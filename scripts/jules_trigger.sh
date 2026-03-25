@@ -144,11 +144,21 @@ echo "{\"date\":\"${TODAY}\",\"task\":\"${TASK_NAME}\",\"session\":\"${SESSION_I
 log "Done. Jules is working on: ${TASK_NAME}"
 log "Session ID: ${SESSION_ID}"
 
-# ── Move task to triggered/ ────────────────────────────────────────────────────
+# ── Move task to triggered/ and push so GitHub is authoritative ───────────────
 TRIGGERED_DIR="${XIBI_DIR}/tasks/triggered"
 mkdir -p "${TRIGGERED_DIR}"
 mv "${SPEC_FILE}" "${TRIGGERED_DIR}/$(basename "${SPEC_FILE}")"
 log "Moved ${TASK_NAME}.md → tasks/triggered/"
+
+# Push the move back to GitHub — this is the idempotency gate.
+# Any other runner that pulls will see the file is gone from pending/ and skip it.
+git -C "${XIBI_DIR}" config user.email "nucbox@xibi.dev"
+git -C "${XIBI_DIR}" config user.name "NucBox"
+git -C "${XIBI_DIR}" add tasks/pending/ tasks/triggered/
+git -C "${XIBI_DIR}" commit -m "chore: trigger ${TASK_NAME} — move pending → triggered" \
+  && git -C "${XIBI_DIR}" push origin main \
+  && log "Pushed pending→triggered move to GitHub." \
+  || log "WARNING: git push failed — task fired but GitHub state not updated. Check manually."
 
 # ── Write pending PR entry for jules_pr_watcher.sh ────────────────────────────
 # Jules branch names follow: {task-title-slug}-{session-numeric-id}
