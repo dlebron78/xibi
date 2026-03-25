@@ -146,4 +146,33 @@ mkdir -p "${TRIGGERED_DIR}"
 mv "${SPEC_FILE}" "${TRIGGERED_DIR}/$(basename "${SPEC_FILE}")"
 log "Moved ${TASK_NAME}.md → tasks/triggered/"
 
+# ── Write pending PR entry for jules_pr_watcher.sh ────────────────────────────
+# Jules branch names follow: {task-title-slug}-{session-numeric-id}
+# We save the numeric session ID so the watcher can find the branch by suffix.
+SESSION_NUM=$(echo "${SESSION_ID}" | sed 's|sessions/||')
+PENDING_PR_DIR="${STATE_DIR}/pending_prs"
+mkdir -p "${PENDING_PR_DIR}"
+
+# Build a readable PR title from the task name (step-02 → "Step 02: ...")
+# Jules uses the session title as-is; default to the task name if no title set.
+PR_TITLE="${TASK_NAME}"
+
+# Use first 3000 chars of task spec as PR body
+PR_BODY=$(head -c 3000 "${TRIGGERED_DIR}/$(basename "${SPEC_FILE}")" 2>/dev/null || echo "Task: ${TASK_NAME}")
+
+python3 -c "
+import json, sys
+print(json.dumps({
+  'task': '${TASK_NAME}',
+  'title': '${PR_TITLE}',
+  'session': '${SESSION_ID}',
+  'session_num': '${SESSION_NUM}',
+  'fired_ts': '$(date -u +%Y-%m-%dT%H:%M:%SZ)',
+  'body': sys.stdin.read()
+}))
+" <<< "${PR_BODY}" > "${PENDING_PR_DIR}/${TASK_NAME}.json"
+
+log "Pending PR entry written → ${PENDING_PR_DIR}/${TASK_NAME}.json"
+log "jules_pr_watcher.sh will create the GitHub PR once Jules pushes a branch."
+
 echo "${SESSION_ID}"
