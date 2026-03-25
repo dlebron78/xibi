@@ -9,6 +9,7 @@ from xibi.router import Config, get_model
 
 if TYPE_CHECKING:
     from xibi.executor import Executor
+    from xibi.routing.control_plane import ControlPlaneRouter, RoutingDecision
 from xibi.types import ReActResult, Step
 
 
@@ -76,6 +77,25 @@ def dispatch(
     return {"status": "ok", "message": "stub"}
 
 
+def _handle_intent(decision: RoutingDecision) -> str:
+    """Return canned responses for control plane intents."""
+    match decision.intent:
+        case "greet":
+            return "Hello! How can I help?"
+        case "status_check":
+            return "All systems up."
+        case "reset":
+            return "Context cleared."
+        case "capability_check":
+            return "I can help with various tasks using my tools. Type 'list skills' to see what I can do."
+        case "update_assistant_name":
+            return f"Understood. You can call me {decision.params.get('name')}."
+        case "update_user_name":
+            return f"Nice to meet you, {decision.params.get('name')}!"
+        case _:
+            return ""
+
+
 def _parse_llm_response(response_text: str) -> dict[str, Any]:
     """Extract JSON from LLM response."""
     # Try direct parse
@@ -109,8 +129,19 @@ def run(
     max_steps: int = 10,
     max_secs: int = 60,
     executor: Executor | None = None,
+    control_plane: ControlPlaneRouter | None = None,
 ) -> ReActResult:
     start_time = time.time()
+
+    if control_plane:
+        decision = control_plane.match(query)
+        if decision.matched:
+            return ReActResult(
+                answer=_handle_intent(decision),
+                steps=[],
+                exit_reason="finish",
+                duration_ms=int((time.time() - start_time) * 1000),
+            )
     scratchpad: list[Step] = []
     consecutive_errors = 0
 
