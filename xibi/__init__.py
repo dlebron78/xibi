@@ -12,3 +12,7 @@ Usage:
     llm = get_model("text", "think")    # reasoning, ReAct loop
     llm = get_model("text", "review")   # observation cycle, audit
 """
+
+from xibi.router import get_model
+
+__all__ = ["get_model"]
