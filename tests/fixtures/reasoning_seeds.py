@@ -2,6 +2,7 @@ import sqlite3
 import json
 from datetime import datetime
 
+
 class ReasoningSeeder:
     def __init__(self, db_path):
         self.db_path = db_path
@@ -16,7 +17,7 @@ class ReasoningSeeder:
                 conn.execute(
                     "INSERT INTO beliefs (key, value, type, visibility, metadata, valid_from, updated_at) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (b['key'], b['value'], b['type'], b.get('visibility', 'user'), '{}', now, now)
+                    (b["key"], b["value"], b["type"], b.get("visibility", "user"), "{}", now, now),
                 )
             conn.commit()
 
@@ -28,7 +29,7 @@ class ReasoningSeeder:
             for e in ledger_entries:
                 conn.execute(
                     "INSERT INTO ledger (id, category, content, created_at) VALUES (?, ?, ?, ?)",
-                    (e.get('id', e['category']), e['category'], e['content'], datetime.now())
+                    (e.get("id", e["category"]), e["category"], e["content"], datetime.now()),
                 )
             conn.commit()
 

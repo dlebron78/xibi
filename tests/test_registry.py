@@ -1,71 +1,129 @@
 import json
-import os
-import glob
-import importlib
-import inspect
 
-def test_manifest_schema():
-    """Verify all manifest.json files contain required keys."""
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    workdir = project_root
-    manifest_paths = glob.glob(os.path.join(workdir, "skills", "*", "manifest.json"))
-    assert len(manifest_paths) > 0, "No skill manifests found in the skills directory."
-    
-    for path in manifest_paths:
-        with open(path, "r") as f:
-            manifest = json.load(f)
-            
-        assert "name" in manifest, f"Manifest missing 'name': {path}"
-        assert "description" in manifest, f"Manifest missing 'description': {path}"
-        assert "tools" in manifest, f"Manifest missing 'tools': {path}"
-        assert isinstance(manifest["tools"], list), f"'tools' must be a list: {path}"
+from xibi.skills.registry import SkillRegistry
 
-def test_tool_compilation_and_contract():
-    """Dynamically import every tool module and assert it exposes a run() function."""
-    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    workdir = project_root
-    manifest_paths = glob.glob(os.path.join(workdir, "skills", "*", "manifest.json"))
-    for path in manifest_paths:
-        with open(path, "r") as f:
-            manifest = json.load(f)
-            
-        skill_name = manifest["name"]
-        
-        for tool in manifest.get("tools", []):
-            tool_name = tool.get("name")
-            module_path = tool.get("python_module")
-            
-            assert tool_name, f"Tool missing 'name' in skill '{skill_name}'"
-            
-            tool_file = os.path.join(os.path.dirname(path), "tools", f"{tool_name}.py")
-            assert os.path.exists(tool_file), f"Tool file missing: {tool_file}"
-            
-            # 1. Test compilation (import)
-            tools_dir = os.path.dirname(tool_file)
-            path_injected = False
-            import sys
-            if tools_dir not in sys.path:
-                sys.path.insert(0, tools_dir)
-                path_injected = True
-                
-            try:
-                import importlib.util
-                spec = importlib.util.spec_from_file_location(tool_name, tool_file)
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-            except Exception as e:
-                raise ImportError(f"Failed to load tool module '{tool_file}' for skill '{skill_name}': {e}")
-            finally:
-                if path_injected:
-                    sys.path.remove(tools_dir)
-                
-            # 2. Test contract (run function)
-            assert hasattr(module, "run"), f"Tool module '{tool_file}' is missing a 'run' function."
-            
-            run_func = getattr(module, "run")
-            assert callable(run_func), f"'run' in '{tool_file}' is not a function."
-            
-            # Verify signature has 'params' argument (with optional fallback check)
-            sig = inspect.signature(run_func)
-            parameters = list(sig.parameters.keys())
-            assert "params" in parameters or "**" in str(sig), f"'run' function in '{tool_file}' must accept 'params'."
+
+def test_load_skills_scans_manifests(tmp_path):
+    skill1 = tmp_path / "skill1"
+    skill1.mkdir()
+    (skill1 / "manifest.json").write_text(json.dumps({"name": "skill1", "description": "desc1"}))
+
+    skill2 = tmp_path / "skill2"
+    skill2.mkdir()
+    (skill2 / "manifest.json").write_text(json.dumps({"name": "skill2", "description": "desc2"}))
+
+    registry = SkillRegistry(tmp_path)
+    assert len(registry.skills) == 2
+    assert "skill1" in registry.skills
+    assert "skill2" in registry.skills
+
+
+def test_load_skills_skips_invalid_json(tmp_path):
+    skill1 = tmp_path / "skill1"
+    skill1.mkdir()
+    (skill1 / "manifest.json").write_text("{invalid json}")
+
+    registry = SkillRegistry(tmp_path)
+    assert len(registry.skills) == 0
+
+
+def test_load_skills_empty_dir(tmp_path):
+    registry = SkillRegistry(tmp_path)
+    assert len(registry.skills) == 0
+
+
+def test_load_skills_nonexistent_dir():
+    registry = SkillRegistry("/nonexistent/path")
+    assert len(registry.skills) == 0
+
+
+def test_get_skill_manifests_returns_all(tmp_path):
+    for i in range(3):
+        skill_dir = tmp_path / f"skill{i}"
+        skill_dir.mkdir()
+        (skill_dir / "manifest.json").write_text(json.dumps({"name": f"skill{i}", "description": f"desc{i}"}))
+
+    registry = SkillRegistry(tmp_path)
+    manifests = registry.get_skill_manifests()
+    assert len(manifests) == 3
+    names = {m["name"] for m in manifests}
+    assert names == {"skill0", "skill1", "skill2"}
+
+
+def test_get_tool_meta_found(tmp_path):
+    skill_dir = tmp_path / "skill1"
+    skill_dir.mkdir()
+    manifest = {
+        "name": "skill1",
+        "description": "desc1",
+        "tools": [{"name": "tool1", "description": "t1"}, {"name": "tool2", "description": "t2"}],
+    }
+    (skill_dir / "manifest.json").write_text(json.dumps(manifest))
+
+    registry = SkillRegistry(tmp_path)
+    meta = registry.get_tool_meta("skill1", "tool1")
+    assert meta == {"name": "tool1", "description": "t1"}
+
+
+def test_get_tool_meta_not_found(tmp_path):
+    registry = SkillRegistry(tmp_path)
+    assert registry.get_tool_meta("unknown", "tool") is None
+
+
+def test_get_tool_min_tier_default(tmp_path):
+    skill_dir = tmp_path / "skill1"
+    skill_dir.mkdir()
+    manifest = {"name": "skill1", "tools": [{"name": "tool1"}]}
+    (skill_dir / "manifest.json").write_text(json.dumps(manifest))
+    registry = SkillRegistry(tmp_path)
+    assert registry.get_tool_min_tier("skill1", "tool1") == 1
+
+
+def test_get_tool_min_tier_explicit(tmp_path):
+    skill_dir = tmp_path / "skill1"
+    skill_dir.mkdir()
+    manifest = {"name": "skill1", "tools": [{"name": "tool1", "min_tier": 2}]}
+    (skill_dir / "manifest.json").write_text(json.dumps(manifest))
+    registry = SkillRegistry(tmp_path)
+    assert registry.get_tool_min_tier("skill1", "tool1") == 2
+
+
+def test_find_skill_for_tool_found(tmp_path):
+    skill_dir = tmp_path / "skill1"
+    skill_dir.mkdir()
+    manifest = {"name": "skill1", "tools": [{"name": "tool1"}]}
+    (skill_dir / "manifest.json").write_text(json.dumps(manifest))
+    registry = SkillRegistry(tmp_path)
+    assert registry.find_skill_for_tool("tool1") == "skill1"
+
+
+def test_find_skill_for_tool_not_found(tmp_path):
+    registry = SkillRegistry(tmp_path)
+    assert registry.find_skill_for_tool("unknown") is None
+
+
+def test_validate_returns_warnings_for_bad_manifests(tmp_path):
+    skill_dir = tmp_path / "skill1"
+    skill_dir.mkdir()
+    manifest = {
+        "name": "skill1",
+        # "description" missing
+        "tools": [{"name": "tool1", "output_type": "invalid"}],
+    }
+    (skill_dir / "manifest.json").write_text(json.dumps(manifest))
+    registry = SkillRegistry(tmp_path)
+    warnings = registry.validate()
+    assert len(warnings) > 0
+
+
+def test_validate_clean_manifest_no_warnings(tmp_path):
+    skill_dir = tmp_path / "skill1"
+    skill_dir.mkdir()
+    manifest = {
+        "name": "skill1",
+        "description": "desc1",
+        "tools": [{"name": "tool1", "description": "t1", "output_type": "raw"}],
+    }
+    (skill_dir / "manifest.json").write_text(json.dumps(manifest))
+    registry = SkillRegistry(tmp_path)
+    assert registry.validate() == []

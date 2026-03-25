@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from xibi.router import Config, get_model
+
+if TYPE_CHECKING:
+    from xibi.executor import Executor
 from xibi.types import ReActResult, Step
 
 
@@ -56,18 +59,21 @@ def is_repeat(step: Step, scratchpad: list[Step]) -> bool:
     return False
 
 
-def dispatch(tool_name: str, tool_input: dict[str, Any], skill_registry: list[dict[str, Any]]) -> dict[str, Any]:
+def dispatch(
+    tool_name: str,
+    tool_input: dict[str, Any],
+    skill_registry: list[dict[str, Any]],
+    executor: Executor | None = None,
+) -> dict[str, Any]:
     """Invoke a tool from the registry."""
+    if executor is not None:
+        return executor.execute(tool_name, tool_input)
+
+    # Fallback: stub path (retained for backward compat with Step 02 tests)
     tool_manifest = next((t for t in skill_registry if t.get("name") == tool_name), None)
     if not tool_manifest:
         return {"status": "error", "message": f"Unknown tool: {tool_name}"}
-
-    # For Step 02, actual tool invocation is stubbed
-    try:
-        # This will be replaced by a real executor in Step 03
-        return {"status": "ok", "message": "stub"}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+    return {"status": "ok", "message": "stub"}
 
 
 def _parse_llm_response(response_text: str) -> dict[str, Any]:
@@ -102,6 +108,7 @@ def run(
     trace_id: str | None = None,
     max_steps: int = 10,
     max_secs: int = 60,
+    executor: Executor | None = None,
 ) -> ReActResult:
     start_time = time.time()
     scratchpad: list[Step] = []
@@ -184,7 +191,7 @@ def run(
                     )
                 continue
 
-            tool_output = dispatch(step.tool, step.tool_input, skill_registry)
+            tool_output = dispatch(step.tool, step.tool_input, skill_registry, executor=executor)
             step.tool_output = tool_output
             scratchpad.append(step)
 

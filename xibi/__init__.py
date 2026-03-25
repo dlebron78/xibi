@@ -20,8 +20,10 @@ Usage:
     )
 """
 
+from xibi.executor import Executor
 from xibi.react import run
 from xibi.router import get_model
+from xibi.skills.registry import SkillRegistry
 from xibi.types import ReActResult
 
-__all__ = ["get_model", "run", "ReActResult"]
+__all__ = ["get_model", "run", "ReActResult", "SkillRegistry", "Executor"]

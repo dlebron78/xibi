@@ -32,6 +32,7 @@ from bregger_heartbeat import (
 class MockNotifier:
     def __init__(self):
         self.sent = []
+
     def send(self, msg, parse_mode=None):
         self.sent.append(msg)
 
@@ -41,7 +42,7 @@ def signal_db(tmp_path):
     """Sterile DB with signals and tasks tables."""
     db_path = tmp_path / "bregger.db"
     with sqlite3.connect(db_path) as conn:
-        conn.execute('''
+        conn.execute("""
             CREATE TABLE signals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -56,8 +57,8 @@ def signal_db(tmp_path):
                 dismissed_at DATETIME,
                 env TEXT DEFAULT 'production'
             )
-        ''')
-        conn.execute('''
+        """)
+        conn.execute("""
             CREATE TABLE tasks (
                 id TEXT PRIMARY KEY,
                 goal TEXT,
@@ -70,31 +71,32 @@ def signal_db(tmp_path):
                 trace_id TEXT,
                 updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )
-        ''')
-        conn.execute('''
+        """)
+        conn.execute("""
             CREATE TABLE traces (
                 id TEXT PRIMARY KEY, intent TEXT, plan TEXT, status TEXT
             )
-        ''')
-        conn.execute('''
+        """)
+        conn.execute("""
             CREATE TABLE beliefs (
                 key TEXT, value TEXT, valid_from DATETIME, valid_until DATETIME
             )
-        ''')
+        """)
     return db_path
 
 
-def seed_signals(db_path, entity, topic, count, proposal_status='active', env='test'):
+def seed_signals(db_path, entity, topic, count, proposal_status="active", env="test"):
     with sqlite3.connect(db_path) as conn:
         for _ in range(count):
             conn.execute(
                 "INSERT INTO signals (source, entity_text, topic_hint, content_preview, proposal_status, env) "
                 "VALUES ('email', ?, ?, 'test preview', ?, ?)",
-                (entity, topic, proposal_status, env)
+                (entity, topic, proposal_status, env),
             )
 
 
 # ── Inference Mutex Tests (Rule 19) ──────────────────────────────────
+
 
 class TestInferenceMutex:
     def test_lock_is_reentrant(self):
@@ -130,6 +132,7 @@ class TestInferenceMutex:
 
 # ── Batch Topic Extraction Tests (Fix 1) ─────────────────────────────
 
+
 class TestBatchExtraction:
     def test_empty_emails_returns_empty(self):
         assert _batch_extract_topics([]) == {}
@@ -138,12 +141,16 @@ class TestBatchExtraction:
     def test_successful_extraction(self, mock_urlopen):
         """Mocked Ollama returns valid JSON → topics extracted."""
         mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({
-            "response": json.dumps([
-                {"num": 1, "topic": "board deck", "entity_text": "Sarah", "entity_type": "person"},
-                {"num": 2, "topic": "flight booking", "entity_text": "JetBlue", "entity_type": "company"},
-            ])
-        }).encode()
+        mock_response.read.return_value = json.dumps(
+            {
+                "response": json.dumps(
+                    [
+                        {"num": 1, "topic": "board deck", "entity_text": "Sarah", "entity_type": "person"},
+                        {"num": 2, "topic": "flight booking", "entity_text": "JetBlue", "entity_type": "company"},
+                    ]
+                )
+            }
+        ).encode()
         mock_response.__enter__ = lambda s: s
         mock_response.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_response
@@ -172,6 +179,7 @@ class TestBatchExtraction:
 
 # ── Contract Tests (Rule 18) ─────────────────────────────────────────
 
+
 class TestSignalContracts:
     """Ensure output of topic extraction is semantically useful to log_signal and reflect."""
 
@@ -179,11 +187,15 @@ class TestSignalContracts:
     def test_batch_output_fits_log_signal_schema(self, mock_urlopen):
         """Batch extraction output has the keys log_signal expects."""
         mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({
-            "response": json.dumps([
-                {"num": 1, "topic": "quarterly review", "entity_text": "Finance Team", "entity_type": "org"},
-            ])
-        }).encode()
+        mock_response.read.return_value = json.dumps(
+            {
+                "response": json.dumps(
+                    [
+                        {"num": 1, "topic": "quarterly review", "entity_text": "Finance Team", "entity_type": "org"},
+                    ]
+                )
+            }
+        ).encode()
         mock_response.__enter__ = lambda s: s
         mock_response.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_response
@@ -224,6 +236,7 @@ class TestSignalContracts:
 
 # ── Reflection Synthesis Tests (Fix 3) ────────────────────────────────
 
+
 class TestReflectionSynthesis:
     @patch("bregger_heartbeat._synthesize_reflection")
     def test_reflect_uses_llm_when_available(self, mock_synth, signal_db):
@@ -231,7 +244,7 @@ class TestReflectionSynthesis:
         mock_synth.return_value = {
             "goal": "Follow up with Sarah about the board deck — feedback pending for 3 days",
             "urgency": "normal",
-            "reasoning": "Sarah sent feedback email 3 days ago with no reply"
+            "reasoning": "Sarah sent feedback email 3 days ago with no reply",
         }
 
         notifier = MockNotifier()
@@ -283,6 +296,7 @@ class TestReflectionSynthesis:
 
 # ── Chat Signal Extraction Tests (Fix 2) ─────────────────────────────
 
+
 class TestChatSignalExtraction:
     """Tests for _extract_passive_memory chat signal path."""
 
@@ -299,6 +313,7 @@ class TestChatSignalExtraction:
 
         # Bind _log_signal from BreggerCore
         from bregger_core import BreggerCore
+
         stub._log_signal = types.MethodType(BreggerCore._log_signal, stub)
         stub.log_trace = lambda *a, **kw: None
         stub.update_trace = lambda *a, **kw: None
@@ -313,6 +328,7 @@ class TestChatSignalExtraction:
         signal_data = {"topic": "board deck review", "entity_text": "Sarah", "entity_type": "person"}
 
         from bregger_utils import normalize_topic as _normalize_topic
+
         raw_topic = "_".join(signal_data["topic"].lower().split()[:3])
         topic = _normalize_topic(raw_topic) or raw_topic
 
@@ -323,7 +339,7 @@ class TestChatSignalExtraction:
             entity_type=signal_data.get("entity_type"),
             content_preview="Can you check the board deck?",
             ref_id="pm_test123",
-            ref_source="passive_memory"
+            ref_source="passive_memory",
         )
 
         with sqlite3.connect(signal_db) as conn:
@@ -354,12 +370,13 @@ class TestChatSignalExtraction:
 
 # ── Phase 2 Tests ─────────────────────────────────────────────────────────
 
+
 @pytest.fixture
 def phase2_db(tmp_path):
     """Minimal DB with signals and pinned_topics tables for Phase 2 tests."""
     db_path = tmp_path / "bregger.db"
     with sqlite3.connect(db_path) as conn:
-        conn.execute('''
+        conn.execute("""
             CREATE TABLE signals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -374,8 +391,8 @@ def phase2_db(tmp_path):
                 dismissed_at DATETIME,
                 env TEXT DEFAULT 'production'
             )
-        ''')
-        conn.execute('CREATE TABLE pinned_topics (topic TEXT PRIMARY KEY)')
+        """)
+        conn.execute("CREATE TABLE pinned_topics (topic TEXT PRIMARY KEY)")
     return db_path
 
 

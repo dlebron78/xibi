@@ -29,7 +29,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 PROJECT_ROOT = Path(__file__).parent.parent
-SKILLS_DIR   = PROJECT_ROOT / "skills"
+SKILLS_DIR = PROJECT_ROOT / "skills"
 
 # Helper files that live inside tools/ but are NOT tools themselves.
 # They won't appear in manifests, so we don't assert run() on them.
@@ -39,6 +39,7 @@ HELPER_FILES = {"_google_auth.py", "__init__.py"}
 # ---------------------------------------------------------------------------
 # Discovery helpers
 # ---------------------------------------------------------------------------
+
 
 def _all_manifests():
     """Yield (skill_name, manifest_path) for every skill."""
@@ -69,7 +70,7 @@ def _import_tool(skill_name: str, py_path: Path):
     # Prefix module name with skill to avoid collisions (e.g., search.search vs memory.search)
     module_name = f"{skill_name}.{py_path.stem}"
     spec = importlib.util.spec_from_file_location(module_name, py_path)
-    mod  = importlib.util.module_from_spec(spec)
+    mod = importlib.util.module_from_spec(spec)
     # Add its parent dir to sys.path so relative sibling imports work
     tools_dir = str(py_path.parent)
     if tools_dir not in sys.path:
@@ -82,6 +83,7 @@ def _import_tool(skill_name: str, py_path: Path):
 # Parametrize: one test ID per (skill, tool) pair
 # ---------------------------------------------------------------------------
 
+
 def _collect_tool_cases():
     """Build the pytest parameter list: [(skill_name, tool_name, py_path), ...]."""
     cases = []
@@ -91,10 +93,7 @@ def _collect_tool_cases():
             if not tool_name:
                 continue
             py_path = _skill_tool_py(skill_name, tool_name)
-            cases.append(pytest.param(
-                skill_name, tool_name, py_path,
-                id=f"{skill_name}:{tool_name}"
-            ))
+            cases.append(pytest.param(skill_name, tool_name, py_path, id=f"{skill_name}:{tool_name}"))
     return cases
 
 
@@ -105,12 +104,11 @@ TOOL_CASES = _collect_tool_cases()
 # Test 1 — Manifest JSON validity
 # ---------------------------------------------------------------------------
 
+
 class TestManifests:
     """Every manifest.json must be valid and structurally correct."""
 
-    @pytest.mark.parametrize("skill_name,manifest_path", [
-        pytest.param(s, m, id=s) for s, m in ALL_MANIFESTS
-    ])
+    @pytest.mark.parametrize("skill_name,manifest_path", [pytest.param(s, m, id=s) for s, m in ALL_MANIFESTS])
     def test_manifest_is_valid_json(self, skill_name, manifest_path):
         """Manifest parses without error."""
         try:
@@ -119,56 +117,47 @@ class TestManifests:
             pytest.fail(f"{skill_name}/manifest.json is not valid JSON: {e}")
         assert isinstance(data, dict), f"{skill_name}/manifest.json root must be a dict"
 
-    @pytest.mark.parametrize("skill_name,manifest_path", [
-        pytest.param(s, m, id=s) for s, m in _all_manifests()
-    ])
+    @pytest.mark.parametrize("skill_name,manifest_path", [pytest.param(s, m, id=s) for s, m in _all_manifests()])
     def test_manifest_has_tools_list(self, skill_name, manifest_path):
         """Manifest declares a non-empty 'tools' array."""
         data = json.loads(manifest_path.read_text())
         tools = data.get("tools")
-        assert isinstance(tools, list), \
-            f"{skill_name}/manifest.json missing 'tools' list"
-        assert len(tools) > 0, \
-            f"{skill_name}/manifest.json has empty 'tools' list"
+        assert isinstance(tools, list), f"{skill_name}/manifest.json missing 'tools' list"
+        assert len(tools) > 0, f"{skill_name}/manifest.json has empty 'tools' list"
 
-    @pytest.mark.parametrize("skill_name,manifest_path", [
-        pytest.param(s, m, id=s) for s, m in _all_manifests()
-    ])
+    @pytest.mark.parametrize("skill_name,manifest_path", [pytest.param(s, m, id=s) for s, m in _all_manifests()])
     def test_every_tool_entry_has_name(self, skill_name, manifest_path):
         """Every tool entry in manifest has a non-empty 'name' field."""
         data = json.loads(manifest_path.read_text())
         for i, tool in enumerate(data.get("tools", [])):
-            assert tool.get("name"), \
-                f"{skill_name}/manifest.json tools[{i}] missing 'name'"
+            assert tool.get("name"), f"{skill_name}/manifest.json tools[{i}] missing 'name'"
 
-    @pytest.mark.parametrize("skill_name,manifest_path", [
-        pytest.param(s, m, id=s) for s, m in _all_manifests()
-    ])
+    @pytest.mark.parametrize("skill_name,manifest_path", [pytest.param(s, m, id=s) for s, m in _all_manifests()])
     def test_every_tool_entry_has_description(self, skill_name, manifest_path):
         """Every tool entry has a non-empty 'description' field."""
         data = json.loads(manifest_path.read_text())
         for tool in data.get("tools", []):
             name = tool.get("name", "<unnamed>")
-            assert tool.get("description"), \
-                f"{skill_name}:{name} missing 'description' in manifest"
+            assert tool.get("description"), f"{skill_name}:{name} missing 'description' in manifest"
 
 
 # ---------------------------------------------------------------------------
 # Test 2 — Tool file existence
 # ---------------------------------------------------------------------------
 
+
 class TestToolFiles:
     """Every tool declared in a manifest must have a corresponding .py file."""
 
     @pytest.mark.parametrize("skill_name,tool_name,py_path", TOOL_CASES)
     def test_tool_py_exists(self, skill_name, tool_name, py_path):
-        assert py_path.exists(), \
-            f"Tool declared in manifest but .py missing: {py_path.relative_to(PROJECT_ROOT)}"
+        assert py_path.exists(), f"Tool declared in manifest but .py missing: {py_path.relative_to(PROJECT_ROOT)}"
 
 
 # ---------------------------------------------------------------------------
 # Test 3 — Tool import (catches bad imports, syntax errors)
 # ---------------------------------------------------------------------------
+
 
 class TestToolImports:
     """Every tool .py must import cleanly — no syntax errors, no missing deps."""
@@ -178,10 +167,7 @@ class TestToolImports:
         try:
             _import_tool(skill_name, py_path)
         except ImportError as e:
-            pytest.fail(
-                f"{skill_name}:{tool_name} — ImportError: {e}\n"
-                f"  File: {py_path.relative_to(PROJECT_ROOT)}"
-            )
+            pytest.fail(f"{skill_name}:{tool_name} — ImportError: {e}\n  File: {py_path.relative_to(PROJECT_ROOT)}")
         except SyntaxError as e:
             pytest.fail(
                 f"{skill_name}:{tool_name} — SyntaxError at line {e.lineno}: {e.msg}\n"
@@ -193,30 +179,29 @@ class TestToolImports:
 # Test 4 — run() contract
 # ---------------------------------------------------------------------------
 
+
 class TestRunContract:
     """Every tool must expose run(params: dict) -> dict."""
 
     @pytest.mark.parametrize("skill_name,tool_name,py_path", TOOL_CASES)
     def test_tool_has_run_function(self, skill_name, tool_name, py_path):
         mod = _import_tool(skill_name, py_path)
-        assert hasattr(mod, "run"), \
-            f"{skill_name}:{tool_name} missing run() function"
-        assert callable(mod.run), \
-            f"{skill_name}:{tool_name} run is not callable"
+        assert hasattr(mod, "run"), f"{skill_name}:{tool_name} missing run() function"
+        assert callable(mod.run), f"{skill_name}:{tool_name} run is not callable"
 
     @pytest.mark.parametrize("skill_name,tool_name,py_path", TOOL_CASES)
     def test_run_accepts_dict_param(self, skill_name, tool_name, py_path):
         """run() must accept at least one positional argument (the params dict)."""
-        mod  = _import_tool(skill_name, py_path)
-        sig  = inspect.signature(mod.run)
+        mod = _import_tool(skill_name, py_path)
+        sig = inspect.signature(mod.run)
         params = list(sig.parameters.values())
-        assert len(params) >= 1, \
-            f"{skill_name}:{tool_name} run() takes no arguments — expected run(params: dict)"
+        assert len(params) >= 1, f"{skill_name}:{tool_name} run() takes no arguments — expected run(params: dict)"
 
 
 # ---------------------------------------------------------------------------
 # Test 5 — No orphan tool files (helper: informational only, not failed)
 # ---------------------------------------------------------------------------
+
 
 class TestOrphans:
     """
@@ -224,11 +209,9 @@ class TestOrphans:
     These are dead code — not a hard failure, but worth knowing about.
     """
 
-    @pytest.mark.parametrize("skill_name,manifest_path", [
-        pytest.param(s, m, id=s) for s, m in ALL_MANIFESTS
-    ])
+    @pytest.mark.parametrize("skill_name,manifest_path", [pytest.param(s, m, id=s) for s, m in ALL_MANIFESTS])
     def test_no_orphan_tool_files(self, skill_name, manifest_path):
-        data  = json.loads(manifest_path.read_text())
+        data = json.loads(manifest_path.read_text())
         declared = {t["name"] for t in data.get("tools", []) if t.get("name")}
         tools_dir = SKILLS_DIR / skill_name / "tools"
 

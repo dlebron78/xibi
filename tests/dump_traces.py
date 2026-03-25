@@ -9,12 +9,12 @@ db_path = os.path.join(data_dir, "data", "bregger.db")
 try:
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
-        
+
         # Test 1 is the 20 runs before the last 20 runs
         rows_test1 = conn.execute(
             "SELECT started_at, steps_detail FROM traces WHERE intent='react' ORDER BY started_at DESC LIMIT 20 OFFSET 20"
         ).fetchall()
-        
+
         failed_t1 = []
         for r in rows_test1:
             try:
