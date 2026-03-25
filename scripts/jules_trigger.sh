@@ -80,6 +80,10 @@ if [[ -f "${HISTORY_FILE}" ]]; then
   log "Daily usage: ${TODAY_COUNT}/${DAILY_CAP} sessions today."
 fi
 
+# ── Sync repo so pending tasks pushed from Cowork are visible ─────────────────
+log "Pulling latest from GitHub..."
+git -C "${XIBI_DIR}" pull origin main --ff-only 2>&1 | while IFS= read -r line; do log "  git: $line"; done || log "WARNING: git pull failed — continuing with local state"
+
 # ── Resolve task spec ─────────────────────────────────────────────────────────
 if [[ "${1:-}" == "--check-pending" ]]; then
   # Find the lexically first file in tasks/pending/
