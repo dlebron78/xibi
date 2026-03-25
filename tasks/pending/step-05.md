@@ -1,171 +1,152 @@
-# Step 05 — Shadow Matcher (BM25 Routing)
+# Step 05 — Shadow Matcher (BM25 Router)
 
-**Target file:** `xibi/routing/shadow.py`
-**Supporting files:** `xibi/routing/__init__.py` (update exports), `tests/test_shadow.py`
-**CI lint scope:** add `tests/test_shadow.py` to ruff check/format lines in `.github/workflows/ci.yml`
+## Goal
 
----
+Implement `xibi/routing/shadow.py` — a pure-Python BM25 scorer that routes queries
+directly to a tool when confidence is high, or injects a hint into the ReAct scratchpad
+when confidence is moderate. This is a promotion from observe-only (bregger_shadow.py)
+to an active router in Xibi.
 
-## Context
+## Source reference
 
-Bregger had a `ShadowMatcher` (`bregger_shadow.py`) that scored queries against skill manifest examples using BM25, but it was **observe-only** — it logged predictions but never influenced routing. Xibi fixes this from day one: the Shadow Matcher is a real routing tier that sits between the Control Plane Router and the full ReAct loop.
-
----
-
-## Routing Tiers (post-step-05)
-
-```
-query
-  └─► ControlPlaneRouter.match()   # exact/regex, step-04
-        ├─ matched → short-circuit, canned response
-        └─ no match ↓
-  └─► ShadowMatcher.match()        # BM25, step-05 (NEW)
-        ├─ score ≥ 0.85 → ShadowDecision(action="route",   tool=..., hint=None)
-        ├─ 0.65 ≤ score < 0.85 → ShadowDecision(action="hint",    tool=..., hint=phrase)
-        └─ score < 0.65  → ShadowDecision(action="passthrough", tool=None, hint=None)
-  └─► ReAct loop                   # full reasoning, step-02
-```
+Read `bregger_shadow.py` in the repo root for the BM25 math and corpus-building logic.
+Do not copy it — reimplement cleanly with types, dataclasses, and the changes below.
 
 ---
 
-## Data Contract
+## File to create: `xibi/routing/shadow.py`
 
-### `ShadowDecision` dataclass
+### Dataclasses
 
 ```python
 @dataclass
-class ShadowDecision:
-    action: str          # "route" | "hint" | "passthrough"
-    tool: str | None     # matched tool name (None for passthrough)
-    score: float         # normalized BM25 confidence 0.0–1.0
-    phrase_matched: str | None  # corpus phrase that scored highest
+class ShadowMatch:
+    tool: str          # matched tool name
+    skill: str         # skill that owns the tool
+    phrase: str        # corpus phrase that matched
+    score: float       # normalised BM25 confidence 0.0–1.0
+    tier: str          # "direct" (>=0.85) | "hint" (0.65–0.85) | "none" (<0.65)
 ```
 
-### Thresholds (class-level constants, not hardcoded inline)
+### Class: `ShadowMatcher`
 
 ```python
-ROUTE_THRESHOLD = 0.85
-HINT_THRESHOLD  = 0.65
+class ShadowMatcher:
+    def __init__(self, k1: float = 1.5, b: float = 0.75) -> None: ...
+    def build_corpus(self, documents: list[tuple[str, str, str]]) -> None: ...
+    def load_manifests(self, skills_dir: str | Path) -> None: ...
+    def match(self, query: str) -> ShadowMatch | None: ...
 ```
 
----
-
-## `ShadowMatcher` class
-
-Located at `xibi/routing/shadow.py`.
-
-### Constructor
+### Routing thresholds (class constants)
 
 ```python
-def __init__(self, k1: float = 1.5, b: float = 0.75) -> None
+DIRECT_THRESHOLD = 0.85   # skip ReAct, call tool directly
+HINT_THRESHOLD   = 0.65   # inject as hint into ReAct context
 ```
 
-BM25 hyperparameters only. Thresholds are class constants (see above), not constructor params — removes the footgun of per-instance threshold drift.
+### `build_corpus` behaviour
 
-### `load_manifests(skills_dir: str | Path) -> int`
+- Input: list of `(skill_name, tool_name, example_phrase)` triples
+- Tokenise with `re.findall(r'\b\w+\b', text.lower())`
+- Compute standard BM25 IDF: `log(1 + (N - f_t + 0.5) / (f_t + 0.5))`
+- Store per-document term frequencies and doc lengths
+- Precompute each document's self-score (max possible score) for normalisation
+- Empty corpus is valid — `match()` returns `None`
 
-- Walks `skills_dir` looking for `*/manifest.json` files
-- For each manifest: reads `name` (skill), iterates `tools[]`, collects `tool.examples[]`
-- Strips comments from example phrases: split on `"->"` and `"—"`, take left side, strip
-- Skips malformed manifests silently (log warning, continue — don't raise)
-- Calls `build_corpus()` internally
-- Returns count of example phrases loaded
+### `load_manifests` behaviour
 
-### `build_corpus(documents: list[tuple[str, str, str]]) -> None`
+- Globs `skills_dir/*/manifest.json`
+- For each manifest: reads `tools[].examples[]`, strips after `->` or `—`
+- Calls `build_corpus()` with resulting triples
+- Silently skips malformed manifests (log warning, continue)
 
-Documents are `(skill_name, tool_name, example_phrase)` triples. Computes:
-- Per-document term frequencies (`collections.Counter`)
-- Document lengths
-- Average document length
-- IDF for each term (standard BM25 formula: `log(1 + (N - df + 0.5) / (df + 0.5))`)
-- Per-document max-possible score (document scored against itself) — used for normalization
+### `match` behaviour
 
-### `match(query: str) -> ShadowDecision`
-
-Always returns a `ShadowDecision` (never `None` — caller should not need to null-check).
-
-- If corpus is empty → return `ShadowDecision(action="passthrough", tool=None, score=0.0, phrase_matched=None)`
-- Tokenize query (lowercase, alphanumeric `\b\w+\b`)
-- Score each document using BM25 term scoring
-- Normalize winning score against that document's max possible score
-- Apply thresholds → set `action`
-- Return `ShadowDecision`
+- Tokenise query
+- Score query against every corpus document using BM25
+- Normalise best raw score against that document's self-score
+- If normalised score >= `DIRECT_THRESHOLD`: return `ShadowMatch(..., tier="direct")`
+- If normalised score >= `HINT_THRESHOLD`: return `ShadowMatch(..., tier="hint")`
+- Otherwise: return `None`
 
 ---
 
-## BM25 Term Score Formula
+## Integration: `xibi/react.py`
 
-For each query term `t` in document `d`:
+Add optional `shadow: ShadowMatcher | None = None` parameter to `run()`.
 
-```
-score_t = IDF(t) * (f_td * (k1 + 1)) / (f_td + k1 * (1 - b + b * (doc_len / avg_doc_len)))
-```
+Routing order at top of `run()`:
 
-Where `f_td` = term frequency of `t` in `d`.
-
-Total document score = sum of `score_t` for all query terms present in document.
+1. `control_plane.match()` first (exact intents, step 04)
+2. `shadow.match()` second:
+   - `tier == "direct"` -> call tool via executor, return `ReActResult` without entering loop
+   - `tier == "hint"` -> prepend hint to `context`: `f"[Shadow hint: consider using {match.tool}]\n{context}"`
+   - `None` -> fall through to ReAct loop as normal
 
 ---
 
-## Integration with `react.py`
+## Update: `xibi/routing/__init__.py`
 
-Update `run()` signature to accept an optional `shadow_matcher` parameter:
+Export `ShadowMatcher` and `ShadowMatch`:
 
 ```python
-def run(
-    query: str,
-    config: Config,
-    skill_registry: list[dict[str, Any]],
-    context: str = "",
-    step_callback: Callable[[str], None] | None = None,
-    trace_id: str | None = None,
-    max_steps: int = 10,
-    max_secs: int = 60,
-    executor: Executor | None = None,
-    control_plane: ControlPlaneRouter | None = None,
-    shadow_matcher: ShadowMatcher | None = None,   # NEW
-) -> ReActResult:
+from xibi.routing.control_plane import ControlPlaneRouter, RoutingDecision
+from xibi.routing.shadow import ShadowMatch, ShadowMatcher
+
+__all__ = ["ControlPlaneRouter", "RoutingDecision", "ShadowMatch", "ShadowMatcher"]
 ```
 
-After `control_plane` check, before the ReAct loop:
+---
 
+## Update: `xibi/__init__.py`
+
+Add to exports:
 ```python
-if shadow_matcher:
-    shadow = shadow_matcher.match(query)
-    if shadow.action == "route" and shadow.tool:
-        # Skip ReAct entirely — dispatch directly via executor
-        result = executor.execute(shadow.tool, {"query": query}) if executor else {"answer": f"[shadow] {shadow.tool}"}
-        return ReActResult(answer=result.get("answer", ""), steps=[], exit_reason="shadow_route", ...)
-    elif shadow.action == "hint" and shadow.hint:
-        # Inject hint into context for the ReAct loop
-        context = f"[Hint: likely tool is '{shadow.tool}' — {shadow.phrase_matched}]\n{context}"
+from xibi.routing.shadow import ShadowMatch, ShadowMatcher
 ```
 
-`ReActResult.exit_reason` should accept `"shadow_route"` as a valid value (update `xibi/types.py` if `exit_reason` is an enum or Literal — keep it a plain `str` if it already is).
+---
+
+## Tests: `tests/test_shadow.py`
+
+Write at least 15 tests. Required coverage:
+
+### BM25 scoring
+1. `test_exact_phrase_match_is_direct` — single-doc corpus, query = exact phrase -> tier "direct"
+2. `test_partial_match_is_hint` — partial overlap query -> tier "hint"
+3. `test_no_match_returns_none` — completely unrelated query -> None
+4. `test_empty_corpus_returns_none` — `build_corpus([])` then `match()` -> None
+
+### Corpus building
+5. `test_build_corpus_sets_avg_doc_length` — check `avg_doc_length` is computed
+6. `test_duplicate_documents_handled` — corpus with duplicate phrases -> no crash
+7. `test_single_token_query` — one-word query against multi-word corpus -> returns result or None
+
+### Manifest loading
+8. `test_load_manifests_builds_corpus` — write a temp manifest.json, call `load_manifests()`, verify `match()` works
+9. `test_load_manifests_missing_dir` — nonexistent dir -> no crash, empty corpus
+10. `test_load_manifests_skips_malformed` — malformed JSON manifest -> skips, loads valid ones
+
+### Thresholds
+11. `test_score_below_hint_threshold_returns_none` — score just under 0.65 -> None
+12. `test_score_between_thresholds_is_hint` — score ~0.70 -> tier "hint"
+13. `test_score_above_direct_threshold_is_direct` — score ~0.90 -> tier "direct"
+
+### React integration
+14. `test_react_shadow_direct_calls_tool` — tier="direct", executor mock -> returns tool result without loop
+15. `test_react_shadow_hint_prepends_context` — tier="hint" -> context contains `[Shadow hint: ...]`
+16. `test_react_shadow_none_falls_through` — no shadow match -> normal ReAct loop runs
+17. `test_react_shadow_after_control_plane` — control plane matches first -> shadow never called
 
 ---
 
-## Required Tests (`tests/test_shadow.py`)
+## Type annotations
 
-1. `test_build_corpus_empty` — empty corpus, `match()` returns `action="passthrough"`
-2. `test_match_above_route_threshold` — build corpus with a phrase, query it exactly → `action="route"`
-3. `test_match_in_hint_band` — partial overlap query → `action="hint"`
-4. `test_match_below_threshold` — unrelated query → `action="passthrough"`
-5. `test_normalized_score_range` — score is always 0.0–1.0
-6. `test_load_manifests_skips_missing_dir` — nonexistent path → no exception, 0 loaded
-7. `test_load_manifests_skips_malformed_json` — invalid JSON manifest → skips, continues
-8. `test_load_manifests_loads_examples` — valid manifest with 3 examples → returns 3
-9. `test_route_threshold_constant` — `ROUTE_THRESHOLD == 0.85`
-10. `test_hint_threshold_constant` — `HINT_THRESHOLD == 0.65`
-11. `test_react_run_shadow_route_skips_react` — `run()` with shadow_matcher high-confidence match → `exit_reason="shadow_route"`, `steps=[]`
-12. `test_react_run_shadow_hint_injects_context` — medium-confidence → ReAct runs, hint appears in first prompt
-13. `test_react_run_no_shadow_matcher` — `shadow_matcher=None` → ReAct runs normally (regression guard)
+- All public methods fully annotated
+- `from __future__ import annotations` at top of file
+- No `Any` except where unavoidable
 
----
+## Linting
 
-## Notes
-
-- No new runtime dependencies. BM25 is pure Python (`math`, `collections`, `re`).
-- `tokenize()` is a module-level helper (not private to class) — tests can import and use it directly.
-- All type annotations use `from __future__ import annotations`.
-- Follow existing Xibi code style: dataclasses over dicts, type hints everywhere, no `Optional[X]` (use `X | None`).
+Run `ruff check xibi/ tests/test_shadow.py` and `ruff format xibi/ tests/test_shadow.py` before committing.
