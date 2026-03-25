@@ -6,131 +6,156 @@ Read this at the start of a new session to resume without losing context.
 
 ## What We're Building
 
-Xibi — an AI agent wrapper (formerly Bregger). The repo is live at `github.com/dlebron78/xibi`. Jules (Google's AI coding agent) is the implementation worker. Cowork (Claude) is the planner, reviewer, and orchestrator.
+Xibi — an AI agent wrapper (formerly Bregger). The repo is live at `github.com/dlebron78/xibi`. Jules (Google's AI coding agent) is the implementation worker. Cowork (Claude Opus) is the reviewer and orchestrator. Cowork (Claude Sonnet) writes task specs, updates docs, handles CI fixes.
 
 ---
 
 ## Current Status
 
-### Infrastructure — DONE ✅
-- GitHub repo: `github.com/dlebron78/xibi` (branch: `main`)
-- NucBox (Ubuntu, home network): self-hosted GitHub Actions runner, active
-- WireGuard VPN on Flint 2 router → SSH into NucBox at `192.168.8.193`
-- Auto-deploy cron on NucBox: `~/auto_deploy.sh` runs every 5 min
-- Overnight Cowork review task: `xibi-pipeline-review`, runs hourly midnight–6am
-- **SSH deploy key**: Cowork can push to GitHub autonomously via `.ssh/xibi_deploy_key`
-  - Private key: `Project_Ray/.ssh/xibi_deploy_key` (gitignored)
-  - Public key: added as GitHub deploy key on `dlebron78/xibi` (write access)
-  - Git remote: `git@github-xibi:dlebron78/xibi.git` (SSH alias in `~/.ssh/config`)
+### Merged PRs ✅
+| PR | Step | Title | Merged |
+|----|------|-------|--------|
+| #1 | 01 | get_model() Router | 2026-03-25 04:10 UTC |
+| #2 | 02 | ReAct Reasoning Loop | 2026-03-25 05:51 UTC |
+| #4 | 03 | Skill Registry + Executor | 2026-03-25 11:32 UTC |
 
-### Jules Integration — DONE ✅
-- Jules connected to `dlebron78/xibi` via GitHub App (installed on `dlebron78` account)
-- `JULES_API_KEY`: stored in `~/.xibi_env` on NucBox
-- `JULES_REPO_SOURCE`: `sources/github/dlebron78/xibi` (set in `~/.xibi_env`)
-- `jules_trigger.sh`: complete, deployed at `~/xibi/scripts/jules_trigger.sh` on NucBox
-  - Uses `sourceContext` + `githubRepoContext.startingBranch` (both required by API)
+(PR #3 was a duplicate step-02 branch — closed without merging.)
+
+### In Flight 🔄
+- **Step 04 — Control Plane Router**: spec fired to Jules, in `tasks/triggered/step-04.md`
+  - Jules is implementing — branch + PR will auto-create when done (AUTO_CREATE_PR mode)
+  - Spec: `xibi/routing/control_plane.py`, ControlPlaneRouter, RoutingDecision, 13 tests
+
+### Pipeline State
+- `tasks/pending/` — **empty** (nothing waiting to fire)
+- `tasks/triggered/` — step-01, step-02, step-03, step-04 (all fired)
+- `tasks/done/` — (steps move here after merge, pipeline review handles it)
+- Next spec to write after step-04 merges: **Step 05** (see BACKLOG.md)
+
+---
+
+## Infrastructure
+
+### NucBox (Ubuntu, home network)
+- IP: `192.168.8.193` (reserved in Flint 2 router)
+- WireGuard VPN on Flint 2 → SSH access
+- GitHub Actions self-hosted runner: active
+- Crons (all in `~/xibi/scripts/`):
+  - `*/30 * * * *` → `jules_trigger.sh --check-pending` — fires Jules on next pending task
+  - `*/5 * * * *` → `xibi_deploy.sh` — git pull + pip install when main changes
+  - `*/5 * * * *` → `jules_pr_watcher.sh` — fallback PR creator (mostly redundant now)
+- Env file: `~/.xibi_env` — stores JULES_API_KEY, JULES_REPO_SOURCE, GITHUB_TOKEN
+
+### Jules Integration
+- Connected to `dlebron78/xibi` via GitHub App
+- `JULES_REPO_SOURCE`: `sources/github/dlebron78/xibi`
+- `jules_trigger.sh` key features:
+  - `automationMode: AUTO_CREATE_PR` — Jules pushes branch AND opens PR automatically
+  - Self-re-exec after `git pull` (md5sum check) — always runs latest version
+  - Idempotency gate: moves spec pending→triggered AND pushes that move to GitHub
+  - HTTPS push auth: `https://${GITHUB_TOKEN}@github.com/dlebron78/xibi.git`
   - Rate limits: 30-min cooldown, 5/day cap
-  - Auto-moves task files from `tasks/pending/` → `tasks/triggered/` after firing
-- NucBox cron: `*/30 * * * * bash ~/xibi/scripts/jules_trigger.sh --check-pending`
+- To manually kick off next pending task from NucBox:
+  ```bash
+  cd ~/xibi && git pull && bash scripts/jules_trigger.sh --check-pending
+  ```
 
-### Pipeline — ACTIVE 🟡
-- **PR #1 open**: "Implement Step 1: get_model() Router" — 617 lines, 4 files
-  - Branch: `step-1-get-model-router-1550666350881804579`
-  - **CI failing** (all 4 checks): fixable issues (see step-01b.md)
-- **step-01b.md**: queued in `tasks/pending/` — fixes CI failures on PR #1
-  - NucBox cron will pick this up in the next 30-min window
-  - Or trigger manually: `bash ~/xibi/scripts/jules_trigger.sh ~/xibi/tasks/pending/step-01b.md`
+### Cowork Pipeline Review (Overnight)
+- Scheduled task: `xibi-pipeline-review`
+- Schedule: every 20 min, 11pm–7am
+- Model: `claude-opus-4-6` (Opus reviews code, Sonnet handles ops)
+- Decision logic:
+  - **Clean PR + passing CI** → auto-merge via GitHub API, move spec to done/, queue next spec
+  - **Failing CI** → push fix commit directly to PR branch (don't write new Jules task for trivial fixes)
+  - **No open PR, empty queue** → write next task spec, push to tasks/pending/
+  - **Jules working (triggered, no PR yet)** → wait
+  - **Pending spec exists** → wait for NucBox to fire
+- GITHUB_TOKEN for API calls: stored at `/sessions/*/mnt/Project_Ray/.env.review`
+  - Format: `GITHUB_TOKEN=ghp_...`
+- Review files written to: `reviews/daily/YYYY-MM-DD-HHMM.md` in repo
+
+### SSH Deploy Key (Cowork → GitHub push)
+- Private key: `Project_Ray/.ssh/xibi_deploy_key` (gitignored, in mounted volume)
+- Public key: added as deploy key on `dlebron78/xibi` (write access)
+- To rebuild SSH config at session start (do this before any git operations):
+  ```bash
+  KEY_PATH=$(ls /sessions/*/mnt/Project_Ray/.ssh/xibi_deploy_key 2>/dev/null | head -1)
+  mkdir -p ~/.ssh
+  cat > ~/.ssh/config << EOF
+  Host github-xibi
+    HostName github.com
+    User git
+    IdentityFile ${KEY_PATH}
+    IdentitiesOnly yes
+  EOF
+  chmod 600 ~/.ssh/config "${KEY_PATH}"
+  ```
+- Git remote: `git@github-xibi:dlebron78/xibi.git`
+
+### Auto-deploy (NucBox)
+- Script: `~/xibi/scripts/xibi_deploy.sh`
+- Runs every 5 min, compares LOCAL vs REMOTE HEAD, pulls and `pip install -e .` if different
+- Service restart stubs commented in for steps 06 (telegram) and 07 (heartbeat)
 
 ---
 
-## Immediate Next Steps
+## CI Configuration
 
-### 1 — Wait for step-01b (or trigger manually)
-The cron on NucBox fires every 30 min. `step-01b.md` is queued. Jules will fix CI.
-
-To trigger immediately on NucBox:
-```bash
-source ~/.xibi_env
-bash ~/xibi/scripts/jules_trigger.sh ~/xibi/tasks/pending/step-01b.md
-```
-
-### 2 — Review PR #1 once CI passes
-Check: `https://github.com/dlebron78/xibi/pull/1`
-- Verify `xibi/router.py` structure matches `public/xibi_architecture.md`
-- If good: merge and write step-02 spec
-
-### 3 — Write step-02: ReAct Loop
-The next logical piece after routing is the ReAct reasoning loop. See BACKLOG.md for full context from the `local_bregger/` triage.
-
----
-
-## CI Failures in PR #1 — Root Cause
-
-Jules's PR #1 has 4 failing checks. All are fixable:
-
-| Check | Failure | Fix |
-|-------|---------|-----|
-| lint | `tests/test_router.py`: unsorted imports + unused `NoModelAvailableError` import | Auto-fixable with `ruff --fix` |
-| typecheck | `types-requests` stubs missing; deprecated `google.generativeai` SDK | Add `types-requests` to dev deps; migrate to `google-genai` |
-| test | `responses` module not in `pyproject.toml` dev deps | Add `responses>=0.25` to dev deps |
-| secrets-check | Likely triggered by deprecated SDK or config patterns | Will clear once typecheck is fixed |
-
-Fix spec: `tasks/triggered/step-01b.md` (queued for Jules)
+- File: `.github/workflows/ci.yml`
+- Lint step scoped to avoid legacy bregger test files:
+  ```yaml
+  ruff check xibi/ tests/test_router.py tests/test_memory.py tests/conftest.py
+  ruff format --check xibi/ tests/test_router.py tests/test_memory.py tests/conftest.py
+  ```
+- As new steps add test files, add them to the lint scope in ci.yml
 
 ---
 
 ## Key Architecture Decisions
 
-**Cowork model protocol:**
-- Opus → code reviews, architecture decisions, prioritization
-- Sonnet → task specs, doc updates, backlog editing, writing (current)
+**Model protocol:**
+- Opus → code reviews, architecture decisions, PR review quality gates
+- Sonnet → task specs, doc updates, CI fix commits, operational scripts
 
-**Autonomous pipeline loop:**
-1. Cowork writes task spec → pushes to GitHub (`tasks/pending/`)
-2. NucBox cron detects pending task → runs `jules_trigger.sh`
-3. Jules implements → opens PR
-4. Overnight Cowork task reviews PR → writes next spec
-5. Repeat
+**Jules writes from scratch** using task specs. The specs are informed by reading `bregger_core.py` as a blueprint — extracting logic, not porting code. Jules produces typed, tested, clean Xibi-style implementations.
 
-**Existing code (local_bregger/) triage — DONE:**
-Full triage completed 2026-03-24. Key findings:
-- `bregger_core.py` (3,545 lines): Core ReAct loop, routing, providers — worth preserving but needs decomposition into `xibi/routing.py`, `xibi/react.py`, `xibi/executor.py`
-- `bregger_shadow.py` (144 lines): BM25 intent matcher — currently observe-only, needs promotion to actual router
-- `bregger_heartbeat.py` (1,421 lines): Proactive polling daemon with rule engine — high-value, needs modularization
-- `bregger_telegram.py` (305 lines): Zero-dependency Telegram adapter — good pattern for `xibi/channels/`
-- All test files (39KB+): Migrate to Xibi test suite
-- `bregger_dashboard.py` (458 lines): Flask observability UI — keep or replace with Grafana
-- See BACKLOG.md for full priority list
+**Pipeline loop (fully autonomous):**
+1. Cowork (Opus, overnight) writes task spec → pushes to `tasks/pending/`
+2. NucBox cron (every 30 min) detects pending task → `jules_trigger.sh` fires Jules
+3. Jules implements → AUTO_CREATE_PR opens branch + PR automatically
+4. Cowork (Opus, overnight) reviews PR → auto-merges if clean → queues next spec
+5. Repeat — zero human intervention required
 
-**Pushing from Cowork to GitHub:**
-Cowork now has full push access via SSH deploy key (set up 2026-03-24).
-- Git remote is configured as `git@github-xibi:dlebron78/xibi.git`
-- SSH config at `~/.ssh/config` in Cowork VM (rebuilt each session from key in mounted folder)
-- To rebuild SSH config at session start:
-```bash
-mkdir -p ~/.ssh
-cat > ~/.ssh/config << 'EOF'
-Host github-xibi
-  HostName github.com
-  User git
-  IdentityFile /sessions/focused-laughing-cori/mnt/Project_Ray/.ssh/xibi_deploy_key
-  IdentitiesOnly yes
-EOF
-chmod 600 ~/.ssh/config /sessions/focused-laughing-cori/mnt/Project_Ray/.ssh/xibi_deploy_key
-```
+**Bregger code as blueprint:**
+- `bregger_core.py` (3,545 lines): Core ReAct loop, routing, providers
+- `bregger_shadow.py` (144 lines): BM25 intent matcher
+- `bregger_heartbeat.py` (1,421 lines): Proactive polling daemon
+- `bregger_telegram.py` (305 lines): Telegram adapter
+- See BACKLOG.md for full build order
+
+---
+
+## Known Issues / Deferred
+
+- `google-generativeai` → `google-genai` migration: FutureWarning showing, not breaking yet — defer to dedicated step
+- Jules daily cap is 5/day — may want to raise to 10-12 for faster overnight builds (COOLDOWN_MINUTES=30 in trigger script)
+- SSH key path uses glob `/sessions/*/mnt/...` in pipeline review SKILL.md — could match multiple paths if multiple mounts exist
 
 ---
 
 ## Key Credentials / Locations
-- Jules API key: `~/.xibi_env` on NucBox (do not commit)
-- `JULES_REPO_SOURCE`: `sources/github/dlebron78/xibi`
-- NucBox IP: `192.168.8.193` (reserved in Flint 2)
-- GitHub repo: `https://github.com/dlebron78/xibi`
-- Jules web UI: `jules.google.com`
-- Daily session limit: 15/day (was at 6/15 as of 2026-03-25 ~11pm EDT)
+
+| Secret | Location |
+|--------|----------|
+| Jules API key | `~/.xibi_env` on NucBox |
+| GITHUB_TOKEN (NucBox ops) | `~/.xibi_env` on NucBox |
+| GITHUB_TOKEN (Cowork API calls) | `Project_Ray/.env.review` (mounted, gitignored) |
+| SSH deploy key (private) | `Project_Ray/.ssh/xibi_deploy_key` (mounted, gitignored) |
+| JULES_REPO_SOURCE | `sources/github/dlebron78/xibi` |
 
 ---
 
 ## How to Start New Session
+
 Paste this into your first message:
 > "Read HANDOFF.md in the project folder and resume from there."
