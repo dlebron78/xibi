@@ -43,6 +43,7 @@ fi
 
 [[ -z "${JULES_API_KEY:-}" ]]     && die "JULES_API_KEY not set. Add to ~/.xibi_env"
 [[ -z "${JULES_REPO_SOURCE:-}" ]] && die "JULES_REPO_SOURCE not set. Run: bash scripts/jules_get_source.sh"
+[[ -z "${GITHUB_TOKEN:-}" ]]      && die "GITHUB_TOKEN not set. Add to ~/.xibi_env (repo-scoped PAT)"
 
 # ── Lockfile ──────────────────────────────────────────────────────────────────
 if [[ -f "${LOCKFILE}" ]]; then
@@ -156,7 +157,7 @@ git -C "${XIBI_DIR}" config user.email "nucbox@xibi.dev"
 git -C "${XIBI_DIR}" config user.name "NucBox"
 git -C "${XIBI_DIR}" add tasks/pending/ tasks/triggered/
 git -C "${XIBI_DIR}" commit -m "chore: trigger ${TASK_NAME} — move pending → triggered" \
-  && git -C "${XIBI_DIR}" push origin main \
+  && git -C "${XIBI_DIR}" push "https://${GITHUB_TOKEN}@github.com/dlebron78/xibi.git" main \
   && log "Pushed pending→triggered move to GitHub." \
   || log "WARNING: git push failed — task fired but GitHub state not updated. Check manually."
 
