@@ -30,7 +30,7 @@ class Step:
 
     def one_line_summary(self) -> str:
         """Compressed one-liner for older steps."""
-        input_summary = json.dumps(self.tool_input, separators=(',', ':'))[:60]
+        input_summary = json.dumps(self.tool_input, separators=(",", ":"))[:60]
         if self.tool_output.get("status") == "error":
             output_hint = f"ERROR: {self.tool_output.get('message', '?')[:60]}"
         elif self.tool_output.get("content"):

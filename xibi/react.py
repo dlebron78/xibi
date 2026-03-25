@@ -19,12 +19,15 @@ def compress_scratchpad(scratchpad: list[Step]) -> str:
             lines.append(step.one_line_summary())
     return "\n".join(lines)
 
+
 def is_repeat(step: Step, scratchpad: list[Step]) -> bool:
     """True if this step has >60% word overlap with any prior same-tool step."""
+
     def get_words(s: str) -> set[str]:
         # Simple word extractor
         import re
-        return set(re.findall(r'\w+', s.lower()))
+
+        return set(re.findall(r"\w+", s.lower()))
 
     new_input_str = json.dumps(step.tool_input, sort_keys=True)
     new_words = get_words(new_input_str)
@@ -52,6 +55,7 @@ def is_repeat(step: Step, scratchpad: list[Step]) -> bool:
                 return True
     return False
 
+
 def dispatch(tool_name: str, tool_input: dict[str, Any], skill_registry: list[dict[str, Any]]) -> dict[str, Any]:
     """Invoke a tool from the registry."""
     tool_manifest = next((t for t in skill_registry if t.get("name") == tool_name), None)
@@ -65,6 +69,7 @@ def dispatch(tool_name: str, tool_input: dict[str, Any], skill_registry: list[di
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+
 def _parse_llm_response(response_text: str) -> dict[str, Any]:
     """Extract JSON from LLM response."""
     # Try direct parse
@@ -76,7 +81,8 @@ def _parse_llm_response(response_text: str) -> dict[str, Any]:
     except (json.JSONDecodeError, ValueError):
         # Try to find JSON block
         import re
-        match = re.search(r'\{.*\}', response_text, re.DOTALL)
+
+        match = re.search(r"\{.*\}", response_text, re.DOTALL)
         if match:
             try:
                 parsed = json.loads(match.group())
@@ -85,6 +91,7 @@ def _parse_llm_response(response_text: str) -> dict[str, Any]:
             except json.JSONDecodeError:
                 pass
         raise
+
 
 def run(
     query: str,
@@ -106,10 +113,10 @@ def run(
         "You are a helpful assistant with access to tools.\n"
         f"Available tools: {json.dumps(skill_registry)}\n\n"
         "Instructions:\n"
-        "1. Respond in JSON format only: {\"thought\": \"...\", \"tool\": \"...\", \"tool_input\": {...}}\n"
+        '1. Respond in JSON format only: {"thought": "...", "tool": "...", "tool_input": {...}}\n'
         "2. Special tools:\n"
-        "   - \"finish\": Use when you have the final answer. Input: {\"answer\": \"...\"}\n"
-        "   - \"ask_user\": Use when you need more information. Input: {\"question\": \"...\"}\n"
+        '   - "finish": Use when you have the final answer. Input: {"answer": "..."}\n'
+        '   - "ask_user": Use when you need more information. Input: {"question": "..."}\n'
     )
 
     for step_num in range(1, max_steps + 1):
@@ -119,12 +126,7 @@ def run(
 
         # Construct prompt
         compressed_pad = compress_scratchpad(scratchpad)
-        prompt = (
-            f"Original Query: {query}\n"
-            f"Context: {context}\n"
-            f"Scratchpad:\n{compressed_pad}\n\n"
-            "Next Step (JSON):"
-        )
+        prompt = f"Original Query: {query}\nContext: {context}\nScratchpad:\n{compressed_pad}\n\nNext Step (JSON):"
 
         if step_callback:
             step_callback(f"Thinking (Step {step_num})...")
@@ -148,7 +150,7 @@ def run(
                 tool=parsed.get("tool", ""),
                 tool_input=parsed.get("tool_input", {}),
                 duration_ms=int((time.time() - step_start_time) * 1000),
-                parse_warning=parse_warning
+                parse_warning=parse_warning,
             )
 
             if step.tool == "finish":
@@ -157,7 +159,7 @@ def run(
                     answer=step.tool_input.get("answer", ""),
                     steps=scratchpad,
                     exit_reason="finish",
-                    duration_ms=int((time.time() - start_time) * 1000)
+                    duration_ms=int((time.time() - start_time) * 1000),
                 )
 
             if step.tool == "ask_user":
@@ -166,7 +168,7 @@ def run(
                     answer=step.tool_input.get("question", ""),
                     steps=scratchpad,
                     exit_reason="ask_user",
-                    duration_ms=int((time.time() - start_time) * 1000)
+                    duration_ms=int((time.time() - start_time) * 1000),
                 )
 
             if is_repeat(step, scratchpad):
@@ -178,7 +180,7 @@ def run(
                         answer="",
                         steps=scratchpad,
                         exit_reason="error",
-                        duration_ms=int((time.time() - start_time) * 1000)
+                        duration_ms=int((time.time() - start_time) * 1000),
                     )
                 continue
 
@@ -193,7 +195,7 @@ def run(
                         answer="",
                         steps=scratchpad,
                         exit_reason="error",
-                        duration_ms=int((time.time() - start_time) * 1000)
+                        duration_ms=int((time.time() - start_time) * 1000),
                     )
             else:
                 consecutive_errors = 0
@@ -201,15 +203,9 @@ def run(
         except Exception:
             # Handle unexpected LLM errors
             return ReActResult(
-                answer="",
-                steps=scratchpad,
-                exit_reason="error",
-                duration_ms=int((time.time() - start_time) * 1000)
+                answer="", steps=scratchpad, exit_reason="error", duration_ms=int((time.time() - start_time) * 1000)
             )
 
     return ReActResult(
-        answer="",
-        steps=scratchpad,
-        exit_reason="max_steps",
-        duration_ms=int((time.time() - start_time) * 1000)
+        answer="", steps=scratchpad, exit_reason="max_steps", duration_ms=int((time.time() - start_time) * 1000)
     )

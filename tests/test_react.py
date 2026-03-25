@@ -14,11 +14,12 @@ def test_step_full_text_truncates():
         thought="thinking",
         tool="test_tool",
         tool_input={"key": "val"},
-        tool_output={"content": long_output}
+        tool_output={"content": long_output},
     )
     full_text = step.full_text()
     assert "[truncated]" in full_text
-    assert len(full_text) < 1200 # Roughly
+    assert len(full_text) < 1200  # Roughly
+
 
 def test_compress_scratchpad_recent_full():
     steps = [
@@ -31,6 +32,7 @@ def test_compress_scratchpad_recent_full():
     assert "Step 2:" in compressed
     assert "Thought: t2" in compressed
 
+
 def test_compress_scratchpad_older_summarized():
     steps = [
         Step(step_num=1, thought="t1", tool="tool1", tool_output={"res": 1}),
@@ -40,7 +42,7 @@ def test_compress_scratchpad_older_summarized():
     compressed = compress_scratchpad(steps)
     # Step 1 should be summarized (one-liner)
     assert "Step 1: tool1" in compressed
-    assert "Thought: t1" not in compressed.split('\n')[0]
+    assert "Thought: t1" not in compressed.split("\n")[0]
 
     # Step 2 and 3 should be full
     assert "Step 2:" in compressed
@@ -48,17 +50,15 @@ def test_compress_scratchpad_older_summarized():
     assert "Step 3:" in compressed
     assert "Thought: t3" in compressed
 
+
 def test_is_repeat_detects_duplicate():
-    scratchpad = [
-        Step(step_num=1, tool="search", tool_input={"query": "weather in london"})
-    ]
+    scratchpad = [Step(step_num=1, tool="search", tool_input={"query": "weather in london"})]
     new_step = Step(step_num=2, tool="search", tool_input={"query": "weather in london"})
     assert is_repeat(new_step, scratchpad) is True
 
+
 def test_is_repeat_overlap_60_percent():
-    scratchpad = [
-        Step(step_num=1, tool="search", tool_input={"query": "weather in london today"})
-    ]
+    scratchpad = [Step(step_num=1, tool="search", tool_input={"query": "weather in london today"})]
     # "weather in london" (3 words) overlaps with "weather in london today" (4 words)
     # intersection: "weather", "in", "london" (3 words)
     # overlap: 3/3 = 1.0 > 0.6
@@ -71,30 +71,30 @@ def test_is_repeat_overlap_60_percent():
     new_step2 = Step(step_num=3, tool="search", tool_input={"query": "london weather"})
     assert is_repeat(new_step2, scratchpad) is True
 
+
 def test_is_repeat_different_tool():
-    scratchpad = [
-        Step(step_num=1, tool="search", tool_input={"query": "weather in london"})
-    ]
+    scratchpad = [Step(step_num=1, tool="search", tool_input={"query": "weather in london"})]
     new_step = Step(step_num=2, tool="get_weather", tool_input={"query": "weather in london"})
     assert is_repeat(new_step, scratchpad) is False
+
 
 @pytest.fixture
 def mock_get_model(mocker):
     return mocker.patch("xibi.react.get_model")
 
+
 @pytest.fixture
 def skill_registry():
     return [{"name": "search", "description": "Search for info"}]
+
 
 def test_run_finish_on_first_step(mock_get_model, mock_config, skill_registry):
     mock_llm = MagicMock()
     mock_get_model.return_value = mock_llm
 
-    mock_llm.generate.return_value = json.dumps({
-        "thought": "I have the answer",
-        "tool": "finish",
-        "tool_input": {"answer": "London is cold"}
-    })
+    mock_llm.generate.return_value = json.dumps(
+        {"thought": "I have the answer", "tool": "finish", "tool_input": {"answer": "London is cold"}}
+    )
 
     result = run("query", mock_config, skill_registry)
 
@@ -102,31 +102,29 @@ def test_run_finish_on_first_step(mock_get_model, mock_config, skill_registry):
     assert result.answer == "London is cold"
     assert len(result.steps) == 1
 
+
 def test_run_ask_user_exit(mock_get_model, mock_config, skill_registry):
     mock_llm = MagicMock()
     mock_get_model.return_value = mock_llm
 
-    mock_llm.generate.return_value = json.dumps({
-        "thought": "I need more info",
-        "tool": "ask_user",
-        "tool_input": {"question": "What is the date?"}
-    })
+    mock_llm.generate.return_value = json.dumps(
+        {"thought": "I need more info", "tool": "ask_user", "tool_input": {"question": "What is the date?"}}
+    )
 
     result = run("query", mock_config, skill_registry)
 
     assert result.exit_reason == "ask_user"
     assert result.answer == "What is the date?"
 
+
 def test_run_max_steps_exit(mock_get_model, mock_config, skill_registry):
     mock_llm = MagicMock()
     mock_get_model.return_value = mock_llm
 
     # LLM keeps suggesting same search tool
-    mock_llm.generate.return_value = json.dumps({
-        "thought": "Let's search",
-        "tool": "search",
-        "tool_input": {"query": "something"}
-    })
+    mock_llm.generate.return_value = json.dumps(
+        {"thought": "Let's search", "tool": "search", "tool_input": {"query": "something"}}
+    )
 
     # Note: is_repeat will return False here because query keeps changing slightly if we want to avoid repeat detection
     # But for simplicity let's mock it to return different things.
@@ -134,8 +132,7 @@ def test_run_max_steps_exit(mock_get_model, mock_config, skill_registry):
 
     # Let's use side_effect to return slightly different queries
     mock_llm.generate.side_effect = [
-        json.dumps({"thought": f"t{i}", "tool": "search", "tool_input": {"query": f"q{i}"}})
-        for i in range(15)
+        json.dumps({"thought": f"t{i}", "tool": "search", "tool_input": {"query": f"q{i}"}}) for i in range(15)
     ]
 
     result = run("query", mock_config, skill_registry, max_steps=5)
@@ -143,22 +140,20 @@ def test_run_max_steps_exit(mock_get_model, mock_config, skill_registry):
     assert result.exit_reason == "max_steps"
     assert len(result.steps) == 5
 
+
 def test_run_consecutive_errors_exit(mock_get_model, mock_config):
     mock_llm = MagicMock()
     mock_get_model.return_value = mock_llm
 
     # Tool "unknown" will return error from dispatch
-    mock_llm.generate.return_value = json.dumps({
-        "thought": "Trying unknown tool",
-        "tool": "unknown",
-        "tool_input": {}
-    })
+    mock_llm.generate.return_value = json.dumps({"thought": "Trying unknown tool", "tool": "unknown", "tool_input": {}})
 
     result = run("query", mock_config, [], max_steps=10)
 
     assert result.exit_reason == "error"
     assert len(result.steps) == 3
     assert result.steps[-1].tool_output["status"] == "error"
+
 
 def test_run_repeat_detection(mock_get_model, mock_config, skill_registry):
     mock_llm = MagicMock()
@@ -170,7 +165,7 @@ def test_run_repeat_detection(mock_get_model, mock_config, skill_registry):
     mock_llm.generate.side_effect = [
         json.dumps({"thought": "t1", "tool": "search", "tool_input": {"q": "london"}}),
         json.dumps({"thought": "t2", "tool": "search", "tool_input": {"q": "london"}}),
-        json.dumps({"thought": "t3", "tool": "finish", "tool_input": {"answer": "done"}})
+        json.dumps({"thought": "t3", "tool": "finish", "tool_input": {"answer": "done"}}),
     ]
 
     result = run("query", mock_config, skill_registry)
@@ -178,6 +173,7 @@ def test_run_repeat_detection(mock_get_model, mock_config, skill_registry):
     assert result.exit_reason == "finish"
     assert len(result.steps) == 3
     assert "Repeat detected" in result.steps[1].tool_output["message"]
+
 
 def test_run_parse_recovery(mock_get_model, mock_config, skill_registry):
     mock_llm = MagicMock()
@@ -187,13 +183,14 @@ def test_run_parse_recovery(mock_get_model, mock_config, skill_registry):
     # Second (recovery) is good
     mock_llm.generate.side_effect = [
         "Bad JSON response",
-        json.dumps({"thought": "recovered", "tool": "finish", "tool_input": {"answer": "ok"}})
+        json.dumps({"thought": "recovered", "tool": "finish", "tool_input": {"answer": "ok"}}),
     ]
 
     result = run("query", mock_config, skill_registry)
 
     assert result.exit_reason == "finish"
     assert result.steps[0].parse_warning == "Recovered from invalid JSON"
+
 
 def test_run_timeout(mock_get_model, mock_config, skill_registry, mocker):
     mock_llm = MagicMock()
@@ -208,7 +205,9 @@ def test_run_timeout(mock_get_model, mock_config, skill_registry, mocker):
     # 80: ReActResult duration_ms
     mocker.patch("time.time", side_effect=[0, 10, 20, 30, 70, 80])
 
-    mock_llm.generate.return_value = json.dumps({"thought": "thinking", "tool": "search", "tool_input": {"q": "something"}})
+    mock_llm.generate.return_value = json.dumps(
+        {"thought": "thinking", "tool": "search", "tool_input": {"q": "something"}}
+    )
 
     result = run("query", mock_config, skill_registry, max_secs=60)
 
