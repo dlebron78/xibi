@@ -81,9 +81,16 @@ if [[ -f "${HISTORY_FILE}" ]]; then
   log "Daily usage: ${TODAY_COUNT}/${DAILY_CAP} sessions today."
 fi
 
-# ── Sync repo so pending tasks pushed from Cowork are visible ─────────────────
+# ── Sync repo and self-update ─────────────────────────────────────────────────
 log "Pulling latest from GitHub..."
+SELF="${BASH_SOURCE[0]}"
+SELF_BEFORE=$(md5sum "${SELF}" 2>/dev/null | awk '{print $1}')
 git -C "${XIBI_DIR}" pull origin main --ff-only 2>&1 | while IFS= read -r line; do log "  git: $line"; done || log "WARNING: git pull failed — continuing with local state"
+SELF_AFTER=$(md5sum "${SELF}" 2>/dev/null | awk '{print $1}')
+if [[ "${SELF_BEFORE}" != "${SELF_AFTER}" ]]; then
+  log "Script updated by git pull — re-executing with new version..."
+  exec bash "${SELF}" "$@"
+fi
 
 # ── Resolve task spec ─────────────────────────────────────────────────────────
 if [[ "${1:-}" == "--check-pending" ]]; then
