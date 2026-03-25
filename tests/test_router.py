@@ -7,9 +7,12 @@ import requests
 import responses
 
 from xibi.router import (
+    AnthropicClient,
     ConfigValidationError,
     GeminiClient,
+    GroqClient,
     OllamaClient,
+    OpenAIClient,
     _check_provider_health,
     _resolve_model,
     get_model,
@@ -229,3 +232,141 @@ def test_config_reload(tmp_path):
         cp.write_text(json.dumps(config2))
         client2 = get_model("text", "fast", config_path=str(cp))
         assert client2.model == "m2"
+
+
+# Additional coverage tests
+
+
+@responses.activate
+def test_ollama_client_generate_with_system():
+    """Covers the system prompt branch in OllamaClient._call_provider (line 72)."""
+    responses.add(responses.POST, "http://localhost:11434/api/generate", json={"response": "Hi there"}, status=200)
+    client = OllamaClient("ollama", "m", {}, "http://localhost:11434")
+    res = client.generate("Hi", system="You are a helpful assistant.")
+    assert res == "Hi there"
+    body = json.loads(responses.calls[0].request.body)
+    assert body["system"] == "You are a helpful assistant."
+
+
+@responses.activate
+def test_ollama_generate_structured_invalid_json():
+    """Covers JSONDecodeError branch in OllamaClient.generate_structured (lines 95-96)."""
+    responses.add(
+        responses.POST, "http://localhost:11434/api/generate", json={"response": "not valid json {"}, status=200
+    )
+    client = OllamaClient("ollama", "m", {}, "http://localhost:11434")
+    with pytest.raises(RuntimeError) as excinfo:
+        client.generate_structured("Hi", {"type": "object"})
+    assert "invalid JSON" in str(excinfo.value)
+
+
+@patch("google.generativeai.GenerativeModel")
+@patch("google.generativeai.configure")
+def test_gemini_client_generate_structured(mock_configure, mock_gen_model):
+    """Covers GeminiClient.generate_structured (lines 137-147)."""
+    mock_model_instance = MagicMock()
+    mock_gen_model.return_value = mock_model_instance
+    mock_model_instance.generate_content.return_value = MagicMock(text='{"result": "ok"}')
+
+    client = GeminiClient("gemini", "gemini-2.5-flash", {}, "fake-key")
+    res = client.generate_structured("Summarize", {"type": "object"})
+    assert res == {"result": "ok"}
+
+
+@patch("google.generativeai.GenerativeModel")
+@patch("google.generativeai.configure")
+def test_gemini_client_generate_exception(mock_configure, mock_gen_model):
+    """Covers the Exception branch in GeminiClient._call_provider (lines 130-131)."""
+    mock_model_instance = MagicMock()
+    mock_gen_model.return_value = mock_model_instance
+    mock_model_instance.generate_content.side_effect = RuntimeError("API error")
+
+    client = GeminiClient("gemini", "gemini-2.5-flash", {}, "fake-key")
+    with pytest.raises(RuntimeError) as excinfo:
+        client.generate("Hi")
+    assert "Gemini call failed" in str(excinfo.value)
+
+
+@patch("google.generativeai.GenerativeModel")
+@patch("google.generativeai.configure")
+def test_gemini_client_generate_structured_invalid_json(mock_configure, mock_gen_model):
+    """Covers JSONDecodeError branch in GeminiClient.generate_structured."""
+    mock_model_instance = MagicMock()
+    mock_gen_model.return_value = mock_model_instance
+    mock_model_instance.generate_content.return_value = MagicMock(text="not-json")
+
+    client = GeminiClient("gemini", "gemini-2.5-flash", {}, "fake-key")
+    with pytest.raises(RuntimeError) as excinfo:
+        client.generate_structured("Hi", {"type": "object"})
+    assert "invalid JSON" in str(excinfo.value)
+
+
+@patch("google.generativeai.GenerativeModel")
+@patch("google.generativeai.configure")
+def test_gemini_client_generate_with_timeout(mock_configure, mock_gen_model):
+    """Covers the timeout kwarg branch in GeminiClient._call_provider (line 120)."""
+    mock_model_instance = MagicMock()
+    mock_gen_model.return_value = mock_model_instance
+    mock_model_instance.generate_content.return_value = MagicMock(text="response")
+
+    client = GeminiClient("gemini", "gemini-2.5-flash", {}, "fake-key")
+    res = client.generate("Hi", timeout=30)
+    assert res == "response"
+
+
+def test_openai_client_not_implemented():
+    """Covers OpenAIClient stub __init__ (line 156)."""
+    with pytest.raises(NotImplementedError):
+        OpenAIClient("openai", "gpt-4", {}, "fake-key")
+
+
+def test_anthropic_client_not_implemented():
+    """Covers AnthropicClient stub __init__ (line 171)."""
+    with pytest.raises(NotImplementedError):
+        AnthropicClient("anthropic", "claude-3", {}, "fake-key")
+
+
+def test_groq_client_not_implemented():
+    """Covers GroqClient stub __init__ (line 186)."""
+    with pytest.raises(NotImplementedError):
+        GroqClient("groq", "llama3", {}, "fake-key")
+
+
+@responses.activate
+def test_ollama_model_matched_with_latest_tag():
+    """Covers the ':latest' tag matching paths in _check_provider_health (lines 306-312)."""
+    # Model list has "qwen3.5:latest" but we request "qwen3.5"
+    responses.add(
+        responses.GET,
+        "http://localhost:11434/api/tags",
+        json={"models": [{"name": "qwen3.5:latest"}]},
+        status=200,
+    )
+    config = {"providers": {"ollama": {"base_url": "http://localhost:11434"}}}
+    role_cfg = {"provider": "ollama", "model": "qwen3.5"}
+    assert _check_provider_health(config, role_cfg) is True
+
+
+@responses.activate
+def test_ollama_model_matched_base_name_without_latest():
+    """Covers model matching when requesting 'model:latest' but list has bare name (line ~312)."""
+    responses.add(
+        responses.GET,
+        "http://localhost:11434/api/tags",
+        json={"models": [{"name": "qwen3.5"}]},
+        status=200,
+    )
+    config = {"providers": {"ollama": {"base_url": "http://localhost:11434"}}}
+    role_cfg = {"provider": "ollama", "model": "qwen3.5:latest"}
+    assert _check_provider_health(config, role_cfg) is True
+
+
+def test_resolve_model_no_think_effort_returns_first(mock_config):
+    """Covers the branch where 'think' is missing and we return the first available effort (line 279)."""
+    config = {
+        "models": {"text": {"fast": {"provider": "ollama", "model": "fast-model"}}},
+        "providers": {"ollama": {}},
+    }
+    # "ultra" is not a defined effort; "think" is also missing; should return first available
+    res = _resolve_model(config, "text", "ultra")
+    assert res["model"] == "fast-model"
