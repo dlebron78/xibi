@@ -1,0 +1,94 @@
+name: Xibi CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  secrets-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for hardcoded secrets
+        run: |
+          # Common API key patterns
+          PATTERNS='(sk-[a-zA-Z0-9]{20,}|AIza[a-zA-Z0-9_-]{35}|ghp_[a-zA-Z0-9]{36}|AKIA[A-Z0-9]{16}|sk-ant-[a-zA-Z0-9-]{80,}|gsk_[a-zA-Z0-9]{50,})'
+          # Search in tracked files only (not .gitignore'd)
+          if git ls-files '*.py' '*.md' '*.json' '*.yml' '*.yaml' | xargs grep -lE "$PATTERNS" 2>/dev/null; then
+            echo "::error::Potential hardcoded secret detected! API keys must be in environment variables, not in code."
+            exit 1
+          fi
+
+      - name: Check for PII in test fixtures
+        run: |
+          # Flag real-looking email addresses in test files (not @example.com or @test.com)
+          if grep -rn '@[a-z]*\.' tests/ --include='*.py' | grep -vE '@(example|test|mock|fake|redacted)\.' | grep -vE '^\s*#' | head -5; then
+            echo "::warning::Possible real email address in test fixtures. Use @example.com for test data."
+          fi
+
+      - name: Enforce Xibi naming in new code
+        run: |
+          # xibi/ package must not contain legacy "bregger" references.
+          # Allowed: references to legacy filenames in comments (e.g. "extracted from bregger_core.py")
+          # Not allowed: new bregger symbols, class names, env vars, or identifiers
+          VIOLATIONS=$(git ls-files 'xibi/*.py' 'tests/*.py' | xargs grep -n \
+            -e 'class Bregger' \
+            -e 'def bregger' \
+            -e 'import bregger' \
+            -e 'from bregger' \
+            -e 'BREGGER_' \
+            -e '"bregger_' \
+            2>/dev/null || true)
+          if [ -n "$VIOLATIONS" ]; then
+            echo "::error::Legacy 'bregger' identifier found in new code. Use 'xibi' naming."
+            echo "$VIOLATIONS"
+            exit 1
+          fi
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      - name: Lint
+        run: ruff check xibi/ tests/
+      - name: Format check
+        run: ruff format --check xibi/ tests/
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      - name: Type check
+        run: mypy xibi/ --ignore-missing-imports
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      - name: Run tests
+        run: pytest tests/ -v --tb=short --cov=xibi --cov-report=term-missing -m "not live"
+      - name: Check coverage
+        run: |
+          coverage=$(pytest tests/ --cov=xibi --cov-report=term -m "not live" 2>/dev/null | grep TOTAL | awk '{print $NF}' | tr -d '%')
+          echo "Coverage: ${coverage}%"
+          if [ -n "$coverage" ] && [ "$coverage" -lt 80 ]; then
+            echo "::warning::Coverage is below 80%: ${coverage}%"
+          fi

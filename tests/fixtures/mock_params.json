@@ -1,0 +1,31 @@
+{
+    "email:send_email": {
+        "to": "test@example.com",
+        "subject": "Unit Test Coverage",
+        "body": "This is a dry-run test from pytest."
+    },
+    "email:draft_email": {
+        "to": "test@example.com",
+        "subject": "Unit Test Coverage",
+        "body": "This is a dry-run test from pytest."
+    },
+    "email:search_emails": {
+        "query": "pytest execution"
+    },
+    "search:search_searxng": {
+        "query": "local model architectures"
+    },
+    "calendar:list_events": {
+        "days": 7
+    },
+    "memory:recall": {
+        "query": "pytest"
+    },
+    "memory:recall_conversation": {
+        "query": "pytest"
+    },
+    "memory:remember": {
+        "category": "note",
+        "content": "Pytest is now integrated into Bregger's deployment pipeline."
+    }
+}

@@ -1,0 +1,61 @@
+{
+  "models": {
+    "text": {
+      "fast": {
+        "provider": "ollama",
+        "model": "qwen3.5:4b",
+        "options": { "think": false },
+        "fallback": "think"
+      },
+      "think": {
+        "provider": "ollama",
+        "model": "qwen3.5:9b",
+        "options": { "think": false },
+        "fallback": "review"
+      },
+      "review": {
+        "provider": "gemini",
+        "model": "gemini-2.5-flash",
+        "options": {},
+        "fallback": null
+      }
+    },
+    "code": {
+      "fast": {
+        "provider": "ollama",
+        "model": "qwen3.5:4b",
+        "options": { "think": false },
+        "fallback": "think"
+      },
+      "think": {
+        "provider": "ollama",
+        "model": "qwen3.5:9b",
+        "options": {},
+        "fallback": "review"
+      },
+      "review": {
+        "provider": "gemini",
+        "model": "gemini-2.5-flash",
+        "options": {},
+        "fallback": null
+      }
+    }
+  },
+  "providers": {
+    "ollama": {
+      "base_url": "http://localhost:11434"
+    },
+    "gemini": {
+      "api_key_env": "GEMINI_API_KEY"
+    },
+    "openai": {
+      "api_key_env": "OPENAI_API_KEY"
+    },
+    "anthropic": {
+      "api_key_env": "ANTHROPIC_API_KEY"
+    },
+    "groq": {
+      "api_key_env": "GROQ_API_KEY"
+    }
+  }
+}

@@ -1,0 +1,144 @@
+{
+    "name": "memory",
+    "description": "A personal memory ledger for ideas, tasks, contacts, and notes the user has explicitly asked to remember. NOT for emails — use the email skill for anything in the inbox.",
+    "tools": [
+        {
+            "name": "remember",
+            "output_type": "action",
+            "description": "Store something in the memory ledger. The LLM should extract a category (lead, idea, task, note), the main content, an optional entity name, and any follow-up or due date.",
+            "examples": [
+                "remember that my access code is 1234",
+                "save this idea for the project",
+                "note that sarah prefers morning meetings",
+                "add a task to buy groceries"
+            ],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "category": {
+                        "type": "string",
+                        "description": "Auto-tagged category: lead, idea, task, note, follow-up."
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The main content to remember."
+                    },
+                    "entity": {
+                        "type": "string",
+                        "description": "A person, company, or thing related to this item."
+                    },
+                    "status": {
+                        "type": "string",
+                        "description": "Optional status like new, pending, done."
+                    },
+                    "due": {
+                        "type": "string",
+                        "description": "Optional due date or follow-up time, e.g. 'Friday', '2026-03-10'."
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "Any additional context."
+                    }
+                },
+                "required": [
+                    "content"
+                ]
+            }
+        },
+        {
+            "name": "recall",
+            "output_type": "raw",
+            "description": "Search and retrieve personal notes, tasks, contacts, or ideas from the memory ledger. Use this ONLY for things the user has explicitly asked to remember. Do NOT use this to find emails — use summarize_email for inbox lookups.",
+            "examples": [
+                "what was sarah's access code",
+                "what notes do i have on the ray project",
+                "what's my active task list",
+                "do i have any ideas saved for the new app"
+            ],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "category": {
+                        "type": "string",
+                        "description": "Filter by category: lead, idea, task, note, follow-up."
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Keyword to search for in content or entity."
+                    }
+                }
+            }
+        },
+        {
+            "name": "archive",
+            "output_type": "action",
+            "risk": "irreversible",
+            "description": "Forget or archive a personal fact, preference, or stored memory from the Beliefs table.",
+            "examples": [
+                "forget that my favorite color is blue",
+                "that's not true anymore",
+                "archive the memory about sarah's dog"
+            ],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Keyword to search for the belief to archive."
+                    }
+                },
+                "required": ["query"]
+            }
+        },
+        {
+            "name": "recall_conversation",
+            "output_type": "raw",
+            "description": "Search deep past conversation history when you need to recall exactly what the user or you said earlier in this session or prior sessions. Use this when the user asks 'what did I say about X' or refers to previous messages that have fallen out of your active context window.",
+            "examples": [
+                "what did I say earlier about the meeting",
+                "what emails did you show me",
+                "what was that link you sent me yesterday"
+            ],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Keyword to search for in previous user messages and your responses."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Number of previous turns to return. Defaults to 5. Max 10."
+                    }
+                },
+                "required": ["query"]
+            }
+        },
+        {
+            "name": "manage_goal",
+            "output_type": "action",
+            "description": "Create, list, or remove explicit goals (pinned topics) that the assistant should proactively monitor across emails and chats.",
+            "examples": [
+                "watch for emails about tennis courts",
+                "track job postings from JetBlue",
+                "what are my goals",
+                "stop watching for tennis emails"
+            ],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action_type": {
+                        "type": "string",
+                        "description": "What to do: 'pin', 'unpin', or 'list'",
+                        "enum": ["pin", "unpin", "list"]
+                    },
+                    "topic": {
+                        "type": "string",
+                        "description": "The topic to pin or unpin (not needed for 'list'). Extract a clean noun phrase like 'tennis courts' or 'JetBlue jobs'."
+                    }
+                },
+                "required": ["action_type"]
+            }
+        }
+    ]
+}

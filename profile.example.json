@@ -1,0 +1,31 @@
+{
+  "environment": "dev",
+  "observation": {
+    "baseline": "3x/day",
+    "min_interval": "2h",
+    "max_interval": "8h",
+    "trigger_threshold": 5,
+    "idle_skip": true,
+    "cost_ceiling_daily": 5.00,
+    "profiles": {}
+  },
+  "trust": {
+    "fast_role_audit_interval": "weekly",
+    "auto_promote_after_successes": 10
+  },
+  "channels": {
+    "email": {
+      "enabled": false,
+      "send_enabled": false
+    },
+    "telegram": {
+      "enabled": false
+    }
+  },
+  "dev_overrides": {
+    "dry_run_sends": true,
+    "mock_channels": true,
+    "log_level": "DEBUG",
+    "test_recipient": "dev@example.com"
+  }
+}

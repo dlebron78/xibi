@@ -1,0 +1,475 @@
+Below is a clean, structured system document designed for developers and AI agents.
+It avoids narrative fluff and focuses on facts, architecture, configuration, and current issues.
+
+⸻
+
+LOCAL AI OPERATOR STACK
+
+Architecture and Runtime Summary
+
+Last Updated: 2026-03-04
+Operator: Daniel Lebron
+
+⸻
+
+1. System Purpose
+
+This system runs a local AI agent capable of interacting with tools and external services via messaging channels.
+
+Primary workflow:
+
+Telegram
+   ↓
+OpenClaw Gateway (Docker)
+   ↓
+Local LLM (Ollama)
+   ↓
+ACPX Runtime
+   ↓
+Shell Tools
+   ↓
+External Utilities (e.g., Himalaya email client)
+
+The goal is to create a locally hosted AI operator capable of:
+
+• conversational interaction
+• executing system commands
+• interacting with email
+• performing automation tasks
+• acting as a remote assistant via Telegram
+
+⸻
+
+2. Hardware
+
+Host Machine
+
+Model
+GMKtec NucBox K12
+
+CPU
+AMD Ryzen (mobile APU)
+
+GPU
+Integrated AMD Radeon (780M class)
+
+RAM
+32 GB
+
+Storage
+1 TB SSD
+
+Operating System
+Ubuntu Linux
+
+Kernel
+Linux 6.17.0
+
+⸻
+
+3. Network
+
+Host IP
+
+192.168.5.237
+
+Gateway
+
+ws://127.0.0.1:18900
+
+The gateway runs locally and is accessed internally by OpenClaw services.
+
+External communication is handled through Telegram bots.
+
+⸻
+
+4. Core Software Stack
+
+Container Runtime
+
+Docker
+docker compose
+
+Primary container:
+
+openclaw-gateway
+
+
+⸻
+
+AI Runtime
+
+Ollama
+
+Provides local model inference.
+
+⸻
+
+Agent Framework
+
+OpenClaw 2026.3.1
+
+Capabilities:
+
+• agent orchestration
+• channel integrations
+• tool execution
+• command approvals
+• session memory
+
+⸻
+
+5. Active Model
+
+Primary model currently deployed:
+
+ollama/qwen2.5:7b-instruct
+
+Context window:
+
+16000 tokens
+
+Observed performance:
+
+Model	Status
+qwen2.5 7B	most responsive
+llama3.1 8B	slower
+qwen2.5 coder 14B	very slow
+
+GPU acceleration attempted but disabled due to instability.
+
+Current inference mode:
+
+CPU
+
+
+⸻
+
+6. Model Runtime Parameters
+
+Observed parameters from Ollama runner:
+
+BatchSize: 512
+Parallel: 1
+NumThreads: 8
+KvSize: 32768
+
+GPU layers attempted earlier:
+
+49 layers
+33 layers
+29 layers
+
+GPU eventually disabled due to:
+
+GPU hang
+ROCm instability
+timeout errors
+
+
+⸻
+
+7. Agent Configuration
+
+Agent name:
+
+main
+
+Configuration:
+
+workspace: /home/node/.openclaw/workspace
+maxConcurrent: 1
+subagents.maxConcurrent: 1
+
+Compaction mode:
+
+safeguard
+
+Effect:
+
+Conversation history is not summarized automatically unless specific conditions are met.
+
+⸻
+
+8. Channels
+
+Telegram
+
+Status:
+
+Enabled
+
+Used for remote interaction with the AI agent.
+
+Sessions observed:
+
+agent:main:telegram:direct
+agent:main:telegram:slash
+
+Telegram is the primary external interface.
+
+⸻
+
+9. Tool Execution System
+
+Tool execution occurs through:
+
+ACPX Runtime
+
+Capabilities enabled:
+
+exec
+filesystem
+process
+
+
+⸻
+
+10. Command Approval System
+
+Approval configuration:
+
+security = deny
+ask = on-miss
+
+Meaning:
+
+• commands not allowlisted are denied
+• allowlisted commands run automatically
+
+Current allowlist:
+
+/usr/local/bin/himalaya
+
+
+⸻
+
+11. Email Integration
+
+Email client:
+
+Himalaya
+v1.2.0
+
+Installed inside container:
+
+/usr/local/bin/himalaya
+
+Capabilities:
+
+envelope list
+email retrieval
+IMAP access
+
+Tested successfully in:
+
+• TUI environment
+• manual shell execution
+
+⸻
+
+12. Memory System
+
+Current memory configuration:
+
+files: 0
+chunks: 0
+vector store: unknown
+
+Persistent memory is not currently being used.
+
+Agent relies on session history.
+
+⸻
+
+13. Gateway Configuration
+
+Gateway:
+
+ws://127.0.0.1:18900
+
+Authentication:
+
+gateway.auth.token
+gateway.remote.token
+
+Earlier issue:
+
+token mismatch
+
+Resolved by synchronizing remote token with gateway token.
+
+Verification:
+
+openclaw gateway probe
+
+Result:
+
+Connect: ok
+RPC: ok
+
+
+⸻
+
+14. Performance Observations
+
+Best performing configuration:
+
+Model: qwen2.5:7b-instruct
+Inference: CPU
+Context: <4000 tokens
+Fresh session
+
+Slow scenarios:
+
+context > 10000 tokens
+14B model
+GPU enabled
+
+Observed issues:
+
+GPU hang
+hardware exception
+long inference times
+
+
+⸻
+
+15. Current Known Issue (as of 2026-03-04)
+
+The AI agent does not consistently execute tools when interacting through Telegram.
+
+Observed behavior:
+
+• agent acknowledges commands
+• agent suggests running commands
+• agent does not emit actual tool calls
+
+Example failure:
+
+Agent states:
+
+The himalaya tool is not installed
+
+Despite:
+
+tool exists
+allowlisted
+verified working
+
+Logs show:
+
+no exec events
+
+This indicates the agent did not attempt tool execution.
+
+⸻
+
+16. Current Hypothesis
+
+The issue may be caused by:
+
+Model limitations
+
+Small models (7B–8B) may struggle with:
+
+• structured tool calls
+• agent orchestration
+• execution formatting
+
+Skill configuration
+
+It is also possible that OpenClaw skills were not properly enabled during onboarding.
+
+During onboarding several options were skipped, including:
+
+skills installation
+dependency setup
+hooks configuration
+
+This may prevent proper tool routing.
+
+⸻
+
+17. System State Summary
+
+Working:
+
+• local model inference
+• OpenClaw agent framework
+• Telegram connectivity
+• shell tool execution (TUI)
+• Himalaya email access
+• gateway authentication
+
+Partially working:
+
+• tool invocation through Telegram
+
+Not working reliably:
+
+• agent tool calls from messaging interface
+
+⸻
+
+18. Next Investigation Areas
+
+Potential next debugging steps:
+	1.	verify OpenClaw skills configuration
+	2.	confirm runtime tool adapters loaded
+	3.	test alternative models for tool discipline
+	4.	verify Telegram channel tool permissions
+	5.	inspect agent prompt configuration
+	6.	inspect tool routing logic inside OpenClaw
+
+⸻
+
+19. System Diagram
+
+Telegram
+   │
+   ▼
+OpenClaw Gateway (Docker)
+   │
+   ▼
+Agent "main"
+   │
+   ▼
+Local Model (Ollama)
+   │
+   ▼
+ACPX Runtime
+   │
+   ▼
+Shell Execution
+   │
+   ▼
+Tools
+   ├── Himalaya Email
+   └── Future CLI integrations
+
+
+⸻
+
+20. Project Goal
+
+Long-term goal is to operate a local AI assistant capable of autonomous tool execution without reliance on cloud services.
+
+Capabilities envisioned:
+
+• email management
+• automation workflows
+• system operations
+• conversational interface
+• remote command execution
+
+⸻
+
+If you’d like, I can also generate a second document that engineers usually pair with this one called:
+
+TROUBLESHOOTING_AND_DEBUG_GUIDE.md
+
+It would include every command you ran today so another developer (or AI agent) could reproduce or debug the environment quickly.
+
+
+Tailscale IP address 100.25.95.42

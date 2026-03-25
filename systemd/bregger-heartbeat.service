@@ -1,0 +1,15 @@
+[Unit]
+Description=Bregger Heartbeat Loop
+After=network.target
+Wants=bregger-telegram.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/bregger_deployment
+Environment="XIBI_WORKDIR=%h/bregger_remote"
+ExecStart=/usr/bin/python3 -u bregger_heartbeat.py %h/bregger_remote/config.json
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

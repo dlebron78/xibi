@@ -1,0 +1,288 @@
+{
+    "name": "email",
+    "description": "Handle email operations like checking, searching, and summarizing unread messages using himalaya.",
+    "version": "0.1.0",
+    "control_plane_triggers": [
+        {
+            "regex": "^(check mail|read mail|read email|check email|inbox|did i get any mail)[.!?\\s]*$",
+            "intent": "check_email",
+            "tool": "list_unread"
+        },
+        {
+            "regex": "^more[.!?\\s]*$",
+            "intent": "email_more",
+            "skill": "none",
+            "tool": "none"
+        },
+        {
+            "regex": "^(?:open\\s+)?(\\d+)[.!?\\s]*$",
+            "intent": "email_open",
+            "skill": "none",
+            "tool": "none",
+            "entities": {"num": 1}
+        }
+    ],
+    "tools": [
+        {
+            "name": "list_unread",
+            "output_type": "raw",
+            "description": "List the last N unread emails.",
+            "examples": [
+                "check my email",
+                "any new mail",
+                "do i have any unread messages",
+                "check my inbox"
+            ],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "count": {
+                        "type": "integer",
+                        "description": "Number of emails to fetch (max 10).",
+                        "default": 5
+                    }
+                }
+            }
+        },
+        {
+            "name": "summarize_email",
+            "output_type": "synthesis",
+            "description": "Fetch, read, or summarize the content of a specific email. Call this immediately when the user wants to read an email. Pass the sender name or subject words as subject_query — this is the primary path.",
+            "examples": [
+                "what's that email about",
+                "summarize the message from sarah",
+                "read the email from dan",
+                "tell me what the invite says"
+            ],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "email_id": {
+                        "type": "string",
+                        "description": "A numeric email ID. Use this when you have a specific numeric ID. One ID per call — to read multiple emails, call this tool once per ID."
+                    },
+                    "subject_query": {
+                        "type": "string",
+                        "description": "Keywords from the email subject or sender name to find the email. Use this when you only have a description (e.g. 'email from Sarah')."
+                    }
+                }
+            }
+        },
+        {
+            "name": "configure_email",
+            "operational": false,
+            "access": "operator",
+            "output_type": "action",
+            "description": "Configure the email skill (Himalaya) with IMAP/SMTP credentials. ALWAYS recommend using an App Password for security.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "email": {
+                        "type": "string",
+                        "description": "The email address to configure."
+                    },
+                    "imap_host": {
+                        "type": "string",
+                        "description": "The IMAP server host (e.g. imap.gmail.com)."
+                    },
+                    "smtp_host": {
+                        "type": "string",
+                        "description": "The SMTP server host (e.g. smtp.gmail.com)."
+                    },
+                    "password": {
+                        "type": "string",
+                        "description": "The App Password for the email account."
+                    }
+                },
+                "required": [
+                    "email",
+                    "imap_host",
+                    "smtp_host",
+                    "password"
+                ]
+            }
+        },
+        {
+            "name": "reply_email",
+            "output_type": "action",
+            "risk": "irreversible",
+            "description": "Reply (or reply-all) to an existing email. Automatically fetches sender address, subject (Re: prefix), and message_id for threading. Use when the user says 'reply', 'respond', 'write back', or 'reply all'. Prefer email_id (from a previous list or search) over subject_query.",
+            "examples": [
+                "reply to that email and say yes",
+                "respond to sarah's message",
+                "write back and tell them i'm available",
+                "reply all with the attached document"
+            ],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "email_id": {
+                        "type": "string",
+                        "description": "The email ID (from list_unread or search_emails). Use this when available — more reliable than subject_query."
+                    },
+                    "subject_query": {
+                        "type": "string",
+                        "description": "Keywords to identify the original email (e.g. 'SXSW invite'). Fallback when email_id is not available."
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "The reply body text."
+                    },
+                    "reply_all": {
+                        "type": "boolean",
+                        "description": "If true, CC all original recipients (To + CC) in addition to the sender. Use when user says 'reply all'. Default: false.",
+                        "default": false
+                    }
+                },
+                "required": ["body"]
+            }
+        },
+        {
+            "name": "list_drafts",
+            "output_type": "raw",
+            "description": "List all pending (unsent) email drafts saved in the Ledger. Use this when the user asks 'do I have any drafts?', 'show me my drafts', 'any emails in draft?', or similar.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        },
+        {
+            "name": "send_email",
+            "output_type": "action",
+            "risk": "irreversible",
+            "description": "Send an email to a recipient, optionally with a file attachment. Requires to, subject, and body. If the user uploaded a file (resume, PDF, etc.) and the attachment_path was provided in context, include it.",
+            "examples": [
+                "email dan about the meeting",
+                "send a message to sarah",
+                "shoot an email to the team"
+            ],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "to": {
+                        "type": "string",
+                        "description": "Recipient email address."
+                    },
+                    "subject": {
+                        "type": "string",
+                        "description": "Email subject line."
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "Email body text."
+                    },
+                    "attachment_path": {
+                        "type": "string",
+                        "description": "Absolute path to a file on the server to attach. Provided automatically when user uploads a file via Telegram."
+                    }
+                },
+                "required": [
+                    "to",
+                    "subject",
+                    "body"
+                ]
+            }
+        },
+        {
+            "name": "discard_draft",
+            "output_type": "raw",
+            "description": "Discard a pending email draft by its ID. Use this when the user says 'forget that draft', 'delete the draft', or 'discard it'.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "draft_id": {
+                        "type": "string",
+                        "description": "The unique ID of the draft to discard (e.g. from list_drafts output)."
+                    }
+                },
+                "required": ["draft_id"]
+            }
+        },
+        {
+            "name": "draft_email",
+            "output_type": "raw",
+            "description": "Compose a draft email and save it for later. Only 'body' is required — 'to' and 'subject' can be filled in later. Use this when the user says 'draft', 'compose', 'jot down', or 'write an email'. Does NOT send. Use send_email to send.",
+            "examples": [
+                "draft an email to the board",
+                "compose a message to sarah",
+                "start an email to dan"
+            ],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "to": {
+                        "type": "string",
+                        "description": "Recipient email address. Optional at draft time — can be added before sending."
+                    },
+                    "subject": {
+                        "type": "string",
+                        "description": "Email subject line. Optional at draft time — can be added before sending."
+                    },
+                    "body": {
+                        "type": "string",
+                        "description": "Email body text."
+                    },
+                    "draft_id": {
+                        "type": "string",
+                        "description": "If revising an existing draft, pass the draft_id from the previous draft_email response to update it in-place."
+                    },
+                    "attachment_path": {
+                        "type": "string",
+                        "description": "Absolute path to a file to attach."
+                    }
+                },
+                "required": [
+                    "body"
+                ]
+            }
+        },
+        {
+            "name": "search_emails",
+            "output_type": "synthesis",
+            "description": "Search the mailbox by proposing candidate keywords. Python handles query construction and retrieval planning — do NOT use OR, AND, or any query syntax. Just provide keyword lists.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "subject_keywords": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Subject terms to match. ANY keyword matching returns the email. Use specific phrases: ['product manager', 'ad tech'] not ['product manager OR ad tech']."
+                    },
+                    "body_keywords": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Body terms to match. ANY keyword matching returns the email. Use sparingly — subject and sender searches are much faster."
+                    },
+                    "from_keywords": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Sender names, addresses, or domains. ANY keyword matching returns the email. Example: ['LinkedIn', 'recruiter@apple.com']."
+                    },
+                    "relative_time": {
+                        "type": "string",
+                        "description": "Time window for the search. Supported: 'today', 'yesterday', '1w_ago'...'6w_ago', '1mo_ago'...'6mo_ago', '1yr_ago'."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max emails to return.",
+                        "default": 10
+                    }
+                }
+            },
+            "examples": [
+                "Find job emails from Apple or Amazon in the last 2 months → subject_keywords: ['Apple', 'Amazon'], relative_time: '2mo_ago'",
+                "Emails from LinkedIn about product manager roles → subject_keywords: ['product manager'], from_keywords: ['LinkedIn'], relative_time: '1mo_ago'",
+                "Recent emails mentioning NDA → body_keywords: ['NDA'], relative_time: '2w_ago'"
+            ]
+        },
+        {
+            "name": "account_info",
+            "output_type": "raw",
+            "description": "Fetch the configured email addresses for this Bregger instance. Use this if you need to know 'who am I?' or 'what is my email address?' before replying to or drafting an email.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+    ]
+}

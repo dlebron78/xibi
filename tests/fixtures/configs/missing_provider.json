@@ -1,0 +1,17 @@
+{
+  "models": {
+    "text": {
+      "fast": {
+        "provider": "magical_inference_cloud",
+        "model": "gpt-99",
+        "options": {},
+        "fallback": null
+      }
+    }
+  },
+  "providers": {
+    "ollama": {
+      "base_url": "http://localhost:11434"
+    }
+  }
+}

@@ -1,0 +1,105 @@
+{
+  "name": "calendar",
+  "description": "Read and create events on Google Calendar.",
+  "version": "1.0.0",
+  "tools": [
+    {
+      "name": "list_events",
+      "description": "List upcoming calendar events. Use for 'what's on my calendar', 'do I have anything this week', etc.",
+      "examples": [
+        "what's on my calendar",
+        "do i have any meetings today",
+        "schedule for tomorrow",
+        "what's my day look like"
+      ],
+      "parameters": {
+        "days": {
+          "type": "integer",
+          "description": "Number of days ahead to look (default: 7, max: 30)",
+          "required": false
+        },
+        "max_results": {
+          "type": "integer",
+          "description": "Max number of events to return (default: 10)",
+          "required": false
+        }
+      },
+      "min_tier": 2,
+      "output_type": "synthesis",
+      "risk": "safe"
+    },
+    {
+      "name": "find_event",
+      "description": "Search calendar events by keyword. Use to check if a specific meeting, appointment, or event exists.",
+      "examples": [
+        "when is my meeting with sarah",
+        "do i have a doctor's appointment",
+        "find the sync with the engineering team"
+      ],
+      "parameters": {
+        "query": {
+          "type": "string",
+          "description": "Search query to match against event titles and descriptions",
+          "required": true
+        },
+        "days": {
+          "type": "integer",
+          "description": "Number of days ahead to search (default: 30)",
+          "required": false
+        }
+      },
+      "min_tier": 2,
+      "output_type": "synthesis",
+      "risk": "safe"
+    },
+    {
+      "name": "add_event",
+      "description": "Create a new calendar event. Requires title, date, and time. Always confirm with the user before calling this.",
+      "examples": [
+        "add a meeting with dan for tomorrow at 2",
+        "schedule lunch on friday",
+        "create an event for the project kickoff"
+      ],
+      "parameters": {
+        "title": {
+          "type": "string",
+          "description": "Event title / summary",
+          "required": true
+        },
+        "start_datetime": {
+          "type": "string",
+          "description": "Semantic time token (e.g. 'tomorrow_1400', 'wednesday_0930', 'today_1800') OR absolute ISO 8601 string.",
+          "required": true
+        },
+        "duration_mins": {
+          "type": "integer",
+          "description": "Duration in minutes. Defaults to 60. Example: 30, 90.",
+          "required": false
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional event description / notes",
+          "required": false
+        },
+        "timezone": {
+          "type": "string",
+          "description": "IANA timezone, e.g. 'America/New_York'. Defaults to America/New_York.",
+          "required": false
+        }
+      },
+      "min_tier": 2,
+      "output_type": "synthesis",
+      "risk": "irreversible"
+    }
+  ],
+  "triggers": {
+    "phrases": [
+      "check my calendar",
+      "what's on my calendar",
+      "do i have anything",
+      "schedule a meeting",
+      "add to my calendar",
+      "create an event"
+    ]
+  }
+}

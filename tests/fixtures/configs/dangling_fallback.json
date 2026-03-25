@@ -1,0 +1,17 @@
+{
+  "models": {
+    "text": {
+      "fast": {
+        "provider": "ollama",
+        "model": "qwen3.5:4b",
+        "options": {},
+        "fallback": "ultra"
+      }
+    }
+  },
+  "providers": {
+    "ollama": {
+      "base_url": "http://localhost:11434"
+    }
+  }
+}

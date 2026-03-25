@@ -1,0 +1,309 @@
+Before you re-ran onboarding, your system was effectively running with these key settings (based on the logs and config snippets we saw earlier).
+
+I’ll separate runtime settings, model settings, and agent/tool settings so you can see what changed.
+
+⸻
+
+Pre-Onboarding Configuration
+
+Model
+
+Primary model:
+
+ollama/qwen2.5:7b-instruct
+
+Other models you experimented with:
+
+ollama/qwen2.5-coder:14b
+ollama/llama3.1:8b
+
+The one that behaved best:
+
+qwen2.5:7b-instruct
+
+Reason:
+	•	Fastest responses
+	•	Most stable
+	•	Didn’t crash GPU
+
+⸻
+
+Context Memory
+
+Before onboarding your config looked like:
+
+contextTokens: 16000
+
+But earlier in the day you also ran tests with:
+
+contextTokens: 32000
+
+What that means:
+
+Setting	Meaning
+16000	model can read ~16k tokens of conversation history
+32000	larger context but slower
+
+Actual active usage in your sessions:
+
+tokens ~12k / 16k
+
+Which explains the slowdown.
+
+⸻
+
+Model Runtime (Ollama)
+
+From logs:
+
+BatchSize:512
+Parallel:1
+NumThreads:8
+KvSize:32768
+
+And GPU layer attempts:
+
+GPULayers:49
+GPULayers:33
+GPULayers:29
+
+Eventually you ended up effectively running:
+
+CPU inference
+
+Because GPU kept hanging.
+
+⸻
+
+Memory / KV Cache
+
+KvSize:32768
+
+Meaning:
+
+KV cache size allowed for large conversation history.
+
+This interacts with:
+
+contextTokens:16000
+
+
+⸻
+
+Agent Configuration
+
+From your config snippet earlier:
+
+agents.defaults.workspace: /home/node/.openclaw/workspace
+agents.defaults.maxConcurrent: 1
+agents.defaults.subagents.maxConcurrent: 1
+
+So:
+
+Feature	Setting
+Agent concurrency	1
+Subagents	1
+Workspace	/home/node/.openclaw/workspace
+
+
+⸻
+
+Compaction Mode
+
+You had:
+
+compaction.mode: safeguard
+
+Which explains these log messages:
+
+Compaction safeguard: cancelling compaction with no real conversation messages to summarize.
+
+Meaning:
+
+OpenClaw refused to summarize conversation history automatically.
+
+So context grew.
+
+⸻
+
+Tools
+
+Tools were not explicitly listed in config.
+
+Instead they came from:
+
+ACPX runtime plugin
+
+Which allowed:
+
+exec
+filesystem
+process
+
+
+⸻
+
+Exec Approvals
+
+Your approval file now shows:
+
+security: deny
+ask: on-miss
+
+Allowlist:
+
+/usr/local/bin/himalaya
+
+Meaning:
+
+Only Himalaya CLI commands could run without manual approval.
+
+⸻
+
+Telegram Session
+
+Sessions visible:
+
+agent:main:telegram:direct
+agent:main:telegram:slash
+
+So Telegram had its own agent session.
+
+⸻
+
+Memory System
+
+From status:
+
+Memory files: 0
+Memory chunks: 0
+Vector store: unknown
+
+Meaning:
+
+Persistent memory was not actually used yet.
+
+⸻
+
+Gateway Settings
+
+Your gateway was:
+
+ws://127.0.0.1:18900
+
+Auth token existed but CLI was not synced until we fixed:
+
+gateway.remote.token
+
+
+⸻
+
+Performance Observations (Before Onboarding)
+
+Best performance setup you saw:
+
+Model: qwen2.5:7b-instruct
+Context: ~4k tokens
+CPU inference
+Fresh session
+
+Worst:
+
+14B model
+GPU enabled
+context >10k
+
+Which caused:
+
+GPU hang
+HW exception
+3+ minute responses
+
+
+⸻
+
+What Onboarding Changed
+
+The onboarding primarily reset:
+
+gateway.remote.*
+channel config
+agent bootstrap files
+session metadata
+
+But it did not significantly change:
+
+contextTokens
+KV cache
+batch size
+ollama runtime
+
+Those remained mostly the same.
+
+⸻
+
+Your System Right Now
+
+Your stack currently is:
+
+Hardware
+GMK NucBox K12
+32GB RAM
+AMD iGPU
+
+Software
+Ubuntu
+Docker
+Ollama
+OpenClaw
+
+Model
+qwen2.5:7b-instruct
+
+Context
+16k tokens
+
+Tools
+ACPX runtime
+Himalaya CLI allowlisted
+
+
+⸻
+
+The Real Remaining Issue
+
+Everything infra-wise is working.
+
+The remaining problem is:
+
+Telegram agent not emitting tool calls
+
+Not:
+
+runtime
+permissions
+allowlist
+gateway
+
+
+⸻
+
+One Insight
+
+You built something pretty advanced:
+
+Telegram
+→ OpenClaw
+→ Local LLM
+→ Shell tools
+→ Himalaya email
+
+That is essentially a local AI operator stack.
+
+⸻
+
+If you want, I can also show you something interesting:
+
+Why OpenClaw struggles with small models like 7B for tools, and what models the OpenClaw community actually uses successfully.
+
+That will explain a lot of the weird behavior you’re seeing.

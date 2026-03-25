@@ -1,0 +1,103 @@
+{
+    "name": "search",
+    "description": "Access real-time information from the internet. Use this for ANY query requiring current data: sports scores, news, stock prices, weather, people, companies, or general web research.",
+    "control_plane_triggers": [
+        {
+            "regex": "^look up (?P<query>.+)$",
+            "intent": "search_web",
+            "tool": "search_searxng"
+        },
+        {
+            "regex": "^search for (?P<query>.+)$",
+            "intent": "search_web",
+            "tool": "search_searxng"
+        }
+    ],
+    "tools": [
+        {
+            "name": "search_searxng",
+            "output_type": "synthesis",
+            "description": "Perform a real-time web search using the local SearXNG instance. This is the primary search tool — no API key, no rate limits, returns rich results with snippets and URLs. Use this for any world-state or current information request.",
+            "examples": [
+                "search for the latest news on AI",
+                "look up the stock price of AAPL",
+                "find information about the mars rover",
+                "what's the weather in Seattle"
+            ],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query."
+                    }
+                },
+                "required": [
+                    "query"
+                ]
+            }
+        },
+        {
+            "name": "read_page",
+            "output_type": "synthesis",
+            "description": "Fetch and extract the main text content from a URL using trafilatura. Use this after search_searxng when you need to read the full content of a page (e.g., a news article, a standings page).",
+            "examples": [
+                "read the article at https://example.com",
+                "summarize that webpage for me",
+                "fetch the content of the link"
+            ],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The full URL to fetch and read (e.g. https://www.espn.com/nba/standings)."
+                    }
+                },
+                "required": [
+                    "url"
+                ]
+            }
+        },
+        {
+            "name": "configure_search",
+            "output_type": "action",
+            "access": "operator",
+            "description": "Configure the web search engine settings.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "api_key": {
+                        "type": "string",
+                        "description": "The search API key (optional)."
+                    }
+                },
+                "required": [
+                    "api_key"
+                ]
+            }
+        },
+        {
+            "name": "search_tavily",
+            "output_type": "synthesis",
+            "access": "operator",
+            "description": "Fallback web search via Tavily API. Use only when search_searxng is unavailable. Requires TAVILY_API_KEY in secrets.env.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The search query."
+                    },
+                    "search_depth": {
+                        "type": "string",
+                        "description": "Search depth: 'basic' (fast) or 'advanced' (thorough). Defaults to 'basic'."
+                    }
+                },
+                "required": [
+                    "query"
+                ]
+            }
+        }
+    ]
+}

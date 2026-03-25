@@ -1,0 +1,67 @@
+[project]
+name = "xibi"
+version = "0.1.0"
+description = "Your AI assistant, your stack. Local, cloud, or both."
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Daniel Lebron"}
+]
+
+dependencies = [
+    "requests>=2.31",
+    "google-generativeai>=0.8",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "pytest-mock>=3.14",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "types-requests>=2.31",
+    "responses>=0.25",        # HTTP mocking for requests library
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+markers = [
+    "unit: Fast tests with no external dependencies (default)",
+    "integration: Tests requiring mocked providers (run with -m integration)",
+    "live: Tests hitting real providers - NEVER run in CI (run with -m live)",
+]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
+ignore = ["E501"]  # line length handled by formatter
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["google.generativeai.*"]
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["xibi"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true

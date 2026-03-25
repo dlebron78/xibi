@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bregger Observability</title>
+    <!-- Tailwind CSS (CDN for simplicity on local dashboard) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <style>
+        body { background-color: #0f172a; color: #f8fafc; }
+        .panel { background-color: #1e293b; border: 1px solid #334155; border-radius: 0.5rem; padding: 1.5rem; }
+    </style>
+</head>
+<body class="p-6">
+
+    <div class="max-w-7xl mx-auto space-y-6">
+        <!-- Header & Health -->
+        <div class="flex justify-between items-end mb-8">
+            <div class="flex items-center gap-4">
+                <div>
+                    <h1 class="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400">Bregger Command Center</h1>
+                    <p class="text-slate-400 mt-1 flex items-center gap-3">
+                        NucBox K12 Local Inference
+                        <button onclick="openPromptModal()" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-1 rounded border border-slate-700 transition-colors">
+                            View System Prompt
+                        </button>
+                    </p>
+                </div>
+            </div>
+            
+            <div id="health-bar" class="flex gap-4">
+                <!-- Populated by JS -->
+                <div class="panel py-2 px-4 shadow-lg animate-pulse">Loading health...</div>
+            </div>
+        </div>
+
+        <!-- Active Threads Row -->
+        <div class="grid grid-cols-1 gap-6 mb-6">
+            <div class="panel shadow-lg border border-indigo-500/30">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-lg font-semibold text-indigo-300">Active Threads (Unified Memory)</h2>
+                    <span id="signal-volume" class="text-xs text-slate-500 font-mono">Loading...</span>
+                </div>
+                <div id="active-threads-container" class="flex flex-wrap gap-3 pb-2">
+                    <span class="text-slate-500 italic text-sm">Loading signals...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts Row -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Latency & Tok/s -->
+            <div class="panel shadow-lg">
+                <h2 class="text-lg font-semibold mb-4 text-slate-200">Performance Trend (last 48h)</h2>
+                <div class="relative h-64">
+                    <canvas id="perfChart"></canvas>
+                </div>
+            </div>
+
+            <!-- RAM & Steps -->
+            <div class="panel shadow-lg">
+                <h2 class="text-lg font-semibold mb-4 text-slate-200">System Pressure</h2>
+                <div class="relative h-64">
+                    <canvas id="pressureChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Signal Pipeline Health (Phase 1.75) -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- Batch Extraction -->
+            <div class="panel shadow-lg">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-lg font-semibold text-amber-300 flex items-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+                        Batch Extraction
+                    </h2>
+                    <span class="text-[10px] text-slate-500 uppercase font-bold tracking-widest">48h</span>
+                </div>
+                <div id="batch-extraction-stats" class="space-y-3">
+                    <span class="text-slate-500 italic text-sm">Loading...</span>
+                </div>
+            </div>
+
+            <!-- Reflection Synthesis -->
+            <div class="panel shadow-lg">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-lg font-semibold text-purple-300 flex items-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path></svg>
+                        Reflection Synthesis
+                    </h2>
+                    <span class="text-[10px] text-slate-500 uppercase font-bold tracking-widest">7d</span>
+                </div>
+                <div id="reflection-stats" class="space-y-3">
+                    <span class="text-slate-500 italic text-sm">Loading...</span>
+                </div>
+                <div class="mt-4 relative h-32">
+                    <canvas id="reflectionChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Signal Quality by Source -->
+            <div class="panel shadow-lg">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-lg font-semibold text-emerald-300 flex items-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
+                        Signal Quality
+                    </h2>
+                    <span class="text-[10px] text-slate-500 uppercase font-bold tracking-widest">By Source</span>
+                </div>
+                <div id="signal-quality-stats" class="space-y-3">
+                    <span class="text-slate-500 italic text-sm">Loading...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Shadow Readiness Row -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- Readiness Status -->
+            <div class="panel shadow-lg lg:col-span-2">
+                <div class="flex justify-between items-center mb-6">
+                    <h2 class="text-lg font-semibold text-indigo-300 flex items-center gap-2">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                        Shadow Tier 2 Readiness
+                    </h2>
+                    <span class="text-[10px] text-slate-500 uppercase font-bold tracking-widest">Graduation Threshold: 90%</span>
+                </div>
+                <div id="shadow-stats-grid" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- Populated by JS -->
+                    <div class="text-slate-500 italic text-sm py-4">Waiting for shadow hits...</div>
+                </div>
+            </div>
+
+            <!-- Recent Shadow Hits -->
+            <div class="panel shadow-lg">
+                <h2 class="text-lg font-semibold mb-4 text-indigo-300">Shadow Logs</h2>
+                <div class="space-y-3" id="shadow-logs">
+                    <!-- Populated by JS -->
+                    <div class="text-slate-500 italic text-sm">No recent shadow activity.</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tables Row -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Top Errors -->
+            <div class="panel shadow-lg">
+                <h2 class="text-lg font-semibold mb-4 text-red-400">Top Tool Errors</h2>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-sm text-slate-300">
+                        <thead class="text-xs text-slate-400 uppercase bg-slate-800 rounded-t-lg">
+                            <tr>
+                                <th class="px-4 py-3 rounded-tl-lg">Tool</th>
+                                <th class="px-4 py-3">Error Message</th>
+                                <th class="px-4 py-3 rounded-tr-lg">Freq</th>
+                            </tr>
+                        </thead>
+                        <tbody id="errors-body" class="divide-y divide-slate-700">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Recent Requests -->
+            <div class="panel shadow-lg">
+                <h2 class="text-lg font-semibold mb-4 text-slate-200">Recent Requests</h2>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-sm text-slate-300">
+                        <thead class="text-xs text-slate-400 uppercase bg-slate-800">
+                            <tr>
+                                <th class="px-4 py-3 rounded-tl-lg">Time</th>
+                                <th class="px-4 py-3">Intent</th>
+                                <th class="px-4 py-3">Status</th>
+                                <th class="px-4 py-3">Speed</th>
+                                <th class="px-4 py-3 rounded-tr-lg text-right">Steps</th>
+                            </tr>
+                        </thead>
+                        <tbody id="recent-body" class="divide-y divide-slate-700">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+                <div class="mt-4 text-center">
+                    <button id="load-more-btn" onclick="fetchRecent(true)" class="px-6 py-2 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs font-semibold rounded-lg transition-colors shadow-sm hidden">Load More</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Set Chart.js defaults for dark theme
+        Chart.defaults.color = '#94a3b8';
+        Chart.defaults.borderColor = '#334155';
+
+        // Wait for DOM
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchHealth();
+            fetchTrends();
+            fetchErrors();
+            fetchRecent();
+            fetchShadow();
+            fetchSignals();
+            fetchSignalPipeline();
+
+            // Auto-refresh every 60s
+            setInterval(() => {
+                fetchHealth();
+                // Only auto-refresh recent list if we haven't loaded more pages
+                if (currentOffset <= limitCount) {
+                    fetchRecent(false);
+                }
+                fetchShadow();
+                fetchSignals();
+                fetchSignalPipeline();
+                // Don't refetch all charts every minute to save cycles
+            }, 60000);
+        });
+
+        let currentOffset = 0;
+        const limitCount = 15;
+
+        // format relative time
+        function timeAgo(dateString) {
+            if (!dateString) return '-';
+            // dateString is UTC from sqlite like "2024-03-18 20:00:00"
+            const d = new Date(dateString.replace(' ', 'T') + 'Z'); 
+            const now = new Date();
+            const ms = now - d;
+            const mins = Math.floor(ms / 60000);
+            if (mins < 1) return 'Just now';
+            if (mins < 60) return `${mins}m ago`;
+            const hrs = Math.floor(mins / 60);
+            if (hrs < 24) return `${hrs}h ago`;
+            const days = Math.floor(hrs / 24);
+            return `${days}d ago`;
+        }
+
+        async function fetchHealth() {
+            try {
+                const res = await fetch('/api/health');
+                const data = await res.json();
+                
+                const processDot = data.bot_alive ? '<span class="inline-block w-3 h-3 bg-emerald-500 rounded-full mr-2 shadow-[0_0_8px_rgba(16,185,129,0.8)]"></span>' : '<span class="inline-block w-3 h-3 bg-red-500 rounded-full mr-2 shadow-[0_0_8px_rgba(239,68,68,0.8)]"></span>';
+                const ramColor = data.system_ram_pct > 85 ? 'text-red-400' : 'text-slate-300';
+                
+                document.getElementById('health-bar').innerHTML = `
+                    <div class="panel py-2 px-4 shadow-lg flex items-center">
+                        ${processDot} 
+                        <span class="text-sm font-medium">Engine Active</span>
+                    </div>
+                    <div class="panel py-2 px-4 shadow-lg">
+                        <span class="text-xs text-slate-400 block uppercase tracking-wide">Sys RAM</span>
+                        <span class="font-mono font-bold ${ramColor}">${data.system_ram_pct}%</span>
+                    </div>
+                    <div class="panel py-2 px-4 shadow-lg">
+                        <span class="text-xs text-slate-400 block uppercase tracking-wide">Last Trace</span>
+                        <span class="font-mono text-slate-300">${data.last_active.split(' ')[1].substring(0,5)}</span>
+                    </div>
+                    <div class="panel py-2 px-4 shadow-lg border-emerald-900/50 bg-emerald-900/10">
+                        <span class="text-xs text-emerald-400 block uppercase tracking-wide">Model Loaded</span>
+                        <span class="font-mono font-bold text-emerald-300">${data.model_loaded}</span>
+                    </div>
+                    <div class="panel py-2 px-4 shadow-lg flex flex-col justify-center min-w-[160px]">
+                        <div class="flex justify-between items-center mb-1">
+                            <span class="text-[10px] text-slate-500 uppercase font-bold">Escalation Threshold</span>
+                            <span id="threshold-val" class="text-xs font-mono text-indigo-400 font-bold">--%</span>
+                        </div>
+                        <input type="range" min="10" max="95" value="70" step="5" 
+                               id="threshold-slider" 
+                               onchange="updateConfig(this.value)" 
+                               oninput="document.getElementById('threshold-val').innerText = this.value + '%'"
+                               class="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-indigo-500">
+                    </div>
+                `;
+                fetchConfig(); // Sync slider with actual config
+            } catch(e) { console.error('Health fetch failed:', e); }
+        }
+
+        async function fetchConfig() {
+            try {
+                const res = await fetch('/api/config');
+                const data = await res.json();
+                const slider = document.getElementById('threshold-slider');
+                const val = document.getElementById('threshold-val');
+                if (slider) slider.value = data.threshold_pct;
+                if (val) val.innerText = data.threshold_pct + '%';
+            } catch(e) { console.error('Config fetch failed:', e); }
+        }
+
+        async function updateConfig(val) {
+            try {
+                await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ threshold_pct: parseInt(val) })
+                });
+            } catch(e) { console.error('Config update failed:', e); }
+        }
+
+        async function fetchTrends() {
+            try {
+                const res = await fetch('/api/trends');
+                const data = await res.json();
+
+                // Chart 1: Performance (Latency vs Tok/s)
+                const ctxPerf = document.getElementById('perfChart').getContext('2d');
+                new Chart(ctxPerf, {
+                    type: 'line',
+                    data: {
+                        labels: data.labels,
+                        datasets: [
+                            {
+                                label: 'Latency (ms)',
+                                data: data.latency_ms,
+                                borderColor: '#ef4444',
+                                backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                                yAxisID: 'y',
+                                fill: true,
+                                tension: 0.3,
+                                borderWidth: 2,
+                                pointRadius: 0
+                            },
+                            {
+                                label: 'Speed (tok/s)',
+                                data: data.tok_per_sec,
+                                borderColor: '#3b82f6',
+                                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                                yAxisID: 'y1',
+                                fill: false,
+                                tension: 0.3,
+                                borderWidth: 2,
+                                pointRadius: 0
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        interaction: { mode: 'index', intersect: false },
+                        scales: {
+                            y: { type: 'linear', display: true, position: 'left', title: {display: true, text: 'Latency'} },
+                            y1: { type: 'linear', display: true, position: 'right', grid: { drawOnChartArea: false }, title: {display: true, text: 'Tok/s'} },
+                            x: { type: 'time', time: { tooltipFormat: 'MMM d, h:mm a' }, ticks: { maxTicksLimit: 12 } }
+                        }
+                    }
+                });
+
+                // Chart 2: System Pressure (RAM vs Steps vs Errors)
+                const ctxPres = document.getElementById('pressureChart').getContext('2d');
+                new Chart(ctxPres, {
+                    type: 'line',
+                    data: {
+                        labels: data.labels,
+                        datasets: [
+                            {
+                                label: 'End RAM %',
+                                data: data.ram_pct,
+                                borderColor: '#10b981',
+                                backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                                yAxisID: 'y',
+                                fill: true,
+                                tension: 0.2,
+                                borderWidth: 2,
+                                pointRadius: 0
+                            },
+                            {
+                                label: 'ReAct Steps',
+                                data: data.steps,
+                                borderColor: '#8b5cf6',
+                                yAxisID: 'y1',
+                                type: 'bar',
+                                backgroundColor: 'rgba(139, 92, 246, 0.5)',
+                                barThickness: 6 // Fixed width so bars don't vanish on a time scale
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        scales: {
+                            y: { type: 'linear', display: true, position: 'left', min: 0, max: 100, title: {display: true, text: 'RAM %'} },
+                            y1: { type: 'linear', display: true, position: 'right', grid: { drawOnChartArea: false }, min: 0, suggestMax: 5, title: {display: true, text: 'Steps'} },
+                            x: { type: 'time', time: { tooltipFormat: 'MMM d, h:mm a' }, ticks: { maxTicksLimit: 12 } }
+                        }
+                    }
+                });
+            } catch(e) { console.error('Trends fetch failed:', e); }
+        }
+
+        async function fetchErrors() {
+            try {
+                const res = await fetch('/api/errors');
+                const rows = await res.json();
+                
+                const tbody = document.getElementById('errors-body');
+                if (rows.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="3" class="px-4 py-4 text-center text-slate-500 italic">No errors in traces logs.</td></tr>';
+                    return;
+                }
+                
+                tbody.innerHTML = rows.map(r => `
+                    <tr class="hover:bg-slate-700/50 transition-colors">
+                        <td class="px-4 py-3 font-mono text-xs text-blue-400">${r.tool || 'engine'}</td>
+                        <td class="px-4 py-3 text-slate-300 truncate max-w-xs" title="${r.err_msg}">${r.err_msg}</td>
+                        <td class="px-4 py-3 font-bold text-red-400">${r.freq}</td>
+                    </tr>
+                `).join('');
+            } catch(e) { console.error('Errors fetch failed:', e); }
+        }
+
+        async function openPromptModal() {
+            const modal = document.getElementById('prompt-modal');
+            const content = document.getElementById('prompt-modal-content');
+            modal.classList.remove('hidden');
+            content.innerHTML = '<span class="animate-pulse text-slate-400">Loading template...</span>';
+            
+            try {
+                const res = await fetch('/api/template');
+                const data = await res.json();
+                content.innerHTML = data.template.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            } catch(e) {
+                content.innerHTML = `<span class="text-red-400">Failed to load prompt template: ${e}</span>`;
+            }
+        }
+
+        function closePromptModal() {
+            document.getElementById('prompt-modal').classList.add('hidden');
+        }
+
+        function toggleRow(id) {
+            const row = document.getElementById(`detail-${id}`);
+            if (row.classList.contains('hidden')) {
+                row.classList.remove('hidden');
+            } else {
+                row.classList.add('hidden');
+            }
+        }
+
+        function togglePrompt(e, id) {
+            e.stopPropagation();
+            const el = document.getElementById(`prompt-${id}`);
+             if (el.classList.contains('hidden')) {
+                el.classList.remove('hidden');
+            } else {
+                el.classList.add('hidden');
+            }
+        }
+
+        async function fetchRecent(append = false) {
+            try {
+                if (!append) currentOffset = 0;
+                const res = await fetch(`/api/recent?limit=${limitCount}&offset=${currentOffset}`);
+                const rows = await res.json();
+                
+                const tbody = document.getElementById('recent-body');
+                const btn = document.getElementById('load-more-btn');
+                
+                if (rows.length < limitCount) {
+                    btn.classList.add('hidden');
+                } else {
+                    btn.classList.remove('hidden');
+                }
+                
+                const html = rows.map((r, i) => {
+                    const statusBadge = r.status === 'completed' 
+                        ? `<span class="px-2 py-1 rounded bg-emerald-900/30 text-emerald-400 text-xs border border-emerald-800">OK</span>`
+                        : `<span class="px-2 py-1 rounded bg-red-900/30 text-red-400 text-xs border border-red-800">ERR</span>`;
+                        
+                    // Detail formatting
+                    const stepsHtml = (r.steps_detail || []).map((s, stepIndex) => `
+                        <div class="mb-3">
+                            ${s.thought ? `<div class="text-xs text-slate-500 italic mb-1 pl-2 border-l-2 border-slate-600">💭 ${s.thought}</div>` : ''}
+                            <div class="flex flex-wrap items-center gap-2 pl-2 border-l-2 border-slate-700">
+                                <span class="text-xs text-slate-500">[S${stepIndex+1}]</span>
+                                <span class="font-mono text-xs text-blue-300 max-w-[120px] truncate" title="${s.tool}">${s.tool}</span>
+                                ${s.params ? `<span class="font-mono text-[10px] text-slate-500 truncate max-w-xs" title='${JSON.stringify(s.params).replace(/'/g, "&#39;")}'>${JSON.stringify(s.params)}</span>` : ''}
+                                <span class="text-xs text-slate-400 ml-auto flex-shrink-0">${s.latency ? s.latency : (s.ms/1000).toFixed(1)}s</span>
+                            </div>
+                            ${s.error ? `
+                                <div class="mt-1 ml-2 pl-2 border-l-2 border-red-900/50 text-[10px] text-red-500 font-mono whitespace-pre-wrap break-all">
+                                    ⚠ Failed: ${typeof s.error === 'object' ? JSON.stringify(s.error) : s.error}
+                                </div>
+                            ` : ''}
+                        </div>
+                    `).join('');
+
+                    const stepCount = (r.steps_detail || []).length;
+                    
+                    const isGemini = r.model && r.model.toLowerCase().includes('gemini');
+                    const modelBadge = isGemini 
+                        ? `<span class="ml-2 px-1.5 py-0.5 rounded bg-indigo-900/40 text-indigo-300 border border-indigo-500/30 text-[9px] uppercase font-bold tracking-wider" title="Escalated to Gemini">GMNI</span>` 
+                        : '';
+
+                    // Format timestamp
+                    const ts = timeAgo(r.created_at);
+                    const rowIndex = currentOffset + i;
+
+                    return `
+                    <!-- Main Row -->
+                    <tr class="hover:bg-slate-700/50 transition-colors cursor-pointer group" onclick="toggleRow('row-${rowIndex}')">
+                        <td class="px-4 py-3 font-mono text-xs text-slate-400 whitespace-nowrap">${ts}</td>
+                        <td class="px-4 py-3 font-mono text-xs text-indigo-300 flex items-center pr-2">
+                            <svg class="w-3 h-3 inline-block mr-1 flex-shrink-0 text-slate-500 group-hover:text-indigo-400 transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                            <span class="truncate">${r.intent}</span>
+                            ${modelBadge}
+                        </td>
+                        <td class="px-4 py-3">${statusBadge}</td>
+                        <td class="px-4 py-3 text-slate-300 whitespace-nowrap">${r.overall_tok_per_sec ? r.overall_tok_per_sec.toFixed(1) + ' t/s' : '-'}</td>
+                        <td class="px-4 py-3 font-mono text-slate-400 text-right">${stepCount}</td>
+                    </tr>
+                    
+                    <!-- Detail Row (Hidden by default) -->
+                    <tr id="detail-row-${rowIndex}" class="hidden bg-slate-800/50">
+                        <td colspan="5" class="px-6 py-4">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <!-- Left side: Metrics & Steps -->
+                                <div>
+                                    <div class="flex gap-4 mb-3 pb-3 border-b border-slate-700">
+                                        <div>
+                                            <span class="block text-[10px] text-slate-500 uppercase">Latency</span>
+                                            <span class="text-sm text-slate-300">${(r.total_ms / 1000).toFixed(2)}s</span>
+                                        </div>
+                                        <div>
+                                            <span class="block text-[10px] text-slate-500 uppercase">Tokens (P/R)</span>
+                                            <span class="text-sm text-slate-300">${r.total_prompt_tokens||0} / ${r.total_response_tokens||0}</span>
+                                        </div>
+                                        <div>
+                                            <span class="block text-[10px] text-slate-500 uppercase">Model</span>
+                                            <span class="text-sm font-mono text-emerald-400">${r.model || '-'}</span>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="flex items-center justify-between mb-2">
+                                        <h4 class="text-xs font-semibold text-slate-400 uppercase">Execution Path</h4>
+                                        ${r.raw_prompt ? `<button onclick="togglePrompt(event, 'row-${rowIndex}')" class="text-[10px] bg-slate-700 hover:bg-slate-600 text-slate-300 px-2 py-1 rounded transition-colors">Toggle Raw Prompt</button>` : ''}
+                                    </div>
+                                    
+                                    <!-- Hidden Prompt Block -->
+                                    <div id="prompt-row-${rowIndex}" class="hidden mb-4 p-3 bg-slate-900 border border-slate-700 rounded text-xs font-mono text-slate-400 overflow-x-auto whitespace-pre-wrap max-h-64 overflow-y-auto">
+                                        ${r.raw_prompt ? r.raw_prompt.replace(/</g, "&lt;").replace(/>/g, "&gt;") : ''}
+                                    </div>
+
+                                    ${stepsHtml || '<span class="text-xs text-slate-600 block pl-2 border-l-2 border-slate-700">No tools called</span>'}
+                                </div>
+                                
+                                <!-- Right side: Final Answer -->
+                                <div>
+                                    <h4 class="text-xs font-semibold text-slate-400 mb-2 uppercase">Final Answer Excerpt</h4>
+                                    <div class="bg-slate-900 rounded p-3 text-xs text-slate-300 overflow-y-auto max-h-32 whitespace-pre-wrap border border-slate-700 font-serif leading-relaxed">
+                                        ${r.final_answer ? r.final_answer.substring(0, 300) + (r.final_answer.length > 300 ? '...' : '') : '<span class="text-slate-600 italic">No final answer logged.</span>'}
+                                    </div>
+                                </div>
+                            </div>
+                        </td>
+                    </tr>
+                    <!-- Spacer -->
+                    <tr class="h-1 bg-slate-900 border-none"></tr>
+                    `;
+                });
+                
+                const finalHtml = html.join('');
+                if (append) {
+                    tbody.insertAdjacentHTML('beforeend', finalHtml);
+                } else {
+                    tbody.innerHTML = finalHtml;
+                }
+                
+                currentOffset += rows.length;
+                    
+            } catch(e) { console.error('Recent trace fetch failed:', e); }
+        }
+
+        async function fetchSignals() {
+            try {
+                const res = await fetch('/api/signals');
+                const data = await res.json();
+                
+                const container = document.getElementById('active-threads-container');
+                const volumeEl = document.getElementById('signal-volume');
+                
+                // Volume
+                const chat = data.volume['chat'] || 0;
+                const email = data.volume['email'] || 0;
+                const total = chat + email;
+                volumeEl.innerHTML = `${total} signals (Chat: ${chat} | Email: ${email})`;
+
+                // Threads
+                if (data.active_threads.length === 0) {
+                    container.innerHTML = '<span class="text-slate-500 italic text-sm">No active threads detected in the last 7 days.</span>';
+                } else {
+                    container.innerHTML = data.active_threads.map(t => `
+                        <div class="flex flex-col items-center flex-shrink-0 ${t.pinned ? 'bg-amber-900/30 border-amber-500/40 text-amber-300' : 'bg-indigo-900/30 border-indigo-500/40 text-indigo-300'} border rounded-lg px-4 py-2 min-w-[120px]">
+                            <span class="text-sm font-bold capitalize text-center leading-tight flex items-center gap-1">
+                                ${t.pinned ? '📌' : '🔥'} ${t.topic.replace(/_/g, ' ')}
+                            </span>
+                            <span class="text-xs font-mono text-slate-400 mt-1">${t.count} signals</span>
+                            <span class="text-[10px] text-slate-500 mt-0.5">${t.last_seen === 'pinned' ? 'permanent' : timeAgo(t.last_seen)}</span>
+                        </div>
+                    `).join('');
+                }
+            } catch(e) { console.error('Signals fetch failed:', e); }
+        }
+
+        async function fetchSignalPipeline() {
+            try {
+                const res = await fetch('/api/signal_pipeline');
+                const data = await res.json();
+
+                // 1. Batch Extraction stats
+                const be = data.batch_extraction;
+                const batchEl = document.getElementById('batch-extraction-stats');
+                if (be.ticks_48h === 0) {
+                    batchEl.innerHTML = '<span class="text-slate-500 italic text-sm">No batch extraction ticks in the last 48h.</span>';
+                } else {
+                    const rateColor = be.avg_success_rate_pct >= 80 ? 'text-emerald-400' : (be.avg_success_rate_pct >= 50 ? 'text-amber-400' : 'text-red-400');
+                    batchEl.innerHTML = `
+                        <div class="flex justify-between items-end">
+                            <div>
+                                <span class="block text-[10px] text-slate-500 uppercase">LLM Success Rate</span>
+                                <span class="text-2xl font-bold font-mono ${rateColor}">${be.avg_success_rate_pct}%</span>
+                            </div>
+                            <div class="text-right">
+                                <span class="block text-[10px] text-slate-500 uppercase">Ticks</span>
+                                <span class="text-sm font-mono text-slate-300">${be.ticks_48h}</span>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-3 gap-2 mt-2">
+                            <div class="bg-slate-800 rounded p-2 text-center">
+                                <span class="block text-[10px] text-slate-500">Emails</span>
+                                <span class="text-sm font-mono text-slate-200">${be.total_emails}</span>
+                            </div>
+                            <div class="bg-slate-800 rounded p-2 text-center">
+                                <span class="block text-[10px] text-emerald-500">LLM</span>
+                                <span class="text-sm font-mono text-emerald-300">${be.llm_extracted}</span>
+                            </div>
+                            <div class="bg-slate-800 rounded p-2 text-center">
+                                <span class="block text-[10px] text-amber-500">Regex FB</span>
+                                <span class="text-sm font-mono text-amber-300">${be.regex_fallback}</span>
+                            </div>
+                        </div>
+                        ${be.trend.length > 1 ? `
+                        <div class="mt-3 flex items-end gap-[2px] h-10">
+                            ${be.trend.slice().reverse().map(t => {
+                                const h = Math.max(4, Math.round(t.rate / 100 * 40));
+                                const color = t.rate >= 80 ? 'bg-emerald-500' : (t.rate >= 50 ? 'bg-amber-500' : 'bg-red-500');
+                                return `<div class="${color} rounded-t flex-1 min-w-[3px]" style="height:${h}px" title="${t.rate}% (${t.llm}/${t.total})"></div>`;
+                            }).join('')}
+                        </div>
+                        <span class="text-[9px] text-slate-600 mt-1 block">Per-tick success rate (oldest → newest)</span>
+                        ` : ''}
+                    `;
+                }
+
+                // 2. Reflection Synthesis breakdown
+                const rf = data.reflection;
+                const reflEl = document.getElementById('reflection-stats');
+                if (rf.total === 0) {
+                    reflEl.innerHTML = '<span class="text-slate-500 italic text-sm">No reflections in the last 7 days.</span>';
+                } else {
+                    const llmPct = Math.round(rf.llm_synthesis / rf.total * 100);
+                    const freqPct = Math.round(rf.frequency_fallback / rf.total * 100);
+                    const nonePct = Math.round(rf.no_proposal / rf.total * 100);
+                    reflEl.innerHTML = `
+                        <div class="flex justify-between items-end">
+                            <div>
+                                <span class="block text-[10px] text-slate-500 uppercase">LLM Synthesis</span>
+                                <span class="text-2xl font-bold font-mono text-purple-300">${llmPct}%</span>
+                            </div>
+                            <div class="text-right">
+                                <span class="block text-[10px] text-slate-500 uppercase">Total</span>
+                                <span class="text-sm font-mono text-slate-300">${rf.total} reflections</span>
+                            </div>
+                        </div>
+                    `;
+
+                    // Doughnut chart
+                    const ctx = document.getElementById('reflectionChart');
+                    if (ctx._chartInstance) ctx._chartInstance.destroy();
+                    ctx._chartInstance = new Chart(ctx.getContext('2d'), {
+                        type: 'doughnut',
+                        data: {
+                            labels: ['LLM Synthesis', 'Frequency Fallback', 'No Proposal'],
+                            datasets: [{
+                                data: [rf.llm_synthesis, rf.frequency_fallback, rf.no_proposal],
+                                backgroundColor: ['#a78bfa', '#f59e0b', '#475569'],
+                                borderColor: '#1e293b',
+                                borderWidth: 2
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            cutout: '60%',
+                            plugins: {
+                                legend: {
+                                    position: 'bottom',
+                                    labels: { boxWidth: 10, padding: 8, font: { size: 10 } }
+                                }
+                            }
+                        }
+                    });
+                }
+
+                // 3. Signal Quality by source
+                const sq = data.signal_quality;
+                const qualEl = document.getElementById('signal-quality-stats');
+                const sources = Object.keys(sq);
+                if (sources.length === 0) {
+                    qualEl.innerHTML = '<span class="text-slate-500 italic text-sm">No signal quality data available.</span>';
+                } else {
+                    qualEl.innerHTML = sources.map(src => {
+                        const s = sq[src];
+                        const entityColor = s.entity_rate_pct >= 70 ? 'text-emerald-400' : (s.entity_rate_pct >= 40 ? 'text-amber-400' : 'text-red-400');
+                        const topicColor = s.topic_rate_pct >= 70 ? 'text-emerald-400' : (s.topic_rate_pct >= 40 ? 'text-amber-400' : 'text-red-400');
+                        return `
+                            <div class="bg-slate-800 rounded-lg p-3 border border-slate-700">
+                                <div class="flex justify-between items-center mb-2">
+                                    <span class="text-sm font-bold capitalize text-slate-200">${src}</span>
+                                    <span class="text-xs font-mono text-slate-400">${s.total} signals</span>
+                                </div>
+                                <div class="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <span class="block text-[10px] text-slate-500">Entity Rate</span>
+                                        <div class="flex items-center gap-1">
+                                            <span class="text-sm font-mono font-bold ${entityColor}">${s.entity_rate_pct}%</span>
+                                            <div class="flex-1 bg-slate-900 rounded-full h-1">
+                                                <div class="h-1 rounded-full ${s.entity_rate_pct >= 70 ? 'bg-emerald-500' : (s.entity_rate_pct >= 40 ? 'bg-amber-500' : 'bg-red-500')}" style="width:${s.entity_rate_pct}%"></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <span class="block text-[10px] text-slate-500">Topic Rate</span>
+                                        <div class="flex items-center gap-1">
+                                            <span class="text-sm font-mono font-bold ${topicColor}">${s.topic_rate_pct}%</span>
+                                            <div class="flex-1 bg-slate-900 rounded-full h-1">
+                                                <div class="h-1 rounded-full ${s.topic_rate_pct >= 70 ? 'bg-emerald-500' : (s.topic_rate_pct >= 40 ? 'bg-amber-500' : 'bg-red-500')}" style="width:${s.topic_rate_pct}%"></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+                }
+            } catch(e) { console.error('Signal pipeline fetch failed:', e); }
+        }
+
+        async function fetchShadow() {
+            try {
+                const res = await fetch('/api/shadow');
+                const data = await res.json();
+                
+                // 1. Update Stats Grid
+                const statsGrid = document.getElementById('shadow-stats-grid');
+                if (data.tool_stats.length === 0) {
+                    statsGrid.innerHTML = '<div class="col-span-2 text-slate-500 italic text-sm py-4">No shadow metrics recorded yet. Send queries to start grading.</div>';
+                } else {
+                    statsGrid.innerHTML = data.tool_stats.map(s => {
+                        const pct = (s.accuracy * 100).toFixed(0);
+                        const color = s.ready ? 'bg-emerald-500' : (s.accuracy > 0.7 ? 'bg-indigo-500' : 'bg-slate-500');
+                        const border = s.ready ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-slate-700 bg-slate-800/30';
+                        
+                        return `
+                            <div class="border ${border} rounded-lg p-3 relative overflow-hidden">
+                                ${s.ready ? '<div class="absolute -right-6 -top-2 bg-emerald-500 text-[8px] font-bold text-white px-8 py-1 rotate-45 uppercase">Ready</div>' : ''}
+                                <div class="flex justify-between items-center mb-2">
+                                    <span class="text-sm font-mono text-indigo-300 font-bold">${s.tool}</span>
+                                    <span class="text-xs ${s.ready ? 'text-emerald-400' : 'text-slate-400'}">${pct}% Acc</span>
+                                </div>
+                                <div class="w-full bg-slate-900 rounded-full h-1.5 mb-1">
+                                    <div class="${color} h-1.5 rounded-full transition-all duration-1000" style="width: ${pct}%"></div>
+                                </div>
+                                <div class="flex justify-between text-[10px] text-slate-500">
+                                    <span>${s.hits} samples</span>
+                                    <span>${s.correct} match</span>
+                                </div>
+                            </div>
+                        `;
+                    }).join('');
+                }
+
+                // 2. Update Logs
+                const logsList = document.getElementById('shadow-logs');
+                if (data.recent_matches.length === 0) {
+                    logsList.innerHTML = '<div class="text-slate-500 italic text-sm">No shadow logs yet.</div>';
+                } else {
+                    logsList.innerHTML = data.recent_matches.map(m => `
+                        <div class="flex items-start gap-3 p-2 rounded hover:bg-slate-800 transition-colors">
+                            <div class="mt-1">
+                                ${m.match 
+                                    ? '<svg class="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>'
+                                    : '<svg class="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>'}
+                            </div>
+                            <div class="overflow-hidden">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-[10px] text-slate-500 font-mono">${m.time}</span>
+                                    <span class="text-xs font-mono text-indigo-300 truncate">${m.predicted}</span>
+                                    <span class="text-[10px] text-slate-600">(${m.score})</span>
+                                </div>
+                                <div class="text-[10px] text-slate-400 truncate mt-0.5">Intent: ${m.intent}</div>
+                            </div>
+                        </div>
+                    `).join('');
+                }
+            } catch(e) { console.error('Shadow fetch failed:', e); }
+        }
+    </script>
+
+    <!-- System Prompt Modal -->
+    <div id="prompt-modal" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 sm:p-6">
+        <div class="bg-slate-800 rounded-lg shadow-2xl border border-slate-600 w-full max-w-4xl max-h-[90vh] flex flex-col">
+            <div class="flex justify-between items-center p-4 border-b border-slate-700">
+                <h2 class="text-lg font-bold text-slate-200">Core Engine: REACT_SYSTEM_PROMPT</h2>
+                <button onclick="closePromptModal()" class="text-slate-400 hover:text-white transition-colors p-1">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                </button>
+            </div>
+            <div class="p-4 overflow-y-auto flex-1">
+                <pre id="prompt-modal-content" class="text-xs font-mono text-emerald-400 bg-slate-900 p-4 rounded border border-slate-700 whitespace-pre-wrap leading-tight"></pre>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

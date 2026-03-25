@@ -1,0 +1,23 @@
+# Task: Eje Architecture Documentation
+
+- [x] Research OpenClaw and POC differences
+- [x] Compare Ray Lite vs OpenClaw features
+- [x] Design hybrid Ray architecture
+- [x] Document Ray architecture and delta
+- [x] Research OpenClaw Marketplace compatibility
+- [x] Create OpenClaw Context Optimization Guide
+- [x] Compare Optimized OpenClaw vs. Full Ray
+- [x] Merge Sandbox/Security features into Core Docs
+- [x] Lock in P-D-A-R and Belief Store (Memory Ledger) specifications
+- [x] Lock in I-P-D-A-R, full Belief Store schema, and Degradation Ladder
+- [x] Create Email Skill Spec (manifest, safe view, policy gates, idempotency)
+- [x] Refine Sandbox topology constraints (Linear/Fan-out/Map-reduce)
+- [x] Define Router confidence thresholds (Backoff math)
+- [x] Implement Belief Visibility (system/internal/user)
+- [x] Add Plan Hashing and Timeout Degradation
+- [x] Define Durable Task System (Workflows)
+- [x] Document State Hydration (Pause/Resume) and Concurrency (Write Queue)
+- [x] Document Headless Auth (Device Flow) and Upgrades (Migrations)
+- [x] Define Attachment Parsing and Summarization Pipeline
+- [x] Implement Core Runtime Loop Skeleton
+- [ ] Finalize plan for Ray v2

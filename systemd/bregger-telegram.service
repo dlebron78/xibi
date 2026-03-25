@@ -1,0 +1,14 @@
+[Unit]
+Description=Bregger Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/bregger_deployment
+Environment="XIBI_WORKDIR=%h/bregger_remote"
+ExecStart=/usr/bin/python3 -u bregger_telegram.py %h/bregger_remote/config.json
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
