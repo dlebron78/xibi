@@ -1,17 +1,19 @@
 from __future__ import annotations
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional
+
 import json
+from dataclasses import dataclass, field
+from typing import Any, Literal
+
 
 @dataclass
 class Step:
     step_num: int
     thought: str = ""
     tool: str = ""
-    tool_input: Dict[str, Any] = field(default_factory=dict)
-    tool_output: Dict[str, Any] = field(default_factory=dict)
+    tool_input: dict[str, Any] = field(default_factory=dict)
+    tool_output: dict[str, Any] = field(default_factory=dict)
     duration_ms: int = 0
-    parse_warning: Optional[str] = None
+    parse_warning: str | None = None
 
     def full_text(self) -> str:
         """Full detail — injected for the 2 most recent steps."""
@@ -41,6 +43,6 @@ class Step:
 @dataclass
 class ReActResult:
     answer: str
-    steps: List[Step]
+    steps: list[Step]
     exit_reason: Literal["finish", "ask_user", "max_steps", "timeout", "error"]
     duration_ms: int

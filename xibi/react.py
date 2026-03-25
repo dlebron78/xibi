@@ -1,12 +1,15 @@
 from __future__ import annotations
+
 import json
 import time
-from typing import Any, Dict, List, Literal, Optional, Callable
+from collections.abc import Callable
+from typing import Any
 
-from xibi.types import Step, ReActResult
-from xibi.router import get_model, Config
+from xibi.router import Config, get_model
+from xibi.types import ReActResult, Step
 
-def compress_scratchpad(scratchpad: List[Step]) -> str:
+
+def compress_scratchpad(scratchpad: list[Step]) -> str:
     """Last 2 steps full detail, older steps one-liners."""
     lines = []
     for i, step in enumerate(scratchpad):
@@ -16,7 +19,7 @@ def compress_scratchpad(scratchpad: List[Step]) -> str:
             lines.append(step.one_line_summary())
     return "\n".join(lines)
 
-def is_repeat(step: Step, scratchpad: List[Step]) -> bool:
+def is_repeat(step: Step, scratchpad: list[Step]) -> bool:
     """True if this step has >60% word overlap with any prior same-tool step."""
     def get_words(s: str) -> set[str]:
         # Simple word extractor
@@ -49,7 +52,7 @@ def is_repeat(step: Step, scratchpad: List[Step]) -> bool:
                 return True
     return False
 
-def dispatch(tool_name: str, tool_input: Dict[str, Any], skill_registry: List[Dict[str, Any]]) -> Dict[str, Any]:
+def dispatch(tool_name: str, tool_input: dict[str, Any], skill_registry: list[dict[str, Any]]) -> dict[str, Any]:
     """Invoke a tool from the registry."""
     tool_manifest = next((t for t in skill_registry if t.get("name") == tool_name), None)
     if not tool_manifest:
@@ -62,7 +65,7 @@ def dispatch(tool_name: str, tool_input: Dict[str, Any], skill_registry: List[Di
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-def _parse_llm_response(response_text: str) -> Dict[str, Any]:
+def _parse_llm_response(response_text: str) -> dict[str, Any]:
     """Extract JSON from LLM response."""
     # Try direct parse
     try:
@@ -86,15 +89,15 @@ def _parse_llm_response(response_text: str) -> Dict[str, Any]:
 def run(
     query: str,
     config: Config,
-    skill_registry: List[Dict[str, Any]],
+    skill_registry: list[dict[str, Any]],
     context: str = "",
-    step_callback: Optional[Callable[[str], None]] = None,
-    trace_id: Optional[str] = None,
+    step_callback: Callable[[str], None] | None = None,
+    trace_id: str | None = None,
     max_steps: int = 10,
     max_secs: int = 60,
 ) -> ReActResult:
     start_time = time.time()
-    scratchpad: List[Step] = []
+    scratchpad: list[Step] = []
     consecutive_errors = 0
 
     llm = get_model(specialty="text", effort="fast", config=config)
@@ -195,7 +198,7 @@ def run(
             else:
                 consecutive_errors = 0
 
-        except Exception as e:
+        except Exception:
             # Handle unexpected LLM errors
             return ReActResult(
                 answer="",

@@ -1,9 +1,11 @@
-import pytest
 import json
-import time
 from unittest.mock import MagicMock
-from xibi.types import Step, ReActResult
-from xibi.react import compress_scratchpad, is_repeat, run, dispatch
+
+import pytest
+
+from xibi.react import compress_scratchpad, is_repeat, run
+from xibi.types import Step
+
 
 def test_step_full_text_truncates():
     long_output = "a" * 1000

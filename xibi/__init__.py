@@ -20,8 +20,8 @@ Usage:
     )
 """
 
-from xibi.router import get_model
 from xibi.react import run
+from xibi.router import get_model
 from xibi.types import ReActResult
 
 __all__ = ["get_model", "run", "ReActResult"]
