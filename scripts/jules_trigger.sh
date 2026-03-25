@@ -113,6 +113,7 @@ task = sys.stdin.read()
 print(json.dumps({
   'title': '${TASK_NAME}',
   'prompt': task,
+  'automationMode': 'AUTO_CREATE_PR',
   'sourceContext': {
     'source': '${JULES_REPO_SOURCE}',
     'githubRepoContext': {
