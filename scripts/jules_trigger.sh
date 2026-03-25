@@ -109,7 +109,10 @@ print(json.dumps({
   'title': '${TASK_NAME}',
   'prompt': task,
   'sourceContext': {
-    'source': '${JULES_REPO_SOURCE}'
+    'source': '${JULES_REPO_SOURCE}',
+    'githubRepoContext': {
+      'startingBranch': 'main'
+    }
   }
 }))
 " <<< "${TASK_CONTENT}")
