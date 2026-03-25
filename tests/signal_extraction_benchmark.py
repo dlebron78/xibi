@@ -23,8 +23,8 @@ from pathlib import Path
 
 # ── Config ──────────────────────────────────────────────────────────────────
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL = "qwen3.5:9b"          # change to test other models
-ITERATIONS = 5               # runs per test case for reliability stats
+MODEL = "qwen3.5:9b"  # change to test other models
+ITERATIONS = 5  # runs per test case for reliability stats
 OUTPUT_DIR = Path.home() / "bregger_deployment" / "benchmarks"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -44,7 +44,7 @@ EXTRACTION_CASES = [
             "action": "request",
             "urgency": "high",
             "direction": "inbound",
-        }
+        },
     },
     {
         "id": "e2",
@@ -57,7 +57,7 @@ EXTRACTION_CASES = [
             "action": "request",
             "urgency": "normal",
             "direction": "inbound",
-        }
+        },
     },
     {
         "id": "e3",
@@ -70,7 +70,7 @@ EXTRACTION_CASES = [
             "action": "info",
             "urgency": "normal",
             "direction": "inbound",
-        }
+        },
     },
     {
         "id": "e4",
@@ -83,7 +83,7 @@ EXTRACTION_CASES = [
             "action": "fyi",
             "urgency": "low",
             "direction": "inbound",
-        }
+        },
     },
     {
         "id": "e5",
@@ -96,7 +96,7 @@ EXTRACTION_CASES = [
             "action": "request",
             "urgency": "high",
             "direction": "inbound",
-        }
+        },
     },
     {
         "id": "e6",
@@ -109,7 +109,7 @@ EXTRACTION_CASES = [
             "action": "follow_up",
             "urgency": "normal",
             "direction": "outbound",
-        }
+        },
     },
     {
         "id": "e7",
@@ -122,7 +122,7 @@ EXTRACTION_CASES = [
             "action": "info",
             "urgency": "normal",
             "direction": "inbound",
-        }
+        },
     },
     {
         "id": "e8",
@@ -135,7 +135,7 @@ EXTRACTION_CASES = [
             "action": "info",
             "urgency": "high",
             "direction": "inbound",
-        }
+        },
     },
 ]
 
@@ -144,52 +144,52 @@ DISAMBIGUATION_CASES = [
         "id": "d1",
         "a": "From: Jake Johnson | Subject: Q2 Campaign Proposal",
         "b": "From: Jake Johnson | Subject: Re: the marketing deck — update",
-        "expected": True,   # same thread
-        "note": "Same sender, same topic domain (marketing/proposal/deck)"
+        "expected": True,  # same thread
+        "note": "Same sender, same topic domain (marketing/proposal/deck)",
     },
     {
         "id": "d2",
         "a": "From: Sarah Chen | Subject: Board deck v3 attached",
         "b": "From: Jake Johnson | Subject: Q2 Campaign Proposal",
         "expected": False,  # different threads
-        "note": "Different senders, different topics"
+        "note": "Different senders, different topics",
     },
     {
         "id": "d3",
         "a": "From: billing@comcast.com | Subject: Your Comcast bill is due April 15",
         "b": "From: billing@comcast.com | Subject: Your Comcast bill is due May 15",
-        "expected": True,   # same thread (recurring bill, deadline changed)
-        "note": "Same sender, same topic, deadline moved — should be same thread"
+        "expected": True,  # same thread (recurring bill, deadline changed)
+        "note": "Same sender, same topic, deadline moved — should be same thread",
     },
     {
         "id": "d4",
         "a": "From: Mike Torres | Subject: Invoice #4821 for March",
         "b": "From: Mike Torres | Subject: Invoice #4822 for April",
         "expected": False,  # different invoices
-        "note": "Same sender but distinct invoices — different threads"
+        "note": "Same sender but distinct invoices — different threads",
     },
     {
         "id": "d5",
         "a": "From: dan@company.com | Subject: board presentation slides",
         "b": "From: Sarah Chen | Subject: Q3 board deck feedback",
-        "expected": True,   # same thread
-        "note": "Different senders but both about board presentation — semantic match"
+        "expected": True,  # same thread
+        "note": "Different senders but both about board presentation — semantic match",
     },
     {
         "id": "d6",
         "a": "From: recruiter@bigtech.com | Subject: Exciting opportunity at BigTech",
         "b": "From: hr@bigtech.com | Subject: Your application status update",
-        "expected": True,   # same thread (job opportunity)
-        "note": "Related senders, same company, same thread (job/application)"
+        "expected": True,  # same thread (job opportunity)
+        "note": "Related senders, same company, same thread (job/application)",
     },
 ]
 
 # ── Prompt builders ───────────────────────────────────────────────────────────
 
+
 def build_current_prompt(cases):
     """Current 4-field prompt used in production."""
-    lines = [f"{i+1}. From: {c['from']} | Subject: {c['subject']}"
-             for i, c in enumerate(cases)]
+    lines = [f"{i + 1}. From: {c['from']} | Subject: {c['subject']}" for i, c in enumerate(cases)]
     return (
         "Extract the main topic and any named entity from each email below.\n"
         "For each email, output one JSON object per line with keys: num, topic, entity_text, entity_type.\n"
@@ -200,10 +200,10 @@ def build_current_prompt(cases):
         "Emails:\n" + "\n".join(lines) + "\n\nJSON:"
     )
 
+
 def build_rich_prompt(cases):
     """Proposed Tier 1 richer prompt with 7 fields."""
-    lines = [f"{i+1}. From: {c['from']} | Subject: {c['subject']}"
-             for i, c in enumerate(cases)]
+    lines = [f"{i + 1}. From: {c['from']} | Subject: {c['subject']}" for i, c in enumerate(cases)]
     return (
         "Extract structured metadata from each email below.\n"
         "For each email output a JSON object with these exact keys:\n"
@@ -225,6 +225,7 @@ def build_rich_prompt(cases):
         "Emails:\n" + "\n".join(lines) + "\n\nJSON:"
     )
 
+
 def build_disambiguation_prompt(a, b):
     """Thread disambiguation: are these two emails about the same situation?"""
     return (
@@ -232,27 +233,27 @@ def build_disambiguation_prompt(a, b):
         f"Email A: {a}\n"
         f"Email B: {b}\n\n"
         "Are these two emails about the same situation or thread?\n"
-        "Answer with a single JSON object: {\"same_thread\": true} or {\"same_thread\": false}\n"
+        'Answer with a single JSON object: {"same_thread": true} or {"same_thread": false}\n'
         "No explanation. JSON only."
     )
 
+
 # ── LLM caller ───────────────────────────────────────────────────────────────
 
+
 def call_ollama(prompt, max_tokens=600, temperature=0):
-    payload = json.dumps({
-        "model": MODEL,
-        "prompt": prompt,
-        "stream": False,
-        "options": {"num_predict": max_tokens, "temperature": temperature}
-    }).encode()
+    payload = json.dumps(
+        {
+            "model": MODEL,
+            "prompt": prompt,
+            "stream": False,
+            "options": {"num_predict": max_tokens, "temperature": temperature},
+        }
+    ).encode()
 
     start = time.time()
     try:
-        req = urllib.request.Request(
-            OLLAMA_URL,
-            data=payload,
-            headers={"Content-Type": "application/json"}
-        )
+        req = urllib.request.Request(OLLAMA_URL, data=payload, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=60) as r:
             resp = json.loads(r.read())
         duration_ms = int((time.time() - start) * 1000)
@@ -263,12 +264,14 @@ def call_ollama(prompt, max_tokens=600, temperature=0):
         duration_ms = int((time.time() - start) * 1000)
         return None, duration_ms, 0
 
+
 def parse_json_response(raw):
     """Try to parse JSON, handling markdown fences."""
     if raw is None:
         return None, "null_response"
     try:
         import re
+
         cleaned = raw
         if cleaned.startswith("```"):
             cleaned = re.sub(r"^```(?:json)?", "", cleaned)
@@ -277,6 +280,7 @@ def parse_json_response(raw):
         return result, None
     except json.JSONDecodeError as e:
         return None, str(e)
+
 
 # ── Scorer ────────────────────────────────────────────────────────────────────
 
@@ -288,6 +292,7 @@ TOPIC_SYNONYMS = {
     "board deck": {"deck", "board presentation", "presentation"},
     "security alert": {"security", "alert"},
 }
+
 
 def topics_match(got, expected):
     if got is None or expected is None:
@@ -306,6 +311,7 @@ def topics_match(got, expected):
         return True
     return False
 
+
 def score_extraction(extracted_list, cases, fields):
     """Score extraction results against ground truth."""
     scores = {f: {"correct": 0, "total": 0} for f in fields}
@@ -316,7 +322,7 @@ def score_extraction(extracted_list, cases, fields):
 
     # Build lookup by num
     by_num = {}
-    for item in (extracted_list if isinstance(extracted_list, list) else []):
+    for item in extracted_list if isinstance(extracted_list, list) else []:
         try:
             by_num[int(item.get("num", 0))] = item
         except (ValueError, TypeError):
@@ -346,19 +352,21 @@ def score_extraction(extracted_list, cases, fields):
 
     return scores, True
 
+
 # ── Test runners ─────────────────────────────────────────────────────────────
 
+
 def run_extraction_benchmark():
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("SIGNAL EXTRACTION BENCHMARK")
     print(f"Model: {MODEL}  |  Iterations: {ITERATIONS}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     results = {"current": [], "rich": []}
 
     for variant, prompt_fn, fields in [
         ("current", build_current_prompt, ["topic", "entity_text", "entity_type"]),
-        ("rich",    build_rich_prompt,    ["topic", "entity_text", "entity_type", "action", "urgency", "direction"]),
+        ("rich", build_rich_prompt, ["topic", "entity_text", "entity_type", "action", "urgency", "direction"]),
     ]:
         print(f"\n── {variant.upper()} PROMPT ({len(fields)} fields) ──")
         parse_failures = 0
@@ -373,17 +381,17 @@ def run_extraction_benchmark():
             parsed, err = parse_json_response(raw)
             if parsed is None:
                 parse_failures += 1
-                print(f"  [{iteration+1}/{ITERATIONS}] PARSE FAIL ({duration_ms}ms): {err}")
+                print(f"  [{iteration + 1}/{ITERATIONS}] PARSE FAIL ({duration_ms}ms): {err}")
                 print(f"    Raw: {repr(raw[:200]) if raw else 'None'}")
                 continue
 
             scores, ok = score_extraction(parsed, EXTRACTION_CASES, fields)
             for f in fields:
                 all_scores[f]["correct"] += scores[f]["correct"]
-                all_scores[f]["total"]   += scores[f]["total"]
+                all_scores[f]["total"] += scores[f]["total"]
 
             field_accs = {f: f"{scores[f]['correct']}/{scores[f]['total']}" for f in fields}
-            print(f"  [{iteration+1}/{ITERATIONS}] OK ({duration_ms}ms) | {field_accs}")
+            print(f"  [{iteration + 1}/{ITERATIONS}] OK ({duration_ms}ms) | {field_accs}")
 
         # Summary
         parse_rate = (ITERATIONS - parse_failures) / ITERATIONS * 100
@@ -393,22 +401,23 @@ def run_extraction_benchmark():
         for f in fields:
             t = all_scores[f]["total"]
             c = all_scores[f]["correct"]
-            pct = (c/t*100) if t else 0
+            pct = (c / t * 100) if t else 0
             print(f"  {f:<15}: {c}/{t} ({pct:.0f}%)")
 
         results[variant] = {
             "parse_success_rate": parse_rate,
             "avg_latency_ms": avg_latency,
-            "field_accuracy": {f: all_scores[f] for f in fields}
+            "field_accuracy": {f: all_scores[f] for f in fields},
         }
 
     return results
 
+
 def run_disambiguation_benchmark():
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("THREAD DISAMBIGUATION BENCHMARK")
     print(f"Model: {MODEL}  |  Iterations: {ITERATIONS}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     results = []
     parse_failures = 0
@@ -429,7 +438,7 @@ def run_disambiguation_benchmark():
             if parsed is None or not isinstance(parsed, dict):
                 parse_failures += 1
                 case_failures += 1
-                print(f"    [{iteration+1}] PARSE FAIL ({duration_ms}ms): {repr(raw[:100]) if raw else 'None'}")
+                print(f"    [{iteration + 1}] PARSE FAIL ({duration_ms}ms): {repr(raw[:100]) if raw else 'None'}")
                 continue
 
             got = parsed.get("same_thread")
@@ -439,21 +448,24 @@ def run_disambiguation_benchmark():
                 correct += 1
             total += 1
             symbol = "✓" if match else "✗"
-            print(f"    [{iteration+1}] {symbol} got={got} ({duration_ms}ms)")
+            print(f"    [{iteration + 1}] {symbol} got={got} ({duration_ms}ms)")
 
         case_rate = (case_correct / (ITERATIONS - case_failures) * 100) if (ITERATIONS - case_failures) > 0 else 0
-        results.append({
-            "id": case["id"],
-            "note": case["note"],
-            "expected": case["expected"],
-            "accuracy": case_rate,
-            "parse_failures": case_failures,
-        })
+        results.append(
+            {
+                "id": case["id"],
+                "note": case["note"],
+                "expected": case["expected"],
+                "accuracy": case_rate,
+                "parse_failures": case_failures,
+            }
+        )
 
     overall = (correct / total * 100) if total else 0
     print(f"\n  Overall accuracy: {correct}/{total} ({overall:.0f}%)")
     print(f"  Parse failures:  {parse_failures}/{ITERATIONS * len(DISAMBIGUATION_CASES)}")
     return results, overall
+
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
@@ -466,9 +478,9 @@ if __name__ == "__main__":
     disambiguation_results, disambiguation_accuracy = run_disambiguation_benchmark()
 
     # Summary comparison
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("SUMMARY")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
     cur = extraction_results.get("current", {})
     rich = extraction_results.get("rich", {})
@@ -481,8 +493,8 @@ if __name__ == "__main__":
     print(f"  Parse rate:  {rich.get('parse_success_rate', 0):.0f}%")
     print(f"  Avg latency: {rich.get('avg_latency_ms', 0):.0f}ms")
 
-    delta = rich.get('parse_success_rate', 0) - cur.get('parse_success_rate', 0)
-    latency_delta = rich.get('avg_latency_ms', 0) - cur.get('avg_latency_ms', 0)
+    delta = rich.get("parse_success_rate", 0) - cur.get("parse_success_rate", 0)
+    latency_delta = rich.get("avg_latency_ms", 0) - cur.get("avg_latency_ms", 0)
     print(f"\n  Parse rate delta:  {delta:+.0f}%  (rich vs current)")
     print(f"  Latency delta:     {latency_delta:+.0f}ms")
 
@@ -490,9 +502,9 @@ if __name__ == "__main__":
 
     # Verdict
     print(f"\n── VERDICT ──")
-    if rich.get('parse_success_rate', 0) >= 90:
+    if rich.get("parse_success_rate", 0) >= 90:
         print("✓ Rich prompt parse rate acceptable (≥90%) — Tier 1 expansion is safe to build")
-    elif rich.get('parse_success_rate', 0) >= 70:
+    elif rich.get("parse_success_rate", 0) >= 70:
         print("⚠ Rich prompt parse rate marginal (70-90%) — add fallback parsing, proceed carefully")
     else:
         print("✗ Rich prompt parse rate too low (<70%) — simplify schema or use 2-pass extraction")

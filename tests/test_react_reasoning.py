@@ -35,9 +35,11 @@ from bregger_core import BreggerCore
 core = None
 seeder = None
 
+
 def init_core():
     global core, seeder
-    if core is not None: return
+    if core is not None:
+        return
     data_dir = os.environ.get("XIBI_DATA_DIR", os.path.join(os.path.expanduser("~"), "bregger_remote"))
     config_path = os.environ.get("BREGGER_CONFIG", os.path.join(data_dir, "config.json"))
     with open(config_path) as f:
@@ -45,7 +47,9 @@ def init_core():
     core = BreggerCore(config)
     seeder = ReasoningSeeder(str(core.db_path))
 
+
 # ─── History flush ───────────────────────────────────────────
+
 
 def clear_conversation_history():
     """
@@ -57,7 +61,6 @@ def clear_conversation_history():
     with sqlite3.connect(str(core.db_path)) as conn:
         conn.execute("DELETE FROM conversation_history")
         conn.commit()
-
 
 
 def get_latest_react_trace():
@@ -100,12 +103,14 @@ def get_latest_react_trace():
             final_answer = tool_input.get("final_answer", "") if isinstance(tool_input, dict) else ""
             tool = "finish"
 
-        steps.append({
-            "tool": tool,
-            "tool_input": tool_input,
-            # escalated flag: tier 4 means cloud escalation fired
-            "escalated": s.get("tier", 0) >= 4 or act.get("escalated", False),
-        })
+        steps.append(
+            {
+                "tool": tool,
+                "tool_input": tool_input,
+                # escalated flag: tier 4 means cloud escalation fired
+                "escalated": s.get("tier", 0) >= 4 or act.get("escalated", False),
+            }
+        )
 
     return {
         "steps": steps,
@@ -116,6 +121,7 @@ def get_latest_react_trace():
 
 
 # ─── Integration shim ────────────────────────────────────────
+
 
 def run_single_test_wired(prompt, evaluate_fn, iteration, force_react=False):
     """
@@ -157,18 +163,20 @@ def run_single_test_wired(prompt, evaluate_fn, iteration, force_react=False):
 
 # ─── Seed helpers ────────────────────────────────────────────
 
+
 def seed_entity_chain():
     seeder.clear()
-    seeder.seed_ledger([
-        {"id": "jake_rivera", "category": "contact", "content": "Jake Rivera: jake@company.com"}
-    ])
-    seeder.seed_beliefs([
-        {"key": "product_name",  "value": "Bregger",              "type": "product"},
-        {"key": "product_pitch", "value": "local-first AI agent", "type": "product"},
-    ])
+    seeder.seed_ledger([{"id": "jake_rivera", "category": "contact", "content": "Jake Rivera: jake@company.com"}])
+    seeder.seed_beliefs(
+        [
+            {"key": "product_name", "value": "Bregger", "type": "product"},
+            {"key": "product_pitch", "value": "local-first AI agent", "type": "product"},
+        ]
+    )
 
 
 # ─── Main ────────────────────────────────────────────────────
+
 
 def main():
     init_core()
@@ -188,7 +196,7 @@ def main():
     test1_results = []
     for i in range(benchmark.NUM_ITERATIONS):
         clear_conversation_history()  # prevent answer-from-memory contamination
-        seeder.clear()                # no seeding needed for Test 1
+        seeder.clear()  # no seeding needed for Test 1
         result = run_single_test_wired(benchmark.TEST_1_PROMPT, benchmark.evaluate_test_1, i, force_react=False)
         test1_results.append(result)
 
@@ -207,7 +215,7 @@ def main():
     test2_results = []
     for i in range(benchmark.NUM_ITERATIONS):
         clear_conversation_history()  # clean slate
-        seed_entity_chain()           # plant Jake's contact + product context
+        seed_entity_chain()  # plant Jake's contact + product context
         result = run_single_test_wired(benchmark.TEST_2_PROMPT, benchmark.evaluate_test_2, i, force_react=True)
         test2_results.append(result)
 
