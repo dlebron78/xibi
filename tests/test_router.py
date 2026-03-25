@@ -1,13 +1,21 @@
-import os
 import json
+import os
+from unittest.mock import MagicMock, patch
+
 import pytest
 import requests
 import responses
-from unittest.mock import patch, MagicMock
+
 from xibi.router import (
-    load_config, get_model, _resolve_model, _check_provider_health,
-    ConfigValidationError, NoModelAvailableError, OllamaClient, GeminiClient
+    ConfigValidationError,
+    GeminiClient,
+    OllamaClient,
+    _check_provider_health,
+    _resolve_model,
+    get_model,
+    load_config,
 )
+
 
 # Config loading tests
 def test_load_valid_config():
@@ -16,9 +24,11 @@ def test_load_valid_config():
     assert "providers" in config
     assert config["models"]["text"]["fast"]["provider"] == "ollama"
 
+
 def test_load_missing_file():
     with pytest.raises(FileNotFoundError):
         load_config("non_existent.json")
+
 
 def test_load_invalid_json(tmp_path):
     d = tmp_path / "invalid.json"
@@ -27,75 +37,82 @@ def test_load_invalid_json(tmp_path):
         load_config(str(d))
     assert "Invalid JSON" in str(excinfo.value)
 
+
 def test_load_missing_provider_field(tmp_path):
-    config_dict = {
-        "models": {
-            "text": {
-                "fast": {"model": "m"}
-            }
-        },
-        "providers": {}
-    }
+    config_dict = {"models": {"text": {"fast": {"model": "m"}}}, "providers": {}}
     d = tmp_path / "missing.json"
     d.write_text(json.dumps(config_dict))
     with pytest.raises(ConfigValidationError) as excinfo:
         load_config(str(d))
     assert "Missing 'provider'" in str(excinfo.value)
 
+
 def test_load_circular_fallback():
     with pytest.raises(ConfigValidationError) as excinfo:
         load_config("tests/fixtures/configs/circular_fallback.json")
     assert "Circular fallback" in str(excinfo.value)
+
 
 def test_load_dangling_fallback():
     with pytest.raises(ConfigValidationError) as excinfo:
         load_config("tests/fixtures/configs/dangling_fallback.json")
     assert "Fallback 'ultra' for models.text.fast does not exist" in str(excinfo.value)
 
+
 def test_load_missing_provider_in_providers():
     with pytest.raises(ConfigValidationError) as excinfo:
         load_config("tests/fixtures/configs/missing_provider.json")
     assert "Provider 'magical_inference_cloud' referenced in models.text.fast not found" in str(excinfo.value)
+
 
 # Fallback resolution tests
 def test_resolve_exact_match(mock_config):
     res = _resolve_model(mock_config, "text", "fast")
     assert res["model"] == "qwen3.5:4b"
 
+
 def test_resolve_effort_fallback(mock_config):
     # If effort missing, it should default to 'think' according to my implementation of _resolve_model
     res = _resolve_model(mock_config, "text", "ultra")
-    assert res["model"] == "qwen3.5:9b" # think model
+    assert res["model"] == "qwen3.5:9b"  # think model
+
 
 def test_resolve_specialty_fallback(mock_config):
     res = _resolve_model(mock_config, "code", "fast")
-    assert res["model"] == "qwen3.5:4b" # from text.fast
+    assert res["model"] == "qwen3.5:4b"  # from text.fast
+
 
 def test_resolve_double_fallback(mock_config):
     res = _resolve_model(mock_config, "audio", "ultra")
-    assert res["model"] == "qwen3.5:9b" # from text.think
+    assert res["model"] == "qwen3.5:9b"  # from text.think
+
 
 # Provider health tests
 @responses.activate
 def test_ollama_healthy():
-    responses.add(responses.GET, "http://localhost:11434/api/tags",
-                  json={"models": [{"name": "qwen3.5:4b"}]}, status=200)
+    responses.add(
+        responses.GET, "http://localhost:11434/api/tags", json={"models": [{"name": "qwen3.5:4b"}]}, status=200
+    )
     config = {"providers": {"ollama": {"base_url": "http://localhost:11434"}}}
     role_cfg = {"provider": "ollama", "model": "qwen3.5:4b"}
     assert _check_provider_health(config, role_cfg) is True
 
+
 @responses.activate
 def test_ollama_unreachable():
-    responses.add(responses.GET, "http://localhost:11434/api/tags",
-                  body=requests.exceptions.ConnectionError("Unreachable"))
+    responses.add(
+        responses.GET, "http://localhost:11434/api/tags", body=requests.exceptions.ConnectionError("Unreachable")
+    )
     config = {"providers": {"ollama": {"base_url": "http://localhost:11434"}}}
     role_cfg = {"provider": "ollama", "model": "qwen3.5:4b"}
     assert _check_provider_health(config, role_cfg) is False
 
+
 @responses.activate
 def test_ollama_model_not_loaded_triggers_warmup():
-    responses.add(responses.GET, "http://localhost:11434/api/tags",
-                  json={"models": [{"name": "other-model"}]}, status=200)
+    responses.add(
+        responses.GET, "http://localhost:11434/api/tags", json={"models": [{"name": "other-model"}]}, status=200
+    )
     responses.add(responses.POST, "http://localhost:11434/api/generate", status=200)
 
     config = {"providers": {"ollama": {"base_url": "http://localhost:11434"}}}
@@ -104,28 +121,32 @@ def test_ollama_model_not_loaded_triggers_warmup():
     assert len(responses.calls) == 2
     assert responses.calls[1].request.url == "http://localhost:11434/api/generate"
 
+
 def test_cloud_provider_skips_check():
     config = {"providers": {"gemini": {}}}
     role_cfg = {"provider": "gemini", "model": "gemini-2.5-flash"}
     assert _check_provider_health(config, role_cfg) is True
 
+
 # ModelClient contracts
 @responses.activate
 def test_ollama_client_generate():
-    responses.add(responses.POST, "http://localhost:11434/api/generate",
-                  json={"response": "Hello world"}, status=200)
+    responses.add(responses.POST, "http://localhost:11434/api/generate", json={"response": "Hello world"}, status=200)
     client = OllamaClient("ollama", "m", {}, "http://localhost:11434")
     res = client.generate("Hi")
     assert res == "Hello world"
     assert json.loads(responses.calls[0].request.body)["prompt"] == "Hi"
 
+
 @responses.activate
 def test_ollama_client_generate_structured():
-    responses.add(responses.POST, "http://localhost:11434/api/generate",
-                  json={"response": '{"key": "value"}'}, status=200)
+    responses.add(
+        responses.POST, "http://localhost:11434/api/generate", json={"response": '{"key": "value"}'}, status=200
+    )
     client = OllamaClient("ollama", "m", {}, "http://localhost:11434")
     res = client.generate_structured("Hi", {"type": "object"})
     assert res == {"key": "value"}
+
 
 @patch("google.generativeai.GenerativeModel")
 @patch("google.generativeai.configure")
@@ -139,14 +160,15 @@ def test_gemini_client_generate(mock_configure, mock_gen_model):
     assert res == "Gemini response"
     mock_configure.assert_called_with(api_key="fake-key")
 
+
 @responses.activate
 def test_client_timeout_handling():
-    responses.add(responses.POST, "http://localhost:11434/api/generate",
-                  body=requests.exceptions.Timeout("Timeout"))
+    responses.add(responses.POST, "http://localhost:11434/api/generate", body=requests.exceptions.Timeout("Timeout"))
     client = OllamaClient("ollama", "m", {}, "http://localhost:11434")
     with pytest.raises(RuntimeError) as excinfo:
         client.generate("Hi", timeout=1)
     assert "failed" in str(excinfo.value)
+
 
 # Integration tests
 @responses.activate
@@ -154,23 +176,25 @@ def test_client_timeout_handling():
 @patch("google.generativeai.GenerativeModel")
 def test_full_path_fast_role(mock_gen_model):
     # Mock Ollama health check
-    responses.add(responses.GET, "http://localhost:11434/api/tags",
-                  json={"models": [{"name": "qwen3.5:4b"}]}, status=200)
+    responses.add(
+        responses.GET, "http://localhost:11434/api/tags", json={"models": [{"name": "qwen3.5:4b"}]}, status=200
+    )
     # Mock Ollama generate
-    responses.add(responses.POST, "http://localhost:11434/api/generate",
-                  json={"response": "Ollama fast response"}, status=200)
+    responses.add(
+        responses.POST, "http://localhost:11434/api/generate", json={"response": "Ollama fast response"}, status=200
+    )
 
     client = get_model("text", "fast", config_path="tests/fixtures/configs/valid.json")
     res = client.generate("test")
     assert res == "Ollama fast response"
+
 
 @responses.activate
 @patch.dict(os.environ, {"GEMINI_API_KEY": "fake-key"})
 @patch("google.generativeai.GenerativeModel")
 def test_full_path_with_fallback(mock_gen_model):
     # Mock Ollama health check - UNHEALTHY
-    responses.add(responses.GET, "http://localhost:11434/api/tags",
-                  status=500)
+    responses.add(responses.GET, "http://localhost:11434/api/tags", status=500)
     # Fallback from fast -> think (also ollama)
     # Mock Ollama think health check - UNHEALTHY
     # responses.add(responses.GET, "http://localhost:11434/api/tags", status=500) # already added for any GET to tags
@@ -185,14 +209,15 @@ def test_full_path_with_fallback(mock_gen_model):
     res = client.generate("test")
     assert res == "Gemini fallback response"
 
+
 def test_config_reload(tmp_path):
     config1 = {
         "models": {"text": {"fast": {"provider": "ollama", "model": "m1"}}},
-        "providers": {"ollama": {"base_url": "h1"}}
+        "providers": {"ollama": {"base_url": "h1"}},
     }
     config2 = {
         "models": {"text": {"fast": {"provider": "ollama", "model": "m2"}}},
-        "providers": {"ollama": {"base_url": "h2"}}
+        "providers": {"ollama": {"base_url": "h2"}},
     }
     cp = tmp_path / "config.json"
     cp.write_text(json.dumps(config1))

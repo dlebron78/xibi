@@ -9,9 +9,9 @@ import requests
 class ModelClient(Protocol):
     """Unified interface for all LLM providers."""
 
-    provider: str       # "ollama", "gemini", "openai", "anthropic", "groq"
-    model: str          # "qwen3.5:9b", "gemini-2.5-flash", etc.
-    options: dict       # Provider-specific options (e.g., {"think": false})
+    provider: str  # "ollama", "gemini", "openai", "anthropic", "groq"
+    model: str  # "qwen3.5:9b", "gemini-2.5-flash", etc.
+    options: dict  # Provider-specific options (e.g., {"think": false})
 
     def generate(self, prompt: str, system: str | None = None, **kwargs: Any) -> str:
         """Generate a text completion. Returns the response text."""
@@ -21,27 +21,35 @@ class ModelClient(Protocol):
         """Generate structured output conforming to a JSON schema. Returns parsed dict."""
         ...
 
+
 class RoleConfig(TypedDict):
     provider: str
     model: str
     options: dict[str, Any]
     fallback: str | None
 
+
 class ProviderConfig(TypedDict):
     base_url: str | None
     api_key_env: str | None
+
 
 class Config(TypedDict):
     models: dict[str, dict[str, RoleConfig]]
     providers: dict[str, ProviderConfig]
 
+
 class ConfigValidationError(Exception):
     """Raised when the configuration is invalid."""
+
     pass
+
 
 class NoModelAvailableError(Exception):
     """Raised when the entire fallback chain is exhausted."""
+
     pass
+
 
 class OllamaClient:
     """Ollama implementation of ModelClient."""
@@ -58,7 +66,7 @@ class OllamaClient:
             "model": self.model,
             "prompt": prompt,
             "stream": False,
-            "options": {**self.options, **kwargs}
+            "options": {**self.options, **kwargs},
         }
         if system:
             payload["system"] = system
@@ -75,7 +83,9 @@ class OllamaClient:
         return self._call_provider(prompt, system, **kwargs)
 
     def generate_structured(self, prompt: str, schema: dict, system: str | None = None, **kwargs: Any) -> dict:
-        prompt_with_schema = f"{prompt}\n\nReturn output in JSON format conforming to this schema:\n{json.dumps(schema)}"
+        prompt_with_schema = (
+            f"{prompt}\n\nReturn output in JSON format conforming to this schema:\n{json.dumps(schema)}"
+        )
         # Ollama can use format="json" for JSON mode
         kwargs.setdefault("format", "json")
         response_text = self._call_provider(prompt_with_schema, system, **kwargs)
@@ -84,6 +94,7 @@ class OllamaClient:
             return result
         except json.JSONDecodeError as e:
             raise RuntimeError(f"Ollama returned invalid JSON: {e}\nResponse: {response_text}") from e
+
 
 class GeminiClient:
     """Gemini implementation of ModelClient."""
@@ -112,9 +123,7 @@ class GeminiClient:
 
         try:
             response = client.generate_content(
-                prompt,
-                generation_config=generation_config,
-                request_options=request_options
+                prompt, generation_config=generation_config, request_options=request_options
             )
             result: str = response.text
             return result
@@ -125,7 +134,9 @@ class GeminiClient:
         return self._call_provider(prompt, system, **kwargs)
 
     def generate_structured(self, prompt: str, schema: dict, system: str | None = None, **kwargs: Any) -> dict:
-        prompt_with_schema = f"{prompt}\n\nReturn output in JSON format conforming to this schema:\n{json.dumps(schema)}"
+        prompt_with_schema = (
+            f"{prompt}\n\nReturn output in JSON format conforming to this schema:\n{json.dumps(schema)}"
+        )
         # For Gemini, we could use response_mime_type="application/json"
         kwargs.setdefault("response_mime_type", "application/json")
         response_text = self._call_provider(prompt_with_schema, system, **kwargs)
@@ -135,38 +146,51 @@ class GeminiClient:
         except json.JSONDecodeError as e:
             raise RuntimeError(f"Gemini returned invalid JSON: {e}\nResponse: {response_text}") from e
 
+
 class OpenAIClient:
     provider: str
     model: str
     options: dict
+
     def __init__(self, provider: str, model: str, options: dict, api_key: str | None):
         raise NotImplementedError("Provider OpenAI not yet implemented. Add implementation and tests.")
+
     def generate(self, prompt: str, system: str | None = None, **kwargs: Any) -> str:
         return ""
+
     def generate_structured(self, prompt: str, schema: dict, system: str | None = None, **kwargs: Any) -> dict:
         return {}
+
 
 class AnthropicClient:
     provider: str
     model: str
     options: dict
+
     def __init__(self, provider: str, model: str, options: dict, api_key: str | None):
         raise NotImplementedError("Provider Anthropic not yet implemented. Add implementation and tests.")
+
     def generate(self, prompt: str, system: str | None = None, **kwargs: Any) -> str:
         return ""
+
     def generate_structured(self, prompt: str, schema: dict, system: str | None = None, **kwargs: Any) -> dict:
         return {}
+
 
 class GroqClient:
     provider: str
     model: str
     options: dict
+
     def __init__(self, provider: str, model: str, options: dict, api_key: str | None):
         raise NotImplementedError("Provider Groq not yet implemented. Add implementation and tests.")
+
     def generate(self, prompt: str, system: str | None = None, **kwargs: Any) -> str:
         return ""
+
     def generate_structured(self, prompt: str, schema: dict, system: str | None = None, **kwargs: Any) -> dict:
         return {}
+
 
 def load_config(path: str = "config.json") -> Config:
     """Load and validate the model config."""
@@ -197,13 +221,17 @@ def load_config(path: str = "config.json") -> Config:
 
             provider = role_cfg["provider"]
             if provider not in config["providers"]:
-                raise ConfigValidationError(f"Provider '{provider}' referenced in models.{specialty}.{effort} not found in providers section")
+                raise ConfigValidationError(
+                    f"Provider '{provider}' referenced in models.{specialty}.{effort} not found in providers section"
+                )
 
             # Validate fallbacks
             fallback = role_cfg.get("fallback")
             if fallback:
                 if fallback not in efforts:
-                    raise ConfigValidationError(f"Fallback '{fallback}' for models.{specialty}.{effort} does not exist in that specialty")
+                    raise ConfigValidationError(
+                        f"Fallback '{fallback}' for models.{specialty}.{effort} does not exist in that specialty"
+                    )
 
                 # Check for circular fallback
                 chain = [effort, fallback]
@@ -213,11 +241,14 @@ def load_config(path: str = "config.json") -> Config:
                     if not next_fallback:
                         break
                     if next_fallback in chain:
-                        raise ConfigValidationError(f"Circular fallback chain detected: {' -> '.join(chain)} -> {next_fallback}")
+                        raise ConfigValidationError(
+                            f"Circular fallback chain detected: {' -> '.join(chain)} -> {next_fallback}"
+                        )
                     chain.append(next_fallback)
                     current = next_fallback
 
     return config
+
 
 def _resolve_model(config: Config, specialty: str, effort: str) -> RoleConfig:
     """Resolve specialty + effort to a config entry with fallbacks."""
@@ -248,6 +279,7 @@ def _resolve_model(config: Config, specialty: str, effort: str) -> RoleConfig:
         return next(iter(efforts.values()))
 
     return efforts[start_effort]
+
 
 def _check_provider_health(config: Config, role_cfg: RoleConfig) -> bool:
     """Quick health check before inference."""
@@ -282,12 +314,13 @@ def _check_provider_health(config: Config, role_cfg: RoleConfig) -> bool:
             # If not loaded, trigger warmup (POST /api/show or just /api/generate with empty prompt)
             # Spec says "trigger warmup". /api/generate with just the model name will pull/load it.
             requests.post(f"{base_url}/api/generate", json={"model": role_cfg["model"]}, timeout=1)
-            return True # Assume it's warming up
+            return True  # Assume it's warming up
         except requests.exceptions.RequestException:
             return False
 
     # Cloud providers: skip check (assume available)
     return True
+
 
 def get_model(specialty: str = "text", effort: str = "think", config_path: str = "config.json") -> ModelClient:
     """Resolve a role (specialty × effort) to a callable model client."""
@@ -312,12 +345,7 @@ def get_model(specialty: str = "text", effort: str = "think", config_path: str =
 
             if provider_name == "ollama":
                 base_url = provider_cfg.get("base_url") or "http://localhost:11434"
-                return OllamaClient(
-                    provider=provider_name,
-                    model=model,
-                    options=options,
-                    base_url=base_url
-                )
+                return OllamaClient(provider=provider_name, model=model, options=options, base_url=base_url)
             elif provider_name == "gemini":
                 api_key_env = provider_cfg.get("api_key_env") or "GEMINI_API_KEY"
                 api_key = os.environ.get(api_key_env)
@@ -325,12 +353,7 @@ def get_model(specialty: str = "text", effort: str = "think", config_path: str =
                     # If API key missing, maybe try fallback?
                     pass
                 else:
-                    return GeminiClient(
-                        provider=provider_name,
-                        model=model,
-                        options=options,
-                        api_key=api_key
-                    )
+                    return GeminiClient(provider=provider_name, model=model, options=options, api_key=api_key)
             elif provider_name == "openai":
                 api_key_env = provider_cfg.get("api_key_env") or ""
                 return OpenAIClient(provider_name, model, options, os.environ.get(api_key_env))
