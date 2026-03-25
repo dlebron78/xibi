@@ -38,7 +38,8 @@ def fresh_db():
                     id TEXT PRIMARY KEY,
                     source TEXT,
                     topic_hint TEXT,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    env TEXT DEFAULT 'production'
                 )
             ''')
             

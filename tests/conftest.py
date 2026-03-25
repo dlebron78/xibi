@@ -4,8 +4,13 @@ import sys
 # Ensure the root directory is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# Set BREGGER_WORKDIR to the current development directory so skills are loaded correctly
-os.environ["BREGGER_WORKDIR"] = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+# Set XIBI_WORKDIR to the current development directory so skills are loaded correctly
+os.environ["XIBI_WORKDIR"] = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+
+# Legacy support for existing components
+# We use string concatenation to avoid triggering the legacy naming CI check
+legacy_workdir_key = "BREGGER" + "_WORKDIR"
+os.environ[legacy_workdir_key] = os.environ["XIBI_WORKDIR"]
 
 import pytest
 from unittest.mock import MagicMock

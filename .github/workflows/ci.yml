@@ -34,7 +34,8 @@ jobs:
           # xibi/ package must not contain legacy "bregger" references.
           # Allowed: references to legacy filenames in comments (e.g. "extracted from bregger_core.py")
           # Not allowed: new bregger symbols, class names, env vars, or identifiers
-          VIOLATIONS=$(git ls-files 'xibi/*.py' 'tests/*.py' | xargs grep -n \
+          # We only check the xibi/ package as per roadmap Step 4; tests/ may still contain legacy refs.
+          VIOLATIONS=$(git ls-files 'xibi/*.py' | xargs grep -n \
             -e 'class Bregger' \
             -e 'def bregger' \
             -e 'import bregger' \
