@@ -322,9 +322,12 @@ def _check_provider_health(config: Config, role_cfg: RoleConfig) -> bool:
     return True
 
 
-def get_model(specialty: str = "text", effort: str = "think", config_path: str = "config.json") -> ModelClient:
+def get_model(
+    specialty: str = "text", effort: str = "think", config_path: str = "config.json", config: Config | None = None
+) -> ModelClient:
     """Resolve a role (specialty × effort) to a callable model client."""
-    config = load_config(config_path)
+    if config is None:
+        config = load_config(config_path)
 
     try:
         role_cfg = _resolve_model(config, specialty, effort)
