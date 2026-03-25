@@ -18,6 +18,90 @@ _(Jules: drop new items here during implementation. Cowork triages into Active o
 
 ---
 
+## Xibi Build Queue
+_Last groomed: 2026-03-25. Ordered by implementation dependency._
+
+### Step 01b — Fix CI on PR #1 [P0 — IN PROGRESS]
+PR #1 ("get_model() Router") has 4 failing CI checks. Fix spec queued at `tasks/pending/step-01b.md`.
+Failures: missing `responses` + `types-requests` dev deps, deprecated `google.generativeai` → `google.genai`, ruff import sort.
+
+### Step 02 — ReAct Reasoning Loop [P1]
+Port the P-D-A-R loop from `bregger_core.py` into `xibi/react.py`. Key design decisions:
+- `Step` dataclass (scratchpad entry with `full_text()` + `one_line_summary()` compression) → `xibi/types.py`
+- Extract `_run_react_loop()` as a standalone function, not buried in `_process_query_internal`
+- Stuck detection, repetition guards, parse fallbacks all carry over from Bregger
+- Integrate with `get_model()` router (Step 01) for provider selection per step
+- Target: `xibi.react.run(query, config, skill_registry) -> ReActResult`
+
+### Step 03 — Skill Registry + Executor [P1]
+Port `SkillRegistry` and `BreggerExecutive` from `bregger_core.py`:
+- `xibi/skills/registry.py` — manifest scanning, `get_tool_meta()`, `get_min_tier()`
+- `xibi/executor.py` — plan validation, subprocess/HTTP tool invocation, error recovery
+- Keep the fail-closed design on plan validation
+
+### Step 04 — Control Plane Router [P1]
+Port `KeywordRouter` + `IntentMapper` from `bregger_core.py`:
+- `xibi/routing/control_plane.py` — regex patterns, fail-closed extraction
+- `xibi/routing/intent_mapper.py` — intent → plan, `min_tier` gate
+- Keep to 4 intents: greet, status, capability_check, reset, confirmation gate
+
+### Step 05 — Shadow Matcher (BM25) [P1]
+Port `bregger_shadow.py` and **promote from observer to router**:
+- `xibi/routing/shadow.py` — BM25 scorer against skill manifest examples
+- Routing logic: score >0.85 → skip ReAct, score 0.65–0.85 → inject as hint, <0.65 → fall through
+- This was observe-only in Bregger — a known architectural gap. Fix it in Xibi from day one.
+
+### Step 06 — Telegram Channel Adapter [P2]
+Port `bregger_telegram.py` to `xibi/channels/telegram.py`:
+- Keep zero-dependency urllib pattern (no `requests` in channel layer)
+- Multi-chat allowlist, step_callback for ReAct nudges, continuation detection
+
+### Step 07 — Heartbeat Daemon [P2]
+Port `bregger_heartbeat.py` (~1,421 lines) with proper modularization:
+- `xibi/alerting/rules.py` — RuleEngine with JSON-based conditions
+- `xibi/heartbeat/poller.py` — configurable interval polling loop
+- Reuse `xibi/channels/telegram.py` for notifications
+
+### Step 08 — SQLite Schema + Migrations [P2]
+Port schema from `bregger_cli.py` into a proper migration framework:
+- Tables: beliefs, ledger, conversation_history, signals, traces, tasks, rules, pinned_topics
+- Add schema versioning (simple `schema_version` table + migration scripts)
+- `xibi init` CLI command to bootstrap a new workdir
+
+### Step 09 — MessageModeClassifier Redesign [P2]
+The Bregger version has known issues (false dichotomies, binary output).
+- Replace with probabilistic scoring: return `{command: 0.8, conversation: 0.4}` tuple
+- Integrate with Shadow Matcher so BM25 score informs mode decision
+- Reduces misroutes, especially for hybrid command/conversation messages
+
+### Step 10 — Observability Dashboard [P3]
+Port or replace `bregger_dashboard.py` (Flask, 458 lines):
+- Option A: Keep Flask, migrate to `xibi/dashboard.py`
+- Option B: Replace with lightweight JSON API + Grafana on NucBox
+- Decision deferred — evaluate after Step 07 (heartbeat) is running
+
+---
+
+## From local_bregger/ Triage — Not Worth Porting
+- `restart_dash.py` — DevOps glue. Replace with systemd unit.
+- `scratch_extraction.py` — Test scaffold. Move to `tests/fixtures/` or delete.
+
+---
+
+## Architecture Notes (from `local_bregger/ARCHITECTURE_REVIEW.md`)
+These are the exact pain points diagnosed in the old system. Xibi should fix all of them by design:
+1. Shadow Matcher was observe-only — **fix: Steps 05 promotes it to live routing**
+2. No unified routing decision object — **fix: `RoutingDecision` dataclass in Step 02**
+3. `MessageModeClassifier` was binary — **fix: Step 09 replaces with probabilistic scoring**
+4. Cloud escalation was blunt (threshold-based) — **fix: Step 02 integrates tiered escalation**
+5. Multi-step escalation not implemented — **fix: Step 02 ReAct loop handles mid-session escalation**
+6. Context window issues — **fix: Step 02 scratchpad compression carries over from Bregger**
+7. Token accounting discrepancies — **fix: Step 02 includes token tracking per step**
+
+---
+
+---
+
 ## Architecture — `bregger_core.py` Monolith Decomposition
 
 ### Cross-Class Scoping Risk (Triggered by `_compress_scratchpad` bug)
