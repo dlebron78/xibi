@@ -1,4 +1,4 @@
-# Session Handoff — 2026-03-25
+# Session Handoff — 2026-03-26
 
 Read this at the start of a new session to resume without losing context.
 
@@ -13,24 +13,44 @@ Xibi — an AI agent wrapper (formerly Bregger). The repo is live at `github.com
 ## Current Status
 
 ### Merged PRs ✅
-| PR | Step | Title | Merged |
-|----|------|-------|--------|
-| #1 | 01 | get_model() Router | 2026-03-25 04:10 UTC |
-| #2 | 02 | ReAct Reasoning Loop | 2026-03-25 05:51 UTC |
-| #4 | 03 | Skill Registry + Executor | 2026-03-25 11:32 UTC |
+| PR | Title | Merged |
+|----|-------|--------|
+| #1 | get_model() Router | 2026-03-25 04:10 UTC |
+| #2 | ReAct Reasoning Loop | 2026-03-25 05:51 UTC |
+| #4 | Skill Registry + Executor | 2026-03-25 11:32 UTC |
+| #5 | Control Plane Router | 2026-03-25 |
+| #6 | Shadow Matcher (BM25 Router) | 2026-03-25 |
+| #7 | Telegram Bot Adapter | 2026-03-25 |
+| #8 | Heartbeat Daemon | 2026-03-25 |
+| #9 | CLI Chat Interface | 2026-03-25 |
+| #10 | SQLite Schema Consolidation + CLI | 2026-03-25 |
+| #11 | MessageModeClassifier Redesign + ShadowMatcher Update | 2026-03-25 |
+| #12 | Observability Dashboard | 2026-03-25 |
 
 (PR #3 was a duplicate step-02 branch — closed without merging.)
 
 ### In Flight 🔄
-- **Step 04 — Control Plane Router**: spec fired to Jules, in `tasks/triggered/step-04.md`
-  - Jules is implementing — branch + PR will auto-create when done (AUTO_CREATE_PR mode)
-  - Spec: `xibi/routing/control_plane.py`, ControlPlaneRouter, RoutingDecision, 13 tests
+- Nothing currently in flight. All PRs merged. NucBox cron will pick up next pending spec.
 
 ### Pipeline State
-- `tasks/pending/` — **empty** (nothing waiting to fire)
-- `tasks/triggered/` — step-01, step-02, step-03, step-04 (all fired)
-- `tasks/done/` — (steps move here after merge, pipeline review handles it)
-- Next spec to write after step-04 merges: **Step 05** (see BACKLOG.md)
+- `tasks/pending/` — **step-11.md through step-16.md** (specs written, waiting for NucBox to fire)
+- `tasks/triggered/` — empty
+- `tasks/done/` — steps 01-05 (moved after merge)
+- Next to fire: **step-11 (Trust Gradient MVP)**
+
+---
+
+## Pending Specs Queue (in order)
+
+| Spec | Title | Key Files |
+|------|-------|-----------|
+| step-11.md | Trust Gradient MVP | `xibi/trust/`, TrustGradient, TrustRecord, 13 tests |
+| step-11b.md | Trust Gradient Hardening | probabilistic audit, FailureType enum, model-hash auto-reset |
+| step-12.md | Tier 1 Bug Fixes | consecutive_errors reset, health timeout, watermark race, WAL mode, Telegram idempotency |
+| step-13.md | Tier 2 Security | path traversal fix, access logging, honest health check |
+| step-14.md | Architectural Resilience | XibiError, circuit breakers, per-tool timeout, configurable timeouts |
+| step-15.md | Session Context Phase 1 | `xibi/session.py`, rolling turn window, continuation detection |
+| step-16.md | Entity Extraction Phase 2 | fast LLM entity extract, cross-domain implicit refs (Miami → weather) |
 
 ---
 
@@ -67,9 +87,9 @@ Xibi — an AI agent wrapper (formerly Bregger). The repo is live at `github.com
 - Decision logic:
   - **Clean PR + passing CI** → auto-merge via GitHub API, move spec to done/, queue next spec
   - **Failing CI** → push fix commit directly to PR branch (don't write new Jules task for trivial fixes)
-  - **No open PR, empty queue** → write next task spec, push to tasks/pending/
+  - **No open PR, pending specs exist** → wait for NucBox to fire
   - **Jules working (triggered, no PR yet)** → wait
-  - **Pending spec exists** → wait for NucBox to fire
+  - **No open PR, empty queue** → write next task spec, push to tasks/pending/
 - GITHUB_TOKEN for API calls: stored at `/sessions/*/mnt/Project_Ray/.env.review`
   - Format: `GITHUB_TOKEN=ghp_...`
 - Review files written to: `reviews/daily/YYYY-MM-DD-HHMM.md` in repo
@@ -95,7 +115,6 @@ Xibi — an AI agent wrapper (formerly Bregger). The repo is live at `github.com
 ### Auto-deploy (NucBox)
 - Script: `~/xibi/scripts/xibi_deploy.sh`
 - Runs every 5 min, compares LOCAL vs REMOTE HEAD, pulls and `pip install -e .` if different
-- Service restart stubs commented in for steps 06 (telegram) and 07 (heartbeat)
 
 ---
 
@@ -132,6 +151,23 @@ Xibi — an AI agent wrapper (formerly Bregger). The repo is live at `github.com
 - `bregger_heartbeat.py` (1,421 lines): Proactive polling daemon
 - `bregger_telegram.py` (305 lines): Telegram adapter
 - See BACKLOG.md for full build order
+
+**Session key namespacing (from OpenClaw analysis):**
+- Session IDs use `{channel}:{id}:{scope}` — e.g. `telegram:1234567890:2026-03-26`, `cli:local`
+- Prevents cross-channel contamination if Telegram + CLI run against same DB
+- Enables channel-scoped queries: `SELECT * FROM session_turns WHERE session_id LIKE 'telegram:%'`
+
+**What to steal from OpenClaw (future specs):**
+- Queue mode abstraction: Steer / Followup / Collect / Interrupt — after step-16
+- Hierarchical session scoping already folded into step-15 (channel-namespaced session IDs)
+- Bootstrap files (per-channel system prompt injection) — low priority, defer
+
+**Where Xibi is ahead of OpenClaw:**
+- Confidence scoring on routing (BM25 + threshold)
+- Trust Gradient (adaptive audit sampling per model role)
+- Circuit breakers (SQLite-backed, per-provider and per-tool)
+- Audit trails + observability dashboard
+- OpenClaw routing is pure rule-based with no fallback confidence
 
 ---
 
