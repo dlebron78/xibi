@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-xibi = "xibi.cli:main"
+xibi = "xibi.__main__:main"
 
 [project.optional-dependencies]
 dev = [
@@ -29,7 +29,7 @@ dev = [
 ]
 
 [tool.setuptools]
-packages = ["xibi"]
+packages = ["xibi", "xibi.db"]
 
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
