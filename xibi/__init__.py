@@ -20,8 +20,10 @@ Usage:
     )
 """
 
+from xibi.alerting.rules import RuleEngine
 from xibi.channels.telegram import TelegramAdapter
 from xibi.executor import Executor
+from xibi.heartbeat.poller import HeartbeatPoller
 from xibi.react import run
 from xibi.router import get_model
 from xibi.routing.control_plane import ControlPlaneRouter, RoutingDecision
@@ -40,4 +42,6 @@ __all__ = [
     "RoutingDecision",
     "ShadowMatch",
     "ShadowMatcher",
+    "RuleEngine",
+    "HeartbeatPoller",
 ]
