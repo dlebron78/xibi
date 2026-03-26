@@ -141,9 +141,9 @@ def main() -> None:
                     step_callback=step_callback,
                 )
                 answer = result.answer
+            print(f"\n{answer}")
 
         duration = (time.time() - start_time) * 1000
-        print(f"\n{answer}")
         print(f"(routed via: {routed_via}, {duration:.0f}ms)")
         print()
 
