@@ -73,6 +73,7 @@ The Bregger version has known issues (false dichotomies, binary output).
 - Replace with probabilistic scoring: return `{command: 0.8, conversation: 0.4}` tuple
 - Integrate with Shadow Matcher so BM25 score informs mode decision
 - Reduces misroutes, especially for hybrid command/conversation messages
+- **Also fix:** Shadow `direct` dispatch currently passes empty `tool_input: {}` to executor — BM25 identifies the tool but not its parameters. Step 09 should add parameter extraction so direct matches can populate tool_input from the query before bypassing the ReAct loop.
 
 ### Step 10 — Observability Dashboard [P3]
 Port or replace `bregger_dashboard.py` (Flask, 458 lines):

@@ -1,10 +1,24 @@
-# Bregger — Changelog
+# Bregger / Xibi — Changelog
 
 > One entry per deploy. Format: `[YYYY-MM-DD] <file(s) changed> — <what changed and why>`
 
 ---
 
 ## 2026-03
+
+### 2026-03-25 — Xibi steps 01–05 merged
+
+[2026-03-25] `xibi/router.py`, `xibi/__init__.py`, `tests/test_router.py` — **Step 01: get_model() Router.** Core model routing function with OllamaClient and GeminiClient, specialty/effort-based selection, fallback chain, config validation. 28 tests passing.
+
+[2026-03-25] `xibi/react.py`, `xibi/types.py`, `tests/test_router.py` — **Step 02: ReAct Reasoning Loop.** P-D-A-R loop with Step dataclass, scratchpad compression (last 2 full, older one-liners), repeat/stuck detection (>60% word overlap), JSON parse fallback + recovery, timeout + max_steps circuit breakers. ReActResult typed return.
+
+[2026-03-25] `xibi/skills/registry.py`, `xibi/executor.py`, `tests/test_memory.py` — **Step 03: Skill Registry + Executor.** Manifest scanning, get_tool_meta(), min_tier gate, plan validation (fail-closed), subprocess/HTTP tool invocation, error recovery.
+
+[2026-03-25] `xibi/routing/control_plane.py`, `xibi/routing/__init__.py`, `xibi/react.py`, `tests/test_control_plane.py` — **Step 04: Control Plane Router.** ControlPlaneRouter with regex patterns for greet/status_check/reset/capability_check/update_assistant_name/update_user_name. Fail-closed extractor (returns None → no match). Integrated into react.run() as optional first-pass router. 13 tests.
+
+[2026-03-25] `xibi/routing/shadow.py`, `xibi/routing/__init__.py`, `xibi/react.py`, `tests/test_shadow.py` — **Step 05: Shadow Matcher (BM25 Router).** Pure-Python BM25 scorer against skill manifest examples. Normalised confidence via self-score. Three-tier routing: score ≥0.85 → direct tool dispatch (skip ReAct), 0.65–0.85 → hint injected into ReAct context, <0.65 → fall through. load_manifests() globs skills_dir/*/manifest.json. Integrated into react.run() after control plane, before ReAct loop. 17 tests. **Known gap:** direct dispatch passes empty tool_input `{}` — BM25 identifies the tool but not the parameters. Parameter extraction for direct matches deferred to step-09 (MessageModeClassifier redesign).
+
+### 2026-03-23
 
 ### 2026-03-23
 
