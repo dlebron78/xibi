@@ -18,6 +18,38 @@ _(Jules: drop new items here during implementation. Cowork triages into Active o
 
 ---
 
+## Tier 3 — Scale concerns (backlog until multi-user)
+
+- [P2] [tech-debt] **Three-tier routing confidence fusion** — control_plane, shadow, and classifier output independent scores that are never combined. A query can false-positive on control plane (e.g. "clear my inbox" → reset intent) and silently eat the real request. Fix: unified `route_query()` that blends all three scores before deciding. Architectural rework — schedule when routing misroutes become measurable.
+
+- [P2] [tech-debt] **SQLite connection pooling and WAL mode** — concurrent reads+writes from Telegram poller, heartbeat, and ReAct are not locked. Fine for one user, race conditions at two. Fix: WAL mode + `busy_timeout` + connection pool. Schedule before multi-user deployment.
+
+- [P2] [tech-debt] **Skill manifest hot-reload** — manifests are loaded once at startup. A deployed manifest change requires a restart. Fix: hash manifests on startup, use watchdog to detect changes and reload without restart.
+
+- [P2] [tech-debt] **BM25 tokenization memoization** — ShadowMatcher re-tokenizes every query on every call. Fix: cache tokenized query results with a small LRU cache (queries repeat in practice).
+
+---
+
+## Tier 4 — Tech debt (backlog until codebase stabilizes)
+
+- [P3] [tech-debt] **Standardize error return types** — functions return None, {}, error strings, or exceptions with no consistent pattern. Fix: adopt XibiError (introduced in step-14) across all modules.
+
+- [P3] [tech-debt] **Distributed tracing / request ID propagation** — impossible to follow a single user request through control_plane → shadow → ReAct → executor → tool in logs. Fix: generate a trace_id at the channel layer, thread it through all components, log it on every step. Pre-condition for production debugging.
+
+- [P3] [tech-debt] **Email classification batching** — heartbeat classifies emails one-at-a-time with one LLM call each. At 100 emails, that's 100 calls. Fix: batch 10 at a time with structured output. Also validate LLM response is one of {URGENT, DIGEST, NOISE} before acting on it.
+
+- [P3] [tech-debt] **Implement OpenAI, Anthropic, Groq clients in router.py** — three providers raise NotImplementedError at first use. Fix: implement or remove from config schema. Currently a silent landmine.
+
+- [P3] [tech-debt] **Manifest versioning** — no `version` field in tool manifest schema. If a tool signature changes, old cached calls are silently wrong. Fix: add version + changelog to manifest, reject calls against stale manifests.
+
+- [P3] [tech-debt] **Database backup and recovery strategy** — SQLite corruption = full outage. No automatic backup. Fix: periodic `VACUUM INTO backup_path`, integrity check on startup, alert if corrupted.
+
+- [P3] [tech-debt] **Telegram rate limiting** — no throttle on messages per chat_id. A user can trigger 100 ReAct loops in rapid succession. Fix: 1 message/sec per chat_id, queue overflow with backpressure message.
+
+- [P3] [tech-debt] **Async Telegram file handling** — file downloads block the main polling loop. Fix: move downloads to background worker thread.
+
+---
+
 ## Xibi Build Queue
 _Last groomed: 2026-03-25. Ordered by implementation dependency._
 
