@@ -22,6 +22,7 @@ Usage:
 
 from xibi.alerting.rules import RuleEngine
 from xibi.channels.telegram import TelegramAdapter
+from xibi.dashboard.app import DashboardConfig, create_app
 from xibi.db.migrations import SchemaManager
 from xibi.executor import Executor
 from xibi.heartbeat.poller import HeartbeatPoller
@@ -49,4 +50,6 @@ __all__ = [
     "RuleEngine",
     "HeartbeatPoller",
     "SchemaManager",
+    "create_app",
+    "DashboardConfig",
 ]
