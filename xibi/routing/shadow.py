@@ -4,7 +4,7 @@ import json
 import logging
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -15,6 +15,7 @@ class ShadowMatch:
     phrase: str  # corpus phrase that matched
     score: float  # normalised BM25 confidence 0.0–1.0
     tier: str  # "direct" (>=0.85) | "hint" (0.65–0.85) | "none" (<0.65)
+    tool_input: dict[str, str] = field(default_factory=dict)  # populated by extract_tool_input for direct matches
 
 
 class ShadowMatcher:
@@ -150,4 +151,27 @@ class ShadowMatcher:
             return None
 
         skill, tool, phrase = self.documents[best_idx]
-        return ShadowMatch(tool=tool, skill=skill, phrase=phrase, score=round(normalized_score, 3), tier=tier)
+        match = ShadowMatch(tool=tool, skill=skill, phrase=phrase, score=round(normalized_score, 3), tier=tier)
+
+        if tier == "direct":
+            match.tool_input = extract_tool_input(query, match)
+
+        return match
+
+
+def extract_tool_input(query: str, match: ShadowMatch) -> dict[str, str]:
+    """
+    Given a query and a direct ShadowMatch, extract the most likely tool input parameters
+    by parsing the query relative to the matched phrase.
+    """
+    phrase_tokens = re.findall(r"\b\w+\b", match.phrase.lower())
+    remainder = query
+
+    for token in phrase_tokens:
+        # Case-insensitive, whole-word only removal
+        remainder = re.sub(rf"\b{re.escape(token)}\b", "", remainder, flags=re.IGNORECASE, count=1)
+
+    remainder = remainder.strip().strip(".,?!;:")
+    if remainder:
+        return {"input": remainder}
+    return {}

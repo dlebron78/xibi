@@ -27,6 +27,7 @@ from xibi.executor import Executor
 from xibi.heartbeat.poller import HeartbeatPoller
 from xibi.react import run
 from xibi.router import get_model
+from xibi.routing.classifier import MessageModeClassifier, ModeScores
 from xibi.routing.control_plane import ControlPlaneRouter, RoutingDecision
 from xibi.routing.shadow import ShadowMatch, ShadowMatcher
 from xibi.skills.registry import SkillRegistry
@@ -39,6 +40,8 @@ __all__ = [
     "ReActResult",
     "SkillRegistry",
     "Executor",
+    "MessageModeClassifier",
+    "ModeScores",
     "ControlPlaneRouter",
     "RoutingDecision",
     "ShadowMatch",
