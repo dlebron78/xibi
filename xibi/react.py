@@ -150,7 +150,7 @@ def run(
         if match:
             if match.tier == "direct":
                 # Execute tool directly
-                tool_output = dispatch(match.tool, {}, skill_registry, executor=executor)
+                tool_output = dispatch(match.tool, match.tool_input, skill_registry, executor=executor)
                 # Use a reasonable default for answer from tool output
                 answer = (
                     tool_output.get("answer")
