@@ -78,7 +78,7 @@ def dispatch(
     return {"status": "ok", "message": "stub"}
 
 
-def _handle_intent(decision: RoutingDecision) -> str:
+def handle_intent(decision: RoutingDecision) -> str:
     """Return canned responses for control plane intents."""
     match decision.intent:
         case "greet":
@@ -125,7 +125,7 @@ def run(
     config: Config,
     skill_registry: list[dict[str, Any]],
     context: str = "",
-    step_callback: Callable[[str], None] | None = None,
+    step_callback: Callable[[Any], None] | None = None,
     trace_id: str | None = None,
     max_steps: int = 10,
     max_secs: int = 60,
@@ -139,7 +139,7 @@ def run(
         decision = control_plane.match(query)
         if decision.matched:
             return ReActResult(
-                answer=_handle_intent(decision),
+                answer=handle_intent(decision),
                 steps=[],
                 exit_reason="finish",
                 duration_ms=int((time.time() - start_time) * 1000),
@@ -151,12 +151,15 @@ def run(
             if match.tier == "direct":
                 # Execute tool directly
                 tool_output = dispatch(match.tool, {}, skill_registry, executor=executor)
-                # For direct matches, we don't have an LLM thought, so we just return the result
-                # but ReActResult expects an answer. If it's a direct tool call, we might not have a clean "answer"
-                # unless we format the tool output.
-                # However, the goal is to skip ReAct loop.
+                # Use a reasonable default for answer from tool output
+                answer = (
+                    tool_output.get("answer")
+                    or tool_output.get("message")
+                    or tool_output.get("content")
+                    or str(tool_output)
+                )
                 return ReActResult(
-                    answer=str(tool_output.get("content", tool_output.get("message", tool_output))),
+                    answer=str(answer),
                     steps=[],
                     exit_reason="finish",
                     duration_ms=int((time.time() - start_time) * 1000),
@@ -187,9 +190,6 @@ def run(
         # Construct prompt
         compressed_pad = compress_scratchpad(scratchpad)
         prompt = f"Original Query: {query}\nContext: {context}\nScratchpad:\n{compressed_pad}\n\nNext Step (JSON):"
-
-        if step_callback:
-            step_callback(f"Thinking (Step {step_num})...")
 
         step_start_time = time.time()
         try:
@@ -247,6 +247,9 @@ def run(
             tool_output = dispatch(step.tool, step.tool_input, skill_registry, executor=executor)
             step.tool_output = tool_output
             scratchpad.append(step)
+
+            if step_callback:
+                step_callback(step)
 
             if tool_output.get("status") == "error":
                 consecutive_errors += 1

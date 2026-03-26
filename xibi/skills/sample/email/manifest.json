@@ -1,0 +1,31 @@
+{
+  "name": "email",
+  "description": "Manage your emails",
+  "tools": [
+    {
+      "name": "list_emails",
+      "description": "List recent unread emails",
+      "examples": [
+        "check my email",
+        "what emails do I have",
+        "any new messages",
+        "show unread",
+        "what's in my inbox"
+      ],
+      "input_schema": {"max_results": {"type": "integer", "default": 5}},
+      "output_type": "raw"
+    },
+    {
+      "name": "triage_email",
+      "description": "Summarise and categorise emails by urgency",
+      "examples": [
+        "triage my inbox",
+        "which emails need attention",
+        "prioritise my email",
+        "what should I respond to first"
+      ],
+      "input_schema": {},
+      "output_type": "raw"
+    }
+  ]
+}
