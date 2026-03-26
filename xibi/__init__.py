@@ -20,6 +20,7 @@ Usage:
     )
 """
 
+from xibi.channels.telegram import TelegramAdapter
 from xibi.executor import Executor
 from xibi.react import run
 from xibi.router import get_model
@@ -31,6 +32,7 @@ from xibi.types import ReActResult
 __all__ = [
     "get_model",
     "run",
+    "TelegramAdapter",
     "ReActResult",
     "SkillRegistry",
     "Executor",
