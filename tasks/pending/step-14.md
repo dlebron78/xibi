@@ -339,3 +339,86 @@ This makes it immediately visible when a provider or tool is in backoff.
 - Circuit breaker state table created via `_ensure_table()` — NOT via the migration
   framework (avoids coupling). Add to migrations in a later cleanup step.
 - No new external dependencies
+
+---
+
+## Implementation caveats (build these correctly first time)
+
+### Circuit breaker — failure classification dependency
+
+The circuit breaker threshold counts ALL failures. If the 5 failures that open the
+circuit are all transient (brief network blip), the circuit opens on a healthy
+provider for 60 seconds. This causes false "circuit open" errors.
+
+**Required:** Only count `FailureType.PERSISTENT` failures toward the open threshold.
+Transient failures should increment a separate `transient_count` but not open the circuit.
+This requires step-11b (failure classification) to be merged first, OR implement
+`FailureType` inline here.
+
+```python
+def record_failure(self, failure_type: str = "persistent") -> None:
+    if failure_type == "persistent":
+        failures = self._increment_failure()
+        if failures >= self.config.failure_threshold:
+            self._open()
+    else:
+        # Transient — log it but don't count toward circuit opening
+        self._increment_transient()
+```
+
+### Per-tool timeout — ThreadPoolExecutor zombie threads
+
+`concurrent.futures.ThreadPoolExecutor` cannot forcibly kill a thread. When the
+timeout fires, the caller gets the error and moves on, but the thread keeps running
+until the tool finishes naturally. With many concurrent timeouts, zombie threads
+accumulate.
+
+**Mitigation (implement this):** Cap the executor's max_workers and add a thread
+count check before submitting:
+
+```python
+_executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)  # global, not per-call
+
+def _execute_with_timeout(self, tool_name, params, timeout):
+    # Check thread saturation before submitting
+    running = len([t for t in _executor._threads if t.is_alive()])
+    if running >= 6:  # 75% capacity — leave headroom
+        return {"status": "error", "error": "Tool executor at capacity, retry shortly"}
+    future = _executor.submit(self._execute_inner, tool_name, params)
+    ...
+```
+
+Log zombie thread count periodically so the dashboard can surface it.
+
+### Configurable timeouts
+
+All timeout values must be configurable, not hardcoded. Add to `~/.xibi/config.json`:
+
+```json
+{
+  "timeouts": {
+    "tool_default_secs": 15,
+    "llm_fast_secs": 10,
+    "llm_think_secs": 45,
+    "llm_review_secs": 120,
+    "health_check_secs": 2,
+    "circuit_recovery_secs": 60
+  }
+}
+```
+
+Read via `Config` dataclass, fall back to hardcoded defaults if not present.
+This makes them tunable per-deployment without code changes.
+
+### Dead man's switch — do NOT implement
+
+A background thread writing a heartbeat timestamp every 30s was considered and
+rejected for the following reasons:
+- Python GIL / GC pauses can cause false "system partitioned" alerts on a healthy system
+- If the network is actually down, the alert can't be delivered anyway (Telegram dead)
+- The only consumer is local SQLite, which nobody monitors in real time
+- Threshold tuning is a maintenance trap (too tight = false alarms, too loose = blind spot)
+
+Instead: surface connectivity state reactively — when a provider call fails, log it
+with `ErrorCategory.PROVIDER_DOWN`. Dashboard shows recent provider errors. This gives
+the same visibility without the false alarm risk.

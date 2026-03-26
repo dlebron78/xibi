@@ -183,3 +183,129 @@ def test_watermark_race_condition_safe(tmp_path):
 - No new dependencies
 - Backward compatible — no interface changes
 - All existing tests must continue to pass
+
+---
+
+## Fix 4: Enable WAL mode on all SQLite connections
+
+### Problem
+
+SQLite's default journal mode is DELETE (rollback journal). On ungraceful shutdown
+(SIGKILL, power loss), in-progress writes can corrupt the database. WAL mode is
+dramatically more crash-resilient and improves concurrent read performance 3-5x.
+
+### Fix
+
+In `xibi/db/migrations.py`, enable WAL mode immediately after opening any connection:
+
+```python
+def _get_conn(self) -> sqlite3.Connection:
+    conn = sqlite3.connect(self.db_path, timeout=10, check_same_thread=False)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA wal_autocheckpoint=1000")  # checkpoint every 1000 pages
+    conn.execute("PRAGMA busy_timeout=5000")         # 5s retry on lock before error
+    return conn
+```
+
+Apply the same pragmas in `xibi/circuit_breaker.py`, `xibi/heartbeat/poller.py`,
+and anywhere else that opens a SQLite connection directly. Create a shared helper:
+
+```python
+# xibi/db/__init__.py
+def open_db(path: Path) -> sqlite3.Connection:
+    """Open a SQLite connection with WAL mode and sensible defaults."""
+    conn = sqlite3.connect(path, timeout=10, check_same_thread=False)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA wal_autocheckpoint=1000")
+    conn.execute("PRAGMA busy_timeout=5000")
+    return conn
+```
+
+All callers use `open_db()` instead of `sqlite3.connect()` directly.
+
+### WAL file cleanup
+
+WAL mode creates `.db-wal` and `.db-shm` sidecar files. These are normal and
+auto-cleaned on graceful shutdown. Add to `.gitignore`:
+```
+*.db-wal
+*.db-shm
+```
+
+---
+
+## Fix 5: Telegram message idempotency (replace offset-first with seen-message-id)
+
+### Problem
+
+Writing offset before processing = messages skipped on crash.
+Writing offset after processing = messages duplicated on crash.
+Neither is correct.
+
+### Fix
+
+Store processed message IDs in SQLite instead of relying on offset ordering:
+
+```python
+def _is_already_processed(self, conn: sqlite3.Connection, message_id: int) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM processed_messages WHERE message_id = ?", (message_id,)
+    ).fetchone()
+    return row is not None
+
+def _mark_processed(self, conn: sqlite3.Connection, message_id: int) -> None:
+    conn.execute(
+        "INSERT OR IGNORE INTO processed_messages (message_id, processed_at) VALUES (?, ?)",
+        (message_id, datetime.utcnow().isoformat())
+    )
+```
+
+Add `processed_messages` table to DB migrations (bump SCHEMA_VERSION):
+
+```sql
+CREATE TABLE IF NOT EXISTS processed_messages (
+    message_id   INTEGER PRIMARY KEY,
+    processed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+Processing flow:
+```python
+for update in updates:
+    msg_id = update["message"]["message_id"]
+    with conn:
+        if self._is_already_processed(conn, msg_id):
+            continue  # Already handled — skip safely
+        # Process message
+        self._handle_message(update)
+        # Mark done atomically with processing
+        self._mark_processed(conn, msg_id)
+```
+
+TTL cleanup: purge `processed_messages` rows older than 7 days in a nightly job
+(no need to keep them forever — Telegram won't re-deliver anything older than 24h).
+
+### Caveats documented in code
+
+Add a comment:
+```python
+# NOTE: This table grows ~N rows/day where N = daily message volume.
+# Rows older than 7 days are safe to delete — Telegram max re-delivery window is 24h.
+# TTL cleanup runs nightly via heartbeat poller.
+```
+
+---
+
+## Updated files list
+
+- `xibi/react.py` — Fix 1
+- `xibi/router.py` — Fix 2
+- `xibi/heartbeat/poller.py` — Fix 3, Fix 5
+- `xibi/alerting/rules.py` — Fix 3
+- `xibi/db/__init__.py` — Fix 4 (open_db helper)
+- `xibi/db/migrations.py` — Fix 4 (WAL pragmas), Fix 5 (processed_messages table)
+- `xibi/channels/telegram.py` — Fix 5
+- `tests/test_react.py` — Fix 1 test
+- `tests/test_router.py` — Fix 2 test
+- `tests/test_poller.py` — Fix 3 test
+- `tests/test_telegram.py` — Fix 5 test
