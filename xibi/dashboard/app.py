@@ -4,10 +4,10 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-
 from typing import Any
+
 import psutil
-from flask import Flask, jsonify, render_template, Response
+from flask import Flask, jsonify, render_template
 
 from xibi.dashboard import queries
 
