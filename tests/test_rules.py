@@ -118,3 +118,100 @@ def test_log_signal_deduplication(tmp_path):
         cursor = conn.execute("SELECT COUNT(*) FROM signals")
         count = cursor.fetchone()[0]
     assert count == 1
+
+
+def test_load_triage_rules(tmp_path):
+    db_path = tmp_path / "test.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE ledger (id TEXT, category TEXT, content TEXT, entity TEXT, status TEXT)")
+        conn.execute(
+            "INSERT INTO ledger (id, category, content, entity, status) VALUES (?, ?, ?, ?, ?)",
+            ("1", "triage_rule", "content1", "entity1", "urgent"),
+        )
+    re = RuleEngine(db_path)
+    rules = re.load_triage_rules()
+    assert rules == {"entity1": "URGENT"}
+
+
+def test_log_background_event(tmp_path):
+    db_path = tmp_path / "test.db"
+    re = RuleEngine(db_path)
+    # Ensure ledger table exists (it might not be created by ensure_tables if it's external)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS ledger (id TEXT, category TEXT, content TEXT, entity TEXT, status TEXT)"
+        )
+    re.log_background_event("some content", "some topic")
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute("SELECT content, entity FROM ledger WHERE category='background_event'").fetchone()
+        assert row[0] == "some content"
+        assert row[1] == "some topic"
+
+
+def test_was_digest_sent_since_invalid_format(tmp_path):
+    db_path = tmp_path / "test.db"
+    re = RuleEngine(db_path)
+    re._watermark_cache = "invalid date"
+    assert re.was_digest_sent_since(datetime.now()) is False
+
+
+def test_log_signal_no_ref_id(tmp_path):
+    db_path = tmp_path / "test.db"
+    re = RuleEngine(db_path)
+    re.log_signal("src", "topic", "ent", "type", "content", None, "refsrc")
+    with sqlite3.connect(db_path) as conn:
+        count = conn.execute("SELECT COUNT(*) FROM signals").fetchone()[0]
+        assert count == 1
+
+
+def test_evaluate_email_dict_fields(tmp_path):
+    db_path = tmp_path / "test.db"
+    re = RuleEngine(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE rules SET condition = ?, message = ? WHERE id = 1",
+            ('{"field": "from", "contains": "apple"}', "From {from}"),
+        )
+    re = RuleEngine(db_path)
+    email = {"from": {"name": "Apple", "addr": "jobs@apple.com"}, "subject": "Hi"}
+    res = re.evaluate_email(email, re.load_rules("email_alert"))
+    assert res == "From Apple"
+
+
+def test_log_signal_deduplication_same_day(tmp_path):
+    db_path = tmp_path / "test.db"
+    re = RuleEngine(db_path)
+    re.log_signal("src", "topic", "ent", "type", "content", "ref1", "refsrc")
+    re.log_signal("src", "topic", "ent", "type", "content", "ref1", "refsrc")
+    with sqlite3.connect(db_path) as conn:
+        count = conn.execute("SELECT COUNT(*) FROM signals").fetchone()[0]
+        assert count == 1
+
+
+def test_rules_prewarm_bad_json(tmp_path):
+    db_path = tmp_path / "test.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS rules (id INTEGER PRIMARY KEY, type TEXT, condition TEXT, message TEXT, enabled INTEGER)"
+        )
+        conn.execute(
+            "INSERT INTO rules (type, condition, message, enabled) VALUES (?, ?, ?, ?)",
+            ("email_alert", "invalid { json", "msg", 1),
+        )
+    # Should not crash
+    re = RuleEngine(db_path)
+    assert len(re._rule_cache) == 0
+
+
+def test_rule_engine_exceptions_silently_handled(tmp_path, mocker):
+    db_path = tmp_path / "test.db"
+    re = RuleEngine(db_path)
+    # Mock connect to raise exception
+    mocker.patch("sqlite3.connect", side_effect=Exception("DB Error"))
+
+    re.log_triage("1", "s", "sub", "v")
+    re.update_watermark()
+    re.mark_seen("id")
+    re.log_signal("s", "t", "e", "ty", "c", "r", "rs")
+    re.log_background_event("c", "t")
+    # All these should just log warning and not raise
