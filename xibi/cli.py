@@ -4,7 +4,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from xibi.executor import LocalHandlerExecutor
 from xibi.react import handle_intent, run
@@ -18,7 +18,7 @@ def load_config_with_env_fallback() -> Config:
     config_path = Path.home() / ".xibi" / "config.json"
     if config_path.exists():
         with open(config_path) as f:
-            return json.load(f)
+            return cast(Config, json.load(f))
 
     # Fallback to env vars
     gemini_key = os.environ.get("GEMINI_API_KEY")
