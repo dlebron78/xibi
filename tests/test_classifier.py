@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from unittest.mock import MagicMock
+
 from xibi.routing.classifier import MessageModeClassifier, ModeScores
 from xibi.routing.shadow import ShadowMatch, extract_tool_input
 
@@ -42,7 +43,9 @@ class TestMessageModeClassifier(unittest.TestCase):
 
     def test_shadow_direct_bumps_command_strongly(self):
         # 5. test_shadow_direct_bumps_command_strongly — mock shadow returning ShadowMatch(tier="direct", score=0.90, ...) → command >= 0.70, shadow_hit=True, shadow_tier="direct"
-        self.mock_shadow.match.return_value = ShadowMatch(tool="test", skill="test", phrase="test", score=0.90, tier="direct")
+        self.mock_shadow.match.return_value = ShadowMatch(
+            tool="test", skill="test", phrase="test", score=0.90, tier="direct"
+        )
         scores = self.clf.classify("test")
         self.assertGreaterEqual(scores.command, 0.70)
         self.assertTrue(scores.shadow_hit)
@@ -50,10 +53,14 @@ class TestMessageModeClassifier(unittest.TestCase):
 
     def test_shadow_hint_bumps_command_moderately(self):
         # 6. test_shadow_hint_bumps_command_moderately — mock shadow returning ShadowMatch(tier="hint", score=0.70, ...) → command bumped but less than direct; shadow_tier="hint"
-        self.mock_shadow.match.return_value = ShadowMatch(tool="test", skill="test", phrase="test", score=0.70, tier="hint")
+        self.mock_shadow.match.return_value = ShadowMatch(
+            tool="test", skill="test", phrase="test", score=0.70, tier="hint"
+        )
         scores_hint = self.clf.classify("test")
 
-        self.mock_shadow.match.return_value = ShadowMatch(tool="test", skill="test", phrase="test", score=0.90, tier="direct")
+        self.mock_shadow.match.return_value = ShadowMatch(
+            tool="test", skill="test", phrase="test", score=0.90, tier="direct"
+        )
         scores_direct = self.clf.classify("test")
 
         self.assertLess(scores_hint.command, scores_direct.command)
@@ -69,7 +76,9 @@ class TestMessageModeClassifier(unittest.TestCase):
 
     def test_dominant_command(self):
         # 8. test_dominant_command — query with strong command signal → dominant == "command"
-        self.mock_shadow.match.return_value = ShadowMatch(tool="list", skill="test", phrase="list", score=0.95, tier="direct")
+        self.mock_shadow.match.return_value = ShadowMatch(
+            tool="list", skill="test", phrase="list", score=0.95, tier="direct"
+        )
         scores = self.clf.classify("list my items")
         self.assertEqual(scores.dominant, "command")
 
@@ -81,7 +90,9 @@ class TestMessageModeClassifier(unittest.TestCase):
 
     def test_confidence_monotone(self):
         # 10. test_confidence_monotone — high BM25 + command keyword → confidence > 0.50
-        self.mock_shadow.match.return_value = ShadowMatch(tool="list", skill="test", phrase="list", score=0.95, tier="direct")
+        self.mock_shadow.match.return_value = ShadowMatch(
+            tool="list", skill="test", phrase="list", score=0.95, tier="direct"
+        )
         scores = self.clf.classify("list all files")
         # command: 0.3 (prior) + 0.15 (list keyword) + 0.4 (direct shadow) = 0.85
         # conversation: 0.3 (prior)
@@ -90,7 +101,9 @@ class TestMessageModeClassifier(unittest.TestCase):
 
     def test_scores_clamped(self):
         # 11. test_scores_clamped — no score exceeds 1.0 even with many command keywords
-        self.mock_shadow.match.return_value = ShadowMatch(tool="list", skill="test", phrase="list", score=0.95, tier="direct")
+        self.mock_shadow.match.return_value = ShadowMatch(
+            tool="list", skill="test", phrase="list", score=0.95, tier="direct"
+        )
         # command keywords: list, show, find, search, get, fetch
         scores = self.clf.classify("list show find search get fetch everything now")
         self.assertLessEqual(scores.command, 1.0)
@@ -116,7 +129,7 @@ class TestMessageModeClassifier(unittest.TestCase):
         scores = clf_no_shadow.classify("list things")
         self.assertIsInstance(scores, ModeScores)
 
-    def test_modeScores_fields(self):
+    def test_mode_scores_fields(self):
         # 15. test_modeScores_fields — check all fields (command, conversation, dominant, confidence, shadow_hit, shadow_tier) are present and correctly typed
         scores = self.clf.classify("test")
         self.assertIsInstance(scores.command, float)
@@ -147,6 +160,7 @@ class TestMessageModeClassifier(unittest.TestCase):
         match = ShadowMatch(tool="send_email", skill="email", phrase="send email", score=0.90, tier="direct")
         result = extract_tool_input(query, match)
         self.assertEqual(result["input"], "to bob about meeting")
+
 
 if __name__ == "__main__":
     unittest.main()

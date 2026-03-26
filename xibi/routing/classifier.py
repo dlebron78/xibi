@@ -8,27 +8,76 @@ if TYPE_CHECKING:
     from xibi.routing.shadow import ShadowMatch, ShadowMatcher
 
 DEFAULT_COMMAND_KEYWORDS = [
-    "list", "show", "find", "search", "get", "fetch", "send", "create",
-    "add", "delete", "remove", "update", "set", "check", "run", "execute",
-    "read", "write", "summarize", "schedule", "remind", "email", "calendar",
-    "file", "open", "close", "restart", "status", "ping",
+    "list",
+    "show",
+    "find",
+    "search",
+    "get",
+    "fetch",
+    "send",
+    "create",
+    "add",
+    "delete",
+    "remove",
+    "update",
+    "set",
+    "check",
+    "run",
+    "execute",
+    "read",
+    "write",
+    "summarize",
+    "schedule",
+    "remind",
+    "email",
+    "calendar",
+    "file",
+    "open",
+    "close",
+    "restart",
+    "status",
+    "ping",
 ]
 
 DEFAULT_CONVERSATION_KEYWORDS = [
-    "what", "why", "how", "who", "when", "where", "tell me", "explain",
-    "help", "can you", "could you", "would you", "is it", "are you",
-    "do you", "did you", "think", "feel", "opinion", "advice",
-    "thanks", "thank you", "hi", "hello", "bye", "good morning",
+    "what",
+    "why",
+    "how",
+    "who",
+    "when",
+    "where",
+    "tell me",
+    "explain",
+    "help",
+    "can you",
+    "could you",
+    "would you",
+    "is it",
+    "are you",
+    "do you",
+    "did you",
+    "think",
+    "feel",
+    "opinion",
+    "advice",
+    "thanks",
+    "thank you",
+    "hi",
+    "hello",
+    "bye",
+    "good morning",
 ]
+
 
 @dataclass
 class ModeScores:
-    command: float      # 0.0–1.0
-    conversation: float # 0.0–1.0
-    dominant: str       # "command" | "conversation"
-    confidence: float   # abs(command - conversation), 0.0–1.0
-    shadow_hit: bool    # True if ShadowMatcher contributed to the score
-    shadow_tier: str    # "direct" | "hint" | "none"
+    command: float  # 0.0–1.0
+    conversation: float  # 0.0–1.0
+    dominant: str  # "command" | "conversation"
+    confidence: float  # abs(command - conversation), 0.0–1.0
+    shadow_hit: bool  # True if ShadowMatcher contributed to the score
+    shadow_tier: str  # "direct" | "hint" | "none"
+
 
 class MessageModeClassifier:
     def __init__(
@@ -39,7 +88,9 @@ class MessageModeClassifier:
     ) -> None:
         self.shadow = shadow
         self.command_keywords = command_keywords if command_keywords is not None else DEFAULT_COMMAND_KEYWORDS
-        self.conversation_keywords = conversation_keywords if conversation_keywords is not None else DEFAULT_CONVERSATION_KEYWORDS
+        self.conversation_keywords = (
+            conversation_keywords if conversation_keywords is not None else DEFAULT_CONVERSATION_KEYWORDS
+        )
 
     def classify(self, query: str, shadow_match: ShadowMatch | None = None) -> ModeScores:
         # Step 1: Keyword scoring
