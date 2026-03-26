@@ -11,11 +11,17 @@ of silently returning empty results. Three interconnected concerns:
 
 This step is architectural: it changes how errors flow through the entire system.
 
+## Prerequisites
+
+Step 12 must be merged first (provides `open_db()` in `xibi/db/__init__.py`).
+Step 11b should be merged first (provides `FailureType` enum). If not yet merged,
+implement `FailureType` inline in `circuit_breaker.py` as described in Part 3.
+
 ---
 
 ## Part 1: Structured Error Events (`xibi/errors.py`)
 
-New file. All error types in one place.
+New file. All error types in one place. **Zero imports from other `xibi.*` modules.**
 
 ```python
 from __future__ import annotations
@@ -41,7 +47,7 @@ class XibiError:
     message: str                          # Human-readable, safe to show user
     component: str                        # e.g. "executor", "router", "telegram"
     detail: str = ""                      # Technical detail for logs, not user-facing
-    retryable: bool = True                # Whether caller should retry
+    retryable: bool = True
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def user_message(self) -> str:
@@ -61,7 +67,7 @@ class XibiError:
                 return "Something went wrong. Please try again."
 ```
 
-Export from `xibi/__init__.py` and `xibi/errors.py`.
+Export from `xibi/__init__.py`: `from xibi.errors import XibiError, ErrorCategory`.
 
 ---
 
@@ -69,74 +75,91 @@ Export from `xibi/__init__.py` and `xibi/errors.py`.
 
 ### Problem
 
-No timeout on individual tool execution. One hung tool burns the entire 60s ReAct budget.
+No timeout on individual tool execution. One hung tool burns the entire ReAct budget.
 
-### Fix
+### Fix — global executor, not per-call
 
-Wrap all tool dispatch in a `concurrent.futures.ThreadPoolExecutor` with a timeout:
+Use a **module-level** `ThreadPoolExecutor`. Do NOT create one per `_execute_with_timeout`
+call — that spawns and tears down a thread pool on every tool invocation, which is expensive
+and defeats zombie thread mitigation.
 
 ```python
 import concurrent.futures
 from xibi.errors import XibiError, ErrorCategory
 
-TOOL_TIMEOUT_SECS = 15  # default; overridable per-tool in manifest
+# Module-level — shared across all tool calls
+_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=8)
+_EXECUTOR_CAPACITY_WARNING = 6  # 75% of max_workers — warn before saturation
+
+TOOL_TIMEOUT_SECS = 15  # default; overridable per-tool in manifest via "timeout_secs"
+
 
 def _execute_with_timeout(self, tool_name: str, params: dict, timeout: int) -> dict:
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-        future = executor.submit(self._execute_inner, tool_name, params)
-        try:
-            return future.result(timeout=timeout)
-        except concurrent.futures.TimeoutError:
-            error = XibiError(
-                category=ErrorCategory.TIMEOUT,
-                message=f"Tool '{tool_name}' exceeded {timeout}s timeout",
-                component="executor",
-                retryable=False,
-            )
-            return {"status": "error", "error": error.user_message(), "_xibi_error": error}
+    # Check thread saturation before submitting — leave headroom for burst
+    running = sum(1 for t in _EXECUTOR._threads if t.is_alive())
+    if running >= _EXECUTOR_CAPACITY_WARNING:
+        # Log this — dashboard can surface it
+        logger.warning("executor_near_capacity", running=running, max=8)
+
+    future = _EXECUTOR.submit(self._execute_inner, tool_name, params)
+    try:
+        return future.result(timeout=timeout)
+    except concurrent.futures.TimeoutError:
+        # Thread keeps running until tool finishes naturally (Python limitation).
+        # The zombie clears itself when _execute_inner eventually returns.
+        error = XibiError(
+            category=ErrorCategory.TIMEOUT,
+            message=f"Tool '{tool_name}' exceeded {timeout}s timeout",
+            component="executor",
+            retryable=False,
+        )
+        return {"status": "error", "error": error.user_message(), "_xibi_error": error}
 ```
 
-Add `timeout` field to tool manifests (optional, defaults to 15):
-
+Add optional `timeout_secs` field to tool manifests (defaults to `TOOL_TIMEOUT_SECS`):
 ```json
-{
-  "name": "slow_tool",
-  "timeout_secs": 30
-}
+{ "name": "slow_tool", "timeout_secs": 30 }
+```
+
+Read timeout from manifest in `_execute_with_timeout`:
+```python
+timeout = self._manifest.get("timeout_secs", TOOL_TIMEOUT_SECS)
 ```
 
 ---
 
 ## Part 3: Circuit Breaker (`xibi/circuit_breaker.py`)
 
-New file. Simple, SQLite-backed circuit breaker.
+New file. SQLite-backed circuit breaker. Imports only `xibi.errors` and `xibi.db`.
 
 ```python
 from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-import sqlite3
 import time
+
+from xibi.db import open_db   # <-- use open_db() from step-12, not raw sqlite3.connect()
+from xibi.errors import XibiError, ErrorCategory
 
 
 class CircuitState(str, Enum):
-    CLOSED   = "closed"    # Normal operation
-    OPEN     = "open"      # Failing — not sending requests
-    HALF_OPEN = "half_open"  # Testing recovery
+    CLOSED    = "closed"     # Normal operation
+    OPEN      = "open"       # Failing — not sending requests
+    HALF_OPEN = "half_open"  # Testing recovery — one request allowed through
 
 
 @dataclass
 class CircuitBreakerConfig:
-    failure_threshold: int = 5      # Failures before opening
-    recovery_timeout_secs: int = 60 # Seconds before trying again (OPEN → HALF_OPEN)
-    success_threshold: int = 2      # Successes in HALF_OPEN to close
+    failure_threshold: int = 5        # Persistent failures before opening
+    recovery_timeout_secs: int = 60   # Seconds before OPEN → HALF_OPEN
+    success_threshold: int = 2        # Successes in HALF_OPEN before closing
 
 
 class CircuitBreaker:
     """
     SQLite-backed circuit breaker. Persists state across process restarts.
-    One breaker per component (e.g. "ollama", "gemini", "tool:send_email").
+    One breaker per component: "ollama", "gemini", "tool:send_email", etc.
     """
 
     def __init__(self, name: str, db_path: Path, config: CircuitBreakerConfig | None = None) -> None:
@@ -146,25 +169,71 @@ class CircuitBreaker:
         self._ensure_table()
 
     def _ensure_table(self) -> None:
-        with sqlite3.connect(self.db_path) as conn:
+        """Create table and upsert initial row for this breaker if not present."""
+        with open_db(self.db_path) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS circuit_breakers (
-                    name             TEXT PRIMARY KEY,
-                    state            TEXT DEFAULT 'closed',
-                    failure_count    INTEGER DEFAULT 0,
-                    success_count    INTEGER DEFAULT 0,
-                    last_failure_at  REAL,
-                    opened_at        REAL,
-                    updated_at       REAL
+                    name              TEXT PRIMARY KEY,
+                    state             TEXT NOT NULL DEFAULT 'closed',
+                    failure_count     INTEGER NOT NULL DEFAULT 0,
+                    transient_count   INTEGER NOT NULL DEFAULT 0,
+                    success_count     INTEGER NOT NULL DEFAULT 0,
+                    last_failure_at   REAL,
+                    opened_at         REAL,
+                    updated_at        REAL
                 )
             """)
+            # Upsert initial row so _get_state() always finds a row
+            conn.execute("""
+                INSERT OR IGNORE INTO circuit_breakers (name, updated_at)
+                VALUES (?, ?)
+            """, (self.name, time.time()))
+            conn.commit()
+
+    def _get_row(self) -> dict:
+        with open_db(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT state, failure_count, success_count, opened_at FROM circuit_breakers WHERE name = ?",
+                (self.name,)
+            ).fetchone()
+        return {"state": row[0], "failure_count": row[1], "success_count": row[2], "opened_at": row[3]}
+
+    def _set_state(self, state: CircuitState, *, opened_at: float | None = None) -> None:
+        with open_db(self.db_path) as conn:
+            conn.execute("""
+                UPDATE circuit_breakers
+                SET state = ?, opened_at = COALESCE(?, opened_at), updated_at = ?
+                WHERE name = ?
+            """, (state.value, opened_at, time.time(), self.name))
+            conn.commit()
+
+    def _increment_failure(self) -> int:
+        with open_db(self.db_path) as conn:
+            conn.execute("""
+                UPDATE circuit_breakers SET failure_count = failure_count + 1, updated_at = ?
+                WHERE name = ?
+            """, (time.time(), self.name))
+            conn.commit()
+            return conn.execute(
+                "SELECT failure_count FROM circuit_breakers WHERE name = ?", (self.name,)
+            ).fetchone()[0]
+
+    def _reset(self) -> None:
+        with open_db(self.db_path) as conn:
+            conn.execute("""
+                UPDATE circuit_breakers
+                SET state = 'closed', failure_count = 0, success_count = 0,
+                    opened_at = NULL, updated_at = ?
+                WHERE name = ?
+            """, (time.time(), self.name))
+            conn.commit()
 
     def is_open(self) -> bool:
         """True if requests should be blocked."""
-        state = self._get_state()
+        row = self._get_row()
+        state = CircuitState(row["state"])
         if state == CircuitState.OPEN:
-            # Check if recovery timeout has elapsed → transition to HALF_OPEN
-            opened_at = self._get_opened_at()
+            opened_at = row["opened_at"]
             if opened_at and (time.time() - opened_at) > self.config.recovery_timeout_secs:
                 self._set_state(CircuitState.HALF_OPEN)
                 return False  # Allow one test request through
@@ -172,101 +241,184 @@ class CircuitBreaker:
         return False
 
     def record_success(self) -> None:
-        state = self._get_state()
+        row = self._get_row()
+        state = CircuitState(row["state"])
         if state == CircuitState.HALF_OPEN:
-            successes = self._increment_success()
+            with open_db(self.db_path) as conn:
+                conn.execute("""
+                    UPDATE circuit_breakers SET success_count = success_count + 1, updated_at = ?
+                    WHERE name = ?
+                """, (time.time(), self.name))
+                conn.commit()
+                successes = conn.execute(
+                    "SELECT success_count FROM circuit_breakers WHERE name = ?", (self.name,)
+                ).fetchone()[0]
             if successes >= self.config.success_threshold:
-                self._reset()  # Close the circuit
+                self._reset()
         elif state == CircuitState.CLOSED:
-            self._reset_failure_count()
+            # Reset failure streak on success
+            with open_db(self.db_path) as conn:
+                conn.execute("""
+                    UPDATE circuit_breakers SET failure_count = 0, updated_at = ? WHERE name = ?
+                """, (time.time(), self.name))
+                conn.commit()
 
-    def record_failure(self) -> None:
-        failures = self._increment_failure()
-        state = self._get_state()
-        if state in (CircuitState.CLOSED, CircuitState.HALF_OPEN):
-            if failures >= self.config.failure_threshold:
-                self._open()
+    def record_failure(self, failure_type: str = "persistent") -> None:
+        """
+        failure_type: "persistent" (counts toward opening) or "transient" (logged, not counted).
+        Transient = brief network blip, bad JSON, recoverable. Persistent = provider down.
+        If step-11b FailureType enum is available, pass failure_type=failure_type.value.
+        """
+        if failure_type == "persistent":
+            failures = self._increment_failure()
+            row = self._get_row()
+            state = CircuitState(row["state"])
+            if state in (CircuitState.CLOSED, CircuitState.HALF_OPEN):
+                if failures >= self.config.failure_threshold:
+                    self._set_state(CircuitState.OPEN, opened_at=time.time())
+        else:
+            # Transient — log but don't open circuit
+            with open_db(self.db_path) as conn:
+                conn.execute("""
+                    UPDATE circuit_breakers SET transient_count = transient_count + 1, updated_at = ?
+                    WHERE name = ?
+                """, (time.time(), self.name))
+                conn.commit()
 
     def get_status(self) -> dict:
-        """Return current state for health checks and dashboard."""
-        ...
+        """Return current state dict for health checks and dashboard."""
+        row = self._get_row()
+        return {
+            "name": self.name,
+            "state": row["state"],
+            "failure_count": row["failure_count"],
+            "success_count": row["success_count"],
+            "opened_at": row["opened_at"],
+        }
 ```
 
 ### Integration points
 
-Wire circuit breakers into:
+Wire into **`router.py`** — one breaker per provider:
+```python
+breaker = CircuitBreaker("ollama", db_path=config.db_path)
+if breaker.is_open():
+    raise XibiError(category=ErrorCategory.CIRCUIT_OPEN, component="ollama",
+                    message="ollama circuit open", retryable=False)
+try:
+    result = ollama_client.generate(...)
+    breaker.record_success()
+except ProviderDownError:
+    breaker.record_failure("persistent")
+    raise
+except TransientError:
+    breaker.record_failure("transient")
+    raise
+```
 
-1. **`router.py`** — one breaker per provider (`"ollama"`, `"gemini"`, etc.):
-   ```python
-   breaker = CircuitBreaker("ollama", db_path=config.db_path)
-   if breaker.is_open():
-       raise XibiError(category=ErrorCategory.CIRCUIT_OPEN, component="ollama", ...)
-   try:
-       result = ollama_client.generate(...)
-       breaker.record_success()
-   except Exception:
-       breaker.record_failure()
-       raise
-   ```
-
-2. **`executor.py`** — one breaker per tool name:
-   ```python
-   breaker = CircuitBreaker(f"tool:{tool_name}", db_path=config.db_path)
-   if breaker.is_open():
-       return {"status": "error", "error": XibiError(ErrorCategory.CIRCUIT_OPEN, ...).user_message()}
-   ```
+Wire into **`executor.py`** — one breaker per tool:
+```python
+breaker = CircuitBreaker(f"tool:{tool_name}", db_path=config.db_path)
+if breaker.is_open():
+    error = XibiError(category=ErrorCategory.CIRCUIT_OPEN, component=f"tool:{tool_name}",
+                      message=f"{tool_name} is temporarily disabled", retryable=False)
+    return {"status": "error", "error": error.user_message(), "_xibi_error": error}
+```
 
 ---
 
-## Part 4: Error Transparency in ReAct and CLI
+## Part 4: Configurable Timeouts via `Config`
 
-### ReAct (`react.py`)
+The `Config` TypedDict in `xibi/router.py` currently has `models` and `providers` keys.
+**Extend it** with an optional `timeouts` key (do not break existing configs that lack it):
 
-When a step fails, attach the `XibiError` to the step so callers can see it:
+```python
+class TimeoutsConfig(TypedDict, total=False):
+    tool_default_secs: int      # default: 15
+    llm_fast_secs: int          # default: 10
+    llm_think_secs: int         # default: 45
+    llm_review_secs: int        # default: 120
+    health_check_secs: int      # default: 2
+    circuit_recovery_secs: int  # default: 60
+
+class Config(TypedDict, total=False):
+    models: dict[str, dict[str, RoleConfig]]
+    providers: dict[str, ProviderConfig]
+    timeouts: TimeoutsConfig    # NEW — optional, falls back to defaults if absent
+```
+
+Add a helper to `router.py`:
+```python
+_TIMEOUT_DEFAULTS: TimeoutsConfig = {
+    "tool_default_secs": 15,
+    "llm_fast_secs": 10,
+    "llm_think_secs": 45,
+    "llm_review_secs": 120,
+    "health_check_secs": 2,
+    "circuit_recovery_secs": 60,
+}
+
+def get_timeout(config: Config, key: str) -> int:
+    return config.get("timeouts", {}).get(key, _TIMEOUT_DEFAULTS[key])
+```
+
+Use `get_timeout(config, "tool_default_secs")` in executor, `get_timeout(config, "circuit_recovery_secs")`
+in `CircuitBreakerConfig`, etc. Add `timeouts` block to `config.example.json`.
+
+---
+
+## Part 5: Error Transparency in ReAct and Callers
+
+### `xibi/types.py` — extend `Step` and `ReActResult`
 
 ```python
 @dataclass
 class Step:
     ...
-    error: XibiError | None = None  # NEW — populated on failure
-```
+    error: XibiError | None = None   # NEW — populated on tool/parse failure
 
-When `exit_reason == "error"`, populate `ReActResult.error_summary`:
-
-```python
 @dataclass
 class ReActResult:
     ...
     error_summary: list[XibiError] = field(default_factory=list)  # NEW
+
+    def user_facing_failure_message(self) -> str:
+        """
+        Returns a single user-safe string summarising the failure.
+        Called by CLI and Telegram when answer is empty.
+        """
+        if not self.error_summary:
+            match self.exit_reason:
+                case "timeout":
+                    return "That took too long. Try a simpler request."
+                case "max_steps":
+                    return "I hit my reasoning limit without a clear answer. Try breaking the request into smaller parts."
+                case _:
+                    return "Something went wrong. Please try again."
+        # Surface the most recent / highest-priority error
+        err = self.error_summary[-1]
+        return err.user_message()
 ```
 
-Collect errors from steps:
+Collect errors in `react.py` after the loop:
 ```python
-result = ReActResult(answer="", steps=scratchpad, exit_reason="error", ...)
-result.error_summary = [s.error for s in scratchpad if s.error]
-return result
+result.error_summary = [s.error for s in scratchpad if s.error is not None]
 ```
 
 ### CLI (`cli.py`)
 
-Surface errors to the terminal:
-
 ```python
 result = react.run(query, ...)
-if result.exit_reason == "error":
-    print(f"\n⚠ I ran into some trouble:")
-    for err in result.error_summary:
-        print(f"  [{err.category.value}] {err.user_message()}")
-    print("You can try rephrasing your request.")
-elif result.exit_reason == "timeout":
-    print("\n⏱ That took too long. Try a simpler request.")
-elif result.exit_reason == "max_steps":
-    print("\n🔄 I hit the reasoning limit without a clear answer. Try breaking the request into smaller parts.")
+if result.answer:
+    print(result.answer)
+elif result.exit_reason in ("error", "timeout", "max_steps"):
+    print(f"\n⚠  {result.user_facing_failure_message()}")
+    if result.error_summary:
+        for err in result.error_summary:
+            print(f"   [{err.category.value}] {err.detail or err.message}")
 ```
 
 ### Telegram (`channels/telegram.py`)
-
-Instead of sending nothing on failure, send the user a message:
 
 ```python
 result = react.run(query, ...)
@@ -276,56 +428,58 @@ elif result.exit_reason in ("error", "timeout", "max_steps"):
     self._send_message(chat_id, result.user_facing_failure_message())
 ```
 
-Add `user_facing_failure_message()` to `ReActResult`.
-
 ---
 
-## Part 5: Circuit Breaker State in Dashboard (`xibi/dashboard/queries.py`)
+## Part 6: Circuit Breaker State in Dashboard (`xibi/dashboard/queries.py`)
 
-Add endpoint `/circuit-breakers` returning current state of all breakers:
+Add query returning all circuit breaker rows:
 
-```json
-{
-  "breakers": [
-    {"name": "ollama", "state": "closed", "failures": 0},
-    {"name": "gemini", "state": "open", "failures": 7, "opens_at": "..."},
-    {"name": "tool:send_email", "state": "half_open", "failures": 3}
-  ]
-}
+```python
+def get_circuit_breaker_states(db_path: Path) -> list[dict]:
+    with open_db(db_path) as conn:
+        rows = conn.execute(
+            "SELECT name, state, failure_count, success_count, opened_at, updated_at FROM circuit_breakers"
+        ).fetchall()
+    return [{"name": r[0], "state": r[1], "failures": r[2], "successes": r[3],
+             "opened_at": r[4], "updated_at": r[5]} for r in rows]
 ```
 
-This makes it immediately visible when a provider or tool is in backoff.
+Wire to `/circuit-breakers` endpoint in the dashboard router.
 
 ---
 
 ## New files
 
 - `xibi/errors.py` — XibiError, ErrorCategory
+
 - `xibi/circuit_breaker.py` — CircuitBreaker, CircuitBreakerConfig, CircuitState
 
 ## Modified files
 
-- `xibi/executor.py` — per-tool timeout, circuit breaker, XibiError on failure
-- `xibi/router.py` — circuit breaker per provider, timeout wrapper
-- `xibi/react.py` — Step.error field, ReActResult.error_summary
-- `xibi/types.py` — Step and ReActResult updates
+- `xibi/router.py` — TimeoutsConfig, extend Config TypedDict, get_timeout() helper, circuit breaker per provider
+- `xibi/executor.py` — global _EXECUTOR, per-tool timeout, circuit breaker, XibiError on failure
+- `xibi/types.py` — Step.error field, ReActResult.error_summary, user_facing_failure_message()
+- `xibi/react.py` — collect error_summary from steps
 - `xibi/cli.py` — surface errors to terminal
 - `xibi/channels/telegram.py` — send failure messages instead of silence
-- `xibi/dashboard/queries.py` — circuit breaker state endpoint
+- `xibi/dashboard/queries.py` — circuit breaker state query
 - `xibi/__init__.py` — export XibiError, ErrorCategory
+- `config.example.json` — add timeouts block
 
 ## Tests: `tests/test_resilience.py`
 
-1. `test_tool_timeout_returns_error` — mock slow tool, verify timeout XibiError returned
-2. `test_circuit_opens_after_threshold` — 5 failures → circuit opens
-3. `test_circuit_half_open_after_recovery_timeout` — open → wait → half_open
-4. `test_circuit_closes_after_success_threshold` — 2 successes in half_open → closed
-5. `test_circuit_state_persists_across_instances` — open circuit survives process restart
-6. `test_react_exposes_error_summary` — failed steps populate ReActResult.error_summary
-7. `test_cli_prints_user_facing_error` — error result → terminal shows readable message
-8. `test_telegram_sends_failure_message` — error result → Telegram gets message not silence
-9. `test_provider_circuit_breaker_skips_provider` — open breaker → router skips that provider
-10. `test_xibi_error_user_message_safe` — all ErrorCategory values have safe user_message()
+1. `test_tool_timeout_returns_xibi_error` — mock slow tool, verify XibiError TIMEOUT returned
+2. `test_circuit_opens_after_persistent_failures` — 5 persistent failures → state=open
+3. `test_transient_failures_do_not_open_circuit` — 10 transient failures → state=closed
+4. `test_circuit_half_open_after_recovery_timeout` — open → mock time elapsed → is_open() False
+5. `test_circuit_closes_after_success_threshold` — 2 successes in HALF_OPEN → state=closed
+6. `test_circuit_state_persists_across_instances` — open circuit, create new instance, still open
+7. `test_react_collects_error_summary` — failed steps → ReActResult.error_summary populated
+8. `test_user_facing_failure_message_all_exit_reasons` — timeout / error / max_steps all return safe string
+9. `test_cli_prints_error_on_empty_answer` — error result → terminal shows readable message
+10. `test_telegram_sends_failure_message` — error result → _send_message called with safe string
+11. `test_get_timeout_falls_back_to_defaults` — config with no timeouts key → defaults used
+12. `test_circuit_upsert_idempotent` — two CircuitBreaker instances same name → single DB row
 
 ## Linting
 
@@ -335,90 +489,30 @@ This makes it immediately visible when a provider or tool is in backoff.
 ## Constraints
 
 - `xibi/errors.py` has zero imports from other `xibi.*` modules (no circular deps)
-- `xibi/circuit_breaker.py` imports only from `xibi.errors` (not react, router, etc.)
-- Circuit breaker state table created via `_ensure_table()` — NOT via the migration
-  framework (avoids coupling). Add to migrations in a later cleanup step.
+- `xibi/circuit_breaker.py` imports only from `xibi.errors` and `xibi.db`
+- `circuit_breaker.py` uses `open_db()` from `xibi.db` — NOT raw `sqlite3.connect()`
+- Circuit breaker table created via `_ensure_table()` — NOT via migrations.py (avoids coupling)
+- `_EXECUTOR` is module-level, not created per `_execute_with_timeout` call
 - No new external dependencies
 
 ---
 
-## Implementation caveats (build these correctly first time)
+## Implementation caveats
 
-### Circuit breaker — failure classification dependency
+### Zombie threads are unavoidable but bounded
 
-The circuit breaker threshold counts ALL failures. If the 5 failures that open the
-circuit are all transient (brief network blip), the circuit opens on a healthy
-provider for 60 seconds. This causes false "circuit open" errors.
+Python cannot forcibly kill a thread. When timeout fires, the caller continues but the
+thread runs until the tool finishes naturally. The global `_EXECUTOR` with `max_workers=8`
+bounds the blast radius. Log near-saturation warnings so the dashboard can surface it.
 
-**Required:** Only count `FailureType.PERSISTENT` failures toward the open threshold.
-Transient failures should increment a separate `transient_count` but not open the circuit.
-This requires step-11b (failure classification) to be merged first, OR implement
-`FailureType` inline here.
+### `is_open()` is not atomic across processes
 
-```python
-def record_failure(self, failure_type: str = "persistent") -> None:
-    if failure_type == "persistent":
-        failures = self._increment_failure()
-        if failures >= self.config.failure_threshold:
-            self._open()
-    else:
-        # Transient — log it but don't count toward circuit opening
-        self._increment_transient()
-```
-
-### Per-tool timeout — ThreadPoolExecutor zombie threads
-
-`concurrent.futures.ThreadPoolExecutor` cannot forcibly kill a thread. When the
-timeout fires, the caller gets the error and moves on, but the thread keeps running
-until the tool finishes naturally. With many concurrent timeouts, zombie threads
-accumulate.
-
-**Mitigation (implement this):** Cap the executor's max_workers and add a thread
-count check before submitting:
-
-```python
-_executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)  # global, not per-call
-
-def _execute_with_timeout(self, tool_name, params, timeout):
-    # Check thread saturation before submitting
-    running = len([t for t in _executor._threads if t.is_alive()])
-    if running >= 6:  # 75% capacity — leave headroom
-        return {"status": "error", "error": "Tool executor at capacity, retry shortly"}
-    future = _executor.submit(self._execute_inner, tool_name, params)
-    ...
-```
-
-Log zombie thread count periodically so the dashboard can surface it.
-
-### Configurable timeouts
-
-All timeout values must be configurable, not hardcoded. Add to `~/.xibi/config.json`:
-
-```json
-{
-  "timeouts": {
-    "tool_default_secs": 15,
-    "llm_fast_secs": 10,
-    "llm_think_secs": 45,
-    "llm_review_secs": 120,
-    "health_check_secs": 2,
-    "circuit_recovery_secs": 60
-  }
-}
-```
-
-Read via `Config` dataclass, fall back to hardcoded defaults if not present.
-This makes them tunable per-deployment without code changes.
+If two processes call `is_open()` simultaneously and both see OPEN with elapsed timeout,
+both set HALF_OPEN and both let a test request through. Xibi is single-process; this is
+acceptable. If multi-process is ever needed, wrap the check+set in a SQLite transaction.
 
 ### Dead man's switch — do NOT implement
 
-A background thread writing a heartbeat timestamp every 30s was considered and
-rejected for the following reasons:
-- Python GIL / GC pauses can cause false "system partitioned" alerts on a healthy system
-- If the network is actually down, the alert can't be delivered anyway (Telegram dead)
-- The only consumer is local SQLite, which nobody monitors in real time
-- Threshold tuning is a maintenance trap (too tight = false alarms, too loose = blind spot)
-
-Instead: surface connectivity state reactively — when a provider call fails, log it
-with `ErrorCategory.PROVIDER_DOWN`. Dashboard shows recent provider errors. This gives
-the same visibility without the false alarm risk.
+Rejected. Python GIL/GC pauses cause false alerts on healthy systems. If the network
+is down, the alert can't be delivered anyway. Surface connectivity failures reactively
+via `ErrorCategory.PROVIDER_DOWN` instead — the dashboard shows recent provider errors.
