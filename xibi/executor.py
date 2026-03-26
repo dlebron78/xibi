@@ -58,3 +58,51 @@ class Executor:
         finally:
             if tools_dir in sys.path:
                 sys.path.remove(tools_dir)
+
+
+class LocalHandlerExecutor(Executor):
+    def execute(self, tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+        # 1. Resolve skill
+        skill_name = self.registry.find_skill_for_tool(tool_name)
+        if not skill_name:
+            return {"status": "error", "message": f"Unknown tool: {tool_name}"}
+
+        skill_info = self.registry.skills[skill_name]
+        handler_file = skill_info.path / "handler.py"
+
+        if not handler_file.exists():
+            return super().execute(tool_name, tool_input)
+
+        # 2. Add skill dir to sys.path temporarily
+        skill_dir = str(skill_info.path)
+        sys.path.insert(0, skill_dir)
+
+        try:
+            # 3. Dynamic import and invoke
+            spec = importlib.util.spec_from_file_location(f"xibi.skills.{skill_name}.handler", handler_file)
+            if spec is None or spec.loader is None:
+                return {"status": "error", "message": f"Could not load handler for {skill_name}"}
+
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+
+            if not hasattr(module, tool_name):
+                return {"status": "error", "message": f"Unknown tool: {tool_name}"}
+
+            handler_func = getattr(module, tool_name)
+
+            # 4. Prepare params
+            params = tool_input.copy()
+            if self.workdir:
+                params["_workdir"] = str(self.workdir)
+
+            result = handler_func(params)
+            if isinstance(result, dict):
+                return result
+            return {"status": "error", "message": f"Tool '{tool_name}' returned non-dict result"}
+
+        except Exception as e:
+            return {"status": "error", "message": f"Execution error: {str(e)}"}
+        finally:
+            if skill_dir in sys.path:
+                sys.path.remove(skill_dir)
