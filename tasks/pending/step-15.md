@@ -15,6 +15,14 @@ mentioning Miami).
 
 ---
 
+> **Session key namespacing (from OpenClaw reference architecture):**
+> Session IDs use `{channel}:{id}:{scope}` format so future tooling can filter by channel
+> without regex guessing. Telegram: `telegram:{chat_id}:{YYYY-MM-DD}`. CLI: `cli:local`.
+> This prevents cross-channel contamination if both adapters run against the same DB
+> and enables clean channel-scoped queries: `SELECT * FROM session_turns WHERE session_id LIKE 'telegram:%'`.
+
+---
+
 ## New file: `xibi/session.py`
 
 ### `Turn` dataclass
@@ -168,7 +176,7 @@ self._sessions: dict[str, SessionContext] = {}
 # In message handler:
 def _get_session(self, chat_id: str) -> SessionContext:
     if chat_id not in self._sessions:
-        session_id = f"tg_{chat_id}_{date.today().isoformat()}"
+        session_id = f"telegram:{chat_id}:{date.today().isoformat()}"
         self._sessions[chat_id] = SessionContext(session_id, self.db_path)
     return self._sessions[chat_id]
 ```
@@ -191,7 +199,7 @@ session.add_turn(query, result)
 Maintain a single `SessionContext` for the duration of the CLI session:
 
 ```python
-session = SessionContext(session_id=f"cli_{int(time.time())}", db_path=config.db_path)
+session = SessionContext(session_id="cli:local", db_path=config.db_path)
 
 while True:
     query = input("xibi> ")
@@ -237,3 +245,4 @@ while True:
 - No circular imports: `session.py` imports from `xibi.types` and `xibi.db` only
 - Session state lives in SQLite only — no in-memory-only state that would be lost on restart
 - `get_context_block()` caps output at 2000 tokens (rough char estimate: 8000 chars)
+
