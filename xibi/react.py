@@ -10,6 +10,7 @@ from xibi.router import Config, get_model
 if TYPE_CHECKING:
     from xibi.executor import Executor
     from xibi.routing.control_plane import ControlPlaneRouter, RoutingDecision
+    from xibi.routing.shadow import ShadowMatcher
 from xibi.types import ReActResult, Step
 
 
@@ -130,6 +131,7 @@ def run(
     max_secs: int = 60,
     executor: Executor | None = None,
     control_plane: ControlPlaneRouter | None = None,
+    shadow: ShadowMatcher | None = None,
 ) -> ReActResult:
     start_time = time.time()
 
@@ -142,6 +144,26 @@ def run(
                 exit_reason="finish",
                 duration_ms=int((time.time() - start_time) * 1000),
             )
+
+    if shadow:
+        match = shadow.match(query)
+        if match:
+            if match.tier == "direct":
+                # Execute tool directly
+                tool_output = dispatch(match.tool, {}, skill_registry, executor=executor)
+                # For direct matches, we don't have an LLM thought, so we just return the result
+                # but ReActResult expects an answer. If it's a direct tool call, we might not have a clean "answer"
+                # unless we format the tool output.
+                # However, the goal is to skip ReAct loop.
+                return ReActResult(
+                    answer=str(tool_output.get("content", tool_output.get("message", tool_output))),
+                    steps=[],
+                    exit_reason="finish",
+                    duration_ms=int((time.time() - start_time) * 1000),
+                )
+            elif match.tier == "hint":
+                context = f"[Shadow hint: consider using {match.tool}]\n{context}"
+
     scratchpad: list[Step] = []
     consecutive_errors = 0
 

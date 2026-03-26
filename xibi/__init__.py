@@ -24,7 +24,18 @@ from xibi.executor import Executor
 from xibi.react import run
 from xibi.router import get_model
 from xibi.routing.control_plane import ControlPlaneRouter, RoutingDecision
+from xibi.routing.shadow import ShadowMatch, ShadowMatcher
 from xibi.skills.registry import SkillRegistry
 from xibi.types import ReActResult
 
-__all__ = ["get_model", "run", "ReActResult", "SkillRegistry", "Executor", "ControlPlaneRouter", "RoutingDecision"]
+__all__ = [
+    "get_model",
+    "run",
+    "ReActResult",
+    "SkillRegistry",
+    "Executor",
+    "ControlPlaneRouter",
+    "RoutingDecision",
+    "ShadowMatch",
+    "ShadowMatcher",
+]
