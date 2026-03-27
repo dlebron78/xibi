@@ -258,7 +258,7 @@ class HeartbeatPoller:
             with xibi.db.open_db(self.db_path) as conn:
                 # Check if already run today
                 cursor = conn.execute(
-                    "SELECT value FROM heartbeat_state WHERE key = 'last_telegram_cleanup_at'"
+                    "SELECT value FROM heartbeat_state WHERE key = 'ttl_cleanup_last_run'"
                 )
                 row = cursor.fetchone()
                 if row and row[0] == today:
@@ -267,7 +267,7 @@ class HeartbeatPoller:
                 logger.info("Cleaning up Telegram message cache...")
                 conn.execute("DELETE FROM processed_messages WHERE processed_at < datetime('now', '-7 days')")
                 conn.execute(
-                    "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('last_telegram_cleanup_at', ?)",
+                    "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('ttl_cleanup_last_run', ?)",
                     (today,),
                 )
         except Exception as e:
