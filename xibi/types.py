@@ -4,6 +4,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from xibi.errors import XibiError
+
 
 @dataclass
 class Step:
@@ -14,6 +16,7 @@ class Step:
     tool_output: dict[str, Any] = field(default_factory=dict)
     duration_ms: int = 0
     parse_warning: str | None = None
+    error: XibiError | None = None
 
     def full_text(self) -> str:
         """Full detail — injected for the 2 most recent steps."""
@@ -46,3 +49,23 @@ class ReActResult:
     steps: list[Step]
     exit_reason: Literal["finish", "ask_user", "max_steps", "timeout", "error"]
     duration_ms: int
+    error_summary: list[XibiError] = field(default_factory=list)
+
+    def user_facing_failure_message(self) -> str:
+        """
+        Returns a single user-safe string summarising the failure.
+        Called by CLI and Telegram when answer is empty.
+        """
+        if not self.error_summary:
+            match self.exit_reason:
+                case "timeout":
+                    return "That took too long. Try a simpler request."
+                case "max_steps":
+                    return (
+                        "I hit my reasoning limit without a clear answer. Try breaking the request into smaller parts."
+                    )
+                case _:
+                    return "Something went wrong. Please try again."
+        # Surface the most recent / highest-priority error
+        err = self.error_summary[-1]
+        return err.user_message()

@@ -1,42 +1,115 @@
+import concurrent.futures
 import importlib.util
+import logging
 import sys
 from pathlib import Path
 from typing import Any
 
+from xibi.circuit_breaker import CircuitBreaker, CircuitBreakerConfig, FailureType
+from xibi.errors import ErrorCategory, XibiError
+from xibi.router import Config, get_timeout
 from xibi.skills.registry import SkillRegistry
+
+logger = logging.getLogger(__name__)
+
+# Module-level — shared across all tool calls
+_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=8)
+_EXECUTOR_CAPACITY_WARNING = 6  # 75% of max_workers — warn before saturation
+
+TOOL_TIMEOUT_SECS = 15  # default; overridable per-tool in manifest via "timeout_secs"
 
 
 class Executor:
-    def __init__(self, registry: SkillRegistry, workdir: str | Path | None = None):
+    def __init__(self, registry: SkillRegistry, workdir: str | Path | None = None, config: Config | None = None):
         self.registry = registry
         self.workdir = Path(workdir) if workdir else None
+        self.config = config or {}
+        self.db_path = self.config.get("db_path") or Path.home() / ".xibi" / "data" / "xibi.db"
 
     def execute(self, tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
         # 1. Resolve skill
-        skill_name = None
         skill_name = tool_name if tool_name in self.registry.skills else self.registry.find_skill_for_tool(tool_name)
 
         if not skill_name:
-            return {"status": "error", "message": f"Unknown tool: {tool_name}"}
+            error = XibiError(
+                category=ErrorCategory.TOOL_NOT_FOUND,
+                message=f"I don't have a tool for that: {tool_name}",
+                component="executor",
+                retryable=False,
+            )
+            return {"status": "error", "error": error.user_message(), "_xibi_error": error}
 
         skill_info = self.registry.skills[skill_name]
+        tool_manifest: dict[str, Any] = next(
+            (t for t in skill_info.manifest.get("tools", []) if t.get("name") == tool_name), {}
+        )
 
-        # 2. Locate tool file
+        # 2. Circuit Breaker
+        cb_config = CircuitBreakerConfig(recovery_timeout_secs=get_timeout(self.config, "circuit_recovery_secs"))
+        breaker = CircuitBreaker(f"tool:{tool_name}", db_path=self.db_path, config=cb_config)
+        if breaker.is_open():
+            error = XibiError(
+                category=ErrorCategory.CIRCUIT_OPEN,
+                component=f"tool:{tool_name}",
+                message=f"{tool_name} is temporarily disabled",
+                retryable=False,
+            )
+            return {"status": "error", "error": error.user_message(), "_xibi_error": error}
+
+        # 3. Timeout settings
+        timeout = tool_manifest.get("timeout_secs") or get_timeout(self.config, "tool_default_secs")
+
+        # 4. Execute with timeout
+        try:
+            result = self._execute_with_timeout(tool_name, tool_input, timeout, skill_info)
+            if result.get("status") == "error" and "_xibi_error" in result:
+                breaker.record_failure(FailureType.PERSISTENT)
+            else:
+                breaker.record_success()
+            return result
+        except Exception as e:
+            breaker.record_failure(FailureType.PERSISTENT)
+            error = XibiError(
+                category=ErrorCategory.UNKNOWN,
+                message=str(e),
+                component="executor",
+            )
+            return {"status": "error", "error": error.user_message(), "_xibi_error": error}
+
+    def _execute_with_timeout(self, tool_name: str, params: dict, timeout: int, skill_info: Any) -> dict:
+        # Check thread saturation before submitting — leave headroom for burst
+        running = sum(1 for t in _EXECUTOR._threads if t.is_alive())
+        if running >= _EXECUTOR_CAPACITY_WARNING:
+            logger.warning("executor_near_capacity: running=%d, max=8", running)
+
+        future = _EXECUTOR.submit(self._execute_inner, tool_name, params, skill_info)
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            error = XibiError(
+                category=ErrorCategory.TIMEOUT,
+                message=f"Tool '{tool_name}' exceeded {timeout}s timeout",
+                component="executor",
+                retryable=False,
+            )
+            return {"status": "error", "error": error.user_message(), "_xibi_error": error}
+
+    def _execute_inner(self, tool_name: str, tool_input: dict[str, Any], skill_info: Any) -> dict[str, Any]:
+        # Locate tool file
         tool_file = skill_info.path / "tools" / f"{tool_name}.py"
         if not tool_file.exists():
             return {"status": "error", "message": f"Tool file not found: {tool_file}"}
 
-        # 3. Prepare params
+        # Prepare params
         params = tool_input.copy()
         if self.workdir:
             params["_workdir"] = str(self.workdir)
 
-        # 4. Add tools dir to sys.path temporarily
+        # Add tools dir to sys.path temporarily
         tools_dir = str(skill_info.path / "tools")
         sys.path.insert(0, tools_dir)
 
         try:
-            # 5. Dynamic import and invoke
             spec = importlib.util.spec_from_file_location(tool_name, tool_file)
             if spec is None or spec.loader is None:
                 return {"status": "error", "message": f"Could not load spec for tool: {tool_name}"}
@@ -53,7 +126,6 @@ class Executor:
             return {"status": "error", "message": f"Tool '{tool_name}' returned non-dict result"}
 
         except Exception as e:
-            # 6. Exception handling
             return {"status": "error", "message": f"Execution error: {str(e)}"}
         finally:
             if tools_dir in sys.path:
@@ -61,27 +133,21 @@ class Executor:
 
 
 class LocalHandlerExecutor(Executor):
-    def execute(self, tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
-        # 1. Resolve skill
-        skill_name = self.registry.find_skill_for_tool(tool_name)
-        if not skill_name:
-            return {"status": "error", "message": f"Unknown tool: {tool_name}"}
-
-        skill_info = self.registry.skills[skill_name]
+    def _execute_inner(self, tool_name: str, tool_input: dict[str, Any], skill_info: Any) -> dict[str, Any]:
         handler_file = skill_info.path / "handler.py"
 
         if not handler_file.exists():
-            return super().execute(tool_name, tool_input)
+            return super()._execute_inner(tool_name, tool_input, skill_info)
 
-        # 2. Add skill dir to sys.path temporarily
+        # Add skill dir to sys.path temporarily
         skill_dir = str(skill_info.path)
         sys.path.insert(0, skill_dir)
 
         try:
-            # 3. Dynamic import and invoke
-            spec = importlib.util.spec_from_file_location(f"xibi.skills.{skill_name}.handler", handler_file)
+            # Dynamic import and invoke
+            spec = importlib.util.spec_from_file_location(f"xibi.skills.{skill_info.name}.handler", handler_file)
             if spec is None or spec.loader is None:
-                return {"status": "error", "message": f"Could not load handler for {skill_name}"}
+                return {"status": "error", "message": f"Could not load handler for {skill_info.name}"}
 
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
@@ -91,7 +157,7 @@ class LocalHandlerExecutor(Executor):
 
             handler_func = getattr(module, tool_name)
 
-            # 4. Prepare params
+            # Prepare params
             params = tool_input.copy()
             if self.workdir:
                 params["_workdir"] = str(self.workdir)

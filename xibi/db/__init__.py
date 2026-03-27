@@ -1,9 +1,22 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 
 from xibi.db.migrations import SchemaManager, migrate
+
+
+@contextmanager
+def open_db(db_path: Path) -> Generator[sqlite3.Connection, None, None]:
+    """Context manager for SQLite connections."""
+    conn = sqlite3.connect(db_path)
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def init_workdir(workdir: Path) -> None:
@@ -31,4 +44,4 @@ def init_workdir(workdir: Path) -> None:
     migrate(db_path)
 
 
-__all__ = ["SchemaManager", "migrate", "init_workdir"]
+__all__ = ["SchemaManager", "migrate", "init_workdir", "open_db"]

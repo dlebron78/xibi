@@ -24,6 +24,7 @@ from xibi.alerting.rules import RuleEngine
 from xibi.channels.telegram import TelegramAdapter
 from xibi.dashboard.app import DashboardConfig, create_app
 from xibi.db.migrations import SchemaManager
+from xibi.errors import ErrorCategory, XibiError
 from xibi.executor import Executor
 from xibi.heartbeat.poller import HeartbeatPoller
 from xibi.react import run
@@ -38,6 +39,8 @@ from xibi.types import ReActResult
 __all__ = [
     "get_model",
     "run",
+    "XibiError",
+    "ErrorCategory",
     "TelegramAdapter",
     "ReActResult",
     "SkillRegistry",
