@@ -11,8 +11,11 @@ from xibi.db.migrations import SchemaManager, migrate
 
 @contextmanager
 def open_db(db_path: Path) -> Generator[sqlite3.Connection, None, None]:
-    """Context manager for SQLite connections."""
-    conn = sqlite3.connect(db_path)
+    """Context manager for SQLite connections with WAL mode for crash resilience."""
+    conn = sqlite3.connect(db_path, timeout=10, check_same_thread=False)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA wal_autocheckpoint=1000")
+    conn.execute("PRAGMA busy_timeout=5000")
     try:
         yield conn
     finally:
