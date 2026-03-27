@@ -6,7 +6,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3  # increment when adding new migrations
+SCHEMA_VERSION = 5  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -32,6 +32,8 @@ class SchemaManager:
             (1, "core tables: beliefs, ledger, traces", self._migration_1),
             (2, "app tables: tasks, conversation_history, pinned_topics, signals, shadow_phrases", self._migration_2),
             (3, "alerting tables: rules, triage_log, heartbeat_state, seen_emails", self._migration_3),
+            (4, "trust tables: trust_records", self._migration_4),
+            (5, "trust hardening: model_hash, last_failure_type", self._migration_5),
         ]
 
         for version, description, func in migrations:
@@ -204,6 +206,31 @@ class SchemaManager:
                 seen_at  DATETIME DEFAULT CURRENT_TIMESTAMP
             );
         """)
+
+    def _migration_4(self, conn: sqlite3.Connection) -> None:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS trust_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                specialty TEXT NOT NULL,
+                effort TEXT NOT NULL,
+                audit_interval INTEGER NOT NULL DEFAULT 5,
+                consecutive_clean INTEGER NOT NULL DEFAULT 0,
+                total_outputs INTEGER NOT NULL DEFAULT 0,
+                total_failures INTEGER NOT NULL DEFAULT 0,
+                last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(specialty, effort)
+            );
+        """)
+
+    def _migration_5(self, conn: sqlite3.Connection) -> None:
+        # Check if columns already exist to make it idempotent
+        cursor = conn.execute("PRAGMA table_info(trust_records)")
+        columns = [row[1] for row in cursor.fetchall()]
+
+        if "model_hash" not in columns:
+            conn.execute("ALTER TABLE trust_records ADD COLUMN model_hash TEXT")
+        if "last_failure_type" not in columns:
+            conn.execute("ALTER TABLE trust_records ADD COLUMN last_failure_type TEXT")
 
 
 def migrate(db_path: Path) -> list[int]:
