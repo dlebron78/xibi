@@ -16,6 +16,24 @@ _(Jules: drop new items here during implementation. Cowork triages into Active o
 
 - [P2] [feature] Conversation replay — record a real Telegram session, store as JSON fixture, replay deterministically in tests to catch regressions when model config changes. Depends on CLI channel adapter (Step 4).
 
+_Competitive research additions (2026-03-27 — from LangChain, LiteLLM, Semantic Router, Mem0, Zep, Langfuse, Aider, Claude Code audit):_
+
+- [P1] [feature] **Semantic routing fallback** — BM25 routing has no confidence floor for out-of-vocabulary queries. When `ShadowMatcher` confidence < threshold (suggest: 0.4), fall through to a fast LLM classifier (single call, structured output, <200ms) that maps query → skill. Semantic Router (aurelio-ai) and LangChain both use embedding-based routing as a secondary layer. Xibi's BM25 is brittle on paraphrased or novel queries. Upstream of step-16 entity extraction.
+
+- [P1] [feature] **Per-user Telegram session isolation** — `TelegramAdapter` currently uses one session namespace for all chats. Multiple Telegram users sharing the same instance cross-contaminate session context (e.g. user A's email thread bleeds into user B's query). Fix: namespace session key per `chat_id` (already in step-15 spec as `telegram:{chat_id}:{date}`). Add integration test: two separate chat_ids get separate session windows. Pre-condition for any multi-user deployment.
+
+- [P2] [feature] **Memory compression (Mem0/Zep style)** — after step-15 session window, the rolling turn window drops old turns verbatim. Mem0 and Zep compress old turns into structured summaries ("user prefers email over slack", "ongoing project: Miami conference"). Add a `compress_old_turns()` step that runs a fast LLM summarization when session turns exceed window size, storing compressed summaries in the beliefs table. This preserves long-horizon context across sessions without token blowout.
+
+- [P2] [feature] **LLM-as-Judge quality scoring** — after each `react.run()` that exits via `finish`, run a lightweight judge call (fast model, ~50 tokens) that scores the answer 1-5 on relevance and groundedness. Store score in `spans` table. Dashboard shows score distribution over time. Langfuse uses this pattern to surface regression before users notice. Pairs with trust gradient: persistent quality decline → demote audit interval faster.
+
+- [P2] [tech-debt] **OpenTelemetry OTLP export** — step-19 adds SQLite spans with OTel-compatible JSON field names. This item: add an optional OTLP exporter that pushes spans to a configured endpoint (Jaeger, Tempo, Honeycomb). Gated by `config["tracing"]["otlp_endpoint"]`. No-op if not configured. Do NOT add opentelemetry-sdk as a hard dependency — wrap in `try/except ImportError`.
+
+- [P3] [feature] **Streaming CLI output** — LLMs can stream tokens but Xibi's CLI waits for the full response. LangChain and Claude Code both stream. When `llm.generate()` returns a generator, print tokens as they arrive. Requires `ModelClient` protocol to support `generate_stream()` alongside `generate()`. Medium effort — don't block on this; the spinner (step-20) is sufficient for now.
+
+- [P3] [feature] **Tool result caching** — identical `(tool, tool_input)` pairs within a session return cached results without re-calling the executor. Useful for repeated email/calendar fetches in multi-step conversations (step-15 context continuity pressure tests expose this). Simple LRU with TTL=60s per session. LangChain has `llm_cache`, Xibi can implement at the executor dispatch layer.
+
+- [P3] [tech-debt] **Agentic loop observability** — Aider and Claude Code surface all LLM reasoning steps to the user in real time (streaming scratchpad). Xibi's `--debug` flag does this post-hoc. Consider a `--verbose` mode that streams the ReAct scratchpad inline as it builds, so testers can see reasoning without waiting for finish.
+
 ---
 
 ## Tier 3 — Scale concerns (backlog until multi-user)

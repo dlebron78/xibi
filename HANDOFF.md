@@ -26,17 +26,23 @@ Xibi — an AI agent wrapper (formerly Bregger). The repo is live at `github.com
 | #10 | SQLite Schema Consolidation + CLI | 2026-03-25 |
 | #11 | MessageModeClassifier Redesign + ShadowMatcher Update | 2026-03-25 |
 | #12 | Observability Dashboard | 2026-03-25 |
+| #13 | Tier 2 Security (step-13) | 2026-03-26 |
+| #14 | Architectural Resilience (step-14) | 2026-03-26 |
+| #15 | Trust Gradient MVP (step-11) | 2026-03-26 |
+| #16 | Tier 1 Bug Fixes (step-12) | 2026-03-26 |
+| #17 | Trust Gradient Hardening (step-11b) | 2026-03-26 |
 
 (PR #3 was a duplicate step-02 branch — closed without merging.)
 
 ### In Flight 🔄
-- Nothing currently in flight. All PRs merged. NucBox cron will pick up next pending spec.
+- **step-15** (Session Context Phase 1) — in `tasks/triggered/`, Jules building or PR pending
+- **step-11b** — also in `tasks/triggered/` (may have been re-triggered; check for open PRs)
 
 ### Pipeline State
-- `tasks/pending/` — **step-11.md through step-16.md** (specs written, waiting for NucBox to fire)
-- `tasks/triggered/` — empty
-- `tasks/done/` — steps 01-05 (moved after merge)
-- Next to fire: **step-11 (Trust Gradient MVP)**
+- `tasks/pending/` — step-16 through step-20 (step-17 through step-20 added 2026-03-27)
+- `tasks/triggered/` — step-11b, step-15
+- `tasks/done/` — steps 01-14
+- Next to fire after step-15 merges: **step-16 (Entity Extraction)**
 
 ---
 
@@ -44,13 +50,12 @@ Xibi — an AI agent wrapper (formerly Bregger). The repo is live at `github.com
 
 | Spec | Title | Key Files |
 |------|-------|-----------|
-| step-11.md | Trust Gradient MVP | `xibi/trust/`, TrustGradient, TrustRecord, 13 tests |
-| step-11b.md | Trust Gradient Hardening | probabilistic audit, FailureType enum, model-hash auto-reset |
-| step-12.md | Tier 1 Bug Fixes | consecutive_errors reset, health timeout, watermark race, WAL mode, Telegram idempotency |
-| step-13.md | Tier 2 Security | path traversal fix, access logging, honest health check |
-| step-14.md | Architectural Resilience | XibiError, circuit breakers, per-tool timeout, configurable timeouts |
 | step-15.md | Session Context Phase 1 | `xibi/session.py`, rolling turn window, continuation detection |
-| step-16.md | Entity Extraction Phase 2 | fast LLM entity extract, cross-domain implicit refs (Miami → weather) |
+| step-16.md | Entity Extraction Phase 2 | fast LLM entity extract, cross-domain implicit refs |
+| step-17.md | Critical Bug Fixes | `migrations.py` dead code, tool error detection, telegram integration, step timing |
+| step-18.md | Trust Gradient Wiring | wire `TrustGradient` into `react.run()` loop |
+| step-19.md | Lightweight Tracing | `xibi/tracing.py`, SQLite span table, OTel-compatible JSON export |
+| step-20.md | CLI Debug Mode + History | spinner, readline history, `--debug` improvements, `/traces` command |
 
 ---
 
