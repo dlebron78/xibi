@@ -28,6 +28,7 @@ from xibi.executor import Executor
 from xibi.heartbeat.poller import HeartbeatPoller
 from xibi.react import run
 from xibi.router import get_model
+from xibi.trust.gradient import TrustConfig, TrustGradient, TrustRecord, DEFAULT_TRUST_CONFIG
 from xibi.routing.classifier import MessageModeClassifier, ModeScores
 from xibi.routing.control_plane import ControlPlaneRouter, RoutingDecision
 from xibi.routing.shadow import ShadowMatch, ShadowMatcher
@@ -52,4 +53,8 @@ __all__ = [
     "SchemaManager",
     "create_app",
     "DashboardConfig",
+    "TrustGradient",
+    "TrustRecord",
+    "TrustConfig",
+    "DEFAULT_TRUST_CONFIG",
 ]
