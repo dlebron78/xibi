@@ -17,13 +17,16 @@ class ErrorCategory(str, Enum):
 
 
 @dataclass
-class XibiError(Exception):
+class XibiError(RuntimeError):
     category: ErrorCategory
     message: str  # Human-readable, safe to show user
     component: str  # e.g. "executor", "router", "telegram"
     detail: str = ""  # Technical detail for logs, not user-facing
     retryable: bool = True
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    def __post_init__(self) -> None:
+        super().__init__(self.message)
 
     def user_message(self) -> str:
         """Safe string to show end users."""

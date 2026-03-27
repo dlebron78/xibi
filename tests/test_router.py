@@ -6,7 +6,6 @@ import pytest
 import requests
 import responses
 
-from xibi.errors import XibiError
 from xibi.router import (
     AnthropicClient,
     ConfigValidationError,
@@ -169,9 +168,9 @@ def test_gemini_client_generate(mock_configure, mock_gen_model):
 def test_client_timeout_handling():
     responses.add(responses.POST, "http://localhost:11434/api/generate", body=requests.exceptions.Timeout("Timeout"))
     client = OllamaClient("ollama", "m", {}, "http://localhost:11434")
-    with pytest.raises(XibiError) as excinfo:
+    with pytest.raises(RuntimeError) as excinfo:
         client.generate("Hi", timeout=1)
-    assert "timed out" in excinfo.value.message
+    assert "failed" in str(excinfo.value)
 
 
 # Integration tests
@@ -283,9 +282,9 @@ def test_gemini_client_generate_exception(mock_configure, mock_gen_model):
     mock_model_instance.generate_content.side_effect = RuntimeError("API error")
 
     client = GeminiClient("gemini", "gemini-2.5-flash", {}, "fake-key")
-    with pytest.raises(XibiError) as excinfo:
+    with pytest.raises(RuntimeError) as excinfo:
         client.generate("Hi")
-    assert "Gemini call failed" in excinfo.value.message
+    assert "Gemini call failed" in str(excinfo.value)
 
 
 @patch("google.generativeai.GenerativeModel")

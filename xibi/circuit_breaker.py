@@ -40,6 +40,7 @@ class CircuitBreaker:
 
     def _ensure_table(self) -> None:
         """Create table and upsert initial row for this breaker if not present."""
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with open_db(self.db_path) as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS circuit_breakers (

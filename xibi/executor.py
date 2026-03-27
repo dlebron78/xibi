@@ -33,11 +33,16 @@ class Executor:
         if not skill_name:
             error = XibiError(
                 category=ErrorCategory.TOOL_NOT_FOUND,
-                message=f"I don't have a tool for that: {tool_name}",
+                message=f"Unknown tool: {tool_name}",
                 component="executor",
                 retryable=False,
             )
-            return {"status": "error", "message": f"Unknown tool: {tool_name}", "_xibi_error": error}
+            return {
+                "status": "error",
+                "message": error.message,
+                "error": error.user_message(),
+                "_xibi_error": error,
+            }
 
         skill_info = self.registry.skills[skill_name]
         tool_manifest: dict[str, Any] = next(
@@ -54,7 +59,12 @@ class Executor:
                 message=f"{tool_name} is temporarily disabled",
                 retryable=False,
             )
-            return {"status": "error", "message": error.user_message(), "_xibi_error": error}
+            return {
+                "status": "error",
+                "message": error.message,
+                "error": error.user_message(),
+                "_xibi_error": error,
+            }
 
         # 3. Timeout settings
         timeout = tool_manifest.get("timeout_secs") or get_timeout(self.config, "tool_default_secs")
@@ -74,7 +84,12 @@ class Executor:
                 message=str(e),
                 component="executor",
             )
-            return {"status": "error", "message": error.user_message(), "_xibi_error": error}
+            return {
+                "status": "error",
+                "message": error.message,
+                "error": error.user_message(),
+                "_xibi_error": error,
+            }
 
     def _execute_with_timeout(self, tool_name: str, params: dict, timeout: int, skill_info: Any) -> dict:
         # Check thread saturation before submitting — leave headroom for burst
@@ -92,7 +107,12 @@ class Executor:
                 component="executor",
                 retryable=False,
             )
-            return {"status": "error", "message": error.user_message(), "_xibi_error": error}
+            return {
+                "status": "error",
+                "message": error.message,
+                "error": error.user_message(),
+                "_xibi_error": error,
+            }
 
     def _execute_inner(self, tool_name: str, tool_input: dict[str, Any], skill_info: Any) -> dict[str, Any]:
         # Locate tool file

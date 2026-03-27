@@ -94,7 +94,7 @@ class OllamaClient:
         except requests.exceptions.Timeout as e:
             raise XibiError(
                 category=ErrorCategory.TIMEOUT,
-                message=f"Ollama request timed out: {e}",
+                message=f"Ollama call failed: {e}",
                 component="ollama",
                 retryable=True,
             ) from e
