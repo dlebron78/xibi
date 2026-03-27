@@ -24,7 +24,6 @@ from xibi.alerting.rules import RuleEngine
 from xibi.channels.telegram import TelegramAdapter
 from xibi.dashboard.app import DashboardConfig, create_app
 from xibi.db.migrations import SchemaManager
-from xibi.errors import ErrorCategory, XibiError
 from xibi.executor import Executor
 from xibi.heartbeat.poller import HeartbeatPoller
 from xibi.react import run
@@ -33,14 +32,18 @@ from xibi.routing.classifier import MessageModeClassifier, ModeScores
 from xibi.routing.control_plane import ControlPlaneRouter, RoutingDecision
 from xibi.routing.shadow import ShadowMatch, ShadowMatcher
 from xibi.skills.registry import SkillRegistry
-from xibi.trust.gradient import DEFAULT_TRUST_CONFIG, TrustConfig, TrustGradient, TrustRecord
+from xibi.trust.gradient import (
+    DEFAULT_TRUST_CONFIG,
+    FailureType,
+    TrustConfig,
+    TrustGradient,
+    TrustRecord,
+)
 from xibi.types import ReActResult
 
 __all__ = [
     "get_model",
     "run",
-    "XibiError",
-    "ErrorCategory",
     "TelegramAdapter",
     "ReActResult",
     "SkillRegistry",
@@ -60,4 +63,5 @@ __all__ = [
     "TrustRecord",
     "TrustConfig",
     "DEFAULT_TRUST_CONFIG",
+    "FailureType",
 ]

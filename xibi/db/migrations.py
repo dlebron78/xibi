@@ -6,7 +6,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 6  # increment when adding new migrations
+SCHEMA_VERSION = 7  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -35,6 +35,7 @@ class SchemaManager:
             (4, "trust tables: trust_records", self._migration_4),
             (5, "security tables: access_log", self._migration_5),
             (6, "idempotency: processed_messages table", self._migration_6),
+            (7, "trust hardening: model_hash, last_failure_type", self._migration_7),
         ]
 
         for version, description, func in migrations:
@@ -249,3 +250,14 @@ class SchemaManager:
 def migrate(db_path: Path) -> list[int]:
     """Convenience: create SchemaManager and run all pending migrations."""
     return SchemaManager(db_path).migrate()
+
+    def _migration_7(self, conn: sqlite3.Connection) -> None:
+        for column_sql in [
+            "ALTER TABLE trust_records ADD COLUMN model_hash TEXT",
+            "ALTER TABLE trust_records ADD COLUMN last_failure_type TEXT",
+        ]:
+            try:
+                conn.execute(column_sql)
+            except sqlite3.OperationalError:
+                pass  # Column already exists — idempotent
+
