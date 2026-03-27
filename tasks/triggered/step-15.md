@@ -92,10 +92,10 @@ Two-signal check, both must agree to return True:
 Check if query contains continuation markers:
 ```python
 CONTINUATION_MARKERS = [
-    r"\bwhich one\b", r"\bthat (email|message|one|item)\b",
-    r"\bthe (first|second|third|last|other) one\b",
-    r"\breply to (it|them|that)\b", r"\byes\b", r"\bno\b",
-    r"\bgo ahead\b", r"\bdo it\b", r"\bsame (one|thing)\b",
+message|one|item)\b",
+second|third|last|other) one\b",
+them|that)\b", r"\byes\b", r"\bno\b",
+thing)\b",
 ]
 ```
 
@@ -147,12 +147,12 @@ TTL: purge turns older than 30 days in the nightly heartbeat cleanup job.
 
 ## Integration: `xibi/react.py`
 
-Add `session_context: SessionContext | None = None` parameter to `run()`:
+ None = None` parameter to `run()`:
 
 ```python
 def run(
     ...
-    session_context: SessionContext | None = None,
+ None = None,
 ) -> ReActResult:
     ...
     # Inject context into system prompt before loop
@@ -245,4 +245,3 @@ while True:
 - No circular imports: `session.py` imports from `xibi.types` and `xibi.db` only
 - Session state lives in SQLite only — no in-memory-only state that would be lost on restart
 - `get_context_block()` caps output at 2000 tokens (rough char estimate: 8000 chars)
-
