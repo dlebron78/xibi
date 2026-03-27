@@ -6,7 +6,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 4  # increment when adding new migrations
+SCHEMA_VERSION = 5  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -33,6 +33,7 @@ class SchemaManager:
             (2, "app tables: tasks, conversation_history, pinned_topics, signals, shadow_phrases", self._migration_2),
             (3, "alerting tables: rules, triage_log, heartbeat_state, seen_emails", self._migration_3),
             (4, "trust tables: trust_records", self._migration_4),
+            (5, "security tables: access_log", self._migration_5),
         ]
 
         for version, description, func in migrations:
@@ -218,6 +219,17 @@ class SchemaManager:
                 total_failures INTEGER NOT NULL DEFAULT 0,
                 last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(specialty, effort)
+            );
+        """)
+
+    def _migration_5(self, conn: sqlite3.Connection) -> None:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS access_log (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id     TEXT NOT NULL,
+                authorized  INTEGER NOT NULL,  -- 1=yes, 0=no
+                timestamp   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                user_name   TEXT
             );
         """)
 

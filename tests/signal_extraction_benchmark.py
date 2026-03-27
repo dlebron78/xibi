@@ -16,8 +16,8 @@ Results printed to terminal + saved to benchmarks/signal_extraction_<timestamp>.
 
 import json
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
@@ -260,7 +260,7 @@ def call_ollama(prompt, max_tokens=600, temperature=0):
         raw = resp.get("response", "").strip()
         tokens = resp.get("eval_count", 0)
         return raw, duration_ms, tokens
-    except Exception as e:
+    except Exception:
         duration_ms = int((time.time() - start) * 1000)
         return None, duration_ms, 0
 
@@ -470,7 +470,7 @@ def run_disambiguation_benchmark():
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print(f"\nBregger Signal Extraction Benchmark")
+    print("\nBregger Signal Extraction Benchmark")
     print(f"Model: {MODEL}")
     print(f"Timestamp: {datetime.now().isoformat()}")
 
@@ -485,11 +485,11 @@ if __name__ == "__main__":
     cur = extraction_results.get("current", {})
     rich = extraction_results.get("rich", {})
 
-    print(f"\nExtraction — Current prompt:")
+    print("\nExtraction — Current prompt:")
     print(f"  Parse rate:  {cur.get('parse_success_rate', 0):.0f}%")
     print(f"  Avg latency: {cur.get('avg_latency_ms', 0):.0f}ms")
 
-    print(f"\nExtraction — Rich prompt (Tier 1 candidate):")
+    print("\nExtraction — Rich prompt (Tier 1 candidate):")
     print(f"  Parse rate:  {rich.get('parse_success_rate', 0):.0f}%")
     print(f"  Avg latency: {rich.get('avg_latency_ms', 0):.0f}ms")
 
@@ -501,7 +501,7 @@ if __name__ == "__main__":
     print(f"\nDisambiguation accuracy: {disambiguation_accuracy:.0f}%")
 
     # Verdict
-    print(f"\n── VERDICT ──")
+    print("\n── VERDICT ──")
     if rich.get("parse_success_rate", 0) >= 90:
         print("✓ Rich prompt parse rate acceptable (≥90%) — Tier 1 expansion is safe to build")
     elif rich.get("parse_success_rate", 0) >= 70:
