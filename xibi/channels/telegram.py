@@ -199,9 +199,7 @@ class TelegramAdapter:
             return None
 
     def _is_authorized(self, chat_id: str) -> bool:
-        allowed = [
-            x.strip() for x in os.getenv("XIBI_TELEGRAM_ALLOWED_CHAT_IDS", "").split(",") if x.strip()
-        ]
+        allowed = [x.strip() for x in os.getenv("XIBI_TELEGRAM_ALLOWED_CHAT_IDS", "").split(",") if x.strip()]
         if not allowed:
             logger.warning("XIBI_TELEGRAM_ALLOWED_CHAT_IDS not set — all access denied")
             return False

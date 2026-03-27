@@ -34,9 +34,7 @@ def get_system_health(db_path: Path, config: Config) -> dict:
 
         sm = SchemaManager(db_path)
         version = sm.get_version()
-        checks["schema"] = (
-            "ok" if version == SCHEMA_VERSION else f"stale: v{version} (want v{SCHEMA_VERSION})"
-        )
+        checks["schema"] = "ok" if version == SCHEMA_VERSION else f"stale: v{version} (want v{SCHEMA_VERSION})"
     except Exception as e:
         checks["schema"] = f"error: {e}"
 
