@@ -12,6 +12,7 @@ from xibi.db.migrations import SchemaManager, migrate
 @contextmanager
 def open_db(db_path: Path) -> Generator[sqlite3.Connection, None, None]:
     """Context manager for SQLite connections."""
+    db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     try:
         yield conn
