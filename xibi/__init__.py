@@ -32,6 +32,7 @@ from xibi.routing.classifier import MessageModeClassifier, ModeScores
 from xibi.routing.control_plane import ControlPlaneRouter, RoutingDecision
 from xibi.routing.shadow import ShadowMatch, ShadowMatcher
 from xibi.skills.registry import SkillRegistry
+from xibi.trust.gradient import DEFAULT_TRUST_CONFIG, TrustConfig, TrustGradient, TrustRecord
 from xibi.types import ReActResult
 
 __all__ = [
@@ -52,4 +53,8 @@ __all__ = [
     "SchemaManager",
     "create_app",
     "DashboardConfig",
+    "TrustGradient",
+    "TrustRecord",
+    "TrustConfig",
+    "DEFAULT_TRUST_CONFIG",
 ]
