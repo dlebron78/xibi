@@ -161,6 +161,56 @@ class RuleEngine:
             logger.warning(f"Error fetching digest items: {e}")
             return []
 
+    def pop_digest_items(self) -> list[dict[str, Any]]:
+        """Atomically fetch digest items and advance the watermark.
+
+        Uses a single SQLite transaction so concurrent callers cannot
+        process the same items twice.  If two poller processes race, one
+        will wait on the write lock; when it proceeds it will find no new
+        items because the watermark was already advanced by the winner.
+        """
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10, check_same_thread=False)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
+            try:
+                with conn:  # BEGIN / COMMIT or ROLLBACK
+                    # Read the current watermark from DB (not in-memory cache)
+                    row = conn.execute("SELECT value FROM heartbeat_state WHERE key='last_digest_at'").fetchone()
+                    db_watermark = row[0] if row else "1970-01-01 00:00:00"
+
+                    # Fetch items since the DB watermark
+                    cursor = conn.execute(
+                        """
+                        SELECT sender, subject, verdict, timestamp FROM triage_log
+                        WHERE timestamp > ? AND verdict != 'URGENT'
+                        ORDER BY timestamp ASC
+                        """,
+                        (db_watermark,),
+                    )
+                    rows = cursor.fetchall()
+                    items = [{"sender": r[0], "subject": r[1], "verdict": r[2], "timestamp": r[3]} for r in rows]
+
+                    if items:
+                        # Advance watermark atomically inside the same transaction
+                        conn.execute(
+                            "INSERT OR REPLACE INTO heartbeat_state (key, value)"
+                            " VALUES ('last_digest_at', datetime('now'))"
+                        )
+                        # Refresh in-memory cache
+                        new_row = conn.execute(
+                            "SELECT value FROM heartbeat_state WHERE key='last_digest_at'"
+                        ).fetchone()
+                        if new_row and isinstance(new_row[0], str):
+                            self._watermark_cache = new_row[0]
+
+                    return items
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.warning(f"Error in pop_digest_items: {e}")
+            return []
+
     def update_watermark(self) -> None:
         try:
             with sqlite3.connect(self.db_path) as conn:

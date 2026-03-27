@@ -1,9 +1,11 @@
 import contextlib
 import sqlite3
+import threading
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from xibi.alerting.rules import RuleEngine
 from xibi.heartbeat.poller import HeartbeatPoller
 
 
@@ -110,7 +112,7 @@ def test_tick_defer_not_marked_seen():
 
 def test_digest_tick_no_items_no_force():
     rules = MagicMock()
-    rules.get_digest_items.return_value = []
+    rules.pop_digest_items.return_value = []
     hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), rules, [123])
 
     with (
@@ -123,7 +125,7 @@ def test_digest_tick_no_items_no_force():
 
 def test_digest_tick_force_empty():
     hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), MagicMock(), [123])
-    hp.rules.get_digest_items.return_value = []
+    hp.rules.pop_digest_items.return_value = []
 
     with (
         patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
@@ -135,7 +137,7 @@ def test_digest_tick_force_empty():
 
 def test_digest_tick_with_items():
     rules = MagicMock()
-    rules.get_digest_items.return_value = [{"sender": "s1", "subject": "sub1", "verdict": "DIGEST"}]
+    rules.pop_digest_items.return_value = [{"sender": "s1", "subject": "sub1", "verdict": "DIGEST"}]
     hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), rules, [123])
 
     with (
@@ -144,7 +146,7 @@ def test_digest_tick_with_items():
     ):
         hp.digest_tick()
         mock_broadcast.assert_called()
-        rules.update_watermark.assert_called()
+        # update_watermark is no longer called directly — pop_digest_items handles it atomically
 
 
 def test_auto_noise_prefilter():
@@ -341,3 +343,63 @@ def test_run_tick_exception_continues():
         contextlib.suppress(InterruptedError),
     ):
         hp.run()
+
+
+def test_watermark_race_condition_safe(tmp_path):
+    """Concurrent digest_tick calls must not deliver the same items twice."""
+    db_path = tmp_path / "test.db"
+
+    # Bootstrap DB with required tables via RuleEngine
+    RuleEngine(db_path)
+
+    # Insert a triage item before both ticks see it
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO triage_log (email_id, sender, subject, verdict) VALUES ('e1', 'sender@x.com', 'Sub', 'DIGEST')"
+        )
+
+    broadcast_calls: list[str] = []
+    lock = threading.Lock()
+
+    def make_adapter() -> MagicMock:
+        adapter = MagicMock()
+
+        def track_broadcast(chat_id: int, text: str) -> None:
+            with lock:
+                broadcast_calls.append(text)
+
+        adapter.send_message.side_effect = track_broadcast
+        return adapter
+
+    def run_digest(adapter: MagicMock) -> None:
+        rule_engine = RuleEngine(db_path)
+        hp = HeartbeatPoller(tmp_path, db_path, adapter, rule_engine, [1])
+        with patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False):
+            hp.digest_tick()
+
+    adapter1 = make_adapter()
+    adapter2 = make_adapter()
+
+    t1 = threading.Thread(target=run_digest, args=(adapter1,))
+    t2 = threading.Thread(target=run_digest, args=(adapter2,))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    # Exactly one digest should have been sent (the second tick sees no new items)
+    digest_broadcasts = [c for c in broadcast_calls if "Digest Recap" in c]
+    assert len(digest_broadcasts) == 1, (
+        f"Expected exactly 1 digest broadcast, got {len(digest_broadcasts)}: {broadcast_calls}"
+    )
+
+
+def test_digest_tick_uses_pop_digest_items(tmp_path):
+    """digest_tick should call pop_digest_items (atomic) not get_digest_items."""
+    rules = MagicMock()
+    rules.pop_digest_items.return_value = []
+    hp = HeartbeatPoller(tmp_path, tmp_path / "db", MagicMock(), rules, [1])
+    with patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False):
+        hp.digest_tick()
+    rules.pop_digest_items.assert_called_once()
+    rules.get_digest_items.assert_not_called()

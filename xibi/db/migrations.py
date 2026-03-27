@@ -6,7 +6,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 5  # increment when adding new migrations
+SCHEMA_VERSION = 6  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -34,6 +34,7 @@ class SchemaManager:
             (3, "alerting tables: rules, triage_log, heartbeat_state, seen_emails", self._migration_3),
             (4, "trust tables: trust_records", self._migration_4),
             (5, "security tables: access_log", self._migration_5),
+            (6, "idempotency: processed_messages table", self._migration_6),
         ]
 
         for version, description, func in migrations:
@@ -231,6 +232,17 @@ class SchemaManager:
                 timestamp   DATETIME DEFAULT CURRENT_TIMESTAMP,
                 user_name   TEXT
             );
+        """)
+
+    def _migration_6(self, conn: sqlite3.Connection) -> None:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS processed_messages (
+                message_id    INTEGER PRIMARY KEY,
+                processed_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            -- NOTE: This table grows ~N rows/day where N = daily message volume.
+            -- Rows older than 7 days are safe to delete — Telegram max re-delivery window is 24h.
+            -- TTL cleanup runs nightly via heartbeat poller.
         """)
 
 

@@ -309,3 +309,127 @@ def test_poll_escape_word_cancels_task(monkeypatch, tmp_path):
 
     core._cancel_task.assert_called_once_with("task-123")
     adapter.send_message.assert_called_with(123, "Task cancelled. What's next?")
+
+
+# ── Idempotency tests (Fix 5) ─────────────────────────────────────────────────
+
+
+def _make_adapter(tmp_path, monkeypatch):
+    """Helper: create a TelegramAdapter with a real DB for idempotency tests."""
+    from xibi.db.migrations import migrate
+
+    db_path = tmp_path / "xibi.db"
+    migrate(db_path)
+
+    monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "test-token")
+    core = MagicMock()
+    core._cancel_task = MagicMock()
+    adapter = TelegramAdapter(
+        core=core,
+        token="test-token",
+        allowed_chats=["123"],
+        offset_file=tmp_path / "offset.txt",
+        db_path=db_path,
+    )
+    return adapter, db_path
+
+
+def test_is_already_processed_false_on_fresh_db(tmp_path, monkeypatch):
+    """New message IDs should not be flagged as processed."""
+    adapter, db_path = _make_adapter(tmp_path, monkeypatch)
+    with sqlite3.connect(db_path) as conn:
+        assert adapter._is_already_processed(conn, 999) is False
+
+
+def test_mark_processed_then_check(tmp_path, monkeypatch):
+    """After marking, the same message_id must be detected as processed."""
+    adapter, db_path = _make_adapter(tmp_path, monkeypatch)
+    with sqlite3.connect(db_path) as conn:
+        adapter._mark_processed(conn, 42)
+    with sqlite3.connect(db_path) as conn:
+        assert adapter._is_already_processed(conn, 42) is True
+
+
+def test_mark_processed_idempotent(tmp_path, monkeypatch):
+    """Marking the same message_id twice must not raise (INSERT OR IGNORE)."""
+    adapter, db_path = _make_adapter(tmp_path, monkeypatch)
+    with sqlite3.connect(db_path) as conn:
+        adapter._mark_processed(conn, 7)
+        adapter._mark_processed(conn, 7)  # Should not raise
+    with sqlite3.connect(db_path) as conn:
+        row = conn.execute("SELECT COUNT(*) FROM processed_messages WHERE message_id=7").fetchone()
+        assert row[0] == 1
+
+
+def test_poll_skips_already_processed_message(tmp_path, monkeypatch):
+    """poll() must skip messages whose message_id is already in processed_messages."""
+    from xibi.db.migrations import migrate
+
+    db_path = tmp_path / "xibi.db"
+    migrate(db_path)
+
+    monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "test-token")
+    monkeypatch.setenv("XIBI_MOCK_TELEGRAM", "1")
+
+    core = MagicMock()
+    core.handle = MagicMock()
+    adapter = TelegramAdapter(
+        core=core,
+        token="test-token",
+        allowed_chats=["123"],
+        offset_file=tmp_path / "offset.txt",
+        db_path=db_path,
+    )
+
+    # Pre-mark message_id=99 as already processed
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("INSERT INTO processed_messages (message_id) VALUES (99)")
+
+    call_count = 0
+
+    def mock_api(method, params=None):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return {
+                "ok": True,
+                "result": [
+                    {
+                        "update_id": 100,
+                        "message": {
+                            "message_id": 99,  # already processed
+                            "chat": {"id": 123},
+                            "text": "hello",
+                            "from": {"first_name": "Dan"},
+                        },
+                    }
+                ],
+            }
+        raise StopIteration
+
+    adapter._api_call = mock_api
+
+    with pytest.raises(StopIteration):
+        adapter.poll()
+
+    # core.handle should NOT have been called since message_id=99 was already processed
+    core.handle.assert_not_called()
+
+
+def test_purge_old_processed_messages(tmp_path, monkeypatch):
+    """_purge_old_processed_messages must remove rows older than 7 days."""
+    adapter, db_path = _make_adapter(tmp_path, monkeypatch)
+
+    with sqlite3.connect(db_path) as conn:
+        # Insert an old row and a recent row
+        conn.execute("INSERT INTO processed_messages (message_id, processed_at) VALUES (1, datetime('now', '-8 days'))")
+        conn.execute("INSERT INTO processed_messages (message_id, processed_at) VALUES (2, datetime('now', '-1 day'))")
+
+    adapter._purge_old_processed_messages()
+
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute("SELECT message_id FROM processed_messages").fetchall()
+        ids = {r[0] for r in rows}
+
+    assert 1 not in ids, "Old message should have been purged"
+    assert 2 in ids, "Recent message should be kept"

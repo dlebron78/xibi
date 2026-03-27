@@ -107,6 +107,30 @@ class TelegramAdapter:
                 logger.warning(f"Could not read offset file: {e}")
         return 0
 
+    def _is_already_processed(self, conn: sqlite3.Connection, message_id: int) -> bool:
+        """Return True if this Telegram message_id has already been handled."""
+        row = conn.execute("SELECT 1 FROM processed_messages WHERE message_id = ?", (message_id,)).fetchone()
+        return row is not None
+
+    def _mark_processed(self, conn: sqlite3.Connection, message_id: int) -> None:
+        """Record that this Telegram message_id has been handled (idempotency gate)."""
+        conn.execute(
+            "INSERT OR IGNORE INTO processed_messages (message_id) VALUES (?)",
+            (message_id,),
+        )
+
+    def _purge_old_processed_messages(self) -> None:
+        """TTL cleanup: delete processed_messages rows older than 7 days.
+
+        Telegram's maximum re-delivery window is 24 h, so 7 days is very safe.
+        """
+        try:
+            with sqlite3.connect(self.db_path, timeout=10) as conn:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("DELETE FROM processed_messages WHERE processed_at < datetime('now', '-7 days')")
+        except Exception as e:
+            logger.warning(f"Failed to purge old processed_messages: {e}")
+
     def _save_offset(self, offset: int) -> None:
         try:
             self.offset_file.parent.mkdir(parents=True, exist_ok=True)
@@ -292,14 +316,38 @@ class TelegramAdapter:
                     self.offset = update["update_id"] + 1
                     message = update.get("message")
                     if not message:
+                        self._save_offset(self.offset)
                         continue
 
+                    message_id: int = message.get("message_id", 0)
                     chat_id = message["chat"]["id"]
                     user_name = message.get("from", {}).get("first_name")
+
+                    # --- Idempotency gate: skip already-processed messages ---
+                    # Deduplication by message_id rather than offset so that a
+                    # crash-restart cannot skip or re-deliver the same message.
+                    try:
+                        with sqlite3.connect(self.db_path, timeout=10) as _idem_conn:
+                            _idem_conn.execute("PRAGMA journal_mode=WAL")
+                            if self._is_already_processed(_idem_conn, message_id):
+                                logger.debug(f"Skipping already-processed message_id={message_id}")
+                                self._save_offset(self.offset)
+                                continue
+                    except Exception as _idem_err:
+                        logger.warning(f"Idempotency check failed for message_id={message_id}: {_idem_err}")
+                        # Fall through: process the message and try to mark it below
+
                     if not self._is_authorized(str(chat_id)):
                         logger.warning(f"Unauthorized access attempt from chat_id={chat_id}")
                         self._log_access_attempt(chat_id, authorized=False, user_name=user_name)
                         self.send_message(chat_id, "Sorry, I'm a personal assistant. I don't talk to strangers.")
+                        # Still mark as processed to avoid re-sending the rejection
+                        try:
+                            with sqlite3.connect(self.db_path, timeout=10) as _conn:
+                                _conn.execute("PRAGMA journal_mode=WAL")
+                                self._mark_processed(_conn, message_id)
+                        except Exception as _e:
+                            logger.warning(f"Failed to mark unauthorized message as processed: {_e}")
                         self._save_offset(self.offset)
                         continue
 
@@ -330,11 +378,18 @@ class TelegramAdapter:
                         else:
                             self.send_message(chat_id, "I couldn't download that file. Please try again.")
 
+                        try:
+                            with sqlite3.connect(self.db_path, timeout=10) as _conn:
+                                _conn.execute("PRAGMA journal_mode=WAL")
+                                self._mark_processed(_conn, message_id)
+                        except Exception as _e:
+                            logger.warning(f"Failed to mark file message as processed: {_e}")
                         self._save_offset(self.offset)
                         continue
 
                     # Handle text messages
                     if "text" not in message:
+                        self._save_offset(self.offset)
                         continue
 
                     user_text = message["text"]
@@ -345,6 +400,12 @@ class TelegramAdapter:
                         self._pending_attachments.pop(chat_id, None)
 
                     self._process_message(chat_id, user_text)
+                    try:
+                        with sqlite3.connect(self.db_path, timeout=10) as _conn:
+                            _conn.execute("PRAGMA journal_mode=WAL")
+                            self._mark_processed(_conn, message_id)
+                    except Exception as _e:
+                        logger.warning(f"Failed to mark text message as processed: {_e}")
                     self._save_offset(self.offset)
 
             time.sleep(1)
