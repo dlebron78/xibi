@@ -5,6 +5,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from xibi.errors import ErrorCategory, XibiError
 from xibi.router import Config, get_model
 
 if TYPE_CHECKING:
@@ -185,7 +186,9 @@ def run(
     for step_num in range(1, max_steps + 1):
         elapsed = time.time() - start_time
         if elapsed > max_secs:
-            return ReActResult(answer="", steps=scratchpad, exit_reason="timeout", duration_ms=int(elapsed * 1000))
+            res = ReActResult(answer="", steps=scratchpad, exit_reason="timeout", duration_ms=int(elapsed * 1000))
+            res.error_summary = [s.error for s in scratchpad if s.error is not None]
+            return res
 
         # Construct prompt
         compressed_pad = compress_scratchpad(scratchpad)
@@ -197,12 +200,24 @@ def run(
             try:
                 parsed = _parse_llm_response(response_text)
                 parse_warning = None
+                error = None
             except Exception:
                 # Recovery attempt
-                recovery_prompt = f"{prompt}\n\nInvalid JSON received. Please respond with ONLY the JSON object."
-                response_text = llm.generate(recovery_prompt, system=system_prompt)
-                parsed = _parse_llm_response(response_text)
-                parse_warning = "Recovered from invalid JSON"
+                try:
+                    recovery_prompt = f"{prompt}\n\nInvalid JSON received. Please respond with ONLY the JSON object."
+                    response_text = llm.generate(recovery_prompt, system=system_prompt)
+                    parsed = _parse_llm_response(response_text)
+                    parse_warning = "Recovered from invalid JSON"
+                    error = None
+                except Exception as inner_e:
+                    parsed = {"thought": f"Failed to parse LLM response: {str(inner_e)}", "tool": "error"}
+                    parse_warning = "Failed to parse JSON"
+                    error = XibiError(
+                        category=ErrorCategory.PARSE_FAILURE,
+                        message="I had trouble understanding the response. Retrying.",
+                        component="router",
+                        detail=str(inner_e),
+                    )
 
             step = Step(
                 step_num=step_num,
@@ -211,64 +226,87 @@ def run(
                 tool_input=parsed.get("tool_input", {}),
                 duration_ms=int((time.time() - step_start_time) * 1000),
                 parse_warning=parse_warning,
+                error=error,
             )
 
             if step.tool == "finish":
                 scratchpad.append(step)
-                return ReActResult(
+                res = ReActResult(
                     answer=step.tool_input.get("answer", ""),
                     steps=scratchpad,
                     exit_reason="finish",
                     duration_ms=int((time.time() - start_time) * 1000),
                 )
+                res.error_summary = [s.error for s in scratchpad if s.error is not None]
+                return res
 
             if step.tool == "ask_user":
                 scratchpad.append(step)
-                return ReActResult(
+                res = ReActResult(
                     answer=step.tool_input.get("question", ""),
                     steps=scratchpad,
                     exit_reason="ask_user",
                     duration_ms=int((time.time() - start_time) * 1000),
                 )
+                res.error_summary = [s.error for s in scratchpad if s.error is not None]
+                return res
 
             if is_repeat(step, scratchpad):
                 step.tool_output = {"status": "error", "message": "Repeat detected. Try a different approach or tool."}
                 scratchpad.append(step)
                 consecutive_errors += 1
                 if consecutive_errors >= 3:
-                    return ReActResult(
+                    res = ReActResult(
                         answer="",
                         steps=scratchpad,
                         exit_reason="error",
                         duration_ms=int((time.time() - start_time) * 1000),
                     )
+                    res.error_summary = [s.error for s in scratchpad if s.error is not None]
+                    return res
                 continue
 
-            tool_output = dispatch(step.tool, step.tool_input, skill_registry, executor=executor)
-            step.tool_output = tool_output
+            if step.tool == "error":
+                step.tool_output = {"status": "error", "message": "Parse failure"}
+                tool_output = step.tool_output
+            else:
+                tool_output = dispatch(step.tool, step.tool_input, skill_registry, executor=executor)
+                step.tool_output = tool_output
+                if tool_output.get("status") == "error" and "_xibi_error" in tool_output:
+                    step.error = tool_output["_xibi_error"]
+
             scratchpad.append(step)
 
             if step_callback:
                 step_callback(step)
 
-            if tool_output.get("status") == "error":
+            if step.tool == "error" or tool_output.get("status") == "error":
                 consecutive_errors += 1
                 if consecutive_errors >= 3:
-                    return ReActResult(
+                    res = ReActResult(
                         answer="",
                         steps=scratchpad,
                         exit_reason="error",
                         duration_ms=int((time.time() - start_time) * 1000),
                     )
+                    res.error_summary = [s.error for s in scratchpad if s.error is not None]
+                    return res
             else:
                 consecutive_errors = 0
 
-        except Exception:
+        except Exception as e:
             # Handle unexpected LLM errors
-            return ReActResult(
+            res = ReActResult(
                 answer="", steps=scratchpad, exit_reason="error", duration_ms=int((time.time() - start_time) * 1000)
             )
+            if isinstance(e, XibiError):
+                res.error_summary = [e]
+            else:
+                res.error_summary = [s.error for s in scratchpad if s.error is not None]
+            return res
 
-    return ReActResult(
+    res = ReActResult(
         answer="", steps=scratchpad, exit_reason="max_steps", duration_ms=int((time.time() - start_time) * 1000)
     )
+    res.error_summary = [s.error for s in scratchpad if s.error is not None]
+    return res

@@ -57,5 +57,13 @@
     "groq": {
       "api_key_env": "GROQ_API_KEY"
     }
+  },
+  "timeouts": {
+    "tool_default_secs": 15,
+    "llm_fast_secs": 10,
+    "llm_think_secs": 45,
+    "llm_review_secs": 120,
+    "health_check_secs": 2,
+    "circuit_recovery_secs": 60
   }
 }

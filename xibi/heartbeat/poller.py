@@ -121,8 +121,7 @@ class HeartbeatPoller:
             logger.info("Quiet hours, skipping tick.")
             return
 
-        conn = xibi.db.open_db(self.db_path)
-        try:
+        with xibi.db.open_db(self.db_path) as conn:
             with conn:  # BEGIN / COMMIT or ROLLBACK
                 # Lock: use a sentinel row in heartbeat_state
                 conn.execute(
@@ -131,8 +130,6 @@ class HeartbeatPoller:
                 )
 
                 self._tick_with_conn(conn)
-        finally:
-            conn.close()
 
     def _tick_with_conn(self, conn: sqlite3.Connection) -> None:
         # 1. Check tasks
@@ -223,8 +220,7 @@ class HeartbeatPoller:
         if self._is_quiet_hours() and not force:
             return
 
-        conn = xibi.db.open_db(self.db_path)
-        try:
+        with xibi.db.open_db(self.db_path) as conn:
             with conn:
                 # Lock
                 conn.execute(
@@ -244,8 +240,6 @@ class HeartbeatPoller:
 
                 self._broadcast("\n".join(msg_lines))
                 self.rules.update_watermark_with_conn(conn)
-        finally:
-            conn.close()
 
     def recap_tick(self) -> None:
         logger.info("Running recap tick")
