@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import time
 import urllib.error
 import urllib.parse
@@ -12,6 +13,20 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_filename(file_name: str) -> str:
+    """Strip path components and non-alphanumeric chars. Append random suffix."""
+    import secrets
+
+    # Remove any path separators
+    name = re.sub(r"[/\\]", "", file_name)
+    # Remove leading dots (hidden files)
+    name = name.lstrip(".")
+    # Allow only alphanumeric, dash, underscore, dot
+    name = re.sub(r"[^\w\-.]", "_", name)
+    # Prefix with random token to prevent enumeration
+    return f"{secrets.token_hex(8)}_{name}"
 
 
 def is_continuation(text: str) -> bool:
@@ -54,6 +69,7 @@ class TelegramAdapter:
         token: str | None = None,
         allowed_chats: list[str] | None = None,
         offset_file: Path | str | None = None,
+        db_path: Path | str | None = None,
     ) -> None:
         self.core = core
         self.token = token or os.environ.get("XIBI_TELEGRAM_TOKEN")
@@ -66,6 +82,7 @@ class TelegramAdapter:
         else:
             self.allowed_chats = allowed_chats
 
+        self.db_path = Path(db_path) if db_path else Path.home() / ".xibi" / "data" / "xibi.db"
         self.base_url = f"https://api.telegram.org/bot{self.token}"
 
         if offset_file is None:
@@ -166,13 +183,14 @@ class TelegramAdapter:
                 logger.warning(f"getFile failed for {file_id}")
                 return None
 
-            file_path = result["result"]["file_path"]
-            filename = file_path.split("/")[-1]
-            dl_url = f"https://api.telegram.org/file/bot{self.token}/{file_path}"
+            file_path_tg = result["result"]["file_path"]
+            original_name = file_path_tg.split("/")[-1]
+            filename = _safe_filename(original_name)
+            dl_url = f"https://api.telegram.org/file/bot{self.token}/{file_path_tg}"
 
-            save_dir = Path("/tmp/xibi_uploads")
-            save_dir.mkdir(parents=True, exist_ok=True)
-            local_path = save_dir / filename
+            upload_dir = Path.home() / ".xibi" / "uploads"
+            upload_dir.mkdir(mode=0o700, parents=True, exist_ok=True)  # owner-only
+            local_path = upload_dir / filename
 
             urllib.request.urlretrieve(dl_url, local_path)
             return str(local_path)
@@ -180,10 +198,26 @@ class TelegramAdapter:
             logger.error(f"File download error: {e}")
             return None
 
+    def _is_authorized(self, chat_id: str) -> bool:
+        allowed = [x.strip() for x in os.getenv("XIBI_TELEGRAM_ALLOWED_CHAT_IDS", "").split(",") if x.strip()]
+        if not allowed:
+            logger.warning("XIBI_TELEGRAM_ALLOWED_CHAT_IDS not set — all access denied")
+            return False
+        return chat_id in allowed
+
+    def _log_access_attempt(self, chat_id: int, authorized: bool, user_name: str | None = None) -> None:
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    "INSERT INTO access_log (chat_id, authorized, user_name) VALUES (?, ?, ?)",
+                    (str(chat_id), 1 if authorized else 0, user_name),
+                )
+        except Exception as e:
+            logger.error(f"Failed to log access attempt: {e}")
+
     def is_authorized(self, chat_id: int) -> bool:
-        if not self.allowed_chats:
-            return True
-        return str(chat_id) in self.allowed_chats
+        """Legacy method for backward compatibility."""
+        return self._is_authorized(str(chat_id))
 
     def _process_message(self, chat_id: int, user_text: str) -> None:
         """Handle core engine interaction, task routing, and response sending."""
@@ -238,11 +272,15 @@ class TelegramAdapter:
                         continue
 
                     chat_id = message["chat"]["id"]
-                    if not self.is_authorized(chat_id):
-                        logger.warning(f"Unauthorized access from {chat_id}")
+                    user_name = message.get("from", {}).get("first_name")
+                    if not self._is_authorized(str(chat_id)):
+                        logger.warning(f"Unauthorized access attempt from chat_id={chat_id}")
+                        self._log_access_attempt(chat_id, authorized=False, user_name=user_name)
                         self.send_message(chat_id, "Sorry, I'm a personal assistant. I don't talk to strangers.")
                         self._save_offset(self.offset)
                         continue
+
+                    self._log_access_attempt(chat_id, authorized=True, user_name=user_name)
 
                     # Handle file uploads
                     if "document" in message or "photo" in message:

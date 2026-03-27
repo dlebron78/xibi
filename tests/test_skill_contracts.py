@@ -17,12 +17,13 @@ What this catches:
 This suite should pass before every deploy to the NucBox.
 """
 
-import sys
-import json
 import importlib.util
 import inspect
-import pytest
+import json
+import sys
 from pathlib import Path
+
+import pytest
 
 # ---------------------------------------------------------------------------
 # Project layout

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from flask import Flask
 
-from xibi.dashboard import DashboardConfig, create_app
+from xibi.dashboard import DashboardConfig, create_app, get_system_health
 
 
 @pytest.fixture
@@ -273,3 +275,61 @@ def test_root_serves_html(client):
     response = client.get("/")
     assert response.status_code == 200
     assert b"<html" in response.data.lower()
+
+
+def test_health_check_detects_missing_db(tmp_path):
+    mock_config = {"models": {}, "providers": {}}
+    result = get_system_health(db_path=tmp_path / "nonexistent.db", config=mock_config)
+    assert result["database"].startswith("error")
+    assert result["status"] == "degraded"
+
+
+def test_health_check_healthy_after_init(tmp_path, monkeypatch):
+    # Setup a mock workdir
+    workdir = tmp_path / "workdir"
+    workdir.mkdir()
+    (workdir / "data").mkdir()
+    db_path = workdir / "data" / "xibi.db"
+    config_path = workdir / "config.json"
+
+    # Initialize DB
+    from xibi.db.migrations import migrate
+    migrate(db_path)
+
+    # Create a minimal valid config
+    config = {
+        "models": {
+            "text": {
+                "fast": {"provider": "mock", "model": "m1"}
+            }
+        },
+        "providers": {
+            "mock": {}
+        }
+    }
+    config_path.write_text(json.dumps(config))
+
+    # Mock get_model to return something for our mock provider
+    monkeypatch.setattr("xibi.dashboard.app.get_model", lambda **kwargs: MagicMock())
+
+    result = get_system_health(db_path=db_path, config=config)
+    print(f"DEBUG: result={result}")  # Debug
+    assert result["database"] == "ok"
+    assert result["schema"] == "ok"
+    assert result["llm_provider"] == "ok"
+    assert result["status"] == "healthy"
+
+
+def test_full_health_endpoint(client, db_path, monkeypatch):
+    # Mock get_model to avoid actual LLM calls
+    monkeypatch.setattr("xibi.dashboard.app.get_model", lambda **kwargs: MagicMock())
+    # Mock load_config
+    monkeypatch.setattr("xibi.router.load_config", lambda *args: {"models": {}, "providers": {}})
+
+    response = client.get("/health")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert "database" in data
+    assert "schema" in data
+    assert "llm_provider" in data
+    assert "status" in data

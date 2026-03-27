@@ -1,13 +1,13 @@
-import os
 import json
+import os
 import sqlite3
-import pytest
 from pathlib import Path
-from datetime import datetime
 from unittest.mock import patch
 
+import pytest
+
 from bregger_core import BreggerCore
-from bregger_heartbeat import should_propose, reflect
+from bregger_heartbeat import reflect, should_propose
 
 
 class MockNotifier:
