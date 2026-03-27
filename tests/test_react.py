@@ -233,3 +233,31 @@ def test_run_timeout(mock_get_model, mock_config, skill_registry, mocker):
     result = run("query", mock_config, skill_registry, max_secs=60)
 
     assert result.exit_reason == "timeout"
+
+
+def test_run_consecutive_errors_resets_on_success(mock_get_model, mock_config, skill_registry):
+    mock_llm = MagicMock()
+    mock_get_model.return_value = mock_llm
+
+    # 1. Error (unknown tool)
+    # 2. Success (search tool)
+    # 3. Error (unknown tool)
+    # 4. Success (search tool)
+    # 5. Error (unknown tool)
+    # 6. Finish
+    # Total 3 errors, but interspersed with successes, so it should NOT exit early.
+
+    responses = [
+        json.dumps({"thought": "e1", "tool": "unknown", "tool_input": {}}),
+        json.dumps({"thought": "s1", "tool": "search", "tool_input": {"q": "1"}}),
+        json.dumps({"thought": "e2", "tool": "unknown", "tool_input": {}}),
+        json.dumps({"thought": "s2", "tool": "search", "tool_input": {"q": "2"}}),
+        json.dumps({"thought": "e3", "tool": "unknown", "tool_input": {}}),
+        json.dumps({"thought": "f", "tool": "finish", "tool_input": {"answer": "done"}}),
+    ]
+    mock_llm.generate.side_effect = responses
+
+    result = run("query", mock_config, skill_registry, max_steps=10)
+
+    assert result.exit_reason == "finish"
+    assert len(result.steps) == 6

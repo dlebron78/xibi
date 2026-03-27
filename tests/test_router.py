@@ -198,6 +198,10 @@ def test_full_path_fast_role(mock_gen_model):
 def test_full_path_with_fallback(mock_gen_model):
     # Mock Ollama health check - UNHEALTHY
     responses.add(responses.GET, "http://localhost:11434/api/tags", status=500)
+
+    # Mock Gemini health check - HEALTHY
+    responses.add(responses.GET, "https://generativelanguage.googleapis.com", status=200)
+
     # Fallback from fast -> think (also ollama)
     # Mock Ollama think health check - UNHEALTHY
     # responses.add(responses.GET, "http://localhost:11434/api/tags", status=500) # already added for any GET to tags
@@ -370,3 +374,14 @@ def test_resolve_model_no_think_effort_returns_first(mock_config):
     # "ultra" is not a defined effort; "think" is also missing; should return first available
     res = _resolve_model(config, "text", "ultra")
     assert res["model"] == "fast-model"
+
+
+@responses.activate
+def test_ollama_health_check_times_out():
+    """Health check should return False if Ollama doesn't respond within 2s."""
+    responses.add(responses.GET, "http://localhost:11434/api/tags", body=requests.exceptions.Timeout("Timeout"))
+    config = {"providers": {"ollama": {"base_url": "http://localhost:11434"}}}
+    role_cfg = {"provider": "ollama", "model": "qwen3.5:4b"}
+
+    # We want to verify it returns False when it times out
+    assert _check_provider_health(config, role_cfg) is False
