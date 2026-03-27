@@ -223,14 +223,14 @@ class SchemaManager:
         """)
 
     def _migration_5(self, conn: sqlite3.Connection) -> None:
-        # Check if columns already exist to make it idempotent
-        cursor = conn.execute("PRAGMA table_info(trust_records)")
-        columns = [row[1] for row in cursor.fetchall()]
-
-        if "model_hash" not in columns:
-            conn.execute("ALTER TABLE trust_records ADD COLUMN model_hash TEXT")
-        if "last_failure_type" not in columns:
-            conn.execute("ALTER TABLE trust_records ADD COLUMN last_failure_type TEXT")
+        for column_sql in [
+            "ALTER TABLE trust_records ADD COLUMN model_hash TEXT",
+            "ALTER TABLE trust_records ADD COLUMN last_failure_type TEXT",
+        ]:
+            try:
+                conn.execute(column_sql)
+            except sqlite3.OperationalError:
+                pass  # Column already exists — idempotent
 
 
 def migrate(db_path: Path) -> list[int]:
