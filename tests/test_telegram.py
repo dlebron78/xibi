@@ -93,12 +93,19 @@ def test_nudge_no_active_chat(monkeypatch):
     adapter.send_message.assert_not_called()
 
 
-def test_poll_processes_mock_message(monkeypatch):
+def test_poll_processes_mock_message(monkeypatch, tmp_path):
     monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "test-token")
     monkeypatch.setenv("XIBI_MOCK_TELEGRAM", "1")
 
+    db_path = tmp_path / "xibi.db"
+    import sqlite3
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE processed_messages (message_id INTEGER PRIMARY KEY, processed_at DATETIME)")
+
     core = MagicMock(spec=[])  # Don't have any extra attributes by default
     core.process_query = MagicMock(return_value="Mock Response")
+    core.db_path = db_path
 
     adapter = TelegramAdapter(core=core)
     adapter.send_message = MagicMock()
@@ -121,12 +128,19 @@ def test_poll_processes_mock_message(monkeypatch):
     adapter.send_message.assert_called_with(123, "Mock Response")
 
 
-def test_poll_unauthorized_chat_rejected(monkeypatch):
+def test_poll_unauthorized_chat_rejected(monkeypatch, tmp_path):
     monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "test-token")
     monkeypatch.setenv("XIBI_MOCK_TELEGRAM", "1")
 
+    db_path = tmp_path / "xibi.db"
+    import sqlite3
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE processed_messages (message_id INTEGER PRIMARY KEY, processed_at DATETIME)")
+
     core = MagicMock(spec=[])
     core.process_query = MagicMock()
+    core.db_path = db_path
     adapter = TelegramAdapter(core=core, allowed_chats=["999"])
     adapter.send_message = MagicMock()
 
@@ -146,12 +160,19 @@ def test_poll_unauthorized_chat_rejected(monkeypatch):
     adapter.send_message.assert_called_with(123, "Sorry, I'm a personal assistant. I don't talk to strangers.")
 
 
-def test_poll_file_upload_without_caption(monkeypatch):
+def test_poll_file_upload_without_caption(monkeypatch, tmp_path):
     monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "test-token")
     monkeypatch.setenv("XIBI_MOCK_TELEGRAM", "1")
 
+    db_path = tmp_path / "xibi.db"
+    import sqlite3
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE processed_messages (message_id INTEGER PRIMARY KEY, processed_at DATETIME)")
+
     core = MagicMock(spec=[])
     core.process_query = MagicMock()
+    core.db_path = db_path
     adapter = TelegramAdapter(core=core)
     adapter.send_message = MagicMock()
     adapter._download_file = MagicMock(return_value="/tmp/xibi_uploads/test.jpg")
@@ -166,6 +187,7 @@ def test_poll_file_upload_without_caption(monkeypatch):
                         {
                             "update_id": 1,
                             "message": {
+                                "message_id": 1,
                                 "chat": {"id": 123},
                                 "photo": [{"file_id": "p1"}],
                                 "from": {"first_name": "Dan"},
@@ -185,12 +207,19 @@ def test_poll_file_upload_without_caption(monkeypatch):
     assert "Got it! I've saved 'test.jpg'" in adapter.send_message.call_args[0][1]
 
 
-def test_poll_escape_word_cancels_task(monkeypatch):
+def test_poll_escape_word_cancels_task(monkeypatch, tmp_path):
     monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "test-token")
     monkeypatch.setenv("XIBI_MOCK_TELEGRAM", "1")
 
+    db_path = tmp_path / "xibi.db"
+    import sqlite3
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE processed_messages (message_id INTEGER PRIMARY KEY, processed_at DATETIME)")
+
     core = MagicMock()
     core._get_awaiting_task.return_value = {"id": "task-123"}
+    core.db_path = db_path
 
     adapter = TelegramAdapter(core=core)
     adapter.send_message = MagicMock()
@@ -204,7 +233,12 @@ def test_poll_escape_word_cancels_task(monkeypatch):
                     "result": [
                         {
                             "update_id": 1,
-                            "message": {"chat": {"id": 123}, "text": "cancel", "from": {"first_name": "Dan"}},
+                            "message": {
+                                "message_id": 1,
+                                "chat": {"id": 123},
+                                "text": "cancel",
+                                "from": {"first_name": "Dan"},
+                            },
                         }
                     ],
                 }
@@ -218,3 +252,49 @@ def test_poll_escape_word_cancels_task(monkeypatch):
 
     core._cancel_task.assert_called_once_with("task-123")
     adapter.send_message.assert_called_with(123, "Task cancelled. What's next?")
+
+
+def test_poll_idempotency_skips_processed(monkeypatch, tmp_path):
+    monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "test-token")
+    monkeypatch.setenv("XIBI_MOCK_TELEGRAM", "1")
+
+    db_path = tmp_path / "xibi.db"
+    import sqlite3
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE processed_messages (message_id INTEGER PRIMARY KEY, processed_at DATETIME)")
+        conn.execute("INSERT INTO processed_messages (message_id) VALUES (1001)")
+
+    core = MagicMock()
+    core.db_path = db_path
+    adapter = TelegramAdapter(core=core)
+    adapter.send_message = MagicMock()
+
+    def mock_get_updates(method, params=None):
+        if method == "getUpdates":
+            if not adapter._mock_sent:
+                adapter._mock_sent = True
+                return {
+                    "ok": True,
+                    "result": [
+                        {
+                            "update_id": 1,
+                            "message": {
+                                "message_id": 1001,  # Already in DB
+                                "chat": {"id": 123},
+                                "text": "Hello",
+                                "from": {"first_name": "Dan"},
+                            },
+                        }
+                    ],
+                }
+            raise StopIteration
+        return {"ok": True}
+
+    adapter._api_call = mock_get_updates
+
+    with pytest.raises(StopIteration):
+        adapter.poll()
+
+    core.process_query.assert_not_called()
+    adapter.send_message.assert_not_called()

@@ -14,22 +14,21 @@ Run on NucBox:
     python3 tests/test_react_reasoning.py
 """
 
-import os
-import sys
 import json
-import time
+import os
 import sqlite3
-from pathlib import Path
+import sys
+import time
 from datetime import datetime
+from pathlib import Path
 
 # ─── Path setup ──────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 import tests.reasoning_benchmark_v2 as benchmark
-from tests.fixtures.reasoning_seeds import ReasoningSeeder
-
 from bregger_core import BreggerCore
+from tests.fixtures.reasoning_seeds import ReasoningSeeder
 
 # ─── Core init ───────────────────────────────────────────────
 core = None
@@ -189,9 +188,9 @@ def main():
     all_results = {}
 
     # ── Test 1: Blind Lookup ──────────────────────────────────
-    print(f"\n--- Test 1: Blind Lookup ---")
+    print("\n--- Test 1: Blind Lookup ---")
     print(f'Prompt: "{benchmark.TEST_1_PROMPT}"')
-    print(f"Expected: list_files → read_file(BUGS_AND_ISSUES.md) → summarize\n")
+    print("Expected: list_files → read_file(BUGS_AND_ISSUES.md) → summarize\n")
 
     test1_results = []
     for i in range(benchmark.NUM_ITERATIONS):
@@ -208,9 +207,9 @@ def main():
     }
 
     # ── Test 2: Entity Chain ──────────────────────────────────
-    print(f"\n--- Test 2: Entity Chain ---")
+    print("\n--- Test 2: Entity Chain ---")
     print(f'Prompt: "{benchmark.TEST_2_PROMPT}"')
-    print(f"Expected: recall(Jake) → recall(product) → draft → confirm\n")
+    print("Expected: recall(Jake) → recall(product) → draft → confirm\n")
 
     test2_results = []
     for i in range(benchmark.NUM_ITERATIONS):

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import sqlite3
 import sys
 from pathlib import Path
 
+import xibi.db
 from xibi.db import SchemaManager, init_workdir
 from xibi.db.migrations import SCHEMA_VERSION
 
@@ -65,7 +65,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
                 failed = True
 
             # 5. Required tables exist
-            with sqlite3.connect(db_path) as conn:
+            with xibi.db.open_db(db_path) as conn:
                 cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
                 tables = {row[0] for row in cursor.fetchall()}
                 required = {"beliefs", "ledger", "traces", "tasks", "signals"}

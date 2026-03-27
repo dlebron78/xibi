@@ -1,9 +1,19 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 
 from xibi.db.migrations import SchemaManager, migrate
+
+
+def open_db(path: Path) -> sqlite3.Connection:
+    """Open a SQLite connection with WAL mode and sensible defaults."""
+    conn = sqlite3.connect(path, timeout=10, check_same_thread=False)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA wal_autocheckpoint=1000")
+    conn.execute("PRAGMA busy_timeout=5000")
+    return conn
 
 
 def init_workdir(workdir: Path) -> None:
@@ -31,4 +41,4 @@ def init_workdir(workdir: Path) -> None:
     migrate(db_path)
 
 
-__all__ = ["SchemaManager", "migrate", "init_workdir"]
+__all__ = ["SchemaManager", "migrate", "init_workdir", "open_db"]

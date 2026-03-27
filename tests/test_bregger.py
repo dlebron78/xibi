@@ -8,14 +8,14 @@ Run with:
     pytest tests/test_bregger.py -v
 """
 
-import os
-import sys
 import json
-import sqlite3
-import tempfile
+import os
 import shutil
-import pytest
+import sqlite3
+import sys
 from pathlib import Path
+
+import pytest
 
 # Point at project root
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -164,7 +164,7 @@ class TestControlPlane:
 
 class TestExecutive:
     def setup_method(self):
-        from bregger_core import SkillRegistry, BreggerExecutive
+        from bregger_core import BreggerExecutive, SkillRegistry
 
         skills_dir = PROJECT_ROOT / "skills"
         self.registry = SkillRegistry(str(skills_dir))
@@ -202,7 +202,7 @@ class TestExecutive:
 
     def test_workdir_injected_into_params(self, tmp_path):
         """BreggerExecutive injects _workdir into skill params at execution time."""
-        from bregger_core import SkillRegistry, BreggerExecutive
+        from bregger_core import BreggerExecutive, SkillRegistry
 
         registry = SkillRegistry(str(PROJECT_ROOT / "skills"))
         exec_ = BreggerExecutive(registry)
@@ -288,7 +288,6 @@ class TestWorkingMemory:
 
 class TestConversationRecall:
     def test_recall_empty_history(self, core):
-        import sqlite3
         from skills.memory.tools import recall_conversation
 
         # Test empty
@@ -298,6 +297,7 @@ class TestConversationRecall:
 
     def test_recall_keyword_match(self, core):
         import sqlite3
+
         from skills.memory.tools import recall_conversation
 
         with sqlite3.connect(core.db_path) as conn:
@@ -315,6 +315,7 @@ class TestConversationRecall:
 
     def test_recall_limit(self, core):
         import sqlite3
+
         from skills.memory.tools import recall_conversation
 
         with sqlite3.connect(core.db_path) as conn:
@@ -331,6 +332,7 @@ class TestConversationRecall:
 
     def test_recall_no_match(self, core):
         import sqlite3
+
         from skills.memory.tools import recall_conversation
 
         with sqlite3.connect(core.db_path) as conn:
@@ -365,7 +367,7 @@ class TestMemorySkill:
         assert row[0] == "task"
 
     def test_recall_all(self, tmp_workdir):
-        from skills.memory.tools import remember, recall
+        from skills.memory.tools import recall, remember
 
         remember.run({"content": "item one", "_workdir": str(tmp_workdir)})
         remember.run({"content": "item two", "_workdir": str(tmp_workdir)})
@@ -374,7 +376,7 @@ class TestMemorySkill:
         assert len(result["items"]) >= 2
 
     def test_recall_by_category(self, tmp_workdir):
-        from skills.memory.tools import remember, recall
+        from skills.memory.tools import recall, remember
 
         remember.run({"content": "design spec", "category": "idea"})
         remember.run({"content": "grocery run", "category": "task"})
@@ -382,7 +384,7 @@ class TestMemorySkill:
         assert all(i["category"] == "idea" for i in result["items"])
 
     def test_recall_by_keyword(self, tmp_workdir):
-        from skills.memory.tools import remember, recall
+        from skills.memory.tools import recall, remember
 
         remember.run({"content": "order milk from store", "_workdir": str(tmp_workdir)})
         result = recall.run({"query": "milk", "_workdir": str(tmp_workdir)})
@@ -415,7 +417,7 @@ class TestEmailSkill:
         assert result["status"] == "error"
 
     def test_executive_validates_send_email(self):
-        from bregger_core import SkillRegistry, BreggerExecutive
+        from bregger_core import BreggerExecutive, SkillRegistry
 
         registry = SkillRegistry(str(PROJECT_ROOT / "skills"))
         exec_ = BreggerExecutive(registry)
@@ -499,14 +501,14 @@ class TestReActLoop:
     # ── compress_scratchpad ───────────────────────────────────────────
 
     def test_compress_scratchpad_empty(self):
-        from bregger_core import compress_scratchpad, Step
+        from bregger_core import compress_scratchpad
 
         result = compress_scratchpad([], current_step=1)
         assert "No steps" in result
 
     def test_compress_scratchpad_recent_full(self):
         """Last 2 steps should be full text (contain 'Thought:')."""
-        from bregger_core import compress_scratchpad, Step
+        from bregger_core import Step, compress_scratchpad
 
         steps = [
             Step(1, "first", "list_files", {}, {"status": "success", "content": "a.md"}),
@@ -518,7 +520,7 @@ class TestReActLoop:
 
     def test_compress_scratchpad_older_summary(self):
         """Step 1 should be one-liner when current_step=4."""
-        from bregger_core import compress_scratchpad, Step
+        from bregger_core import Step, compress_scratchpad
 
         steps = [
             Step(1, "old thought", "list_files", {}, {"status": "success", "content": "files here"}),
@@ -759,8 +761,9 @@ class TestUnifiedMemorySignals:
 
     def test_cross_channel_escalation(self, core):
         import sqlite3
-        from bregger_heartbeat import RuleEngine
+
         import bregger_heartbeat
+        from bregger_heartbeat import RuleEngine
 
         # Seed the DB with a chat signal from today (needs >1 count to be an active thread)
         with sqlite3.connect(core.db_path) as conn:
@@ -820,8 +823,9 @@ class TestUnifiedMemorySignals:
             bregger_heartbeat.is_quiet_hours = original_quiet
 
     def test_pinned_topics_escalation(self, core):
-        import bregger_heartbeat
         import sqlite3
+
+        import bregger_heartbeat
 
         # Seed DB with a pinned topic
         with sqlite3.connect(core.db_path) as conn:
@@ -891,6 +895,7 @@ class TestUnifiedMemorySignals:
 
     def test_active_threads_merged(self, core):
         import sqlite3
+
         import bregger_heartbeat
 
         # Seed DB with fragmented topics that should merge to 'schedule'
@@ -915,9 +920,10 @@ class TestUnifiedMemorySignals:
 
 class TestSkillContract:
     def test_skill_triggers_auto_registered(self, tmp_path):
-        from bregger_core import BreggerCore
         import json
         import os
+
+        from bregger_core import BreggerCore
 
         # 1. Setup mock skills dir
         workdir = tmp_path / "bregger"
@@ -959,8 +965,8 @@ class TestSkillContract:
         assert plan["tool"] == "test_tool"
 
     def test_intent_mapper_min_tier(self, tmp_path):
-        from bregger_core import SkillRegistry, IntentMapper
-        import os
+
+        from bregger_core import IntentMapper
 
         # Mock registry with a Tier 3 tool
         class MockRegistry:

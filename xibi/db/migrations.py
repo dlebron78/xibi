@@ -4,9 +4,11 @@ import logging
 import sqlite3
 from pathlib import Path
 
+import xibi.db
+
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 4  # increment when adding new migrations
+SCHEMA_VERSION = 5  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -16,7 +18,7 @@ class SchemaManager:
     def get_version(self) -> int:
         """Return the highest applied version from schema_version, or 0 if the table doesn't exist."""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with xibi.db.open_db(self.db_path) as conn:
                 cursor = conn.execute("SELECT MAX(version) FROM schema_version")
                 row = cursor.fetchone()
                 return row[0] if row and row[0] is not None else 0
@@ -33,13 +35,14 @@ class SchemaManager:
             (2, "app tables: tasks, conversation_history, pinned_topics, signals, shadow_phrases", self._migration_2),
             (3, "alerting tables: rules, triage_log, heartbeat_state, seen_emails", self._migration_3),
             (4, "trust tables: trust_records", self._migration_4),
+            (5, "telegram idempotency: processed_messages", self._migration_5),
         ]
 
         for version, description, func in migrations:
             if version > current_version:
                 logger.info(f"Applying migration {version}: {description}")
                 try:
-                    with sqlite3.connect(self.db_path) as conn:
+                    with xibi.db.open_db(self.db_path) as conn:
                         func(conn)
                         conn.execute(
                             "INSERT INTO schema_version (version, description) VALUES (?, ?)",
@@ -218,6 +221,14 @@ class SchemaManager:
                 total_failures INTEGER NOT NULL DEFAULT 0,
                 last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(specialty, effort)
+            );
+        """)
+
+    def _migration_5(self, conn: sqlite3.Connection) -> None:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS processed_messages (
+                message_id   INTEGER PRIMARY KEY,
+                processed_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
         """)
 

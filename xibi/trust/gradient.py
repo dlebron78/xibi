@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+import xibi.db
+
 
 @dataclass
 class TrustConfig:
@@ -51,7 +53,7 @@ class TrustGradient:
         return self.config.get(key, DEFAULT_TRUST_CONFIG)
 
     def _load_record(self, specialty: str, effort: str) -> TrustRecord:
-        with sqlite3.connect(self.db_path) as conn:
+        with xibi.db.open_db(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 "SELECT * FROM trust_records WHERE specialty = ? AND effort = ?",
@@ -82,7 +84,7 @@ class TrustGradient:
 
     def _upsert_record(self, record: TrustRecord) -> None:
         record.last_updated = datetime.now(timezone.utc).isoformat()
-        with sqlite3.connect(self.db_path) as conn:
+        with xibi.db.open_db(self.db_path) as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO trust_records
@@ -143,7 +145,7 @@ class TrustGradient:
         return total_outputs % audit_interval == 0
 
     def get_record(self, specialty: str, effort: str) -> TrustRecord | None:
-        with sqlite3.connect(self.db_path) as conn:
+        with xibi.db.open_db(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute(
                 "SELECT * FROM trust_records WHERE specialty = ? AND effort = ?",
@@ -164,7 +166,7 @@ class TrustGradient:
 
     def get_all_records(self) -> list[TrustRecord]:
         records = []
-        with sqlite3.connect(self.db_path) as conn:
+        with xibi.db.open_db(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute("SELECT * FROM trust_records ORDER BY specialty ASC, effort ASC")
             for row in cursor.fetchall():

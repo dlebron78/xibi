@@ -4,12 +4,16 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+import xibi.db
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +134,7 @@ class TelegramAdapter:
                         {
                             "update_id": 1,
                             "message": {
+                                "message_id": 1,
                                 "chat": {"id": 123},
                                 "text": "Hi, check my emails",
                                 "from": {"first_name": "Dan"},
@@ -185,6 +190,16 @@ class TelegramAdapter:
             return True
         return str(chat_id) in self.allowed_chats
 
+    def _is_already_processed(self, conn: sqlite3.Connection, message_id: int) -> bool:
+        row = conn.execute("SELECT 1 FROM processed_messages WHERE message_id = ?", (message_id,)).fetchone()
+        return row is not None
+
+    def _mark_processed(self, conn: sqlite3.Connection, message_id: int) -> None:
+        conn.execute(
+            "INSERT OR IGNORE INTO processed_messages (message_id, processed_at) VALUES (?, ?)",
+            (message_id, datetime.now(timezone.utc).isoformat()),
+        )
+
     def _process_message(self, chat_id: int, user_text: str) -> None:
         """Handle core engine interaction, task routing, and response sending."""
         self._api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
@@ -226,6 +241,9 @@ class TelegramAdapter:
     def poll(self) -> None:
         logger.info("Xibi is listening on Telegram...")
 
+        # Get DB path from core if available, or use default
+        db_path = getattr(self.core, "db_path", Path.home() / ".xibi" / "data" / "xibi.db")
+
         while True:
             params = {"offset": self.offset, "timeout": 20}
             updates = self._api_call("getUpdates", params)
@@ -237,53 +255,65 @@ class TelegramAdapter:
                     if not message:
                         continue
 
+                    msg_id = message["message_id"]
                     chat_id = message["chat"]["id"]
-                    if not self.is_authorized(chat_id):
-                        logger.warning(f"Unauthorized access from {chat_id}")
-                        self.send_message(chat_id, "Sorry, I'm a personal assistant. I don't talk to strangers.")
-                        self._save_offset(self.offset)
-                        continue
 
-                    # Handle file uploads
-                    if "document" in message or "photo" in message:
-                        if "document" in message:
-                            file_id = message["document"]["file_id"]
-                        else:
-                            file_id = message["photo"][-1]["file_id"]
+                    with xibi.db.open_db(db_path) as conn:
+                        if self._is_already_processed(conn, msg_id):
+                            self._save_offset(self.offset)
+                            continue
 
-                        caption = message.get("caption", "").strip()
-                        self._api_call("sendChatAction", {"chat_id": chat_id, "action": "upload_document"})
+                        if not self.is_authorized(chat_id):
+                            logger.warning(f"Unauthorized access from {chat_id}")
+                            self.send_message(chat_id, "Sorry, I'm a personal assistant. I don't talk to strangers.")
+                            self._mark_processed(conn, msg_id)
+                            self._save_offset(self.offset)
+                            continue
 
-                        local_path = self._download_file(file_id, chat_id)
-                        if local_path:
-                            self._pending_attachments[chat_id] = local_path
-                            if caption:
-                                user_text = f"{caption} [attachment saved at {local_path}]"
-                                self._process_message(chat_id, user_text)
+                        # Handle file uploads
+                        if "document" in message or "photo" in message:
+                            if "document" in message:
+                                file_id = message["document"]["file_id"]
                             else:
-                                fname = os.path.basename(local_path)
-                                self.send_message(
-                                    chat_id,
-                                    f"Got it! I've saved '{fname}'. Now just tell me what to do with it.",
-                                )
-                        else:
-                            self.send_message(chat_id, "I couldn't download that file. Please try again.")
+                                file_id = message["photo"][-1]["file_id"]
 
+                            caption = message.get("caption", "").strip()
+                            self._api_call("sendChatAction", {"chat_id": chat_id, "action": "upload_document"})
+
+                            local_path = self._download_file(file_id, chat_id)
+                            if local_path:
+                                self._pending_attachments[chat_id] = local_path
+                                if caption:
+                                    user_text = f"{caption} [attachment saved at {local_path}]"
+                                    self._process_message(chat_id, user_text)
+                                else:
+                                    fname = os.path.basename(local_path)
+                                    self.send_message(
+                                        chat_id,
+                                        f"Got it! I've saved '{fname}'. Now just tell me what to do with it.",
+                                    )
+                            else:
+                                self.send_message(chat_id, "I couldn't download that file. Please try again.")
+
+                            self._mark_processed(conn, msg_id)
+                            self._save_offset(self.offset)
+                            continue
+
+                        # Handle text messages
+                        if "text" not in message:
+                            self._mark_processed(conn, msg_id)
+                            self._save_offset(self.offset)
+                            continue
+
+                        user_text = message["text"]
+                        pending_path = self._pending_attachments.get(chat_id)
+                        if pending_path and os.path.isfile(pending_path):
+                            user_text = f"{user_text} [attachment_path={pending_path}]"
+                        elif pending_path:
+                            self._pending_attachments.pop(chat_id, None)
+
+                        self._process_message(chat_id, user_text)
+                        self._mark_processed(conn, msg_id)
                         self._save_offset(self.offset)
-                        continue
-
-                    # Handle text messages
-                    if "text" not in message:
-                        continue
-
-                    user_text = message["text"]
-                    pending_path = self._pending_attachments.get(chat_id)
-                    if pending_path and os.path.isfile(pending_path):
-                        user_text = f"{user_text} [attachment_path={pending_path}]"
-                    elif pending_path:
-                        self._pending_attachments.pop(chat_id, None)
-
-                    self._process_message(chat_id, user_text)
-                    self._save_offset(self.offset)
 
             time.sleep(1)

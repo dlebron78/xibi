@@ -9,6 +9,7 @@ from typing import Any
 import psutil
 from flask import Flask, jsonify, render_template
 
+import xibi.db
 from xibi.dashboard import queries
 
 
@@ -28,7 +29,7 @@ def create_app(config: DashboardConfig) -> Flask:
     app.config["DB_PATH"] = config.db_path
 
     def get_db_conn() -> sqlite3.Connection:
-        conn = sqlite3.connect(app.config["DB_PATH"])
+        conn = xibi.db.open_db(app.config["DB_PATH"])
         return conn
 
     @app.route("/api/health")

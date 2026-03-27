@@ -1,7 +1,6 @@
+import json
 import os
 import sqlite3
-import json
-import sys
 
 data_dir = os.environ.get("XIBI_DATA_DIR", os.path.join(os.path.expanduser("~"), "bregger_remote"))
 db_path = os.path.join(data_dir, "data", "bregger.db")
@@ -23,7 +22,7 @@ try:
                     first_tool = js[0].get("tool")
                     if first_tool != "list_files":
                         failed_t1.append(js)
-            except Exception as e:
+            except Exception:
                 pass
 
         print(json.dumps(failed_t1[:2]))

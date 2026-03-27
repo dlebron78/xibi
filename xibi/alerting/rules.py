@@ -8,6 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import xibi.db
+
 logger = logging.getLogger(__name__)
 
 
@@ -21,7 +23,7 @@ class RuleEngine:
 
     def _ensure_tables(self) -> None:
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with xibi.db.open_db(self.db_path) as conn:
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS rules (
                         id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,7 +79,7 @@ class RuleEngine:
     def _prewarm(self) -> None:
         try:
             self._rule_cache = []  # Clear before reloading
-            with sqlite3.connect(self.db_path) as conn:
+            with xibi.db.open_db(self.db_path) as conn:
                 cursor = conn.execute("SELECT type, condition, message FROM rules WHERE enabled=1")
                 for r_type, cond_json, msg in cursor.fetchall():
                     try:
@@ -122,57 +124,73 @@ class RuleEngine:
 
     def log_triage(self, email_id: str, sender: str, subject: str, verdict: str) -> None:
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute(
-                    "INSERT INTO triage_log (email_id, sender, subject, verdict) VALUES (?, ?, ?, ?)",
-                    (email_id, sender, subject, verdict),
-                )
+            with xibi.db.open_db(self.db_path) as conn:
+                self.log_triage_with_conn(conn, email_id, sender, subject, verdict)
         except Exception as e:
             logger.warning(f"Failed to log triage: {e}")
 
+    def log_triage_with_conn(
+        self, conn: sqlite3.Connection, email_id: str, sender: str, subject: str, verdict: str
+    ) -> None:
+        conn.execute(
+            "INSERT INTO triage_log (email_id, sender, subject, verdict) VALUES (?, ?, ?, ?)",
+            (email_id, sender, subject, verdict),
+        )
+
     def load_triage_rules(self) -> dict[str, str]:
-        rules = {}
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute(
-                    "SELECT COALESCE(entity, content), status FROM ledger WHERE category='triage_rule'"
-                )
-                for entity, status in cursor.fetchall():
-                    if entity and status:
-                        rules[entity.lower()] = status.upper()
+            with xibi.db.open_db(self.db_path) as conn:
+                return self.load_triage_rules_with_conn(conn)
         except Exception as e:
             logger.warning(f"Failed to load triage rules: {e}")
+        return {}
+
+    def load_triage_rules_with_conn(self, conn: sqlite3.Connection) -> dict[str, str]:
+        rules = {}
+        cursor = conn.execute("SELECT COALESCE(entity, content), status FROM ledger WHERE category='triage_rule'")
+        for entity, status in cursor.fetchall():
+            if entity and status:
+                rules[entity.lower()] = status.upper()
         return rules
 
     def get_digest_items(self) -> list[dict[str, Any]]:
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute(
-                    """
-                    SELECT sender, subject, verdict, timestamp FROM triage_log
-                    WHERE timestamp > ? AND verdict != 'URGENT'
-                    ORDER BY timestamp ASC
-                """,
-                    (self._watermark_cache,),
-                )
-                rows = cursor.fetchall()
-                return [{"sender": r[0], "subject": r[1], "verdict": r[2], "timestamp": r[3]} for r in rows]
+            with xibi.db.open_db(self.db_path) as conn:
+                return self.get_digest_items_with_conn(conn)
         except Exception as e:
             logger.warning(f"Error fetching digest items: {e}")
             return []
 
+    def get_digest_items_with_conn(self, conn: sqlite3.Connection) -> list[dict[str, Any]]:
+        # Read watermark from DB within transaction
+        cursor = conn.execute("SELECT value FROM heartbeat_state WHERE key='last_digest_at'")
+        row = cursor.fetchone()
+        watermark = row[0] if row and isinstance(row[0], str) else "1970-01-01 00:00:00"
+
+        cursor = conn.execute(
+            """
+            SELECT sender, subject, verdict, timestamp FROM triage_log
+            WHERE timestamp > ? AND verdict != 'URGENT'
+            ORDER BY timestamp ASC
+        """,
+            (watermark,),
+        )
+        rows = cursor.fetchall()
+        return [{"sender": r[0], "subject": r[1], "verdict": r[2], "timestamp": r[3]} for r in rows]
+
     def update_watermark(self) -> None:
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute(
-                    "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('last_digest_at', CURRENT_TIMESTAMP)"
-                )
-                cursor = conn.execute("SELECT value FROM heartbeat_state WHERE key='last_digest_at'")
-                row = cursor.fetchone()
-                if row and isinstance(row[0], str):
-                    self._watermark_cache = row[0]
+            with xibi.db.open_db(self.db_path) as conn:
+                self.update_watermark_with_conn(conn)
         except Exception as e:
             logger.warning(f"Error updating watermark: {e}")
+
+    def update_watermark_with_conn(self, conn: sqlite3.Connection) -> None:
+        conn.execute("INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('last_digest_at', CURRENT_TIMESTAMP)")
+        cursor = conn.execute("SELECT value FROM heartbeat_state WHERE key='last_digest_at'")
+        row = cursor.fetchone()
+        if row and isinstance(row[0], str):
+            self._watermark_cache = row[0]
 
     def was_digest_sent_since(self, since_dt: datetime) -> bool:
         try:
@@ -187,19 +205,25 @@ class RuleEngine:
 
     def mark_seen(self, email_id: str) -> None:
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute("INSERT OR IGNORE INTO seen_emails (email_id) VALUES (?)", (email_id,))
+            with xibi.db.open_db(self.db_path) as conn:
+                self.mark_seen_with_conn(conn, email_id)
         except Exception as e:
             logger.warning(f"Failed to mark email {email_id} as seen: {e}")
 
+    def mark_seen_with_conn(self, conn: sqlite3.Connection, email_id: str) -> None:
+        conn.execute("INSERT OR IGNORE INTO seen_emails (email_id) VALUES (?)", (email_id,))
+
     def get_seen_ids(self) -> set[str]:
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute("SELECT email_id FROM seen_emails")
-                return {row[0] for row in cursor.fetchall()}
+            with xibi.db.open_db(self.db_path) as conn:
+                return self.get_seen_ids_with_conn(conn)
         except Exception as e:
             logger.warning(f"Failed to get seen email IDs: {e}")
             return set()
+
+    def get_seen_ids_with_conn(self, conn: sqlite3.Connection) -> set[str]:
+        cursor = conn.execute("SELECT email_id FROM seen_emails")
+        return {row[0] for row in cursor.fetchall()}
 
     def log_signal(
         self,
@@ -212,29 +236,44 @@ class RuleEngine:
         ref_source: str | None,
     ) -> None:
         try:
-            preview = (content_preview[:277] + "...") if len(content_preview) > 280 else content_preview
-            with sqlite3.connect(self.db_path) as conn:
-                if ref_id:
-                    cursor = conn.execute(
-                        "SELECT 1 FROM signals WHERE source = ? AND ref_id = ? AND date(timestamp) = date('now')",
-                        (source, str(ref_id)),
-                    )
-                    if cursor.fetchone():
-                        return
-
-                conn.execute(
-                    """
-                    INSERT INTO signals (source, topic, entity_text, entity_type, content_preview, ref_id, ref_source)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                    (source, topic_hint, entity_text, entity_type, preview, str(ref_id), ref_source),
+            with xibi.db.open_db(self.db_path) as conn:
+                self.log_signal_with_conn(
+                    conn, source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source
                 )
         except Exception as e:
             logger.warning(f"Failed to log signal: {e}")
 
+    def log_signal_with_conn(
+        self,
+        conn: sqlite3.Connection,
+        source: str,
+        topic_hint: str | None,
+        entity_text: str | None,
+        entity_type: str | None,
+        content_preview: str,
+        ref_id: str | None,
+        ref_source: str | None,
+    ) -> None:
+        preview = (content_preview[:277] + "...") if len(content_preview) > 280 else content_preview
+        if ref_id:
+            cursor = conn.execute(
+                "SELECT 1 FROM signals WHERE source = ? AND ref_id = ? AND date(timestamp) = date('now')",
+                (source, str(ref_id)),
+            )
+            if cursor.fetchone():
+                return
+
+        conn.execute(
+            """
+            INSERT INTO signals (source, topic, entity_text, entity_type, content_preview, ref_id, ref_source)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+            (source, topic_hint, entity_text, entity_type, preview, str(ref_id), ref_source),
+        )
+
     def log_background_event(self, content: str, topic: str) -> None:
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with xibi.db.open_db(self.db_path) as conn:
                 conn.execute(
                     """
                     INSERT INTO ledger (id, category, content, entity, status)

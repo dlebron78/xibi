@@ -1,8 +1,7 @@
+import glob
+import inspect
 import json
 import os
-import glob
-import importlib
-import inspect
 
 
 def test_manifest_schema():
@@ -13,7 +12,7 @@ def test_manifest_schema():
     assert len(manifest_paths) > 0, "No skill manifests found in the skills directory."
 
     for path in manifest_paths:
-        with open(path, "r") as f:
+        with open(path) as f:
             manifest = json.load(f)
 
         assert "name" in manifest, f"Manifest missing 'name': {path}"
@@ -28,7 +27,7 @@ def test_tool_compilation_and_contract():
     workdir = project_root
     manifest_paths = glob.glob(os.path.join(workdir, "skills", "*", "manifest.json"))
     for path in manifest_paths:
-        with open(path, "r") as f:
+        with open(path) as f:
             manifest = json.load(f)
 
         skill_name = manifest["name"]
@@ -66,7 +65,7 @@ def test_tool_compilation_and_contract():
             # 2. Test contract (run function)
             assert hasattr(module, "run"), f"Tool module '{tool_file}' is missing a 'run' function."
 
-            run_func = getattr(module, "run")
+            run_func = module.run
             assert callable(run_func), f"'run' in '{tool_file}' is not a function."
 
             # Verify signature has 'params' argument (with optional fallback check)

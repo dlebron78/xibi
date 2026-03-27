@@ -18,10 +18,7 @@ Results are printed as a table and saved to reasoning_benchmark_v2_results.json
 
 import json
 import time
-import sys
-import os
 from datetime import datetime
-from collections import defaultdict
 
 # ============================================================
 # CONFIG — adjust these to match your setup
@@ -313,7 +310,7 @@ def print_report(test_name, agg):
     print(f"  Overall: {agg['passed']}/{agg['total']} passed ({agg['overall_pass_rate']}%)")
     print(f"  Avg steps: {agg['avg_steps']}")
     print(f"  Avg duration: {agg['avg_duration_ms']}ms")
-    print(f"\n  Per-metric breakdown:")
+    print("\n  Per-metric breakdown:")
     print(f"  {'Metric':<30} {'Rate':>8} {'Pass':>6}")
     print(f"  {'-' * 30} {'-' * 8} {'-' * 6}")
     for metric, data in agg["metric_rates"].items():
@@ -337,9 +334,9 @@ def main():
     all_results = {}
 
     # Test 1: Blind Lookup
-    print(f"\n--- Test 1: Blind Lookup ---")
+    print("\n--- Test 1: Blind Lookup ---")
     print(f'Prompt: "{TEST_1_PROMPT}"')
-    print(f"Expected: list_files → read_file(BUGS_AND_ISSUES.md) → summarize\n")
+    print("Expected: list_files → read_file(BUGS_AND_ISSUES.md) → summarize\n")
 
     test1_results = []
     for i in range(NUM_ITERATIONS):
@@ -351,9 +348,9 @@ def main():
     all_results["test_1_blind_lookup"] = {"aggregate": test1_agg, "iterations": test1_results}
 
     # Test 2: Entity Chain
-    print(f"\n--- Test 2: Entity Chain ---")
+    print("\n--- Test 2: Entity Chain ---")
     print(f'Prompt: "{TEST_2_PROMPT}"')
-    print(f"Expected: recall(Jake) → recall(product) → draft → confirm\n")
+    print("Expected: recall(Jake) → recall(product) → draft → confirm\n")
 
     test2_results = []
     for i in range(NUM_ITERATIONS):

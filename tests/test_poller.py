@@ -47,11 +47,14 @@ def test_tick_skips_quiet_hours():
         mock_check.assert_not_called()
 
 
-def test_tick_marks_seen_email():
+def test_tick_marks_seen_email(tmp_path):
     rules = MagicMock()
-    rules.get_seen_ids.return_value = set()
-    rules.load_triage_rules.return_value = {}
-    hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), rules, [123])
+    rules.get_seen_ids_with_conn.return_value = set()
+    rules.load_triage_rules_with_conn.return_value = {}
+    db_path = tmp_path / "test.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE heartbeat_state (key TEXT PRIMARY KEY, value TEXT)")
+    hp = HeartbeatPoller(Path("/tmp"), db_path, MagicMock(), rules, [123])
 
     with (
         patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
@@ -59,13 +62,18 @@ def test_tick_marks_seen_email():
         patch.object(HeartbeatPoller, "_classify_email", return_value="DIGEST"),
     ):
         hp.tick()
-        rules.mark_seen.assert_called_with("e1")
+        # The first arg is a sqlite3.Connection, we just check the second arg
+        args, kwargs = rules.mark_seen_with_conn.call_args
+        assert args[1] == "e1"
 
 
-def test_tick_skips_already_seen_email():
+def test_tick_skips_already_seen_email(tmp_path):
     rules = MagicMock()
-    rules.get_seen_ids.return_value = {"e1"}
-    hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), rules, [123])
+    rules.get_seen_ids_with_conn.return_value = {"e1"}
+    db_path = tmp_path / "test.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE heartbeat_state (key TEXT PRIMARY KEY, value TEXT)")
+    hp = HeartbeatPoller(Path("/tmp"), db_path, MagicMock(), rules, [123])
 
     with (
         patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
@@ -76,12 +84,15 @@ def test_tick_skips_already_seen_email():
         mock_classify.assert_not_called()
 
 
-def test_tick_urgent_broadcasts():
+def test_tick_urgent_broadcasts(tmp_path):
     rules = MagicMock()
-    rules.get_seen_ids.return_value = set()
-    rules.load_triage_rules.return_value = {}
+    rules.get_seen_ids_with_conn.return_value = set()
+    rules.load_triage_rules_with_conn.return_value = {}
     rules.evaluate_email.return_value = "Alert!"
-    hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), rules, [123])
+    db_path = tmp_path / "test.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE heartbeat_state (key TEXT PRIMARY KEY, value TEXT)")
+    hp = HeartbeatPoller(Path("/tmp"), db_path, MagicMock(), rules, [123])
 
     with (
         patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
@@ -93,11 +104,14 @@ def test_tick_urgent_broadcasts():
         mock_broadcast.assert_called_with("Alert!")
 
 
-def test_tick_defer_not_marked_seen():
+def test_tick_defer_not_marked_seen(tmp_path):
     rules = MagicMock()
-    rules.get_seen_ids.return_value = set()
-    rules.load_triage_rules.return_value = {}
-    hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), rules, [123])
+    rules.get_seen_ids_with_conn.return_value = set()
+    rules.load_triage_rules_with_conn.return_value = {}
+    db_path = tmp_path / "test.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE heartbeat_state (key TEXT PRIMARY KEY, value TEXT)")
+    hp = HeartbeatPoller(Path("/tmp"), db_path, MagicMock(), rules, [123])
 
     with (
         patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
@@ -108,10 +122,13 @@ def test_tick_defer_not_marked_seen():
         rules.mark_seen.assert_not_called()
 
 
-def test_digest_tick_no_items_no_force():
+def test_digest_tick_no_items_no_force(tmp_path):
     rules = MagicMock()
-    rules.get_digest_items.return_value = []
-    hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), rules, [123])
+    rules.get_digest_items_with_conn.return_value = []
+    db_path = tmp_path / "test.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE heartbeat_state (key TEXT PRIMARY KEY, value TEXT)")
+    hp = HeartbeatPoller(Path("/tmp"), db_path, MagicMock(), rules, [123])
 
     with (
         patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
@@ -121,9 +138,12 @@ def test_digest_tick_no_items_no_force():
         mock_broadcast.assert_not_called()
 
 
-def test_digest_tick_force_empty():
-    hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), MagicMock(), [123])
-    hp.rules.get_digest_items.return_value = []
+def test_digest_tick_force_empty(tmp_path):
+    db_path = tmp_path / "test.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE heartbeat_state (key TEXT PRIMARY KEY, value TEXT)")
+    hp = HeartbeatPoller(Path("/tmp"), db_path, MagicMock(), MagicMock(), [123])
+    hp.rules.get_digest_items_with_conn.return_value = []
 
     with (
         patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
@@ -133,10 +153,13 @@ def test_digest_tick_force_empty():
         mock_broadcast.assert_called_with("📥 Recap — no new emails triaged since last update. All quiet!")
 
 
-def test_digest_tick_with_items():
+def test_digest_tick_with_items(tmp_path):
     rules = MagicMock()
-    rules.get_digest_items.return_value = [{"sender": "s1", "subject": "sub1", "verdict": "DIGEST"}]
-    hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), rules, [123])
+    rules.get_digest_items_with_conn.return_value = [{"sender": "s1", "subject": "sub1", "verdict": "DIGEST"}]
+    db_path = tmp_path / "test.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE heartbeat_state (key TEXT PRIMARY KEY, value TEXT)")
+    hp = HeartbeatPoller(Path("/tmp"), db_path, MagicMock(), rules, [123])
 
     with (
         patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
@@ -144,14 +167,17 @@ def test_digest_tick_with_items():
     ):
         hp.digest_tick()
         mock_broadcast.assert_called()
-        rules.update_watermark.assert_called()
+        assert rules.update_watermark_with_conn.called
 
 
-def test_auto_noise_prefilter():
+def test_auto_noise_prefilter(tmp_path):
     rules = MagicMock()
-    rules.get_seen_ids.return_value = set()
-    rules.load_triage_rules.return_value = {}
-    hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), rules, [123])
+    rules.get_seen_ids_with_conn.return_value = set()
+    rules.load_triage_rules_with_conn.return_value = {}
+    db_path = tmp_path / "test.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE heartbeat_state (key TEXT PRIMARY KEY, value TEXT)")
+    hp = HeartbeatPoller(Path("/tmp"), db_path, MagicMock(), rules, [123])
 
     with (
         patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
@@ -160,7 +186,11 @@ def test_auto_noise_prefilter():
     ):
         hp.tick()
         mock_classify.assert_not_called()
-        rules.log_triage.assert_called_with("e1", "newsletter@domain.com", "No Subject", "NOISE")
+        args, kwargs = rules.log_triage_with_conn.call_args
+        assert args[1] == "e1"
+        assert args[2] == "newsletter@domain.com"
+        assert args[3] == "No Subject"
+        assert args[4] == "NOISE"
 
 
 def test_is_quiet_hours_same_start_end():
@@ -215,6 +245,7 @@ def test_classify_email_exception():
 def test_tick_task_reminder(tmp_path):
     db_path = tmp_path / "test.db"
     with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE heartbeat_state (key TEXT PRIMARY KEY, value TEXT)")
         conn.execute("CREATE TABLE tasks (id TEXT, goal TEXT, status TEXT, due_at TEXT)")
         conn.execute("INSERT INTO tasks VALUES ('1', 'do stuff', 'pending', '1970-01-01 00:00:00')")
 
@@ -306,7 +337,9 @@ def test_should_escalate_no_match():
 
 def test_tick_no_tasks_table(tmp_path):
     db_path = tmp_path / "test.db"
-    # Empty DB, no tables
+    # Setup DB
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE heartbeat_state (key TEXT PRIMARY KEY, value TEXT)")
     hp = HeartbeatPoller(Path("/tmp"), db_path, MagicMock(), MagicMock(), [123])
     with (
         patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
@@ -316,12 +349,15 @@ def test_tick_no_tasks_table(tmp_path):
         # Should not crash
 
 
-def test_tick_urgent_no_alert_msg():
+def test_tick_urgent_no_alert_msg(tmp_path):
     rules = MagicMock()
-    rules.get_seen_ids.return_value = set()
-    rules.load_triage_rules.return_value = {}
+    rules.get_seen_ids_with_conn.return_value = set()
+    rules.load_triage_rules_with_conn.return_value = {}
     rules.evaluate_email.return_value = None
-    hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), rules, [123])
+    db_path = tmp_path / "test.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE heartbeat_state (key TEXT PRIMARY KEY, value TEXT)")
+    hp = HeartbeatPoller(Path("/tmp"), db_path, MagicMock(), rules, [123])
 
     with (
         patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
@@ -341,3 +377,70 @@ def test_run_tick_exception_continues():
         contextlib.suppress(InterruptedError),
     ):
         hp.run()
+
+
+def test_watermark_race_condition_safe(tmp_path):
+    """Concurrent ticks should not duplicate-process items."""
+    import threading
+    import time as time_module
+
+    db_path = tmp_path / "xibi.db"
+    # Setup DB
+    import sqlite3
+
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("CREATE TABLE heartbeat_state (key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute("CREATE TABLE processed_messages (message_id INTEGER PRIMARY KEY, processed_at DATETIME)")
+        conn.execute("CREATE TABLE seen_emails (email_id TEXT PRIMARY KEY, seen_at DATETIME DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute(
+            "CREATE TABLE triage_log (id INTEGER PRIMARY KEY, email_id TEXT, sender TEXT, subject TEXT, verdict TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)"
+        )
+
+    # We'll use a mock RuleEngine that logs processed IDs
+    processed_ids = []
+
+    class MockRules:
+        def load_rules(self, type):
+            return []
+
+        def get_seen_ids_with_conn(self, conn):
+            cursor = conn.execute("SELECT email_id FROM seen_emails")
+            return {row[0] for row in cursor.fetchall()}
+
+        def load_triage_rules_with_conn(self, conn):
+            return {}
+
+        def log_signal_with_conn(self, *args, **kwargs):
+            pass
+
+        def log_triage_with_conn(self, conn, email_id, sender, subject, verdict):
+            processed_ids.append(email_id)
+
+        def mark_seen_with_conn(self, conn, email_id):
+            conn.execute("INSERT INTO seen_emails (email_id) VALUES (?)", (email_id,))
+
+    rules = MockRules()
+    hp = HeartbeatPoller(tmp_path / "skills", db_path, MagicMock(), rules, [123])
+
+    # Mock _check_email to return the same item
+    hp._check_email = MagicMock(return_value=[{"id": "msg1", "from": "s1", "subject": "sub1"}])
+    hp._classify_email = MagicMock(return_value="DIGEST")
+    hp._is_quiet_hours = MagicMock(return_value=False)
+
+    # To ensure overlap, we'll make _tick_with_conn slow
+    original_tick_with_conn = hp._tick_with_conn
+
+    def slow_tick_with_conn(conn):
+        time_module.sleep(0.1)
+        original_tick_with_conn(conn)
+
+    hp._tick_with_conn = slow_tick_with_conn
+
+    threads = [threading.Thread(target=hp.tick) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # Even with concurrent ticks, msg1 should only be processed once
+    assert processed_ids.count("msg1") == 1

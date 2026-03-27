@@ -290,7 +290,7 @@ def _check_provider_health(config: Config, role_cfg: RoleConfig) -> bool:
         base_url = provider_cfg.get("base_url") or "http://localhost:11434"
         try:
             # GET /api/tags — is the model loaded?
-            response = requests.get(f"{base_url}/api/tags", timeout=5)
+            response = requests.get(f"{base_url}/api/tags", timeout=2)
             if response.status_code != 200:
                 return False
             models = response.json().get("models", [])
@@ -318,7 +318,15 @@ def _check_provider_health(config: Config, role_cfg: RoleConfig) -> bool:
         except requests.exceptions.RequestException:
             return False
 
-    # Cloud providers: skip check (assume available)
+    if provider_name == "gemini":
+        try:
+            # Quick connectivity check to Gemini API
+            requests.get("https://generativelanguage.googleapis.com", timeout=2)
+            return True
+        except requests.exceptions.RequestException:
+            return False
+
+    # Other providers: skip check (assume available)
     return True
 
 

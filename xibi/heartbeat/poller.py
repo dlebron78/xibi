@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import xibi.db
 from xibi.alerting.rules import RuleEngine
 from xibi.channels.telegram import TelegramAdapter
 from xibi.router import get_model
@@ -115,31 +116,45 @@ class HeartbeatPoller:
         return verdict, subject
 
     def tick(self) -> None:
+        """Tick with atomic watermark locking to prevent duplicate processing."""
         if self._is_quiet_hours():
             logger.info("Quiet hours, skipping tick.")
             return
 
+        conn = xibi.db.open_db(self.db_path)
+        try:
+            with conn:  # BEGIN / COMMIT or ROLLBACK
+                # Lock: use a sentinel row in heartbeat_state
+                conn.execute(
+                    "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('tick_lock', ?)",
+                    (str(time.time()),),
+                )
+
+                self._tick_with_conn(conn)
+        finally:
+            conn.close()
+
+    def _tick_with_conn(self, conn: sqlite3.Connection) -> None:
         # 1. Check tasks
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.row_factory = sqlite3.Row
-                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                # Handle cases where the table might not exist
-                cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'")
-                if cursor.fetchone():
-                    tasks = conn.execute(
-                        "SELECT id, goal FROM tasks WHERE status IN ('pending', 'due') AND due_at <= ?", (now,)
-                    ).fetchall()
-                    for task in tasks:
-                        self._broadcast(f"⏰ Task reminder: {task['goal']} (ID: {task['id']})")
+            conn.row_factory = sqlite3.Row
+            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            # Handle cases where the table might not exist
+            cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'")
+            if cursor.fetchone():
+                tasks = conn.execute(
+                    "SELECT id, goal FROM tasks WHERE status IN ('pending', 'due') AND due_at <= ?", (now,)
+                ).fetchall()
+                for task in tasks:
+                    self._broadcast(f"⏰ Task reminder: {task['goal']} (ID: {task['id']})")
         except Exception as e:
             logger.warning(f"Task check error: {e}")
 
         # 2. Fetch emails
         emails = self._check_email()
         email_rules = self.rules.load_rules("email_alert")
-        seen_ids = self.rules.get_seen_ids()
-        triage_rules = self.rules.load_triage_rules()
+        seen_ids = self.rules.get_seen_ids_with_conn(conn)
+        triage_rules = self.rules.load_triage_rules_with_conn(conn)
 
         for email in emails:
             email_id = str(email.get("id", ""))
@@ -149,7 +164,8 @@ class HeartbeatPoller:
             subject = email.get("subject", "No Subject")
 
             # Log signal
-            self.rules.log_signal(
+            self.rules.log_signal_with_conn(
+                conn,
                 source="email",
                 topic_hint=None,
                 entity_text=str(sender),
@@ -192,7 +208,7 @@ class HeartbeatPoller:
                 verdict, subject = self._should_escalate(verdict, topic, subject, [])
 
             # Log triage
-            self.rules.log_triage(email_id, str(sender), subject, verdict)
+            self.rules.log_triage_with_conn(conn, email_id, str(sender), subject, verdict)
 
             # Alert
             if verdict == "URGENT":
@@ -201,28 +217,61 @@ class HeartbeatPoller:
                     self._broadcast(alert_msg)
 
             # Mark seen
-            self.rules.mark_seen(email_id)
+            self.rules.mark_seen_with_conn(conn, email_id)
 
     def digest_tick(self, force: bool = False) -> None:
         if self._is_quiet_hours() and not force:
             return
 
-        items = self.rules.get_digest_items()
-        if not items:
-            if force:
-                self._broadcast("📥 Recap — no new emails triaged since last update. All quiet!")
-            return
+        conn = xibi.db.open_db(self.db_path)
+        try:
+            with conn:
+                # Lock
+                conn.execute(
+                    "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('digest_lock', ?)",
+                    (str(time.time()),),
+                )
 
-        msg_lines = ["📥 **Digest Recap**"]
-        for item in items[:10]:
-            msg_lines.append(f"• {item['sender']}: {item['subject']} ({item['verdict']})")
+                items = self.rules.get_digest_items_with_conn(conn)
+                if not items:
+                    if force:
+                        self._broadcast("📥 Recap — no new emails triaged since last update. All quiet!")
+                    return
 
-        self._broadcast("\n".join(msg_lines))
-        self.rules.update_watermark()
+                msg_lines = ["📥 **Digest Recap**"]
+                for item in items[:10]:
+                    msg_lines.append(f"• {item['sender']}: {item['subject']} ({item['verdict']})")
+
+                self._broadcast("\n".join(msg_lines))
+                self.rules.update_watermark_with_conn(conn)
+        finally:
+            conn.close()
 
     def recap_tick(self) -> None:
         logger.info("Running recap tick")
         self.digest_tick(force=True)
+
+    def _cleanup_telegram_cache(self) -> None:
+        """Purge processed_messages rows older than 7 days. Runs once per day."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        try:
+            with xibi.db.open_db(self.db_path) as conn:
+                # Check if already run today
+                cursor = conn.execute(
+                    "SELECT value FROM heartbeat_state WHERE key = 'last_telegram_cleanup_at'"
+                )
+                row = cursor.fetchone()
+                if row and row[0] == today:
+                    return
+
+                logger.info("Cleaning up Telegram message cache...")
+                conn.execute("DELETE FROM processed_messages WHERE processed_at < datetime('now', '-7 days')")
+                conn.execute(
+                    "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('last_telegram_cleanup_at', ?)",
+                    (today,),
+                )
+        except Exception as e:
+            logger.warning(f"Telegram cache cleanup error: {e}")
 
     def reflection_tick(self) -> None:
         if self._is_quiet_hours():
@@ -234,7 +283,7 @@ class HeartbeatPoller:
 
         try:
             # Query triage patterns from 7 days
-            with sqlite3.connect(self.db_path) as conn:
+            with xibi.db.open_db(self.db_path) as conn:
                 cursor = conn.execute("""
                     SELECT sender, COUNT(*) as count FROM triage_log
                     WHERE timestamp > datetime('now', '-7 days')
@@ -279,6 +328,7 @@ class HeartbeatPoller:
 
                 if now.hour == 7 and now.minute < 15:
                     self.reflection_tick()
+                    self._cleanup_telegram_cache()
 
             except Exception as e:
                 logger.error(f"Error in heartbeat loop: {e}")
