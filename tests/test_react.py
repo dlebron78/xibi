@@ -155,6 +155,27 @@ def test_run_consecutive_errors_exit(mock_get_model, mock_config):
     assert result.steps[-1].tool_output["status"] == "error"
 
 
+def test_run_consecutive_errors_resets_on_success(mock_get_model, mock_config, skill_registry):
+    """Errors interspersed with successes should not accumulate to 3 (fix: reset on success)."""
+    mock_llm = MagicMock()
+    mock_get_model.return_value = mock_llm
+
+    # Pattern: error, success (finish), without hitting the 3-error limit
+    mock_llm.generate.side_effect = [
+        json.dumps({"thought": "t1", "tool": "unknown", "tool_input": {}}),  # error 1
+        json.dumps({"thought": "t2", "tool": "search", "tool_input": {"q": "test"}}),  # success → reset
+        json.dumps({"thought": "t3", "tool": "unknown", "tool_input": {}}),  # error 1 (reset)
+        json.dumps({"thought": "t4", "tool": "search", "tool_input": {"q": "test2"}}),  # success → reset
+        json.dumps({"thought": "t5", "tool": "finish", "tool_input": {"answer": "done"}}),
+    ]
+
+    result = run("query", mock_config, skill_registry, max_steps=10)
+
+    # Should finish normally — consecutive_errors never reached 3 because each
+    # success reset the counter.
+    assert result.exit_reason == "finish"
+
+
 def test_run_repeat_detection(mock_get_model, mock_config, skill_registry):
     mock_llm = MagicMock()
     mock_get_model.return_value = mock_llm

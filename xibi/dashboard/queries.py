@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import datetime, timedelta
+from pathlib import Path
 
 
 def get_last_trace(conn: sqlite3.Connection) -> dict[str, str] | None:
@@ -155,6 +156,32 @@ def get_recent_signals(conn: sqlite3.Connection, limit: int = 20) -> list[dict]:
     return [
         {"created_at": r[0], "source": r[1], "ref_id": r[2], "classification": r[3], "summary": r[4]}
         for r in cursor.fetchall()
+    ]
+
+
+def get_circuit_breaker_states(db_path: Path) -> list[dict]:
+    """Return all circuit breaker rows."""
+    from xibi.db import open_db
+
+    with open_db(db_path) as conn:
+        # Check if table exists first to avoid errors
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='circuit_breakers'")
+        if not cursor.fetchone():
+            return []
+
+        rows = conn.execute(
+            "SELECT name, state, failure_count, success_count, opened_at, updated_at FROM circuit_breakers"
+        ).fetchall()
+    return [
+        {
+            "name": r[0],
+            "state": r[1],
+            "failures": r[2],
+            "successes": r[3],
+            "opened_at": r[4],
+            "updated_at": r[5],
+        }
+        for r in rows
     ]
 
 

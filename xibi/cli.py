@@ -140,8 +140,14 @@ def main() -> None:
                     shadow=shadow,  # It will re-match but hint tier will be handled
                     step_callback=step_callback,
                 )
-                answer = result.answer
-            print(f"\n{answer}")
+                if result.answer:
+                    answer = result.answer
+                    print(f"\n{answer}")
+                elif result.exit_reason in ("error", "timeout", "max_steps"):
+                    print(f"\n⚠  {result.user_facing_failure_message()}")
+                    if result.error_summary:
+                        for err in result.error_summary:
+                            print(f"   [{err.category.value}] {err.detail or err.message}")
 
         duration = (time.time() - start_time) * 1000
         print(f"(routed via: {routed_via}, {duration:.0f}ms)")

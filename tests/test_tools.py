@@ -1,13 +1,13 @@
+import importlib.util
 import json
 import os
 import sys
-import importlib.util
 
 
 def load_mock_params():
     current_dir = os.path.dirname(os.path.abspath(__file__))
     mock_file = os.path.join(current_dir, "fixtures", "mock_params.json")
-    with open(mock_file, "r") as f:
+    with open(mock_file) as f:
         return json.load(f)
 
 

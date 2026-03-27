@@ -9,24 +9,20 @@ Covers:
 - Contract tests at boundaries (Rule 18)
 """
 
-import os
 import json
 import sqlite3
 import threading
 import time
-import pytest
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-from bregger_utils import inference_lock, get_active_threads, get_pinned_topics
+import pytest
+
 from bregger_heartbeat import (
     _batch_extract_topics,
-    _extract_sender,
     _should_escalate,
-    should_propose,
     reflect,
-    RuleEngine,
 )
+from bregger_utils import get_active_threads, get_pinned_topics, inference_lock
 
 
 class MockNotifier:

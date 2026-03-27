@@ -6,7 +6,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 5  # increment when adding new migrations
+SCHEMA_VERSION = 7  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -33,7 +33,9 @@ class SchemaManager:
             (2, "app tables: tasks, conversation_history, pinned_topics, signals, shadow_phrases", self._migration_2),
             (3, "alerting tables: rules, triage_log, heartbeat_state, seen_emails", self._migration_3),
             (4, "trust tables: trust_records", self._migration_4),
-            (5, "trust hardening: model_hash, last_failure_type", self._migration_5),
+            (5, "security tables: access_log", self._migration_5),
+            (6, "idempotency: processed_messages table", self._migration_6),
+            (7, "trust hardening: model_hash, last_failure_type", self._migration_7),
         ]
 
         for version, description, func in migrations:
@@ -223,6 +225,33 @@ class SchemaManager:
         """)
 
     def _migration_5(self, conn: sqlite3.Connection) -> None:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS access_log (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id     TEXT NOT NULL,
+                authorized  INTEGER NOT NULL,  -- 1=yes, 0=no
+                timestamp   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                user_name   TEXT
+            );
+        """)
+
+    def _migration_6(self, conn: sqlite3.Connection) -> None:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS processed_messages (
+                message_id    INTEGER PRIMARY KEY,
+                processed_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            -- NOTE: This table grows ~N rows/day where N = daily message volume.
+            -- Rows older than 7 days are safe to delete — Telegram max re-delivery window is 24h.
+            -- TTL cleanup runs nightly via heartbeat poller.
+        """)
+
+
+def migrate(db_path: Path) -> list[int]:
+    """Convenience: create SchemaManager and run all pending migrations."""
+    return SchemaManager(db_path).migrate()
+
+    def _migration_7(self, conn: sqlite3.Connection) -> None:
         for column_sql in [
             "ALTER TABLE trust_records ADD COLUMN model_hash TEXT",
             "ALTER TABLE trust_records ADD COLUMN last_failure_type TEXT",
@@ -232,7 +261,3 @@ class SchemaManager:
             except sqlite3.OperationalError:
                 pass  # Column already exists — idempotent
 
-
-def migrate(db_path: Path) -> list[int]:
-    """Convenience: create SchemaManager and run all pending migrations."""
-    return SchemaManager(db_path).migrate()

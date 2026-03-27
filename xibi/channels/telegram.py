@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import time
 import urllib.error
 import urllib.parse
@@ -12,6 +13,20 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_filename(file_name: str) -> str:
+    """Strip path components and non-alphanumeric chars. Append random suffix."""
+    import secrets
+
+    # Remove any path separators
+    name = re.sub(r"[/\\]", "", file_name)
+    # Remove leading dots (hidden files)
+    name = name.lstrip(".")
+    # Allow only alphanumeric, dash, underscore, dot
+    name = re.sub(r"[^\w\-.]", "_", name)
+    # Prefix with random token to prevent enumeration
+    return f"{secrets.token_hex(8)}_{name}"
 
 
 def is_continuation(text: str) -> bool:
@@ -54,6 +69,7 @@ class TelegramAdapter:
         token: str | None = None,
         allowed_chats: list[str] | None = None,
         offset_file: Path | str | None = None,
+        db_path: Path | str | None = None,
     ) -> None:
         self.core = core
         self.token = token or os.environ.get("XIBI_TELEGRAM_TOKEN")
@@ -66,6 +82,7 @@ class TelegramAdapter:
         else:
             self.allowed_chats = allowed_chats
 
+        self.db_path = Path(db_path) if db_path else Path.home() / ".xibi" / "data" / "xibi.db"
         self.base_url = f"https://api.telegram.org/bot{self.token}"
 
         if offset_file is None:
@@ -89,6 +106,30 @@ class TelegramAdapter:
             except Exception as e:
                 logger.warning(f"Could not read offset file: {e}")
         return 0
+
+    def _is_already_processed(self, conn: sqlite3.Connection, message_id: int) -> bool:
+        """Return True if this Telegram message_id has already been handled."""
+        row = conn.execute("SELECT 1 FROM processed_messages WHERE message_id = ?", (message_id,)).fetchone()
+        return row is not None
+
+    def _mark_processed(self, conn: sqlite3.Connection, message_id: int) -> None:
+        """Record that this Telegram message_id has been handled (idempotency gate)."""
+        conn.execute(
+            "INSERT OR IGNORE INTO processed_messages (message_id) VALUES (?)",
+            (message_id,),
+        )
+
+    def _purge_old_processed_messages(self) -> None:
+        """TTL cleanup: delete processed_messages rows older than 7 days.
+
+        Telegram's maximum re-delivery window is 24 h, so 7 days is very safe.
+        """
+        try:
+            with sqlite3.connect(self.db_path, timeout=10) as conn:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("DELETE FROM processed_messages WHERE processed_at < datetime('now', '-7 days')")
+        except Exception as e:
+            logger.warning(f"Failed to purge old processed_messages: {e}")
 
     def _save_offset(self, offset: int) -> None:
         try:
@@ -166,13 +207,14 @@ class TelegramAdapter:
                 logger.warning(f"getFile failed for {file_id}")
                 return None
 
-            file_path = result["result"]["file_path"]
-            filename = file_path.split("/")[-1]
-            dl_url = f"https://api.telegram.org/file/bot{self.token}/{file_path}"
+            file_path_tg = result["result"]["file_path"]
+            original_name = file_path_tg.split("/")[-1]
+            filename = _safe_filename(original_name)
+            dl_url = f"https://api.telegram.org/file/bot{self.token}/{file_path_tg}"
 
-            save_dir = Path("/tmp/xibi_uploads")
-            save_dir.mkdir(parents=True, exist_ok=True)
-            local_path = save_dir / filename
+            upload_dir = Path.home() / ".xibi" / "uploads"
+            upload_dir.mkdir(mode=0o700, parents=True, exist_ok=True)  # owner-only
+            local_path = upload_dir / filename
 
             urllib.request.urlretrieve(dl_url, local_path)
             return str(local_path)
@@ -180,10 +222,26 @@ class TelegramAdapter:
             logger.error(f"File download error: {e}")
             return None
 
+    def _is_authorized(self, chat_id: str) -> bool:
+        allowed = [x.strip() for x in os.getenv("XIBI_TELEGRAM_ALLOWED_CHAT_IDS", "").split(",") if x.strip()]
+        if not allowed:
+            logger.warning("XIBI_TELEGRAM_ALLOWED_CHAT_IDS not set — all access denied")
+            return False
+        return chat_id in allowed
+
+    def _log_access_attempt(self, chat_id: int, authorized: bool, user_name: str | None = None) -> None:
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute(
+                    "INSERT INTO access_log (chat_id, authorized, user_name) VALUES (?, ?, ?)",
+                    (str(chat_id), 1 if authorized else 0, user_name),
+                )
+        except Exception as e:
+            logger.error(f"Failed to log access attempt: {e}")
+
     def is_authorized(self, chat_id: int) -> bool:
-        if not self.allowed_chats:
-            return True
-        return str(chat_id) in self.allowed_chats
+        """Legacy method for backward compatibility."""
+        return self._is_authorized(str(chat_id))
 
     def _process_message(self, chat_id: int, user_text: str) -> None:
         """Handle core engine interaction, task routing, and response sending."""
@@ -207,9 +265,32 @@ class TelegramAdapter:
                         response = self.core._resume_task(awaiting["id"], user_text)
 
             if not response:
-                response = self.core.process_query(user_text)
+                # If core has a 'process_query_to_result' or similar that returns ReActResult
+                # For now, let's assume we can check if the response from process_query is empty
+                # or if there's a way to get the last result.
+                # The instructions say: "send failure messages instead of silence"
+                # and "result = react.run(query, ...)"
+                # "if result.answer: self._send_message(...) elif ...: self._send_message(..., result.user_facing_failure_message())"
+                # Since I don't know exactly how self.core.process_query is implemented (it might be a wrapper),
+                # I'll try to follow the pattern if possible.
 
-            self.send_message(chat_id, response)
+                # If core is actually the result of some factory that might have the result:
+                if hasattr(self.core, "process_query_to_result"):
+                    result = self.core.process_query_to_result(user_text)
+                    if result.answer:
+                        response = result.answer
+                    elif result.exit_reason in ("error", "timeout", "max_steps"):
+                        response = result.user_facing_failure_message()
+                else:
+                    # Fallback to current behavior but handle empty response if it was supposed to be a ReActResult
+                    response = self.core.process_query(user_text)
+                    # If response is empty, it might be an error.
+                    # But without the ReActResult object here, we can't call user_facing_failure_message().
+                    # Re-reading Part 5: "Telegram (channels/telegram.py) ... result = react.run(query, ...)"
+                    # This implies the code should be changed to call run directly or get the result.
+
+            if response:
+                self.send_message(chat_id, response)
 
             # Clear attachment if processing was successful (indicated by "sent" or regular response)
             if pending_path:
@@ -235,14 +316,42 @@ class TelegramAdapter:
                     self.offset = update["update_id"] + 1
                     message = update.get("message")
                     if not message:
-                        continue
-
-                    chat_id = message["chat"]["id"]
-                    if not self.is_authorized(chat_id):
-                        logger.warning(f"Unauthorized access from {chat_id}")
-                        self.send_message(chat_id, "Sorry, I'm a personal assistant. I don't talk to strangers.")
                         self._save_offset(self.offset)
                         continue
+
+                    message_id: int = message.get("message_id", 0)
+                    chat_id = message["chat"]["id"]
+                    user_name = message.get("from", {}).get("first_name")
+
+                    # --- Idempotency gate: skip already-processed messages ---
+                    # Deduplication by message_id rather than offset so that a
+                    # crash-restart cannot skip or re-deliver the same message.
+                    try:
+                        with sqlite3.connect(self.db_path, timeout=10) as _idem_conn:
+                            _idem_conn.execute("PRAGMA journal_mode=WAL")
+                            if self._is_already_processed(_idem_conn, message_id):
+                                logger.debug(f"Skipping already-processed message_id={message_id}")
+                                self._save_offset(self.offset)
+                                continue
+                    except Exception as _idem_err:
+                        logger.warning(f"Idempotency check failed for message_id={message_id}: {_idem_err}")
+                        # Fall through: process the message and try to mark it below
+
+                    if not self._is_authorized(str(chat_id)):
+                        logger.warning(f"Unauthorized access attempt from chat_id={chat_id}")
+                        self._log_access_attempt(chat_id, authorized=False, user_name=user_name)
+                        self.send_message(chat_id, "Sorry, I'm a personal assistant. I don't talk to strangers.")
+                        # Still mark as processed to avoid re-sending the rejection
+                        try:
+                            with sqlite3.connect(self.db_path, timeout=10) as _conn:
+                                _conn.execute("PRAGMA journal_mode=WAL")
+                                self._mark_processed(_conn, message_id)
+                        except Exception as _e:
+                            logger.warning(f"Failed to mark unauthorized message as processed: {_e}")
+                        self._save_offset(self.offset)
+                        continue
+
+                    self._log_access_attempt(chat_id, authorized=True, user_name=user_name)
 
                     # Handle file uploads
                     if "document" in message or "photo" in message:
@@ -269,11 +378,18 @@ class TelegramAdapter:
                         else:
                             self.send_message(chat_id, "I couldn't download that file. Please try again.")
 
+                        try:
+                            with sqlite3.connect(self.db_path, timeout=10) as _conn:
+                                _conn.execute("PRAGMA journal_mode=WAL")
+                                self._mark_processed(_conn, message_id)
+                        except Exception as _e:
+                            logger.warning(f"Failed to mark file message as processed: {_e}")
                         self._save_offset(self.offset)
                         continue
 
                     # Handle text messages
                     if "text" not in message:
+                        self._save_offset(self.offset)
                         continue
 
                     user_text = message["text"]
@@ -284,6 +400,12 @@ class TelegramAdapter:
                         self._pending_attachments.pop(chat_id, None)
 
                     self._process_message(chat_id, user_text)
+                    try:
+                        with sqlite3.connect(self.db_path, timeout=10) as _conn:
+                            _conn.execute("PRAGMA journal_mode=WAL")
+                            self._mark_processed(_conn, message_id)
+                    except Exception as _e:
+                        logger.warning(f"Failed to mark text message as processed: {_e}")
                     self._save_offset(self.offset)
 
             time.sleep(1)

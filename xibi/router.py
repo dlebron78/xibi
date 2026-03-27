@@ -1,9 +1,22 @@
 import json
 import os
-from typing import Any, Protocol, TypedDict
+from pathlib import Path
+from typing import Any, Literal, Protocol, TypedDict
 
 import google.generativeai as genai
 import requests
+
+from xibi.circuit_breaker import CircuitBreaker, CircuitBreakerConfig, FailureType
+from xibi.errors import ErrorCategory, XibiError
+
+
+class TimeoutsConfig(TypedDict, total=False):
+    tool_default_secs: int  # default: 15
+    llm_fast_secs: int  # default: 10
+    llm_think_secs: int  # default: 45
+    llm_review_secs: int  # default: 120
+    health_check_secs: int  # default: 2
+    circuit_recovery_secs: int  # default: 60
 
 
 class ModelClient(Protocol):
@@ -34,9 +47,11 @@ class ProviderConfig(TypedDict):
     api_key_env: str | None
 
 
-class Config(TypedDict):
+class Config(TypedDict, total=False):
     models: dict[str, dict[str, RoleConfig]]
     providers: dict[str, ProviderConfig]
+    db_path: Path
+    timeouts: TimeoutsConfig
 
 
 class ConfigValidationError(Exception):
@@ -76,8 +91,20 @@ class OllamaClient:
             response.raise_for_status()
             result: str = response.json().get("response", "")
             return result
+        except requests.exceptions.Timeout as e:
+            raise XibiError(
+                category=ErrorCategory.TIMEOUT,
+                message=f"Ollama call failed: {e}",
+                component="ollama",
+                retryable=True,
+            ) from e
         except requests.exceptions.RequestException as e:
-            raise RuntimeError(f"Ollama call failed: {e}") from e
+            raise XibiError(
+                category=ErrorCategory.PROVIDER_DOWN,
+                message=f"Ollama call failed: {e}",
+                component="ollama",
+                retryable=True,
+            ) from e
 
     def generate(self, prompt: str, system: str | None = None, **kwargs: Any) -> str:
         return self._call_provider(prompt, system, **kwargs)
@@ -128,7 +155,19 @@ class GeminiClient:
             result: str = response.text
             return result
         except Exception as e:
-            raise RuntimeError(f"Gemini call failed: {e}") from e
+            if "deadline exceeded" in str(e).lower():
+                raise XibiError(
+                    category=ErrorCategory.TIMEOUT,
+                    message=f"Gemini request timed out: {e}",
+                    component="gemini",
+                    retryable=True,
+                ) from e
+            raise XibiError(
+                category=ErrorCategory.PROVIDER_DOWN,
+                message=f"Gemini call failed: {e}",
+                component="gemini",
+                retryable=True,
+            ) from e
 
     def generate(self, prompt: str, system: str | None = None, **kwargs: Any) -> str:
         return self._call_provider(prompt, system, **kwargs)
@@ -281,6 +320,32 @@ def _resolve_model(config: Config, specialty: str, effort: str) -> RoleConfig:
     return efforts[start_effort]
 
 
+_TIMEOUT_DEFAULTS: TimeoutsConfig = {
+    "tool_default_secs": 15,
+    "llm_fast_secs": 10,
+    "llm_think_secs": 45,
+    "llm_review_secs": 120,
+    "health_check_secs": 2,
+    "circuit_recovery_secs": 60,
+}
+
+
+def get_timeout(
+    config: Config,
+    key: Literal[
+        "tool_default_secs",
+        "llm_fast_secs",
+        "llm_think_secs",
+        "llm_review_secs",
+        "health_check_secs",
+        "circuit_recovery_secs",
+    ],
+) -> int:
+    timeouts = config.get("timeouts", {})
+    val = timeouts.get(key, _TIMEOUT_DEFAULTS[key])
+    return int(val) if val is not None else _TIMEOUT_DEFAULTS[key]
+
+
 def _check_provider_health(config: Config, role_cfg: RoleConfig) -> bool:
     """Quick health check before inference."""
     provider_name = role_cfg["provider"]
@@ -329,6 +394,8 @@ def get_model(
     if config is None:
         config = load_config(config_path)
 
+    db_path = config.get("db_path") or Path.home() / ".xibi" / "data" / "xibi.db"
+
     try:
         role_cfg = _resolve_model(config, specialty, effort)
     except NoModelAvailableError:
@@ -339,33 +406,82 @@ def get_model(
     tried_roles = []
 
     while role_to_check:
-        if _check_provider_health(config, role_to_check):
+        provider_name = role_to_check["provider"]
+        cb_config = CircuitBreakerConfig(recovery_timeout_secs=get_timeout(config, "circuit_recovery_secs"))
+        breaker = CircuitBreaker(provider_name, db_path=db_path, config=cb_config)
+
+        if breaker.is_open():
+            tried_roles.append(f"{provider_name}/{role_to_check['model']} (circuit open)")
+        elif _check_provider_health(config, role_to_check):
             # Create client
-            provider_name = role_to_check["provider"]
             provider_cfg = config["providers"][provider_name]
-            model = role_to_check["model"]
+            model_name = role_to_check["model"]
             options = role_to_check.get("options", {})
+
+            # Wrap client with breaker record_success/record_failure
+            client: ModelClient | None = None
 
             if provider_name == "ollama":
                 base_url = provider_cfg.get("base_url") or "http://localhost:11434"
-                return OllamaClient(provider=provider_name, model=model, options=options, base_url=base_url)
+                client = OllamaClient(provider=provider_name, model=model_name, options=options, base_url=base_url)
             elif provider_name == "gemini":
                 api_key_env = provider_cfg.get("api_key_env") or "GEMINI_API_KEY"
                 api_key = os.environ.get(api_key_env)
-                if not api_key:
-                    # If API key missing, maybe try fallback?
-                    pass
-                else:
-                    return GeminiClient(provider=provider_name, model=model, options=options, api_key=api_key)
+                if api_key:
+                    client = GeminiClient(provider=provider_name, model=model_name, options=options, api_key=api_key)
+
+            if client:
+
+                class BreakerWrappedClient:
+                    def __init__(self, inner: ModelClient, breaker: CircuitBreaker):
+                        self.inner = inner
+                        self.breaker = breaker
+                        self.provider = inner.provider
+                        self.model = inner.model
+                        self.options = inner.options
+
+                    def generate(self, prompt: str, system: str | None = None, **kwargs: Any) -> str:
+                        try:
+                            res = self.inner.generate(prompt, system, **kwargs)
+                            self.breaker.record_success()
+                            return res
+                        except XibiError as e:
+                            if e.category in (ErrorCategory.PROVIDER_DOWN, ErrorCategory.TIMEOUT):
+                                self.breaker.record_failure(FailureType.PERSISTENT)
+                            else:
+                                self.breaker.record_failure(FailureType.TRANSIENT)
+                            raise
+                        except Exception:
+                            self.breaker.record_failure(FailureType.PERSISTENT)
+                            raise
+
+                    def generate_structured(
+                        self, prompt: str, schema: dict, system: str | None = None, **kwargs: Any
+                    ) -> dict:
+                        try:
+                            res = self.inner.generate_structured(prompt, schema, system, **kwargs)
+                            self.breaker.record_success()
+                            return res
+                        except XibiError as e:
+                            if e.category in (ErrorCategory.PROVIDER_DOWN, ErrorCategory.TIMEOUT):
+                                self.breaker.record_failure(FailureType.PERSISTENT)
+                            else:
+                                self.breaker.record_failure(FailureType.TRANSIENT)
+                            raise
+                        except Exception:
+                            self.breaker.record_failure(FailureType.PERSISTENT)
+                            raise
+
+                return BreakerWrappedClient(client, breaker)  # type: ignore
             elif provider_name == "openai":
                 api_key_env = provider_cfg.get("api_key_env") or ""
-                return OpenAIClient(provider_name, model, options, os.environ.get(api_key_env))
+                return OpenAIClient(provider_name, model_name, options, os.environ.get(api_key_env))
             elif provider_name == "anthropic":
                 api_key_env = provider_cfg.get("api_key_env") or ""
-                return AnthropicClient(provider_name, model, options, os.environ.get(api_key_env))
+                return AnthropicClient(provider_name, model_name, options, os.environ.get(api_key_env))
             elif provider_name == "groq":
                 api_key_env = provider_cfg.get("api_key_env") or ""
-                return GroqClient(provider_name, model, options, os.environ.get(api_key_env))
+                return GroqClient(provider_name, model_name, options, os.environ.get(api_key_env))
 
         tried_roles.append(f"{role_to_check['provider']}/{role_to_check['model']}")
         fallback_effort = role_to_check.get("fallback")

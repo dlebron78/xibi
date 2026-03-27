@@ -21,7 +21,7 @@ def test_initial_version_zero(tmp_path: Path):
 def test_migrate_applies_all(tmp_path: Path):
     db_path = tmp_path / "xibi.db"
     applied = migrate(db_path)
-    assert applied == [1, 2, 3, 4, 5]
+    assert applied == list(range(1, SCHEMA_VERSION + 1))
 
 
 def test_migrate_idempotent(tmp_path: Path):
@@ -84,6 +84,15 @@ def test_trust_tables_exist(tmp_path: Path):
         cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = {row[0] for row in cursor.fetchall()}
         assert "trust_records" in tables
+
+
+def test_security_tables_exist(tmp_path: Path):
+    db_path = tmp_path / "xibi.db"
+    migrate(db_path)
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = {row[0] for row in cursor.fetchall()}
+        assert "access_log" in tables
 
 
 def test_default_rule_seeded(tmp_path: Path):

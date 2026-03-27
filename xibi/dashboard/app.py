@@ -10,6 +10,70 @@ import psutil
 from flask import Flask, jsonify, render_template
 
 from xibi.dashboard import queries
+from xibi.router import Config, get_model
+
+
+def get_system_health(db_path: Path, config: Config) -> dict:
+    checks = {}
+
+    # 1. Database connectivity
+    if not db_path.exists():
+        checks["database"] = "error: database file missing"
+    else:
+        try:
+            conn = sqlite3.connect(db_path, timeout=2)
+            conn.execute("SELECT 1")
+            conn.close()
+            checks["database"] = "ok"
+        except Exception as e:
+            checks["database"] = f"error: {e}"
+
+    # 2. Schema up to date
+    try:
+        from xibi.db.migrations import SCHEMA_VERSION, SchemaManager
+
+        sm = SchemaManager(db_path)
+        version = sm.get_version()
+        checks["schema"] = "ok" if version == SCHEMA_VERSION else f"stale: v{version} (want v{SCHEMA_VERSION})"
+    except Exception as e:
+        checks["schema"] = f"error: {e}"
+
+    # 3. At least one LLM provider reachable
+    try:
+        model = get_model(specialty="text", effort="fast", config=config)
+        checks["llm_provider"] = "ok" if model else "no provider available"
+    except Exception as e:
+        checks["llm_provider"] = f"error: {e}"
+
+    # 4. Skill registry has tools
+    try:
+        from xibi.skills.registry import SkillRegistry
+
+        # Try to find skills dir relative to db_path or use default
+        workdir = db_path.parent.parent
+        skills_dir = workdir / "skills"
+        if not skills_dir.exists():
+            # fallback to repository root skills if we are in a dev environment
+            skills_dir = Path(__file__).parent.parent.parent / "skills"
+
+        registry = SkillRegistry(skills_dir)
+        # SkillRegistry doesn't have list_tools(), but we can check manifests
+        tools = []
+        for skill in registry.get_skill_manifests():
+            tools.extend(skill.get("tools", []))
+        tool_count = len(tools)
+        checks["skill_registry"] = f"ok ({tool_count} tools)"
+    except Exception as e:
+        checks["skill_registry"] = f"error: {e}"
+
+    # 5. System resources
+    checks["cpu_pct"] = psutil.cpu_percent()
+    checks["ram_pct"] = psutil.virtual_memory().percent
+
+    # Overall status: degraded if ANY check has "error"
+    any_error = any("error" in str(v) for v in checks.values())
+    checks["status"] = "degraded" if any_error else "healthy"
+    return checks
 
 
 @dataclass
@@ -30,6 +94,25 @@ def create_app(config: DashboardConfig) -> Flask:
     def get_db_conn() -> sqlite3.Connection:
         conn = sqlite3.connect(app.config["DB_PATH"])
         return conn
+
+    @app.route("/health")
+    def health_full() -> Any:
+        # We need a Config object. Since create_app doesn't take it, but the health check needs it,
+        # and the router can load it from default path if not provided.
+        # However, the task description says get_system_health(db_path, config).
+        # We can try to load config here.
+        from xibi.router import load_config
+
+        workdir = app.config["DB_PATH"].parent.parent
+        config_path = workdir / "config.json"
+        try:
+            config = load_config(str(config_path)) if config_path.exists() else load_config()
+        except Exception:
+            # If config is missing or invalid, get_system_health will report it via LLM check
+            config = {"models": {}, "providers": {}}  # type: ignore
+
+        report = get_system_health(app.config["DB_PATH"], config)
+        return jsonify(report)
 
     @app.route("/api/health")
     def health() -> Any:

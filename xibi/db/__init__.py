@@ -1,9 +1,25 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
 
 from xibi.db.migrations import SchemaManager, migrate
+
+
+@contextmanager
+def open_db(db_path: Path) -> Generator[sqlite3.Connection, None, None]:
+    """Context manager for SQLite connections with WAL mode for crash resilience."""
+    conn = sqlite3.connect(db_path, timeout=10, check_same_thread=False)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA wal_autocheckpoint=1000")
+    conn.execute("PRAGMA busy_timeout=5000")
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def init_workdir(workdir: Path) -> None:
@@ -31,4 +47,4 @@ def init_workdir(workdir: Path) -> None:
     migrate(db_path)
 
 
-__all__ = ["SchemaManager", "migrate", "init_workdir"]
+__all__ = ["SchemaManager", "migrate", "init_workdir", "open_db"]

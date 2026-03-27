@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import sqlite3
@@ -159,6 +160,59 @@ class RuleEngine:
                 return [{"sender": r[0], "subject": r[1], "verdict": r[2], "timestamp": r[3]} for r in rows]
         except Exception as e:
             logger.warning(f"Error fetching digest items: {e}")
+            return []
+
+    def pop_digest_items(self) -> list[dict[str, Any]]:
+        """Atomically fetch digest items and advance the watermark.
+
+        Uses BEGIN IMMEDIATE so the write lock is acquired before any reads,
+        ensuring that two concurrent callers are fully serialized: the loser
+        waits until the winner commits, then reads an already-advanced watermark
+        and finds no new items.  A plain DEFERRED transaction would allow both
+        callers to read the same items before either commits.
+        """
+        try:
+            conn = sqlite3.connect(self.db_path, timeout=10, check_same_thread=False, isolation_level=None)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                # Read the current watermark from DB (not in-memory cache)
+                row = conn.execute("SELECT value FROM heartbeat_state WHERE key='last_digest_at'").fetchone()
+                db_watermark = row[0] if row else "1970-01-01 00:00:00"
+
+                # Fetch items since the DB watermark
+                cursor = conn.execute(
+                    """
+                    SELECT sender, subject, verdict, timestamp FROM triage_log
+                    WHERE timestamp > ? AND verdict != 'URGENT'
+                    ORDER BY timestamp ASC
+                    """,
+                    (db_watermark,),
+                )
+                rows = cursor.fetchall()
+                items = [{"sender": r[0], "subject": r[1], "verdict": r[2], "timestamp": r[3]} for r in rows]
+
+                if items:
+                    # Advance watermark atomically inside the same transaction
+                    conn.execute(
+                        "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('last_digest_at', datetime('now'))"
+                    )
+                    # Refresh in-memory cache
+                    new_row = conn.execute("SELECT value FROM heartbeat_state WHERE key='last_digest_at'").fetchone()
+                    if new_row and isinstance(new_row[0], str):
+                        self._watermark_cache = new_row[0]
+
+                conn.execute("COMMIT")
+                return items
+            except Exception:
+                with contextlib.suppress(Exception):
+                    conn.execute("ROLLBACK")
+                raise
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.warning(f"Error in pop_digest_items: {e}")
             return []
 
     def update_watermark(self) -> None:

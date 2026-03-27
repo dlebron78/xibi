@@ -207,7 +207,9 @@ class HeartbeatPoller:
         if self._is_quiet_hours() and not force:
             return
 
-        items = self.rules.get_digest_items()
+        # pop_digest_items atomically reads items and advances the watermark
+        # in one SQLite transaction, preventing duplicate delivery on concurrent ticks.
+        items = self.rules.pop_digest_items()
         if not items:
             if force:
                 self._broadcast("📥 Recap — no new emails triaged since last update. All quiet!")
@@ -218,7 +220,6 @@ class HeartbeatPoller:
             msg_lines.append(f"• {item['sender']}: {item['subject']} ({item['verdict']})")
 
         self._broadcast("\n".join(msg_lines))
-        self.rules.update_watermark()
 
     def recap_tick(self) -> None:
         logger.info("Running recap tick")
