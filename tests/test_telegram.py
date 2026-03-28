@@ -80,36 +80,80 @@ def test_send_message_calls_api(monkeypatch):
     adapter._api_call.assert_called_once_with("sendMessage", {"chat_id": 123, "text": "Hello"})
 
 
-def test_nudge_fires_on_step_3(monkeypatch):
+def test_session_isolation_two_chat_ids(tmp_path):
+    from xibi.channels.telegram import TelegramAdapter
+
+    adapter = TelegramAdapter.__new__(TelegramAdapter)
+    adapter.core = MagicMock()
+    adapter._sessions = {}
+    adapter.db_path = str(tmp_path / "test.db")
+    adapter.config = {}
+
+    sess_a = adapter._get_session(111)
+    sess_b = adapter._get_session(222)
+
+    assert sess_a.session_id.startswith("telegram:111:")
+    assert sess_b.session_id.startswith("telegram:222:")
+    assert sess_a is not sess_b
+
+
+def test_nudge_state_is_per_chat(tmp_path):
+    from xibi.channels.telegram import TelegramAdapter
+
+    adapter = TelegramAdapter.__new__(TelegramAdapter)
+    adapter._active_chats = {}
+
+    # Simulate message arrival for two chats
+    adapter._active_chats[111] = {"nudge_sent": False, "nudge_timer": None}
+    adapter._active_chats[222] = {"nudge_sent": False, "nudge_timer": None}
+
+    # Mark nudge sent for chat 111
+    adapter._active_chats[111]["nudge_sent"] = True
+
+    assert adapter._active_chats[111]["nudge_sent"] is True
+    assert adapter._active_chats[222]["nudge_sent"] is False
+
+
+def test_nudge_callback_targets_correct_chat(tmp_path, monkeypatch):
+    from xibi.channels.telegram import TelegramAdapter
+
+    adapter = TelegramAdapter.__new__(TelegramAdapter)
+    adapter._active_chats = {
+        111: {"nudge_sent": False, "nudge_timer": None},
+        222: {"nudge_sent": False, "nudge_timer": None},
+    }
+
+    sent_to = []
+
+    def mock_send(chat_id, text):
+        sent_to.append(chat_id)
+
+    monkeypatch.setattr(adapter, "send_message", mock_send)
+
+    adapter._nudge_callback(111)
+
+    assert 111 in sent_to
+    assert 222 not in sent_to
+    assert adapter._active_chats[111]["nudge_sent"] is True
+    assert adapter._active_chats[222]["nudge_sent"] is False
+
+
+def test_active_chats_cleanup_after_message(tmp_path, monkeypatch):
+    from xibi.channels.telegram import TelegramAdapter
+
     monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "test-token")
-    adapter = TelegramAdapter(core=MagicMock())
-    adapter.send_message = MagicMock()
-    adapter._active_chat_id = 123
+    core = MagicMock()
+    core.process_query.return_value = "Response"
 
-    adapter._on_react_step("Thinking (Step 3)...")
-    adapter.send_message.assert_called_once_with(123, "🤔 Still working on it…")
-    assert adapter._nudge_sent is True
+    adapter = TelegramAdapter(core=core, db_path=tmp_path / "xibi.db")
+    adapter._api_call = MagicMock(return_value={"ok": True})
+    adapter._get_session = MagicMock()
 
+    chat_id = 123
+    adapter._process_message(chat_id, "hello")
 
-def test_nudge_only_fires_once(monkeypatch):
-    monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "test-token")
-    adapter = TelegramAdapter(core=MagicMock())
-    adapter.send_message = MagicMock()
-    adapter._active_chat_id = 123
-
-    adapter._on_react_step("Thinking (Step 3)...")
-    adapter._on_react_step("Thinking (Step 3)...")
-    assert adapter.send_message.call_count == 1
-
-
-def test_nudge_no_active_chat(monkeypatch):
-    monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "test-token")
-    adapter = TelegramAdapter(core=MagicMock())
-    adapter.send_message = MagicMock()
-    adapter._active_chat_id = None
-
-    adapter._on_react_step("Thinking (Step 3)...")
-    adapter.send_message.assert_not_called()
+    # Verify that the chat state is removed from _active_chats after processing
+    assert chat_id not in adapter._active_chats
 
 
 def test_poll_processes_mock_message(monkeypatch, tmp_path):

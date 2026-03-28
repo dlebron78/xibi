@@ -19,6 +19,8 @@ from xibi.session import SessionContext
 
 logger = logging.getLogger(__name__)
 
+NUDGE_DELAY = 10.0
+
 
 def _safe_filename(file_name: str) -> str:
     """Strip path components and non-alphanumeric chars. Append random suffix."""
@@ -98,12 +100,9 @@ class TelegramAdapter:
         self.offset = self._load_offset()
         self._pending_attachments: dict[int, str] = {}
         self._sessions: dict[int, SessionContext] = {}
-        self._active_chat_id: int | None = None
-        self._nudge_sent: bool = False
+        # Per-chat nudge state: {chat_id: {"nudge_sent": bool, "nudge_timer": Timer | None}}
+        self._active_chats: dict[int, dict] = {}
         self._mock_sent: bool = False
-
-        if hasattr(self.core, "step_callback"):
-            self.core.step_callback = self._on_react_step
 
     def _load_offset(self) -> int:
         if self.offset_file.exists():
@@ -192,19 +191,13 @@ class TelegramAdapter:
         params = {"chat_id": chat_id, "text": text}
         return self._api_call("sendMessage", params)
 
-    def _on_react_step(self, step_info: str) -> None:
-        if self._active_chat_id is None or self._nudge_sent:
+    def _nudge_callback(self, chat_id: int) -> None:
+        state = self._active_chats.get(chat_id)
+        if state is None or state["nudge_sent"]:
             return
 
-        # Expected format: "Thinking (Step {step_num})..."
-        match = re.search(r"Thinking \(Step (\d+)\)\.\.\.", step_info)
-        if not match:
-            return
-
-        step_num = int(match.group(1))
-        if step_num == 3:
-            self.send_message(self._active_chat_id, "🤔 Still working on it…")
-            self._nudge_sent = True
+        self.send_message(chat_id, "🤔 Still working on it…")
+        state["nudge_sent"] = True
 
     def _download_file(self, file_id: str, chat_id: int) -> str | None:
         try:
@@ -261,8 +254,9 @@ class TelegramAdapter:
     def _process_message(self, chat_id: int, user_text: str) -> None:
         """Handle core engine interaction, task routing, and response sending."""
         self._api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
-        self._active_chat_id = chat_id
-        self._nudge_sent = False
+        timer = threading.Timer(NUDGE_DELAY, self._nudge_callback, args=(chat_id,))
+        self._active_chats[chat_id] = {"nudge_sent": False, "nudge_timer": timer}
+        timer.start()
 
         pending_path = self._pending_attachments.get(chat_id)
 
@@ -319,7 +313,9 @@ class TelegramAdapter:
             logger.error(traceback.format_exc())
             self.send_message(chat_id, "Sorry, I had a brain fart. Please try again.")
         finally:
-            self._active_chat_id = None
+            state = self._active_chats.pop(chat_id, None)
+            if state and state["nudge_timer"]:
+                state["nudge_timer"].cancel()
 
     def poll(self) -> None:
         logger.info("Xibi is listening on Telegram...")
