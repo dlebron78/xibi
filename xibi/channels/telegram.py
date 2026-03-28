@@ -5,7 +5,6 @@ import logging
 import os
 import re
 import sqlite3
-import threading
 import time
 import urllib.error
 import urllib.parse
@@ -97,7 +96,7 @@ class TelegramAdapter:
 
         self.offset = self._load_offset()
         self._pending_attachments: dict[int, str] = {}
-        self._sessions: dict[int, SessionContext] = {}
+        self._sessions: dict[str, SessionContext] = {}
         self._active_chat_id: int | None = None
         self._nudge_sent: bool = False
         self._mock_sent: bool = False
@@ -249,17 +248,15 @@ class TelegramAdapter:
         """Legacy method for backward compatibility."""
         return self._is_authorized(str(chat_id))
 
-    def _get_session(self, chat_id: int) -> SessionContext:
+    def _get_session(self, chat_id: str) -> SessionContext:
         if chat_id not in self._sessions:
             session_id = f"telegram:{chat_id}:{date.today().isoformat()}"
-            # self.core.config might not be accessible easily if it's a wrapper,
-            # but usually it is. If not, session uses default which is fine.
-            config = getattr(self.core, "config", None)
-            self._sessions[chat_id] = SessionContext(session_id, self.db_path, config=config)
+            self._sessions[chat_id] = SessionContext(session_id, self.db_path)
         return self._sessions[chat_id]
 
     def _process_message(self, chat_id: int, user_text: str) -> None:
         """Handle core engine interaction, task routing, and response sending."""
+        logger.debug(f"Processing message from chat_id={chat_id}: {user_text}")
         self._api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
         self._active_chat_id = chat_id
         self._nudge_sent = False
@@ -280,31 +277,27 @@ class TelegramAdapter:
                         response = self.core._resume_task(awaiting["id"], user_text)
 
             if not response:
-                session = self._get_session(chat_id)
-                # We need access to registry and executor which are usually on core
-                registry = getattr(self.core, "registry", None)
-                executor = getattr(self.core, "executor", None)
-                config = getattr(self.core, "config", None)
-
-                if registry and executor and config:
-                    result = react.run(
-                        user_text,
-                        config,
-                        registry.get_skill_manifests(),
-                        executor=executor,
-                        session_context=session,
-                    )
+                session = self._get_session(str(chat_id))
+                if hasattr(self.core, "process_query_to_result"):
+                    result = self.core.process_query_to_result(user_text, session_context=session)
+                    session.add_turn(user_text, result)
                     if result.answer:
                         response = result.answer
                     elif result.exit_reason in ("error", "timeout", "max_steps"):
                         response = result.user_facing_failure_message()
-
-                    # Always add turn (even if empty answer)
-                    # Run in background to avoid blocking
-                    threading.Thread(target=session.add_turn, args=(user_text, result), daemon=True).start()
                 else:
-                    # Fallback if core doesn't expose them
-                    response = self.core.process_query(user_text)
+                    try:
+                        config = getattr(self.core, "config", None)
+                        registry = getattr(self.core, "registry", None)
+
+                        if config and registry:
+                            result = react.run(user_text, config, registry, session_context=session)
+                            session.add_turn(user_text, result)
+                            response = result.answer or result.user_facing_failure_message()
+                        else:
+                            response = self.core.process_query(user_text, session_context=session)
+                    except TypeError:
+                        response = self.core.process_query(user_text)
 
             if response:
                 self.send_message(chat_id, response)

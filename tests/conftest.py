@@ -19,13 +19,6 @@ import pytest  # noqa: E402
 from xibi.router import GeminiClient, OllamaClient  # noqa: E402
 
 
-@pytest.fixture(autouse=True)
-def mock_trust_class(mocker):
-    """Automatically mock TrustGradient class in xibi.react to avoid DB issues in tests."""
-    # Only mock it where it's used as a default class to instantiate
-    return mocker.patch("xibi.react.TrustGradient")
-
-
 @pytest.fixture
 def mock_config():
     return {
