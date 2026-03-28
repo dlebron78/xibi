@@ -6,6 +6,7 @@ import pytest
 
 from xibi.cli import main
 from xibi.executor import LocalHandlerExecutor
+from xibi.routing.llm_classifier import LLMRoutingDecision
 from xibi.skills.registry import SkillRegistry
 
 
@@ -171,6 +172,41 @@ def test_cli_shadow_hint_routes(mock_registry, test_db, capsys):
         assert "[shadow:hint] list_emails" in out
         assert "(via:shadow-hint" in out
         assert "hinted answer" in out
+        mock_run.assert_called_once()
+
+
+def test_cli_llm_hint_routing(mock_registry, test_db, capsys):
+    from xibi.types import ReActResult
+
+    with (
+        patch("sys.argv", ["xibi"]),
+        patch("builtins.input", side_effect=["pull up my unread messages", "quit"]),
+        patch("xibi.cli.SkillRegistry", return_value=mock_registry),
+        patch(
+            "xibi.cli.load_config_with_env_fallback",
+            return_value={
+                "models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}},
+                "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+                "db_path": test_db,
+            },
+        ),
+        patch(
+            "xibi.routing.llm_classifier.LLMRoutingClassifier.classify",
+            return_value=LLMRoutingDecision(
+                skill="email", tool="list_emails", confidence=0.88, reasoning="User wants to see emails"
+            ),
+        ),
+        patch(
+            "xibi.cli.run",
+            return_value=ReActResult(answer="llm hinted answer", steps=[], exit_reason="finish", duration_ms=100),
+        ) as mock_run,
+        patch("xibi.session.get_model"),
+    ):
+        main()
+        out, _ = capsys.readouterr()
+        assert "[llm:hint] email/list_emails (0.88)" in out
+        assert "(via:llm-hint" in out
+        assert "llm hinted answer" in out
         mock_run.assert_called_once()
 
 

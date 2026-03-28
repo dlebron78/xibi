@@ -1,10 +1,78 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from xibi.routing.classifier import MessageModeClassifier, ModeScores
+from xibi.routing.llm_classifier import LLMRoutingClassifier, LLMRoutingDecision
 from xibi.routing.shadow import ShadowMatch, extract_tool_input
+
+
+class TestLLMRoutingClassifier(unittest.TestCase):
+    def setUp(self):
+        self.config = {"models": {"text": {"fast": {"provider": "mock"}}}}
+        self.clf = LLMRoutingClassifier(self.config)
+        self.manifests = [
+            {
+                "skill": "email",
+                "tools": [{"name": "list_emails"}, {"name": "send_email"}],
+            }
+        ]
+
+    @patch("xibi.routing.llm_classifier.get_model")
+    def test_llm_classifier_high_confidence_returns_decision(self, mock_get_model):
+        mock_model = MagicMock()
+        mock_model.generate_structured.return_value = {
+            "skill": "email",
+            "tool": "list_emails",
+            "confidence": 0.92,
+            "reasoning": "Query is about unread messages",
+        }
+        mock_get_model.return_value = mock_model
+
+        decision = self.clf.classify("pull up unread emails", self.manifests)
+        self.assertIsNotNone(decision)
+        self.assertEqual(decision.skill, "email")
+        self.assertEqual(decision.tool, "list_emails")
+        self.assertEqual(decision.confidence, 0.92)
+
+    @patch("xibi.routing.llm_classifier.get_model")
+    def test_llm_classifier_low_confidence_returns_none(self, mock_get_model):
+        mock_model = MagicMock()
+        mock_model.generate_structured.return_value = {
+            "skill": "email",
+            "tool": "list_emails",
+            "confidence": 0.55,
+            "reasoning": "Unsure",
+        }
+        mock_get_model.return_value = mock_model
+
+        decision = self.clf.classify("something vague", self.manifests)
+        self.assertIsNone(decision)
+
+    @patch("xibi.routing.llm_classifier.get_model")
+    def test_llm_classifier_hallucinated_tool_returns_none(self, mock_get_model):
+        mock_model = MagicMock()
+        mock_model.generate_structured.return_value = {
+            "skill": "email",
+            "tool": "delete_all_emails",
+            "confidence": 0.95,
+            "reasoning": "User wants to delete emails",
+        }
+        mock_get_model.return_value = mock_model
+
+        decision = self.clf.classify("delete everything", self.manifests)
+        self.assertIsNone(decision)
+
+    @patch("xibi.routing.llm_classifier.get_model")
+    def test_llm_classifier_model_error_returns_none(self, mock_get_model):
+        mock_get_model.side_effect = RuntimeError("model unavailable")
+        decision = self.clf.classify("test", self.manifests)
+        self.assertIsNone(decision)
+
+    def test_llm_classifier_empty_manifests_returns_none(self):
+        decision = self.clf.classify("show me emails", manifests=[])
+        self.assertIsNone(decision)
 
 
 class TestMessageModeClassifier(unittest.TestCase):
