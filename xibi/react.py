@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from xibi.errors import ErrorCategory, XibiError
 from xibi.router import Config, get_model
+from xibi.tracing import Span, Tracer
+from xibi.trust.gradient import FailureType, TrustGradient
 
 if TYPE_CHECKING:
     from xibi.executor import Executor
@@ -135,18 +138,49 @@ def run(
     control_plane: ControlPlaneRouter | None = None,
     shadow: ShadowMatcher | None = None,
     session_context: SessionContext | None = None,
+    trust_gradient: TrustGradient | None = None,
+    tracer: Tracer | None = None,
 ) -> ReActResult:
     start_time = time.time()
+
+    _tracer = tracer  # May be None — all emit() calls are guarded
+    _run_trace_id = trace_id or (_tracer.new_trace_id() if _tracer else None)
+    _run_span_id = _tracer.new_span_id() if _tracer else None
+    _run_start_ms = int(time.time() * 1000)
+
+    def _emit_run_span(result: ReActResult) -> None:
+        if _tracer is None or _run_trace_id is None or _run_span_id is None:
+            return
+        _tracer.emit(
+            Span(
+                trace_id=_run_trace_id,
+                span_id=_run_span_id,
+                parent_span_id=None,
+                operation="react.run",
+                component="react",
+                start_ms=_run_start_ms,
+                duration_ms=result.duration_ms,
+                status="ok" if result.exit_reason in ("finish", "ask_user") else "error",
+                attributes={
+                    "exit_reason": result.exit_reason,
+                    "steps": str(len(result.steps)),
+                    "query_preview": query[:80],
+                },
+            )
+        )
 
     if control_plane:
         decision = control_plane.match(query)
         if decision.matched:
-            return ReActResult(
+            res = ReActResult(
                 answer=handle_intent(decision),
                 steps=[],
                 exit_reason="finish",
                 duration_ms=int((time.time() - start_time) * 1000),
             )
+            res.trace_id = _run_trace_id
+            _emit_run_span(res)
+            return res
 
     if shadow:
         match = shadow.match(query)
@@ -161,12 +195,15 @@ def run(
                     or tool_output.get("content")
                     or str(tool_output)
                 )
-                return ReActResult(
+                res = ReActResult(
                     answer=str(answer),
                     steps=[],
                     exit_reason="finish",
                     duration_ms=int((time.time() - start_time) * 1000),
                 )
+                res.trace_id = _run_trace_id
+                _emit_run_span(res)
+                return res
             elif match.tier == "hint":
                 context = f"[Shadow hint: consider using {match.tool}]\n{context}"
 
@@ -174,13 +211,15 @@ def run(
     consecutive_errors = 0
 
     llm = get_model(specialty="text", effort="fast", config=config)
+    _db_path = config.get("db_path") or Path.home() / ".xibi" / "data" / "xibi.db"
+    trust = trust_gradient or TrustGradient(Path(_db_path))
+    _trust_specialty = "text"
+    _trust_effort = "fast"
 
     # Inject context into system prompt before loop
     context_block = session_context.get_context_block() if session_context else ""
-    if context_block:
-        context = f"{context_block}\n{context}"
 
-    system_prompt = (
+    system_prompt = (f"{context_block}\n\n" if context_block else "") + (
         "You are a helpful assistant with access to tools.\n"
         f"Available tools: {json.dumps(skill_registry)}\n\n"
         "Instructions:\n"
@@ -193,8 +232,12 @@ def run(
     for step_num in range(1, max_steps + 1):
         elapsed = time.time() - start_time
         if elapsed > max_secs:
+            # Timeout — transient failure
+            trust.record_failure(_trust_specialty, _trust_effort, FailureType.TRANSIENT)
             res = ReActResult(answer="", steps=scratchpad, exit_reason="timeout", duration_ms=int(elapsed * 1000))
             res.error_summary = [s.error for s in scratchpad if s.error is not None]
+            res.trace_id = _run_trace_id
+            _emit_run_span(res)
             return res
 
         # Construct prompt
@@ -206,6 +249,8 @@ def run(
             response_text = llm.generate(prompt, system=system_prompt)
             try:
                 parsed = _parse_llm_response(response_text)
+                # Parse succeeded — record success
+                trust.record_success(_trust_specialty, _trust_effort)
                 parse_warning = None
                 error = None
             except Exception:
@@ -214,9 +259,13 @@ def run(
                     recovery_prompt = f"{prompt}\n\nInvalid JSON received. Please respond with ONLY the JSON object."
                     response_text = llm.generate(recovery_prompt, system=system_prompt)
                     parsed = _parse_llm_response(response_text)
+                    # Recovered parse — still a success (LLM produced valid JSON on retry)
+                    trust.record_success(_trust_specialty, _trust_effort)
                     parse_warning = "Recovered from invalid JSON"
                     error = None
                 except Exception as inner_e:
+                    # Persistent failure — LLM could not produce parseable JSON
+                    trust.record_failure(_trust_specialty, _trust_effort, FailureType.PERSISTENT)
                     parsed = {"thought": f"Failed to parse LLM response: {str(inner_e)}", "tool": "error"}
                     parse_warning = "Failed to parse JSON"
                     error = XibiError(
@@ -245,6 +294,8 @@ def run(
                     duration_ms=int((time.time() - start_time) * 1000),
                 )
                 res.error_summary = [s.error for s in scratchpad if s.error is not None]
+                res.trace_id = _run_trace_id
+                _emit_run_span(res)
                 return res
 
             if step.tool == "ask_user":
@@ -256,6 +307,8 @@ def run(
                     duration_ms=int((time.time() - start_time) * 1000),
                 )
                 res.error_summary = [s.error for s in scratchpad if s.error is not None]
+                res.trace_id = _run_trace_id
+                _emit_run_span(res)
                 return res
 
             if is_repeat(step, scratchpad):
@@ -270,6 +323,8 @@ def run(
                         duration_ms=int((time.time() - start_time) * 1000),
                     )
                     res.error_summary = [s.error for s in scratchpad if s.error is not None]
+                    res.trace_id = _run_trace_id
+                    _emit_run_span(res)
                     return res
                 continue
 
@@ -284,6 +339,25 @@ def run(
 
             scratchpad.append(step)
 
+            if _tracer and _run_trace_id and step.tool not in ("finish", "ask_user", "error"):
+                _tracer.emit(
+                    Span(
+                        trace_id=_run_trace_id,
+                        span_id=_tracer.new_span_id(),
+                        parent_span_id=_run_span_id,
+                        operation="tool.dispatch",
+                        component="executor",
+                        start_ms=int(time.time() * 1000) - step.duration_ms,  # approximate
+                        duration_ms=step.duration_ms,
+                        status="error" if step.error else "ok",
+                        attributes={
+                            "tool": step.tool,
+                            "step_num": str(step.step_num),
+                            "error": str(step.error.message) if step.error else "",
+                        },
+                    )
+                )
+
             if step_callback:
                 step_callback(step)
 
@@ -297,11 +371,16 @@ def run(
                         duration_ms=int((time.time() - start_time) * 1000),
                     )
                     res.error_summary = [s.error for s in scratchpad if s.error is not None]
+                    res.trace_id = _run_trace_id
+                    _emit_run_span(res)
                     return res
             else:
                 consecutive_errors = 0
 
         except Exception as e:
+            # Unexpected error — treat as transient unless it's an XibiError parse failure
+            failure_type = FailureType.PERSISTENT if isinstance(e, XibiError) else FailureType.TRANSIENT
+            trust.record_failure(_trust_specialty, _trust_effort, failure_type)
             # Handle unexpected LLM errors
             res = ReActResult(
                 answer="", steps=scratchpad, exit_reason="error", duration_ms=int((time.time() - start_time) * 1000)
@@ -310,10 +389,14 @@ def run(
                 res.error_summary = [e]
             else:
                 res.error_summary = [s.error for s in scratchpad if s.error is not None]
+            res.trace_id = _run_trace_id
+            _emit_run_span(res)
             return res
 
     res = ReActResult(
         answer="", steps=scratchpad, exit_reason="max_steps", duration_ms=int((time.time() - start_time) * 1000)
     )
     res.error_summary = [s.error for s in scratchpad if s.error is not None]
+    res.trace_id = _run_trace_id
+    _emit_run_span(res)
     return res

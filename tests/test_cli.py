@@ -3,9 +3,39 @@ from unittest.mock import patch
 
 import pytest
 
+import sqlite3
 from xibi.cli import main
 from xibi.executor import LocalHandlerExecutor
 from xibi.skills.registry import SkillRegistry
+
+
+@pytest.fixture
+def test_db(tmp_path):
+    db_path = tmp_path / "xibi.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS session_turns (
+                turn_id     TEXT PRIMARY KEY,
+                session_id  TEXT NOT NULL,
+                query       TEXT NOT NULL,
+                answer      TEXT NOT NULL,
+                tools_called TEXT NOT NULL DEFAULT '[]',
+                exit_reason TEXT NOT NULL DEFAULT 'finish',
+                summary     TEXT NOT NULL DEFAULT '',
+                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS session_entities (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id   TEXT NOT NULL,
+                turn_id      TEXT NOT NULL,
+                entity_type  TEXT NOT NULL,
+                value        TEXT NOT NULL,
+                source_tool  TEXT NOT NULL,
+                confidence   REAL NOT NULL,
+                created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+    return db_path
 
 
 @pytest.fixture
@@ -68,12 +98,14 @@ def web_search(params):
     return SkillRegistry(skills_dir)
 
 
-def test_cli_control_plane_routes(mock_registry, capsys):
+def test_cli_control_plane_routes(mock_registry, test_db, capsys):
     with (
         patch("sys.argv", ["xibi"]),
         patch("builtins.input", side_effect=["hi", "quit"]),
         patch("xibi.cli.SkillRegistry", return_value=mock_registry),
+        patch("xibi.cli.load_config_with_env_fallback", return_value={"models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}}, "providers": {"ollama": {"base_url": "http://localhost:11434"}}, "db_path": test_db}),
         patch("xibi.cli.run") as mock_run,
+        patch("xibi.session.get_model"),
     ):
         main()
         out, _ = capsys.readouterr()
@@ -82,12 +114,14 @@ def test_cli_control_plane_routes(mock_registry, capsys):
         mock_run.assert_not_called()
 
 
-def test_cli_shadow_direct_routes(mock_registry, capsys):
+def test_cli_shadow_direct_routes(mock_registry, test_db, capsys):
     with (
         patch("sys.argv", ["xibi"]),
         patch("builtins.input", side_effect=["check my email", "quit"]),
         patch("xibi.cli.SkillRegistry", return_value=mock_registry),
+        patch("xibi.cli.load_config_with_env_fallback", return_value={"models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}}, "providers": {"ollama": {"base_url": "http://localhost:11434"}}, "db_path": test_db}),
         patch("xibi.cli.run") as mock_run,
+        patch("xibi.session.get_model"),
     ):
         main()
         out, _ = capsys.readouterr()
@@ -96,7 +130,7 @@ def test_cli_shadow_direct_routes(mock_registry, capsys):
         mock_run.assert_not_called()
 
 
-def test_cli_shadow_hint_routes(mock_registry, capsys):
+def test_cli_shadow_hint_routes(mock_registry, test_db, capsys):
     # Hint threshold is 0.65. "check email" should be a hint for "check my email"
     from xibi.types import ReActResult
 
@@ -104,10 +138,12 @@ def test_cli_shadow_hint_routes(mock_registry, capsys):
         patch("sys.argv", ["xibi"]),
         patch("builtins.input", side_effect=["check email", "quit"]),
         patch("xibi.cli.SkillRegistry", return_value=mock_registry),
+        patch("xibi.cli.load_config_with_env_fallback", return_value={"models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}}, "providers": {"ollama": {"base_url": "http://localhost:11434"}}, "db_path": test_db}),
         patch(
             "xibi.cli.run",
             return_value=ReActResult(answer="hinted answer", steps=[], exit_reason="finish", duration_ms=100),
         ) as mock_run,
+        patch("xibi.session.get_model"),
     ):
         main()
         out, _ = capsys.readouterr()
@@ -117,17 +153,19 @@ def test_cli_shadow_hint_routes(mock_registry, capsys):
         mock_run.assert_called_once()
 
 
-def test_cli_react_fallthrough(mock_registry, capsys):
+def test_cli_react_fallthrough(mock_registry, test_db, capsys):
     from xibi.types import ReActResult
 
     with (
         patch("sys.argv", ["xibi"]),
         patch("builtins.input", side_effect=["something unknown", "quit"]),
         patch("xibi.cli.SkillRegistry", return_value=mock_registry),
+        patch("xibi.cli.load_config_with_env_fallback", return_value={"models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}}, "providers": {"ollama": {"base_url": "http://localhost:11434"}}, "db_path": test_db}),
         patch(
             "xibi.cli.run",
             return_value=ReActResult(answer="react answer", steps=[], exit_reason="finish", duration_ms=100),
         ) as mock_run,
+        patch("xibi.session.get_model"),
     ):
         main()
         out, _ = capsys.readouterr()
@@ -189,11 +227,12 @@ def test_local_handler_executor_unknown_tool(mock_registry):
     assert "Unknown tool" in res["message"]
 
 
-def test_cli_quit_exits_cleanly(mock_registry, capsys):
+def test_cli_quit_exits_cleanly(mock_registry, test_db, capsys):
     with (
         patch("sys.argv", ["xibi"]),
         patch("builtins.input", side_effect=["quit"]),
         patch("xibi.cli.SkillRegistry", return_value=mock_registry),
+        patch("xibi.cli.load_config_with_env_fallback", return_value={"models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}}, "providers": {"ollama": {"base_url": "http://localhost:11434"}}, "db_path": test_db}),
     ):
         main()
         out, _ = capsys.readouterr()

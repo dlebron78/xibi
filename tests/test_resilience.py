@@ -141,10 +141,36 @@ def test_user_facing_failure_message_all_exit_reasons():
     assert "temporarily pausing" in res_error.user_facing_failure_message()
 
 
-def test_cli_prints_error_on_empty_answer():
+def test_cli_prints_error_on_empty_answer(tmp_path):
+    import sqlite3
     import sys
 
     from xibi.cli import main
+
+    db_path = tmp_path / "xibi.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS session_turns (
+                turn_id     TEXT PRIMARY KEY,
+                session_id  TEXT NOT NULL,
+                query       TEXT NOT NULL,
+                answer      TEXT NOT NULL,
+                tools_called TEXT NOT NULL DEFAULT '[]',
+                exit_reason TEXT NOT NULL DEFAULT 'finish',
+                summary     TEXT NOT NULL DEFAULT '',
+                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS session_entities (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id   TEXT NOT NULL,
+                turn_id      TEXT NOT NULL,
+                entity_type  TEXT NOT NULL,
+                value        TEXT NOT NULL,
+                source_tool  TEXT NOT NULL,
+                confidence   REAL NOT NULL,
+                created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
 
     # Mock inputs and dependencies to trigger an error path in CLI
     with (
@@ -157,8 +183,9 @@ def test_cli_prints_error_on_empty_answer():
         patch("xibi.cli.run") as mock_run,
         patch.object(sys, "argv", ["xibi"]),
         patch("builtins.print") as mock_print,
+        patch("xibi.session.get_model"),
     ):
-        mock_load_config.return_value = {"models": {}, "providers": {}}
+        mock_load_config.return_value = {"models": {}, "providers": {}, "db_path": db_path}
 
         mock_cp = mock_cp_cls.return_value
         mock_cp.match.return_value.matched = False
@@ -181,28 +208,60 @@ def test_cli_prints_error_on_empty_answer():
         assert found_message
 
 
-def test_telegram_sends_failure_message():
+def test_telegram_sends_failure_message(tmp_path):
+    import sqlite3
+
     from xibi.channels.telegram import TelegramAdapter
 
+    db_path = tmp_path / "xibi.db"
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS session_turns (
+                turn_id     TEXT PRIMARY KEY,
+                session_id  TEXT NOT NULL,
+                query       TEXT NOT NULL,
+                answer      TEXT NOT NULL,
+                tools_called TEXT NOT NULL DEFAULT '[]',
+                exit_reason TEXT NOT NULL DEFAULT 'finish',
+                summary     TEXT NOT NULL DEFAULT '',
+                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS session_entities (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id   TEXT NOT NULL,
+                turn_id      TEXT NOT NULL,
+                entity_type  TEXT NOT NULL,
+                value        TEXT NOT NULL,
+                source_tool  TEXT NOT NULL,
+                confidence   REAL NOT NULL,
+                created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
     class MockCore:
-        def process_query(self, text, **kwargs):
+        def __init__(self):
+            self.registry = MagicMock()
+            self.executor = MagicMock()
+            self.config = {"models": {}, "providers": {}}
+
+        def process_query(self, text):
             return ""
 
         def _get_awaiting_task(self):
             return None
-
-        def process_query_to_result(self, text, **kwargs):
-            return ReActResult(answer="", steps=[], exit_reason="timeout", duration_ms=0)
 
     core = MockCore()
 
     with (
         patch.dict("os.environ", {"XIBI_TELEGRAM_TOKEN": "test"}),
         patch("xibi.channels.telegram.TelegramAdapter._api_call") as mock_api,
+        patch("xibi.react.run") as mock_run,
+        patch("xibi.session.get_model"),
     ):
+        mock_run.return_value = ReActResult(answer="", steps=[], exit_reason="timeout", duration_ms=0)
         # mock_api return for typing action
         mock_api.return_value = {"ok": True}
-        adapter = TelegramAdapter(core)
+        adapter = TelegramAdapter(core, db_path=db_path)
 
         # We need to mock _api_call for sendMessage too
         adapter._process_message(123, "hello")
