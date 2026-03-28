@@ -7,7 +7,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 7  # increment when adding new migrations
+SCHEMA_VERSION = 9  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -37,6 +37,8 @@ class SchemaManager:
             (5, "security tables: access_log", self._migration_5),
             (6, "idempotency: processed_messages table", self._migration_6),
             (7, "trust hardening: model_hash, last_failure_type", self._migration_7),
+            (8, "sessions: session_turns table", self._migration_8),
+            (9, "sessions: session_entities table", self._migration_9),
         ]
 
         for version, description, func in migrations:
@@ -254,6 +256,40 @@ class SchemaManager:
         ]:
             with contextlib.suppress(sqlite3.OperationalError):
                 conn.execute(column_sql)
+
+    def _migration_8(self, conn: sqlite3.Connection) -> None:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS session_turns (
+                turn_id     TEXT PRIMARY KEY,
+                session_id  TEXT NOT NULL,
+                query       TEXT NOT NULL,
+                answer      TEXT NOT NULL,
+                tools_called TEXT NOT NULL DEFAULT '[]',
+                exit_reason TEXT NOT NULL DEFAULT 'finish',
+                summary     TEXT NOT NULL DEFAULT '',
+                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_session_turns_session_id
+                ON session_turns (session_id, created_at DESC);
+        """)
+
+    def _migration_9(self, conn: sqlite3.Connection) -> None:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS session_entities (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id   TEXT NOT NULL,
+                turn_id      TEXT NOT NULL,
+                entity_type  TEXT NOT NULL,
+                value        TEXT NOT NULL,
+                source_tool  TEXT NOT NULL,
+                confidence   REAL NOT NULL,
+                created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_session_entities_session
+                ON session_entities (session_id, entity_type);
+        """)
 
 
 def migrate(db_path: Path) -> list[int]:

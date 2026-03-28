@@ -128,6 +128,12 @@ def test_poll_processes_mock_message(monkeypatch, tmp_path):
     core = MagicMock(spec=[])  # Don't have any extra attributes by default
     core.process_query = MagicMock(return_value="Mock Response")
 
+    # The adapter might call process_query with session_context
+    def mock_process_query(query, **kwargs):
+        return "Mock Response"
+
+    core.process_query.side_effect = mock_process_query
+
     adapter = TelegramAdapter(core=core, db_path=db_path)
     adapter.send_message = MagicMock()
 
@@ -145,7 +151,9 @@ def test_poll_processes_mock_message(monkeypatch, tmp_path):
     with pytest.raises(StopIteration):
         adapter.poll()
 
-    core.process_query.assert_called_once_with("Hi, check my emails")
+    # The adapter will call process_query because it doesn't have process_query_to_result
+    core.process_query.assert_called_once()
+    assert core.process_query.call_args[0][0] == "Hi, check my emails"
     adapter.send_message.assert_called_with(123, "Mock Response")
 
 

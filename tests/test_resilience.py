@@ -185,13 +185,13 @@ def test_telegram_sends_failure_message():
     from xibi.channels.telegram import TelegramAdapter
 
     class MockCore:
-        def process_query(self, text):
+        def process_query(self, text, **kwargs):
             return ""
 
         def _get_awaiting_task(self):
             return None
 
-        def process_query_to_result(self, text):
+        def process_query_to_result(self, text, **kwargs):
             return ReActResult(answer="", steps=[], exit_reason="timeout", duration_ms=0)
 
     core = MockCore()
