@@ -36,6 +36,7 @@ DEFAULT_TRUST_CONFIG = TrustConfig(
 class FailureType(str, Enum):
     TRANSIENT = "transient"  # timeout, 429, 503, connection reset
     PERSISTENT = "persistent"  # schema violation, hallucination, semantic error
+    QUALITY_DEGRADATION = "quality"  # LLM-as-Judge scored composite < threshold
 
 
 @dataclass
@@ -143,7 +144,14 @@ class TrustGradient:
 
         record.total_outputs += 1
         record.total_failures += 1
-        record.consecutive_clean = 0
+
+        if failure_type == FailureType.QUALITY_DEGRADATION:
+            # Quality degradation is treated like a transient failure:
+            # decrement consecutive_clean but don't reset it to 0 immediately.
+            record.consecutive_clean = max(0, record.consecutive_clean - 1)
+        else:
+            record.consecutive_clean = 0
+
         record.last_updated = datetime.now(timezone.utc).isoformat()
         record.last_failure_type = failure_type.value
 
