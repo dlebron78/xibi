@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from xibi.errors import ErrorCategory, XibiError
 from xibi.router import Config, get_model
+from xibi.tracing import Span, Tracer
 from xibi.trust.gradient import FailureType, TrustGradient
 
 if TYPE_CHECKING:
@@ -138,18 +139,48 @@ def run(
     shadow: ShadowMatcher | None = None,
     session_context: SessionContext | None = None,
     trust_gradient: TrustGradient | None = None,
+    tracer: Tracer | None = None,
 ) -> ReActResult:
     start_time = time.time()
+
+    _tracer = tracer  # May be None — all emit() calls are guarded
+    _run_trace_id = trace_id or (_tracer.new_trace_id() if _tracer else None)
+    _run_span_id = _tracer.new_span_id() if _tracer else None
+    _run_start_ms = int(time.time() * 1000)
+
+    def _emit_run_span(result: ReActResult) -> None:
+        if _tracer is None or _run_trace_id is None or _run_span_id is None:
+            return
+        _tracer.emit(
+            Span(
+                trace_id=_run_trace_id,
+                span_id=_run_span_id,
+                parent_span_id=None,
+                operation="react.run",
+                component="react",
+                start_ms=_run_start_ms,
+                duration_ms=result.duration_ms,
+                status="ok" if result.exit_reason in ("finish", "ask_user") else "error",
+                attributes={
+                    "exit_reason": result.exit_reason,
+                    "steps": str(len(result.steps)),
+                    "query_preview": query[:80],
+                },
+            )
+        )
 
     if control_plane:
         decision = control_plane.match(query)
         if decision.matched:
-            return ReActResult(
+            res = ReActResult(
                 answer=handle_intent(decision),
                 steps=[],
                 exit_reason="finish",
                 duration_ms=int((time.time() - start_time) * 1000),
             )
+            res.trace_id = _run_trace_id
+            _emit_run_span(res)
+            return res
 
     if shadow:
         match = shadow.match(query)
@@ -164,12 +195,15 @@ def run(
                     or tool_output.get("content")
                     or str(tool_output)
                 )
-                return ReActResult(
+                res = ReActResult(
                     answer=str(answer),
                     steps=[],
                     exit_reason="finish",
                     duration_ms=int((time.time() - start_time) * 1000),
                 )
+                res.trace_id = _run_trace_id
+                _emit_run_span(res)
+                return res
             elif match.tier == "hint":
                 context = f"[Shadow hint: consider using {match.tool}]\n{context}"
 
@@ -202,6 +236,8 @@ def run(
             trust.record_failure(_trust_specialty, _trust_effort, FailureType.TRANSIENT)
             res = ReActResult(answer="", steps=scratchpad, exit_reason="timeout", duration_ms=int(elapsed * 1000))
             res.error_summary = [s.error for s in scratchpad if s.error is not None]
+            res.trace_id = _run_trace_id
+            _emit_run_span(res)
             return res
 
         # Construct prompt
@@ -258,6 +294,8 @@ def run(
                     duration_ms=int((time.time() - start_time) * 1000),
                 )
                 res.error_summary = [s.error for s in scratchpad if s.error is not None]
+                res.trace_id = _run_trace_id
+                _emit_run_span(res)
                 return res
 
             if step.tool == "ask_user":
@@ -269,6 +307,8 @@ def run(
                     duration_ms=int((time.time() - start_time) * 1000),
                 )
                 res.error_summary = [s.error for s in scratchpad if s.error is not None]
+                res.trace_id = _run_trace_id
+                _emit_run_span(res)
                 return res
 
             if is_repeat(step, scratchpad):
@@ -283,6 +323,8 @@ def run(
                         duration_ms=int((time.time() - start_time) * 1000),
                     )
                     res.error_summary = [s.error for s in scratchpad if s.error is not None]
+                    res.trace_id = _run_trace_id
+                    _emit_run_span(res)
                     return res
                 continue
 
@@ -297,6 +339,25 @@ def run(
 
             scratchpad.append(step)
 
+            if _tracer and _run_trace_id and step.tool not in ("finish", "ask_user", "error"):
+                _tracer.emit(
+                    Span(
+                        trace_id=_run_trace_id,
+                        span_id=_tracer.new_span_id(),
+                        parent_span_id=_run_span_id,
+                        operation="tool.dispatch",
+                        component="executor",
+                        start_ms=int(time.time() * 1000) - step.duration_ms,  # approximate
+                        duration_ms=step.duration_ms,
+                        status="error" if step.error else "ok",
+                        attributes={
+                            "tool": step.tool,
+                            "step_num": str(step.step_num),
+                            "error": str(step.error.message) if step.error else "",
+                        },
+                    )
+                )
+
             if step_callback:
                 step_callback(step)
 
@@ -310,6 +371,8 @@ def run(
                         duration_ms=int((time.time() - start_time) * 1000),
                     )
                     res.error_summary = [s.error for s in scratchpad if s.error is not None]
+                    res.trace_id = _run_trace_id
+                    _emit_run_span(res)
                     return res
             else:
                 consecutive_errors = 0
@@ -326,10 +389,14 @@ def run(
                 res.error_summary = [e]
             else:
                 res.error_summary = [s.error for s in scratchpad if s.error is not None]
+            res.trace_id = _run_trace_id
+            _emit_run_span(res)
             return res
 
     res = ReActResult(
         answer="", steps=scratchpad, exit_reason="max_steps", duration_ms=int((time.time() - start_time) * 1000)
     )
     res.error_summary = [s.error for s in scratchpad if s.error is not None]
+    res.trace_id = _run_trace_id
+    _emit_run_span(res)
     return res

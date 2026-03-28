@@ -9,6 +9,7 @@ from typing import Any, cast
 from xibi.executor import LocalHandlerExecutor
 from xibi.react import handle_intent, run
 from xibi.router import Config
+from xibi.tracing import Tracer
 from xibi.routing.control_plane import ControlPlaneRouter
 from xibi.routing.shadow import ShadowMatcher
 from xibi.session import SessionContext
@@ -74,6 +75,7 @@ def main() -> None:
 
     db_path = config.get("db_path") or Path.home() / ".xibi" / "data" / "xibi.db"
     session = SessionContext(session_id="cli:local", db_path=db_path, config=config)
+    tracer = Tracer(Path(db_path))
 
     def step_callback(step: Any) -> None:
         if args.debug:
@@ -147,7 +149,11 @@ def main() -> None:
                     shadow=shadow,  # It will re-match but hint tier will be handled
                     step_callback=step_callback,
                     session_context=session,
+                    tracer=tracer,
                 )
+                if args.debug and result.trace_id:
+                    print(f"  [trace_id: {result.trace_id}]")
+
                 if result.answer:
                     answer = result.answer
                     print(f"\n{answer}")
