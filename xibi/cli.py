@@ -11,6 +11,7 @@ from xibi.react import handle_intent, run
 from xibi.router import Config
 from xibi.routing.control_plane import ControlPlaneRouter
 from xibi.routing.shadow import ShadowMatcher
+from xibi.session import SessionContext
 from xibi.skills.registry import SkillRegistry
 
 
@@ -71,6 +72,9 @@ def main() -> None:
     shadow = ShadowMatcher()
     shadow.load_manifests(args.skills_dir)
 
+    db_path = config.get("db_path") or Path.home() / ".xibi" / "data" / "xibi.db"
+    session = SessionContext(session_id="cli:local", db_path=db_path, config=config)
+
     def step_callback(step: Any) -> None:
         if args.debug:
             print(
@@ -92,6 +96,9 @@ def main() -> None:
         if query.lower() in ["quit", "exit"]:
             print("Goodbye!")
             break
+
+        if session.is_continuation(query):
+            print("  (continuing previous conversation)")  # debug hint
 
         start_time = time.time()
         routed_via = "react"
@@ -139,6 +146,7 @@ def main() -> None:
                     control_plane=None,  # Already checked
                     shadow=shadow,  # It will re-match but hint tier will be handled
                     step_callback=step_callback,
+                    session_context=session,
                 )
                 if result.answer:
                     answer = result.answer
@@ -148,6 +156,9 @@ def main() -> None:
                     if result.error_summary:
                         for err in result.error_summary:
                             print(f"   [{err.category.value}] {err.detail or err.message}")
+
+                # Persist turn
+                session.add_turn(query, result)
 
         duration = (time.time() - start_time) * 1000
         print(f"(routed via: {routed_via}, {duration:.0f}ms)")

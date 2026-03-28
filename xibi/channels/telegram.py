@@ -5,12 +5,17 @@ import logging
 import os
 import re
 import sqlite3
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import date
 from pathlib import Path
 from typing import Any
+
+from xibi import react
+from xibi.session import SessionContext
 
 logger = logging.getLogger(__name__)
 
@@ -92,6 +97,7 @@ class TelegramAdapter:
 
         self.offset = self._load_offset()
         self._pending_attachments: dict[int, str] = {}
+        self._sessions: dict[int, SessionContext] = {}
         self._active_chat_id: int | None = None
         self._nudge_sent: bool = False
         self._mock_sent: bool = False
@@ -243,6 +249,15 @@ class TelegramAdapter:
         """Legacy method for backward compatibility."""
         return self._is_authorized(str(chat_id))
 
+    def _get_session(self, chat_id: int) -> SessionContext:
+        if chat_id not in self._sessions:
+            session_id = f"telegram:{chat_id}:{date.today().isoformat()}"
+            # self.core.config might not be accessible easily if it's a wrapper,
+            # but usually it is. If not, session uses default which is fine.
+            config = getattr(self.core, "config", None)
+            self._sessions[chat_id] = SessionContext(session_id, self.db_path, config=config)
+        return self._sessions[chat_id]
+
     def _process_message(self, chat_id: int, user_text: str) -> None:
         """Handle core engine interaction, task routing, and response sending."""
         self._api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
@@ -265,29 +280,31 @@ class TelegramAdapter:
                         response = self.core._resume_task(awaiting["id"], user_text)
 
             if not response:
-                # If core has a 'process_query_to_result' or similar that returns ReActResult
-                # For now, let's assume we can check if the response from process_query is empty
-                # or if there's a way to get the last result.
-                # The instructions say: "send failure messages instead of silence"
-                # and "result = react.run(query, ...)"
-                # "if result.answer: self._send_message(...) elif ...: self._send_message(..., result.user_facing_failure_message())"
-                # Since I don't know exactly how self.core.process_query is implemented (it might be a wrapper),
-                # I'll try to follow the pattern if possible.
+                session = self._get_session(chat_id)
+                # We need access to registry and executor which are usually on core
+                registry = getattr(self.core, "registry", None)
+                executor = getattr(self.core, "executor", None)
+                config = getattr(self.core, "config", None)
 
-                # If core is actually the result of some factory that might have the result:
-                if hasattr(self.core, "process_query_to_result"):
-                    result = self.core.process_query_to_result(user_text)
+                if registry and executor and config:
+                    result = react.run(
+                        user_text,
+                        config,
+                        registry.get_skill_manifests(),
+                        executor=executor,
+                        session_context=session,
+                    )
                     if result.answer:
                         response = result.answer
                     elif result.exit_reason in ("error", "timeout", "max_steps"):
                         response = result.user_facing_failure_message()
+
+                    # Always add turn (even if empty answer)
+                    # Run in background to avoid blocking
+                    threading.Thread(target=session.add_turn, args=(user_text, result), daemon=True).start()
                 else:
-                    # Fallback to current behavior but handle empty response if it was supposed to be a ReActResult
+                    # Fallback if core doesn't expose them
                     response = self.core.process_query(user_text)
-                    # If response is empty, it might be an error.
-                    # But without the ReActResult object here, we can't call user_facing_failure_message().
-                    # Re-reading Part 5: "Telegram (channels/telegram.py) ... result = react.run(query, ...)"
-                    # This implies the code should be changed to call run directly or get the result.
 
             if response:
                 self.send_message(chat_id, response)
