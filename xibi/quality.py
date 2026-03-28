@@ -6,10 +6,14 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from xibi.router import Config, ModelClient
+    from xibi.trust.gradient import TrustGradient
 
 from xibi.router import get_model
 
 logger = logging.getLogger(__name__)
+
+QUALITY_FAILURE_THRESHOLD = 2.5  # composite score below this → trust failure
+QUALITY_SUCCESS_THRESHOLD = 3.5  # composite score at or above this → trust success
 
 RELEVANCE_WEIGHT = 0.6  # weight for relevance in composite score
 GROUNDEDNESS_WEIGHT = 0.4  # weight for groundedness in composite score
@@ -112,3 +116,30 @@ def quality_score_span(
     except Exception as exc:
         logger.debug("quality_score_span: parse error: %s", exc)
         return None
+
+
+def apply_quality_to_trust(
+    score: QualityScore,
+    trust: TrustGradient,
+    specialty: str,
+    effort: str,
+) -> None:
+    """
+    Map a QualityScore onto the trust gradient.
+
+    - composite < QUALITY_FAILURE_THRESHOLD  → record_failure(QUALITY_DEGRADATION)
+    - composite >= QUALITY_SUCCESS_THRESHOLD → record_success()
+    - in between (2.5 ≤ composite < 3.5)     → no-op (neutral zone, don't bias trust)
+
+    Never raises. Trust gradient failures must not affect the caller.
+    """
+    from xibi.trust.gradient import FailureType
+
+    try:
+        if score.composite < QUALITY_FAILURE_THRESHOLD:
+            trust.record_failure(specialty, effort, FailureType.QUALITY_DEGRADATION)
+        elif score.composite >= QUALITY_SUCCESS_THRESHOLD:
+            trust.record_success(specialty, effort)
+        # neutral zone: no-op
+    except Exception as exc:
+        logger.debug("apply_quality_to_trust: trust update failed: %s", exc)

@@ -15,7 +15,7 @@ except ImportError:
     readline = None  # type: ignore[assignment]
 
 from xibi.executor import LocalHandlerExecutor
-from xibi.quality import quality_score_span
+from xibi.quality import apply_quality_to_trust, quality_score_span
 from xibi.react import handle_intent, run
 from xibi.router import Config
 from xibi.routing.control_plane import ControlPlaneRouter
@@ -24,6 +24,7 @@ from xibi.routing.shadow import ShadowMatcher
 from xibi.session import SessionContext
 from xibi.skills.registry import SkillRegistry
 from xibi.tracing import Tracer
+from xibi.trust.gradient import TrustGradient
 
 _thinking = threading.Event()
 
@@ -122,6 +123,7 @@ def main() -> None:
     _db_path = config.get("db_path") or Path.home() / ".xibi" / "data" / "xibi.db"
     session = SessionContext(session_id="cli:local", db_path=_db_path, config=config)
     tracer = Tracer(Path(_db_path))
+    trust_gradient = TrustGradient(Path(_db_path))
 
     def step_callback(step: Any) -> None:
         if not args.debug:
@@ -193,6 +195,8 @@ def main() -> None:
 
         start_time = time.time()
         routed_via = "react"
+        routed_specialty = "text"
+        routed_effort = "fast"
         answer = ""
         result = None
 
@@ -290,6 +294,15 @@ def main() -> None:
                     quality = quality_score_span(query, result.answer, tool_outputs, config, profile)
                     if quality and tracer and result.trace_id:
                         tracer.record_quality(result.trace_id, quality, query)
+
+                    # Wire quality scores into trust gradient
+                    if quality and trust_gradient:
+                        apply_quality_to_trust(
+                            quality,
+                            trust_gradient,
+                            specialty=routed_specialty,
+                            effort=routed_effort,
+                        )
 
                 # Persist turn
                 session.add_turn(query, result)

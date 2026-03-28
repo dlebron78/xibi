@@ -140,3 +140,50 @@ def test_tracer_record_quality(tmp_path):
     assert attrs["composite"] == 3.6
     assert attrs["reasoning"] == "ok"
     assert attrs["query_preview"] == "test query"
+
+
+def test_apply_quality_to_trust_failure():
+    from xibi.quality import QualityScore, apply_quality_to_trust
+    from xibi.trust.gradient import FailureType
+
+    mock_trust = MagicMock()
+    score = QualityScore(relevance=2, groundedness=2, composite=2.0, reasoning="Poor answer")
+
+    apply_quality_to_trust(score, mock_trust, "text", "fast")
+
+    mock_trust.record_failure.assert_called_once_with("text", "fast", FailureType.QUALITY_DEGRADATION)
+
+
+def test_apply_quality_to_trust_success():
+    from xibi.quality import QualityScore, apply_quality_to_trust
+
+    mock_trust = MagicMock()
+    score = QualityScore(relevance=4, groundedness=4, composite=4.0, reasoning="Good answer")
+
+    apply_quality_to_trust(score, mock_trust, "text", "fast")
+
+    mock_trust.record_success.assert_called_once_with("text", "fast")
+
+
+def test_apply_quality_to_trust_neutral_zone():
+    from xibi.quality import QualityScore, apply_quality_to_trust
+
+    mock_trust = MagicMock()
+    # 3.0 is between 2.5 and 3.5
+    score = QualityScore(relevance=3, groundedness=3, composite=3.0, reasoning="Average answer")
+
+    apply_quality_to_trust(score, mock_trust, "text", "fast")
+
+    mock_trust.record_failure.assert_not_called()
+    mock_trust.record_success.assert_not_called()
+
+
+def test_apply_quality_to_trust_never_raises():
+    from xibi.quality import QualityScore, apply_quality_to_trust
+
+    mock_trust = MagicMock()
+    mock_trust.record_success.side_effect = RuntimeError("DB error")
+    score = QualityScore(relevance=5, groundedness=5, composite=5.0, reasoning="Excellent")
+
+    # Should not raise
+    apply_quality_to_trust(score, mock_trust, "text", "fast")
