@@ -11,16 +11,16 @@ from xibi.router import get_model
 
 logger = logging.getLogger(__name__)
 
-RELEVANCE_WEIGHT = 0.6   # weight for relevance in composite score
+RELEVANCE_WEIGHT = 0.6  # weight for relevance in composite score
 GROUNDEDNESS_WEIGHT = 0.4  # weight for groundedness in composite score
 
 
 @dataclass
 class QualityScore:
-    relevance: int        # 1–5: does the answer address the query?
-    groundedness: int     # 1–5: is the answer grounded in actual tool outputs?
-    composite: float      # weighted average: relevance*0.6 + groundedness*0.4
-    reasoning: str        # one-sentence explanation (for debug/trace)
+    relevance: int  # 1–5: does the answer address the query?
+    groundedness: int  # 1–5: is the answer grounded in actual tool outputs?
+    composite: float  # weighted average: relevance*0.6 + groundedness*0.4
+    reasoning: str  # one-sentence explanation (for debug/trace)
 
 
 def quality_score_span(
@@ -102,9 +102,7 @@ def quality_score_span(
             logger.debug("quality_score_span: out-of-range scores: %s", raw)
             return None
 
-        composite = round(
-            relevance * RELEVANCE_WEIGHT + groundedness * GROUNDEDNESS_WEIGHT, 2
-        )
+        composite = round(relevance * RELEVANCE_WEIGHT + groundedness * GROUNDEDNESS_WEIGHT, 2)
         return QualityScore(
             relevance=relevance,
             groundedness=groundedness,

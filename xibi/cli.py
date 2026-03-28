@@ -152,6 +152,7 @@ def main() -> None:
     print("Xibi CLI Chat Interface. Type 'quit' or 'exit' to leave.")
     while True:
         quality = None
+        result = None
         try:
             query = input("xibi> ").strip()
         except EOFError:
@@ -298,7 +299,7 @@ def main() -> None:
             quality_str = ""
             if quality:
                 quality_str = f" | quality:{quality.composite:.1f} (r:{quality.relevance} g:{quality.groundedness})"
-            print(f"(via:{routed_via} | steps:{len(result.steps)} | {result.exit_reason}{quality_str} | {duration:.0f}ms | trace:{result.trace_id})")
+            print(f"\n(via:{routed_via} | steps:{len(result.steps)} | {result.exit_reason}{quality_str})")
         else:
             print(f"(via:{routed_via} | {duration:.0f}ms)")
         print()
