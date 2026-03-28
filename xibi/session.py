@@ -261,8 +261,8 @@ Skip generic words. Confidence > 0.7 only."""
                                     confidence=confidence,
                                 )
                             )
-        except Exception as e:
-            logger.warning(f"Entity extraction failed for turn {turn.turn_id}: {e}")
+        except Exception as err:
+            logger.warning(f"Entity extraction failed for turn {turn.turn_id}: {err}")
             return []
 
         if not extracted:
@@ -270,7 +270,7 @@ Skip generic words. Confidence > 0.7 only."""
 
         # Persist with deduplication (upsert on session_id + entity_type + value)
         with sqlite3.connect(self.db_path) as conn:
-            for e in extracted:
+            for entity in extracted:
                 # Deduplication logic: "store it once per session (upsert on session_id + entity_type + value)"
                 # Since SQLite doesn't have a simple way to upsert without a unique constraint,
                 # and I don't want to change the schema to add a unique constraint yet if not requested,
@@ -280,7 +280,7 @@ Skip generic words. Confidence > 0.7 only."""
                     SELECT 1 FROM session_entities
                     WHERE session_id = ? AND entity_type = ? AND value = ?
                     """,
-                    (self.session_id, e.entity_type, e.value),
+                    (self.session_id, entity.entity_type, entity.value),
                 ).fetchone()
 
                 if not exists:
@@ -289,7 +289,14 @@ Skip generic words. Confidence > 0.7 only."""
                         INSERT INTO session_entities (session_id, turn_id, entity_type, value, source_tool, confidence)
                         VALUES (?, ?, ?, ?, ?, ?)
                         """,
-                        (self.session_id, e.source_turn_id, e.entity_type, e.value, e.source_tool, e.confidence),
+                        (
+                            self.session_id,
+                            entity.source_turn_id,
+                            entity.entity_type,
+                            entity.value,
+                            entity.source_tool,
+                            entity.confidence,
+                        ),
                     )
             conn.commit()
 
