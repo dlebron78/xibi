@@ -9,12 +9,6 @@ from xibi.trust.gradient import FailureType, TrustGradient
 from xibi.types import Step
 
 
-@pytest.fixture(autouse=True)
-def mock_trust_class(mocker):
-    """Automatically mock TrustGradient class in xibi.react to avoid DB issues in existing tests."""
-    return mocker.patch("xibi.react.TrustGradient")
-
-
 def test_step_full_text_truncates():
     long_output = "a" * 1000
     step = Step(
