@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from xibi.errors import ErrorCategory, XibiError
 from xibi.router import Config, get_model
+from xibi.trust.gradient import FailureType, TrustGradient
 
 if TYPE_CHECKING:
     from xibi.executor import Executor
@@ -135,6 +137,7 @@ def run(
     control_plane: ControlPlaneRouter | None = None,
     shadow: ShadowMatcher | None = None,
     session_context: SessionContext | None = None,
+    trust_gradient: TrustGradient | None = None,
 ) -> ReActResult:
     start_time = time.time()
 
@@ -174,6 +177,10 @@ def run(
     consecutive_errors = 0
 
     llm = get_model(specialty="text", effort="fast", config=config)
+    _db_path = config.get("db_path") or Path.home() / ".xibi" / "data" / "xibi.db"
+    trust = trust_gradient or TrustGradient(Path(_db_path))
+    _trust_specialty = "text"
+    _trust_effort = "fast"
 
     # Inject context into system prompt before loop
     context_block = session_context.get_context_block() if session_context else ""
@@ -191,6 +198,8 @@ def run(
     for step_num in range(1, max_steps + 1):
         elapsed = time.time() - start_time
         if elapsed > max_secs:
+            # Timeout — transient failure
+            trust.record_failure(_trust_specialty, _trust_effort, FailureType.TRANSIENT)
             res = ReActResult(answer="", steps=scratchpad, exit_reason="timeout", duration_ms=int(elapsed * 1000))
             res.error_summary = [s.error for s in scratchpad if s.error is not None]
             return res
@@ -204,6 +213,8 @@ def run(
             response_text = llm.generate(prompt, system=system_prompt)
             try:
                 parsed = _parse_llm_response(response_text)
+                # Parse succeeded — record success
+                trust.record_success(_trust_specialty, _trust_effort)
                 parse_warning = None
                 error = None
             except Exception:
@@ -212,9 +223,13 @@ def run(
                     recovery_prompt = f"{prompt}\n\nInvalid JSON received. Please respond with ONLY the JSON object."
                     response_text = llm.generate(recovery_prompt, system=system_prompt)
                     parsed = _parse_llm_response(response_text)
+                    # Recovered parse — still a success (LLM produced valid JSON on retry)
+                    trust.record_success(_trust_specialty, _trust_effort)
                     parse_warning = "Recovered from invalid JSON"
                     error = None
                 except Exception as inner_e:
+                    # Persistent failure — LLM could not produce parseable JSON
+                    trust.record_failure(_trust_specialty, _trust_effort, FailureType.PERSISTENT)
                     parsed = {"thought": f"Failed to parse LLM response: {str(inner_e)}", "tool": "error"}
                     parse_warning = "Failed to parse JSON"
                     error = XibiError(
@@ -300,6 +315,9 @@ def run(
                 consecutive_errors = 0
 
         except Exception as e:
+            # Unexpected error — treat as transient unless it's an XibiError parse failure
+            failure_type = FailureType.PERSISTENT if isinstance(e, XibiError) else FailureType.TRANSIENT
+            trust.record_failure(_trust_specialty, _trust_effort, failure_type)
             # Handle unexpected LLM errors
             res = ReActResult(
                 answer="", steps=scratchpad, exit_reason="error", duration_ms=int((time.time() - start_time) * 1000)

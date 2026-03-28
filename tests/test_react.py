@@ -3,7 +3,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from xibi.db.migrations import migrate
 from xibi.react import compress_scratchpad, is_repeat, run
+from xibi.trust.gradient import FailureType, TrustGradient
 from xibi.types import Step
 
 
@@ -261,3 +263,61 @@ def test_run_consecutive_errors_resets_on_success(mock_get_model, mock_config, s
 
     assert result.exit_reason == "finish"
     assert len(result.steps) == 6
+
+
+def test_trust_record_success_on_clean_parse(mock_get_model, mock_config, skill_registry):
+    mock_llm = MagicMock()
+    mock_get_model.return_value = mock_llm
+    mock_llm.generate.return_value = json.dumps(
+        {"thought": "done", "tool": "finish", "tool_input": {"answer": "ok"}}
+    )
+
+    mock_trust = MagicMock()
+    run("query", mock_config, skill_registry, trust_gradient=mock_trust)
+
+    mock_trust.record_success.assert_called_with("text", "fast")
+
+
+def test_trust_record_failure_on_parse_error(mock_get_model, mock_config, skill_registry):
+    mock_llm = MagicMock()
+    mock_get_model.return_value = mock_llm
+    # Two garbage responses to trigger persistent failure
+    mock_llm.generate.return_value = "garbage"
+
+    mock_trust = MagicMock()
+    run("query", mock_config, skill_registry, trust_gradient=mock_trust, max_steps=1)
+
+    # In the first step:
+    # 1. First generate() returns "garbage" -> catch Exception
+    # 2. Second generate() returns "garbage" -> catch Exception -> record_failure(PERSISTENT)
+    mock_trust.record_failure.assert_called_with("text", "fast", FailureType.PERSISTENT)
+
+
+def test_trust_record_failure_on_timeout(mock_get_model, mock_config, skill_registry, mocker):
+    mock_llm = MagicMock()
+    mock_get_model.return_value = mock_llm
+    mocker.patch("time.time", side_effect=[0, 100, 110])  # start=0, first loop check=100 (>60)
+
+    mock_trust = MagicMock()
+    run("query", mock_config, skill_registry, trust_gradient=mock_trust, max_secs=60)
+
+    mock_trust.record_failure.assert_called_with("text", "fast", FailureType.TRANSIENT)
+
+
+def test_trust_injectable(mock_get_model, mock_config, skill_registry, tmp_path):
+    mock_llm = MagicMock()
+    mock_get_model.return_value = mock_llm
+    mock_llm.generate.return_value = json.dumps(
+        {"thought": "done", "tool": "finish", "tool_input": {"answer": "ok"}}
+    )
+
+    db_path = tmp_path / "trust.db"
+    migrate(db_path)
+    trust = TrustGradient(db_path)
+
+    run("query", mock_config, skill_registry, trust_gradient=trust)
+
+    record = trust.get_record("text", "fast")
+    assert record is not None
+    assert record.total_outputs == 1
+    assert record.consecutive_clean == 1
