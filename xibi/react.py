@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from xibi.executor import Executor
     from xibi.routing.control_plane import ControlPlaneRouter, RoutingDecision
     from xibi.routing.shadow import ShadowMatcher
+    from xibi.session import SessionContext
 from xibi.types import ReActResult, Step
 
 
@@ -133,6 +134,7 @@ def run(
     executor: Executor | None = None,
     control_plane: ControlPlaneRouter | None = None,
     shadow: ShadowMatcher | None = None,
+    session_context: SessionContext | None = None,
 ) -> ReActResult:
     start_time = time.time()
 
@@ -173,7 +175,10 @@ def run(
 
     llm = get_model(specialty="text", effort="fast", config=config)
 
-    system_prompt = (
+    # Inject context into system prompt before loop
+    context_block = session_context.get_context_block() if session_context else ""
+
+    system_prompt = (f"{context_block}\n\n" if context_block else "") + (
         "You are a helpful assistant with access to tools.\n"
         f"Available tools: {json.dumps(skill_registry)}\n\n"
         "Instructions:\n"
