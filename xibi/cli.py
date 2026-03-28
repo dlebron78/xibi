@@ -1,10 +1,18 @@
 import argparse
+import atexit
+import contextlib
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any, cast
+
+try:
+    import readline
+except ImportError:
+    readline = None  # type: ignore
 
 from xibi.executor import LocalHandlerExecutor
 from xibi.react import handle_intent, run
@@ -47,11 +55,27 @@ def load_config_with_env_fallback() -> Config:
     return config
 
 
+_thinking = threading.Event()
+
+
+def _spin(event: threading.Event) -> None:
+    frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    i = 0
+    while not event.is_set():
+        sys.stderr.write(f"\r{frames[i % len(frames)]} thinking...")
+        sys.stderr.flush()
+        event.wait(0.1)
+        i += 1
+    sys.stderr.write("\r" + " " * 20 + "\r")
+    sys.stderr.flush()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Xibi CLI Chat Interface")
     parser.add_argument("--debug", action="store_true", help="Print ReAct scratchpad steps")
     parser.add_argument("--skills-dir", type=str, default="xibi/skills/sample", help="Path to skills directory")
     parser.add_argument("--model", type=str, help="Force a provider (ollama|gemini)")
+    parser.add_argument("--no-spinner", action="store_true", help="Disable thinking spinner (for CI/pipe)")
     args = parser.parse_args()
 
     try:
@@ -71,16 +95,46 @@ def main() -> None:
     control_plane = ControlPlaneRouter()
     shadow = ShadowMatcher()
     shadow.load_manifests(args.skills_dir)
-    session = SessionContext(
-        session_id="cli:local", db_path=config.get("db_path") or Path.home() / ".xibi" / "data" / "xibi.db"
-    )
+
+    _db_path = config.get("db_path") or Path.home() / ".xibi" / "data" / "xibi.db"
+    session = SessionContext(session_id="cli:local", db_path=_db_path, config=config)
+    from xibi.tracing import Tracer as MainTracer
+
+    tracer = MainTracer(Path(_db_path))
+
+    if readline:
+        history_file = Path.home() / ".xibi" / "cli_history"
+        history_file.parent.mkdir(parents=True, exist_ok=True)
+        with contextlib.suppress(FileNotFoundError):
+            readline.read_history_file(history_file)
+        readline.set_history_length(500)
+        atexit.register(readline.write_history_file, history_file)
 
     def step_callback(step: Any) -> None:
-        if args.debug:
-            print(
-                f"  \u2192 step {step.step_num}: thought={json.dumps(step.thought)} tool={step.tool} input={json.dumps(step.tool_input)}"
-            )
-            print(f"  \u2190 result: {json.dumps(step.tool_output)}")
+        if not args.debug:
+            return
+        thought_preview = step.thought[:120] + ("…" if len(step.thought) > 120 else "")
+        print(f"\n  [{step.step_num}] {step.tool}", end="")
+        if step.tool_input:
+            input_preview = json.dumps(step.tool_input)
+            if len(input_preview) > 80:
+                input_preview = input_preview[:80] + "…}"
+            print(f"({input_preview})", end="")
+        print()
+        if thought_preview:
+            print(f"      thought: {thought_preview}")
+        if step.tool_output:
+            status = step.tool_output.get("status", "ok")
+            if status == "error":
+                msg = step.tool_output.get("message") or step.tool_output.get("error", "?")
+                print(f"      ← ERROR: {msg}")
+            else:
+                out_str = json.dumps(step.tool_output)
+                if len(out_str) > 120:
+                    out_str = out_str[:120] + "…"
+                print(f"      ← {out_str}")
+        if step.parse_warning:
+            print(f"      ⚠ {step.parse_warning}")
 
     print("Xibi CLI Chat Interface. Type 'quit' or 'exit' to leave.")
     while True:
@@ -93,9 +147,34 @@ def main() -> None:
         if not query:
             continue
 
-        if query.lower() in ["quit", "exit"]:
+        if query.lower() in ["quit", "exit", "/exit"]:
             print("Goodbye!")
             break
+
+        if query.startswith("/trace "):
+            trace_id = query.split(maxsplit=1)[1].strip()
+            from xibi.tracing import Tracer
+
+            t = Tracer(Path(_db_path))
+            print(t.export_trace_json(trace_id))
+            print()
+            continue
+
+        if query == "/traces":
+            from xibi.tracing import Tracer as LazyTracer
+
+            t = LazyTracer(Path(_db_path))
+            recent = t.recent_traces(20)
+            if not recent:
+                print("No traces yet.")
+            else:
+                for r in recent:
+                    attrs = r.get("attributes", {})
+                    er = attrs.get("exit_reason", "?")
+                    q = attrs.get("query_preview", "")[:50]
+                    print(f'  {r["trace_id"]}  {r["duration_ms"]}ms  {er}  "{q}"')
+            print()
+            continue
 
         if session.is_continuation(query):
             print("  (continuing previous conversation)")  # debug hint
@@ -103,6 +182,7 @@ def main() -> None:
         start_time = time.time()
         routed_via = "react"
         answer = ""
+        result = None
 
         # 1. Control Plane
         decision = control_plane.match(query)
@@ -116,7 +196,20 @@ def main() -> None:
             if match and match.tier == "direct":
                 routed_via = "shadow-direct"
                 print(f"[shadow:direct] {match.tool}")
-                tool_output = executor.execute(match.tool, {})
+
+                _thinking.clear()
+                show_spinner = not args.no_spinner and sys.stderr.isatty()
+                if show_spinner:
+                    _spinner = threading.Thread(target=_spin, args=(_thinking,), daemon=True)
+                    _spinner.start()
+
+                try:
+                    tool_output = executor.execute(match.tool, {})
+                finally:
+                    if show_spinner:
+                        _thinking.set()
+                        _spinner.join()
+
                 # If tool output doesn't have an answer-like key, format it nicely.
                 # Requirement: "Print final answer"
                 if "emails" in tool_output:
@@ -138,17 +231,29 @@ def main() -> None:
                     print(f"[shadow:hint] {match.tool}")
 
                 # 3. ReAct loop
-                result = run(
-                    query,
-                    config,
-                    registry.get_skill_manifests(),
-                    executor=executor,
-                    control_plane=None,  # Already checked
-                    shadow=shadow,  # It will re-match but hint tier will be handled
-                    step_callback=step_callback,
-                    session_context=session,
-                )
-                session.add_turn(query, result)
+                _thinking.clear()
+                show_spinner = not args.no_spinner and sys.stderr.isatty()
+                if show_spinner:
+                    _spinner = threading.Thread(target=_spin, args=(_thinking,), daemon=True)
+                    _spinner.start()
+
+                try:
+                    result = run(
+                        query,
+                        config,
+                        registry.get_skill_manifests(),
+                        executor=executor,
+                        control_plane=None,  # Already checked
+                        shadow=shadow,  # It will re-match but hint tier will be handled
+                        step_callback=step_callback,
+                        session_context=session,
+                        tracer=tracer,
+                    )
+                finally:
+                    if show_spinner:
+                        _thinking.set()
+                        _spinner.join()
+
                 if result.answer:
                     answer = result.answer
                     print(f"\n{answer}")
@@ -158,8 +263,17 @@ def main() -> None:
                         for err in result.error_summary:
                             print(f"   [{err.category.value}] {err.detail or err.message}")
 
+                # Persist turn
+                session.add_turn(query, result)
+
         duration = (time.time() - start_time) * 1000
-        print(f"(routed via: {routed_via}, {duration:.0f}ms)")
+        parts = [f"via:{routed_via}", f"{duration:.0f}ms"]
+        if result:
+            if hasattr(result, "exit_reason") and result.exit_reason:
+                parts.append(f"exit:{result.exit_reason}")
+            if hasattr(result, "trace_id") and result.trace_id:
+                parts.append(f"trace:{result.trace_id}")
+        print(f"({', '.join(parts)})")
         print()
 
 

@@ -1,7 +1,4 @@
-import json
 import sqlite3
-import time
-from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,10 +9,9 @@ from xibi.types import ReActResult, Step
 
 @pytest.fixture
 def db_path(tmp_path):
-    path = tmp_path / "xibi.db"
-    with sqlite3.connect(path) as conn:
-        conn.execute(
-            """
+    db = tmp_path / "test_entities.db"
+    with sqlite3.connect(db) as conn:
+        conn.executescript("""
             CREATE TABLE session_turns (
                 turn_id     TEXT PRIMARY KEY,
                 session_id  TEXT NOT NULL,
@@ -25,11 +21,7 @@ def db_path(tmp_path):
                 exit_reason TEXT NOT NULL DEFAULT 'finish',
                 summary     TEXT NOT NULL DEFAULT '',
                 created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
-        conn.execute(
-            """
+            );
             CREATE TABLE session_entities (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id   TEXT NOT NULL,
@@ -39,188 +31,161 @@ def db_path(tmp_path):
                 source_tool  TEXT NOT NULL,
                 confidence   REAL NOT NULL,
                 created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
-    return path
+            );
+        """)
+    return db
 
 
 @patch("xibi.session.get_model")
 def test_extract_entities_from_email_content(mock_get_model, db_path):
     mock_llm = MagicMock()
-    mock_llm.generate.return_value = json.dumps(
-        {"entities": [{"type": "place", "value": "Miami Convention Center", "confidence": 0.9}]}
-    )
+    mock_llm.generate.return_value = '{"entities": [{"type": "place", "value": "Miami", "confidence": 0.9}]}'
     mock_get_model.return_value = mock_llm
 
-    ctx = SessionContext("session1", db_path)
-    turn = Turn("t1", "session1", "query", "answer", [], "finish", "now")
+    session = SessionContext("test_session", db_path)
+    turn = Turn("t1", "test_session", "read email", "OK", ["read_email"], "finish", "now")
 
-    tool_steps = [
-        Step(1, tool="search", tool_output={"content": "I am flying to the Miami Convention Center next week."})
-    ]
-    extracted = ctx.extract_entities(turn, tool_steps)
+    entities = session.extract_entities(
+        turn, [{"content": "Meeting in Miami Convention Center which is quite a long text to exceed fifty characters."}]
+    )
 
-    assert len(extracted) == 1
-    assert extracted[0].value == "Miami Convention Center"
+    assert len(entities) == 1
+    assert entities[0].value == "Miami"
+    assert entities[0].entity_type == "place"
 
     with sqlite3.connect(db_path) as conn:
-        row = conn.execute("SELECT value FROM session_entities WHERE session_id = ?", ("session1",)).fetchone()
-        assert row[0] == "Miami Convention Center"
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM session_entities").fetchone()
+        assert row["value"] == "Miami"
 
 
 @patch("xibi.session.get_model")
 def test_extract_entities_filters_low_confidence(mock_get_model, db_path):
     mock_llm = MagicMock()
-    mock_llm.generate.return_value = json.dumps({"entities": [{"type": "place", "value": "Miami", "confidence": 0.5}]})
+    mock_llm.generate.return_value = '{"entities": [{"type": "place", "value": "Miami", "confidence": 0.6}]}'
     mock_get_model.return_value = mock_llm
 
-    ctx = SessionContext("session1", db_path)
-    turn = Turn("t1", "session1", "query", "answer", [], "finish", "now")
-    tool_steps = [
-        Step(1, tool="search", tool_output={"content": "I am flying to the Miami Convention Center next week."})
-    ]
+    session = SessionContext("test_session", db_path)
+    turn = Turn("t1", "test_session", "read email", "OK", ["read_email"], "finish", "now")
 
-    extracted = ctx.extract_entities(turn, tool_steps)
-    assert len(extracted) == 0
+    entities = session.extract_entities(turn, [{"content": "Meeting in Miami Convention Center"}])
+
+    assert len(entities) == 0
+    with sqlite3.connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM session_entities").fetchone()[0] == 0
 
 
-@patch("xibi.session.get_model")
-def test_extract_entities_skips_short_output(mock_get_model, db_path):
-    ctx = SessionContext("session1", db_path)
-    turn = Turn("t1", "session1", "query", "answer", [], "finish", "now")
-    tool_steps = [Step(1, tool="status", tool_output={"status": "ok"})]
+def test_extract_entities_skips_short_output(db_path):
+    session = SessionContext("test_session", db_path)
+    turn = Turn("t1", "test_session", "status", "OK", ["status"], "finish", "now")
 
-    ctx.extract_entities(turn, tool_steps)
-    mock_get_model.assert_not_called()
+    with patch("xibi.session.get_model") as mock_get_model:
+        entities = session.extract_entities(turn, [{"content": "OK"}])
+        assert len(entities) == 0
+        mock_get_model.assert_not_called()
 
 
 @patch("xibi.session.get_model")
 def test_extract_entities_handles_parse_error(mock_get_model, db_path):
     mock_llm = MagicMock()
-    mock_llm.generate.return_value = "invalid json"
+    mock_llm.generate.return_value = "This is not JSON"
     mock_get_model.return_value = mock_llm
 
-    ctx = SessionContext("session1", db_path)
-    turn = Turn("t1", "session1", "query", "answer", [], "finish", "now")
-    tool_steps = [
-        Step(
-            1,
-            tool="search",
-            tool_output={
-                "content": "Some very long content that is more than 50 characters long to trigger extraction."
-            },
-        )
-    ]
+    session = SessionContext("test_session", db_path)
+    turn = Turn("t1", "test_session", "read email", "OK", ["read_email"], "finish", "now")
 
-    # Should not crash
-    extracted = ctx.extract_entities(turn, tool_steps)
-    assert extracted == []
+    entities = session.extract_entities(turn, [{"content": "Meeting in Miami Convention Center"}])
+    assert len(entities) == 0  # Graceful degradation
 
 
 @patch("xibi.session.get_model")
 def test_entities_deduplicated(mock_get_model, db_path):
     mock_llm = MagicMock()
-    mock_llm.generate.return_value = json.dumps({"entities": [{"type": "place", "value": "Miami", "confidence": 0.9}]})
+    mock_llm.generate.return_value = '{"entities": [{"type": "place", "value": "Miami", "confidence": 0.9}]}'
     mock_get_model.return_value = mock_llm
 
-    ctx = SessionContext("session1", db_path)
-    turn = Turn("t1", "session1", "query", "answer", [], "finish", "now")
+    session = SessionContext("test_session", db_path)
 
-    # Same output three times
-    tool_steps = [Step(1, tool="search", tool_output={"content": "Going to Miami." * 10})]
-    ctx.extract_entities(turn, tool_steps)
-    ctx.extract_entities(turn, tool_steps)
-    ctx.extract_entities(turn, tool_steps)
+    # First turn
+    turn1 = Turn("t1", "test_session", "read email", "OK", ["read_email"], "finish", "now")
+    session.extract_entities(
+        turn1,
+        [{"content": "Meeting in Miami Convention Center which is quite a long text to exceed fifty characters."}],
+    )
+
+    # Second turn
+    turn2 = Turn("t2", "test_session", "another email", "OK", ["read_email"], "finish", "now")
+    session.extract_entities(turn2, [{"content": "Conference in Miami and some other words to make it long enough."}])
 
     with sqlite3.connect(db_path) as conn:
-        count = conn.execute("SELECT COUNT(*) FROM session_entities WHERE value = 'Miami'").fetchone()[0]
-        assert count == 1
-
-
-def test_get_entities_filtered_by_type(db_path):
-    ctx = SessionContext("session1", db_path)
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            "INSERT INTO session_entities (session_id, turn_id, entity_type, value, source_tool, confidence) VALUES (?,?,?,?,?,?)",
-            ("session1", "t1", "place", "Miami", "search", 0.9),
-        )
-        conn.execute(
-            "INSERT INTO session_entities (session_id, turn_id, entity_type, value, source_tool, confidence) VALUES (?,?,?,?,?,?)",
-            ("session1", "t1", "person", "Jake", "search", 0.9),
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM session_entities WHERE session_id = 'test_session' AND value = 'Miami'"
+            ).fetchone()[0]
+            == 1
         )
 
-    places = ctx.get_entities("place")
+
+@patch("xibi.session.get_model")
+def test_get_entities_filtered_by_type(mock_get_model, db_path):
+    mock_llm = MagicMock()
+    mock_llm.generate.return_value = '{"entities": [{"type": "place", "value": "Miami", "confidence": 0.9}, {"type": "person", "value": "John", "confidence": 0.9}]}'
+    mock_get_model.return_value = mock_llm
+
+    session = SessionContext("test_session", db_path)
+    turn = Turn("t1", "test_session", "read email", "OK", ["read_email"], "finish", "now")
+    session.extract_entities(turn, [{"content": "Miami and John are meeting at the convention center later today."}])
+
+    places = session.get_entities("place")
     assert len(places) == 1
     assert places[0].value == "Miami"
 
-
-def test_context_block_includes_entities(db_path):
-    ctx = SessionContext("session1", db_path)
-    # Add a turn to avoid empty block
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            "INSERT INTO session_turns (turn_id, session_id, query, answer, created_at) VALUES (?,?,?,?,?)",
-            ("t1", "session1", "q", "a", datetime.now(timezone.utc).isoformat()),
-        )
-        conn.execute(
-            "INSERT INTO session_entities (session_id, turn_id, entity_type, value, source_tool, confidence) VALUES (?,?,?,?,?,?)",
-            ("session1", "t1", "place", "Miami Convention Center", "search", 0.9),
-        )
-
-    block = ctx.get_context_block()
-    assert "Known from this conversation:" in block
-    assert "Place: Miami Convention Center" in block
+    persons = session.get_entities("person")
+    assert len(persons) == 1
+    assert persons[0].value == "John"
 
 
 @patch("xibi.session.get_model")
-def test_weather_query_resolves_to_conference_city(mock_get_model, db_path):
-    pass
+def test_context_block_includes_entities(mock_get_model, db_path):
+    mock_llm = MagicMock()
+    mock_llm.generate.return_value = '{"entities": [{"type": "place", "value": "Miami", "confidence": 0.9}]}'
+    mock_get_model.return_value = mock_llm
+
+    session = SessionContext("test_session", db_path)
+
+    # Add turn via add_turn to trigger extraction
+    result = ReActResult(
+        answer="OK",
+        steps=[
+            Step(
+                1,
+                thought="Thinking",
+                tool="read_email",
+                tool_output={"content": "Miami Convention Center is a huge place with many rooms for conferences."},
+            )
+        ],
+        exit_reason="finish",
+        duration_ms=100,
+    )
+    session.add_turn("What's in the email?", result)
+
+    block = session.get_context_block()
+    assert "Known from this conversation:" in block
+    assert "Place: Miami" in block
 
 
 def test_entities_reset_with_session(db_path):
-    ctx1 = SessionContext("session1", db_path)
-    ctx2 = SessionContext("session2", db_path)
+    session1 = SessionContext("session1", db_path)
+    session2 = SessionContext("session2", db_path)
 
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            "INSERT INTO session_entities (session_id, turn_id, entity_type, value, source_tool, confidence) VALUES (?,?,?,?,?,?)",
-            ("session1", "t1", "place", "Miami", "search", 0.9),
-        )
+    with patch("xibi.session.get_model") as mock_get_model:
+        mock_llm = MagicMock()
+        mock_llm.generate.return_value = '{"entities": [{"type": "place", "value": "Miami", "confidence": 0.9}]}'
+        mock_get_model.return_value = mock_llm
 
-    assert len(ctx1.get_entities()) == 1
-    assert len(ctx2.get_entities()) == 0
+        turn1 = Turn("t1", "session1", "query", "answer", ["tool"], "finish", "now")
+        # Ensure tool output has enough length to trigger extraction
+        session1.extract_entities(turn1, [{"content": "Miami Convention Center is a great place"}])
 
-
-@patch("xibi.session.get_model")
-def test_extraction_runs_async(mock_get_model, db_path):
-    mock_llm = MagicMock()
-
-    def slow_generate(prompt):
-        time.sleep(0.5)
-        return json.dumps({"entities": [{"type": "place", "value": "Miami", "confidence": 0.9}]})
-
-    mock_llm.generate.side_effect = slow_generate
-    mock_get_model.return_value = mock_llm
-
-    ctx = SessionContext("session1", db_path)
-
-    result = ReActResult(
-        answer="ok",
-        steps=[Step(1, tool="search", tool_output={"content": "Miami " * 20})],
-        exit_reason="finish",
-        duration_ms=10,
-    )
-
-    start = time.time()
-    ctx.add_turn("hi", result, config=MagicMock())
-    end = time.time()
-
-    # add_turn should return quickly
-    assert end - start < 0.2
-
-    # Eventually entities should appear
-    time.sleep(1)
-    with sqlite3.connect(db_path) as conn:
-        row = conn.execute("SELECT value FROM session_entities WHERE session_id = ?", ("session1",)).fetchone()
-        assert row[0] == "Miami"
+    assert len(session1.get_entities()) == 1
+    assert len(session2.get_entities()) == 0

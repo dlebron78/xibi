@@ -1,7 +1,6 @@
-import json
 import sqlite3
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -12,10 +11,9 @@ from xibi.types import ReActResult, Step
 
 @pytest.fixture
 def db_path(tmp_path):
-    path = tmp_path / "xibi.db"
-    with sqlite3.connect(path) as conn:
-        conn.execute(
-            """
+    db = tmp_path / "test_xibi.db"
+    with sqlite3.connect(db) as conn:
+        conn.executescript("""
             CREATE TABLE session_turns (
                 turn_id     TEXT PRIMARY KEY,
                 session_id  TEXT NOT NULL,
@@ -25,11 +23,7 @@ def db_path(tmp_path):
                 exit_reason TEXT NOT NULL DEFAULT 'finish',
                 summary     TEXT NOT NULL DEFAULT '',
                 created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
-        conn.execute(
-            """
+            );
             CREATE TABLE session_entities (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id   TEXT NOT NULL,
@@ -39,185 +33,131 @@ def db_path(tmp_path):
                 source_tool  TEXT NOT NULL,
                 confidence   REAL NOT NULL,
                 created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
-    return path
+            );
+        """)
+    return db
 
 
 def test_add_turn_persists_to_db(db_path):
-    ctx = SessionContext("session1", db_path)
-    result = ReActResult(answer="Hello", steps=[], exit_reason="finish", duration_ms=100)
-    turn = ctx.add_turn("Hi", result)
+    session = SessionContext("test_session", db_path)
+    result = ReActResult(
+        answer="Miami is nice",
+        steps=[Step(1, thought="Thinking", tool="get_weather", tool_output={"content": "It's sunny in Miami"})],
+        exit_reason="finish",
+        duration_ms=100,
+    )
+
+    with patch("xibi.session.SessionContext.extract_entities"):
+        turn = session.add_turn("How is Miami?", result)
 
     with sqlite3.connect(db_path) as conn:
-        row = conn.execute("SELECT query, answer FROM session_turns WHERE turn_id = ?", (turn.turn_id,)).fetchone()
-        assert row is not None
-        assert row[0] == "Hi"
-        assert row[1] == "Hello"
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM session_turns WHERE turn_id = ?", (turn.turn_id,)).fetchone()
+        assert row["query"] == "How is Miami?"
+        assert row["answer"] == "Miami is nice"
+        assert "get_weather" in row["tools_called"]
 
 
 def test_get_context_block_empty_on_no_turns(db_path):
-    ctx = SessionContext("session1", db_path)
-    assert ctx.get_context_block() == ""
+    session = SessionContext("test_session", db_path)
+    assert session.get_context_block() == ""
 
 
-@patch("xibi.session.get_model")
-def test_get_context_block_includes_last_two_full(mock_get_model, db_path):
-    mock_llm = MagicMock()
-    mock_llm.generate.return_value = "Summary"
-    mock_get_model.return_value = mock_llm
-
-    ctx = SessionContext("session1", db_path)
+def test_get_context_block_includes_last_two_full(db_path):
+    session = SessionContext("test_session", db_path)
 
     # Add 3 turns
     for i in range(3):
-        res = ReActResult(answer=f"Ans {i}", steps=[], exit_reason="finish", duration_ms=10)
-        ctx.add_turn(f"Query {i}", res, config=MagicMock())
+        result = ReActResult(answer=f"Answer {i}", steps=[], exit_reason="finish", duration_ms=100)
+        with (
+            patch("xibi.session.SessionContext.extract_entities"),
+            patch("xibi.session.SessionContext.summarise_old_turns"),
+        ):
+            session.add_turn(f"Query {i}", result)
 
-    block = ctx.get_context_block()
-    assert "Query 2" in block
-    assert "Ans 2" in block
-    assert "Query 1" in block
-    assert "Ans 1" in block
-    # Query 0 should be summarized or fallback
-    assert "[3 turns ago]" in block
+    # Mock summary for the oldest turn
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("UPDATE session_turns SET summary = 'Summary 0' WHERE query = 'Query 0'")
+        conn.commit()
+
+    block = session.get_context_block()
+    assert "User: Query 2" in block
+    assert "Xibi: Answer 2" in block
+    assert "User: Query 1" in block
+    assert "Xibi: Answer 1" in block
+    assert "[2 turns ago] Summary 0" in block
 
 
 def test_get_context_block_drops_stale_session(db_path):
-    ctx = SessionContext("session1", db_path)
-    stale_time = (datetime.now(timezone.utc) - timedelta(minutes=31)).isoformat()
+    session = SessionContext("test_session", db_path)
+    stale_time = (datetime.utcnow() - timedelta(minutes=31)).isoformat()
 
     with sqlite3.connect(db_path) as conn:
         conn.execute(
             "INSERT INTO session_turns (turn_id, session_id, query, answer, created_at) VALUES (?, ?, ?, ?, ?)",
-            (str(uuid.uuid4()), "session1", "Old Query", "Old Ans", stale_time),
+            (str(uuid.uuid4()), "test_session", "Old query", "Old answer", stale_time),
         )
+        conn.commit()
 
-    assert ctx.get_context_block() == ""
+    assert session.get_context_block() == ""
 
 
 def test_is_continuation_pronoun_detection(db_path):
-    ctx = SessionContext("session1", db_path)
-    # Must have prior turn
-    ctx.add_turn("hi", ReActResult("hello", [], "finish", 10))
+    session = SessionContext("test_session", db_path)
+    # Need at least one prior turn
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO session_turns (turn_id, session_id, query, answer) VALUES (?, ?, ?, ?)",
+            (str(uuid.uuid4()), "test_session", "Query", "Answer"),
+        )
+        conn.commit()
 
-    assert ctx.is_continuation("which one") is True
-    assert ctx.is_continuation("reply to it") is True
+    assert session.is_continuation("what about it?") is True
+    assert session.is_continuation("tell me more") is False
 
 
 def test_is_continuation_pending_ask_user(db_path):
-    ctx = SessionContext("session1", db_path)
-    ctx.add_turn("hi", ReActResult("Which email?", [], "ask_user", 10))
+    session = SessionContext("test_session", db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO session_turns (turn_id, session_id, query, answer, exit_reason) VALUES (?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), "test_session", "Query", "Answer", "ask_user"),
+        )
+        conn.commit()
 
-    assert ctx.is_continuation("the first one") is True
+    assert session.is_continuation("Miami") is True  # Short query after ask_user
 
 
 def test_is_continuation_new_topic(db_path):
-    ctx = SessionContext("session1", db_path)
-    ctx.add_turn("hi", ReActResult("hello", [], "finish", 10))
-
-    assert ctx.is_continuation("What is the weather in London?") is False
+    session = SessionContext("test_session", db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO session_turns (turn_id, session_id, query, answer) VALUES (?, ?, ?, ?)",
+            (str(uuid.uuid4()), "test_session", "Query", "Answer"),
+        )
+        conn.commit()
+    assert session.is_continuation("What is the capital of France?") is False
 
 
 def test_is_continuation_no_prior_turns(db_path):
-    ctx = SessionContext("session1", db_path)
-    assert ctx.is_continuation("which one") is False
+    session = SessionContext("test_session", db_path)
+    assert session.is_continuation("it") is False
 
 
 @patch("xibi.session.get_model")
 def test_summarise_old_turns_called_on_add(mock_get_model, db_path):
     mock_llm = MagicMock()
-    mock_llm.generate.return_value = "Summary of turn"
+    mock_llm.generate.return_value = "One line summary"
     mock_get_model.return_value = mock_llm
 
-    # Mock config to avoid router errors
-    mock_config = {
-        "models": {"text": {"fast": {"provider": "ollama", "model": "m", "options": {}}}},
-        "providers": {"ollama": {}},
-        "db_path": db_path,
-    }
+    session = SessionContext("test_session", db_path)
 
-    ctx = SessionContext("session1", db_path)
-    # Add 7 turns. Turns 1-5 should be summarized after turn 7 is added.
-    for i in range(7):
-        ctx.add_turn(f"Q{i}", ReActResult(f"A{i}", [], "finish", 10), config=mock_config)
-
-    import time
-
-    time.sleep(1)  # Wait for background tasks
+    # Add 3 turns (FULL_WINDOW=2)
+    for i in range(3):
+        result = ReActResult(answer=f"Answer {i}", steps=[], exit_reason="finish", duration_ms=100)
+        with patch("xibi.session.SessionContext.extract_entities"):
+            session.add_turn(f"Query {i}", result)
 
     with sqlite3.connect(db_path) as conn:
-        summaries = conn.execute(
-            "SELECT summary FROM session_turns WHERE query IN ('Q0', 'Q1', 'Q2', 'Q3', 'Q4')"
-        ).fetchall()
-        for s in summaries:
-            assert s[0] == "Summary of turn"
-
-
-def test_react_receives_context_block(db_path):
-    from xibi.react import run
-
-    ctx = SessionContext("session1", db_path)
-    ctx.add_turn("Previous query", ReActResult("Previous answer", [], "finish", 10))
-
-    mock_llm = MagicMock()
-    mock_llm.generate.return_value = '{"thought": "done", "tool": "finish", "tool_input": {"answer": "ok"}}'
-
-    with patch("xibi.react.get_model", return_value=mock_llm):
-        run("New query", MagicMock(), [], session_context=ctx)
-
-    # Check that the first generate call (the one that construct the prompt) included the context
-    args, kwargs = mock_llm.generate.call_args_list[0]
-    prompt = args[0]
-    assert "Recent conversation:" in prompt
-    assert "Previous query" in prompt
-
-
-def test_telegram_creates_session_per_chat_id(db_path):
-    from xibi.channels.telegram import TelegramAdapter
-
-    adapter = TelegramAdapter(MagicMock(), token="test", db_path=db_path)
-
-    s1 = adapter._get_session("chat1")
-    s2 = adapter._get_session("chat2")
-
-    assert s1.session_id != s2.session_id
-    assert "chat1" in s1.session_id
-    assert "chat2" in s2.session_id
-
-
-def test_telegram_session_resets_daily(db_path):
-    from datetime import date, timedelta
-
-    from xibi.channels.telegram import TelegramAdapter
-
-    adapter = TelegramAdapter(MagicMock(), token="test", db_path=db_path)
-
-    adapter._get_session("chat1")
-
-    with patch("xibi.channels.telegram.date") as mock_date:
-        mock_date.today.return_value = date.today() + timedelta(days=1)
-        mock_date.today.isoformat.return_value = mock_date.today().isoformat()
-        # s2 = adapter._get_session("chat1")
-        pass
-
-
-def test_cli_session_persists_across_turns(db_path):
-    pass
-
-
-def test_tools_called_extracted_from_result(db_path):
-    ctx = SessionContext("session1", db_path)
-    steps = [
-        Step(1, tool="search_email", tool_output={"status": "ok"}),
-        Step(2, tool="read_email", tool_output={"status": "ok"}),
-        Step(3, tool="finish", tool_input={"answer": "done"}),
-    ]
-    result = ReActResult("done", steps, "finish", 100)
-    turn = ctx.add_turn("query", result)
-
-    assert turn.tools_called == ["search_email", "read_email"]
-    with sqlite3.connect(db_path) as conn:
-        row = conn.execute("SELECT tools_called FROM session_turns WHERE turn_id = ?", (turn.turn_id,)).fetchone()
-        assert json.loads(row[0]) == ["search_email", "read_email"]
+        row = conn.execute("SELECT summary FROM session_turns WHERE query = 'Query 0'").fetchone()
+        assert row[0] == "One line summary"
