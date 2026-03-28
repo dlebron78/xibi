@@ -221,18 +221,14 @@ def main() -> None:
                         or str(tool_output)
                     )
             else:
-                hint_tool: str | None = None
-
                 if match and match.tier == "hint":
                     routed_via = "shadow-hint"
-                    hint_tool = match.tool
                     print(f"[shadow:hint] {match.tool}")
                 elif not match:
                     # BM25 returned nothing — try LLM fallback
                     llm_decision = llm_classifier.classify(query, registry.get_skill_manifests())
                     if llm_decision:
                         routed_via = "llm-hint"
-                        hint_tool = llm_decision.tool
                         print(f"[llm:hint] {llm_decision.skill}/{llm_decision.tool} ({llm_decision.confidence:.2f})")
                         if args.debug:
                             print(f"      reasoning: {llm_decision.reasoning}")

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -97,7 +96,7 @@ class LLMRoutingClassifier:
         )
 
         try:
-            model: ModelClient = get_model("text", "fast", self.config)
+            model: ModelClient = get_model("text", "fast", config=self.config)
             raw = model.generate_structured(prompt, schema=schema, system=system)
         except Exception as exc:
             logger.debug("LLMRoutingClassifier: model call failed: %s", exc)
