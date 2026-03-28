@@ -16,10 +16,10 @@ CONFIDENCE_THRESHOLD = 0.75  # Below this: return None, fall through to vanilla 
 
 @dataclass
 class LLMRoutingDecision:
-    skill: str          # e.g. "email", "calendar", "filesystem"
-    tool: str           # e.g. "list_emails", "list_events"
-    confidence: float   # 0.0–1.0 from the LLM
-    reasoning: str      # short explanation (for debug/trace)
+    skill: str  # e.g. "email", "calendar", "filesystem"
+    tool: str  # e.g. "list_emails", "list_events"
+    confidence: float  # 0.0–1.0 from the LLM
+    reasoning: str  # short explanation (for debug/trace)
 
 
 class LLMRoutingClassifier:
@@ -36,9 +36,7 @@ class LLMRoutingClassifier:
         Build a compact routing prompt. skill_summaries is a list of
         {"skill": "email", "tools": "list_emails, send_email, search_emails"} dicts.
         """
-        skill_lines = "\n".join(
-            f"- {s['skill']}: {s['tools']}" for s in skill_summaries
-        )
+        skill_lines = "\n".join(f"- {s['skill']}: {s['tools']}" for s in skill_summaries)
         return (
             f"Query: {query}\n\n"
             f"Available skills and their tools:\n{skill_lines}\n\n"
@@ -48,9 +46,7 @@ class LLMRoutingClassifier:
             "If none match well, set skill and tool to null and confidence below 0.5."
         )
 
-    def _extract_skill_summaries(
-        self, manifests: list[dict[str, Any]]
-    ) -> list[dict[str, str]]:
+    def _extract_skill_summaries(self, manifests: list[dict[str, Any]]) -> list[dict[str, str]]:
         """Convert skill manifests into compact {skill, tools} dicts for the prompt."""
         summaries: list[dict[str, str]] = []
         for manifest in manifests:
