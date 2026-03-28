@@ -85,9 +85,11 @@ def test_react_run_emits_root_span(tmp_path: Path):
 
     # Mock LLM to return finish immediately
     mock_llm = MagicMock()
-    mock_llm.generate.return_value = json.dumps({"thought": "done", "tool": "finish", "tool_input": {"answer": "hello"}})
+    mock_llm.generate.return_value = json.dumps(
+        {"thought": "done", "tool": "finish", "tool_input": {"answer": "hello"}}
+    )
 
-    with MagicMock(return_value=mock_llm) as mock_get_model:
+    with MagicMock(return_value=mock_llm):
         # We need to mock get_model in xibi.react
         import xibi.react
 
@@ -183,7 +185,9 @@ def test_result_has_trace_id(tmp_path: Path):
     config = {"db_path": str(db_path)}
 
     mock_llm = MagicMock()
-    mock_llm.generate.return_value = json.dumps({"thought": "done", "tool": "finish", "tool_input": {"answer": "hello"}})
+    mock_llm.generate.return_value = json.dumps(
+        {"thought": "done", "tool": "finish", "tool_input": {"answer": "hello"}}
+    )
 
     import xibi.react
 

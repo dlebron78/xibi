@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,11 +13,11 @@ class Span:
     trace_id: str
     span_id: str
     parent_span_id: str | None
-    operation: str        # e.g. "react.run", "tool.dispatch", "llm.generate"
-    component: str        # e.g. "react", "executor", "router"
-    start_ms: int         # epoch milliseconds
+    operation: str  # e.g. "react.run", "tool.dispatch", "llm.generate"
+    component: str  # e.g. "react", "executor", "router"
+    start_ms: int  # epoch milliseconds
     duration_ms: int
-    status: str           # "ok" | "error"
+    status: str  # "ok" | "error"
     attributes: dict[str, Any] = field(default_factory=dict)
 
 

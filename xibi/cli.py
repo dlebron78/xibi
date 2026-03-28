@@ -9,11 +9,11 @@ from typing import Any, cast
 from xibi.executor import LocalHandlerExecutor
 from xibi.react import handle_intent, run
 from xibi.router import Config
-from xibi.tracing import Tracer
 from xibi.routing.control_plane import ControlPlaneRouter
 from xibi.routing.shadow import ShadowMatcher
 from xibi.session import SessionContext
 from xibi.skills.registry import SkillRegistry
+from xibi.tracing import Tracer
 
 
 def load_config_with_env_fallback() -> Config:
