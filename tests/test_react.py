@@ -157,27 +157,6 @@ def test_run_consecutive_errors_exit(mock_get_model, mock_config):
     assert result.steps[-1].tool_output["status"] == "error"
 
 
-def test_run_consecutive_errors_resets_on_success(mock_get_model, mock_config, skill_registry):
-    """Errors interspersed with successes should not accumulate to 3 (fix: reset on success)."""
-    mock_llm = MagicMock()
-    mock_get_model.return_value = mock_llm
-
-    # Pattern: error, success (finish), without hitting the 3-error limit
-    mock_llm.generate.side_effect = [
-        json.dumps({"thought": "t1", "tool": "unknown", "tool_input": {}}),  # error 1
-        json.dumps({"thought": "t2", "tool": "search", "tool_input": {"q": "test"}}),  # success → reset
-        json.dumps({"thought": "t3", "tool": "unknown", "tool_input": {}}),  # error 1 (reset)
-        json.dumps({"thought": "t4", "tool": "search", "tool_input": {"q": "test2"}}),  # success → reset
-        json.dumps({"thought": "t5", "tool": "finish", "tool_input": {"answer": "done"}}),
-    ]
-
-    result = run("query", mock_config, skill_registry, max_steps=10)
-
-    # Should finish normally — consecutive_errors never reached 3 because each
-    # success reset the counter.
-    assert result.exit_reason == "finish"
-
-
 def test_run_repeat_detection(mock_get_model, mock_config, skill_registry):
     mock_llm = MagicMock()
     mock_get_model.return_value = mock_llm
@@ -221,12 +200,16 @@ def test_run_timeout(mock_get_model, mock_config, skill_registry, mocker):
 
     # Mock time.time()
     # 0: start_time
+    # 1: _run_start_ms
     # 10: first loop start (elapsed check)
     # 20: step_start_time
-    # 30: duration_ms calculation for step
+    # 30: duration_ms calculation for step (Step initialization)
+    # 40: dispatch check
+    # 50: trace emit check
+    # 51: tracer end check (if exists)
     # 70: second loop start (elapsed check) -> timeout!
     # 80: ReActResult duration_ms
-    mocker.patch("time.time", side_effect=[0, 10, 20, 30, 70, 80])
+    mocker.patch("time.time", side_effect=[0, 1, 10, 20, 30, 40, 50, 51, 70, 80, 90, 100])
 
     mock_llm.generate.return_value = json.dumps(
         {"thought": "thinking", "tool": "search", "tool_input": {"q": "something"}}
@@ -268,9 +251,7 @@ def test_run_consecutive_errors_resets_on_success(mock_get_model, mock_config, s
 def test_trust_record_success_on_clean_parse(mock_get_model, mock_config, skill_registry):
     mock_llm = MagicMock()
     mock_get_model.return_value = mock_llm
-    mock_llm.generate.return_value = json.dumps(
-        {"thought": "done", "tool": "finish", "tool_input": {"answer": "ok"}}
-    )
+    mock_llm.generate.return_value = json.dumps({"thought": "done", "tool": "finish", "tool_input": {"answer": "ok"}})
 
     mock_trust = MagicMock()
     run("query", mock_config, skill_registry, trust_gradient=mock_trust)
@@ -307,9 +288,7 @@ def test_trust_record_failure_on_timeout(mock_get_model, mock_config, skill_regi
 def test_trust_injectable(mock_get_model, mock_config, skill_registry, tmp_path):
     mock_llm = MagicMock()
     mock_get_model.return_value = mock_llm
-    mock_llm.generate.return_value = json.dumps(
-        {"thought": "done", "tool": "finish", "tool_input": {"answer": "ok"}}
-    )
+    mock_llm.generate.return_value = json.dumps({"thought": "done", "tool": "finish", "tool_input": {"answer": "ok"}})
 
     db_path = tmp_path / "trust.db"
     migrate(db_path)
