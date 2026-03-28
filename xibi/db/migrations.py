@@ -7,7 +7,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 9  # increment when adding new migrations
+SCHEMA_VERSION = 10  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -39,6 +39,7 @@ class SchemaManager:
             (7, "trust hardening: model_hash, last_failure_type", self._migration_7),
             (8, "session turns: conversation continuity", self._migration_8),
             (9, "session entities: cross-domain extraction", self._migration_9),
+            (10, "tracing: spans table", self._migration_10),
         ]
 
         for version, description, func in migrations:
@@ -289,6 +290,24 @@ class SchemaManager:
 
             CREATE INDEX IF NOT EXISTS idx_session_entities_session
                 ON session_entities (session_id, entity_type);
+        """)
+
+    def _migration_10(self, conn: sqlite3.Connection) -> None:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS spans (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                trace_id        TEXT    NOT NULL,
+                span_id         TEXT    NOT NULL UNIQUE,
+                parent_span_id  TEXT,
+                operation       TEXT    NOT NULL,
+                component       TEXT    NOT NULL,
+                start_ms        INTEGER NOT NULL,
+                duration_ms     INTEGER NOT NULL,
+                status          TEXT    NOT NULL DEFAULT 'ok',
+                attributes      TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_spans_trace ON spans(trace_id);
+            CREATE INDEX IF NOT EXISTS idx_spans_start ON spans(start_ms DESC);
         """)
 
 
