@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import sqlite3
 from pathlib import Path
@@ -246,18 +247,15 @@ class SchemaManager:
             -- TTL cleanup runs nightly via heartbeat poller.
         """)
 
-
-def migrate(db_path: Path) -> list[int]:
-    """Convenience: create SchemaManager and run all pending migrations."""
-    return SchemaManager(db_path).migrate()
-
     def _migration_7(self, conn: sqlite3.Connection) -> None:
         for column_sql in [
             "ALTER TABLE trust_records ADD COLUMN model_hash TEXT",
             "ALTER TABLE trust_records ADD COLUMN last_failure_type TEXT",
         ]:
-            try:
+            with contextlib.suppress(sqlite3.OperationalError):
                 conn.execute(column_sql)
-            except sqlite3.OperationalError:
-                pass  # Column already exists — idempotent
 
+
+def migrate(db_path: Path) -> list[int]:
+    """Convenience: create SchemaManager and run all pending migrations."""
+    return SchemaManager(db_path).migrate()

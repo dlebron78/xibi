@@ -298,3 +298,99 @@ class RuleEngine:
                 )
         except Exception as e:
             logger.warning(f"Error logging background event: {e}")
+
+    # --- Shared-connection variants used by the heartbeat poller for atomic transactions ---
+
+    def get_seen_ids_with_conn(self, conn: sqlite3.Connection) -> set[str]:
+        try:
+            cursor = conn.execute("SELECT email_id FROM seen_emails")
+            return {row[0] for row in cursor.fetchall()}
+        except Exception as e:
+            logger.warning(f"Failed to get seen email IDs: {e}")
+            return set()
+
+    def load_triage_rules_with_conn(self, conn: sqlite3.Connection) -> dict[str, str]:
+        rules: dict[str, str] = {}
+        try:
+            cursor = conn.execute("SELECT COALESCE(entity, content), status FROM ledger WHERE category='triage_rule'")
+            for entity, status in cursor.fetchall():
+                if entity and status:
+                    rules[entity.lower()] = status.upper()
+        except Exception as e:
+            logger.warning(f"Failed to load triage rules: {e}")
+        return rules
+
+    def log_signal_with_conn(
+        self,
+        conn: sqlite3.Connection,
+        source: str,
+        topic_hint: str | None,
+        entity_text: str | None,
+        entity_type: str | None,
+        content_preview: str,
+        ref_id: str | None,
+        ref_source: str | None,
+    ) -> None:
+        try:
+            preview = (content_preview[:277] + "...") if len(content_preview) > 280 else content_preview
+            if ref_id:
+                cursor = conn.execute(
+                    "SELECT 1 FROM signals WHERE source = ? AND ref_id = ? AND date(timestamp) = date('now')",
+                    (source, str(ref_id)),
+                )
+                if cursor.fetchone():
+                    return
+            conn.execute(
+                """
+                INSERT INTO signals (source, topic, entity_text, entity_type, content_preview, ref_id, ref_source)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (source, topic_hint, entity_text, entity_type, preview, str(ref_id), ref_source),
+            )
+        except Exception as e:
+            logger.warning(f"Failed to log signal: {e}")
+
+    def log_triage_with_conn(
+        self, conn: sqlite3.Connection, email_id: str, sender: str, subject: str, verdict: str
+    ) -> None:
+        try:
+            conn.execute(
+                "INSERT INTO triage_log (email_id, sender, subject, verdict) VALUES (?, ?, ?, ?)",
+                (email_id, sender, subject, verdict),
+            )
+        except Exception as e:
+            logger.warning(f"Failed to log triage: {e}")
+
+    def mark_seen_with_conn(self, conn: sqlite3.Connection, email_id: str) -> None:
+        try:
+            conn.execute("INSERT OR IGNORE INTO seen_emails (email_id) VALUES (?)", (email_id,))
+        except Exception as e:
+            logger.warning(f"Failed to mark email {email_id} as seen: {e}")
+
+    def get_digest_items_with_conn(self, conn: sqlite3.Connection) -> list[dict[str, Any]]:
+        try:
+            cursor = conn.execute(
+                """
+                SELECT sender, subject, verdict, timestamp FROM triage_log
+                WHERE timestamp > ? AND verdict != 'URGENT'
+                ORDER BY timestamp ASC
+                """,
+                (self._watermark_cache,),
+            )
+            rows = cursor.fetchall()
+            return [{"sender": r[0], "subject": r[1], "verdict": r[2], "timestamp": r[3]} for r in rows]
+        except Exception as e:
+            logger.warning(f"Error fetching digest items: {e}")
+            return []
+
+    def update_watermark_with_conn(self, conn: sqlite3.Connection) -> None:
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('last_digest_at', CURRENT_TIMESTAMP)"
+            )
+            cursor = conn.execute("SELECT value FROM heartbeat_state WHERE key='last_digest_at'")
+            row = cursor.fetchone()
+            if row and isinstance(row[0], str):
+                self._watermark_cache = row[0]
+        except Exception as e:
+            logger.warning(f"Error updating watermark: {e}")

@@ -1,12 +1,52 @@
 import contextlib
 import sqlite3
 import threading
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from xibi.alerting.rules import RuleEngine
 from xibi.heartbeat.poller import HeartbeatPoller
+
+
+def _make_mock_db_ctx() -> MagicMock:
+    """Return a context manager that yields an in-memory SQLite connection with required tables."""
+
+    @contextmanager
+    def _ctx(db_path: Path):  # type: ignore[misc]
+        conn = sqlite3.connect(":memory:")
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS heartbeat_state (key TEXT PRIMARY KEY, value TEXT);
+            CREATE TABLE IF NOT EXISTS seen_emails (email_id TEXT PRIMARY KEY, seen_at DATETIME);
+            CREATE TABLE IF NOT EXISTS triage_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email_id TEXT, sender TEXT, subject TEXT, verdict TEXT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS signals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                source TEXT, topic TEXT, topic_hint TEXT,
+                entity_text TEXT, entity_type TEXT, content_preview TEXT,
+                ref_id TEXT, ref_source TEXT
+            );
+            CREATE TABLE IF NOT EXISTS ledger (
+                id TEXT PRIMARY KEY, category TEXT, content TEXT,
+                entity TEXT, status TEXT, due TEXT, notes TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS tasks (
+                id TEXT PRIMARY KEY, goal TEXT, status TEXT, due_at TEXT,
+                trace_id TEXT DEFAULT ''
+            );
+        """)
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+    return _ctx
 
 
 def test_is_quiet_hours_start():
@@ -51,25 +91,28 @@ def test_tick_skips_quiet_hours():
 
 def test_tick_marks_seen_email():
     rules = MagicMock()
-    rules.get_seen_ids.return_value = set()
-    rules.load_triage_rules.return_value = {}
+    rules.get_seen_ids_with_conn.return_value = set()
+    rules.load_triage_rules_with_conn.return_value = {}
     hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), rules, [123])
 
     with (
+        patch("xibi.db.open_db", _make_mock_db_ctx()),
         patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
         patch.object(HeartbeatPoller, "_check_email", return_value=[{"id": "e1", "from": "s1", "subject": "sub1"}]),
         patch.object(HeartbeatPoller, "_classify_email", return_value="DIGEST"),
     ):
         hp.tick()
-        rules.mark_seen.assert_called_with("e1")
+        rules.mark_seen_with_conn.assert_called_once()
+        assert rules.mark_seen_with_conn.call_args[0][1] == "e1"
 
 
 def test_tick_skips_already_seen_email():
     rules = MagicMock()
-    rules.get_seen_ids.return_value = {"e1"}
+    rules.get_seen_ids_with_conn.return_value = {"e1"}
     hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), rules, [123])
 
     with (
+        patch("xibi.db.open_db", _make_mock_db_ctx()),
         patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
         patch.object(HeartbeatPoller, "_check_email", return_value=[{"id": "e1"}]),
         patch.object(HeartbeatPoller, "_classify_email") as mock_classify,
@@ -80,12 +123,13 @@ def test_tick_skips_already_seen_email():
 
 def test_tick_urgent_broadcasts():
     rules = MagicMock()
-    rules.get_seen_ids.return_value = set()
-    rules.load_triage_rules.return_value = {}
+    rules.get_seen_ids_with_conn.return_value = set()
+    rules.load_triage_rules_with_conn.return_value = {}
     rules.evaluate_email.return_value = "Alert!"
     hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), rules, [123])
 
     with (
+        patch("xibi.db.open_db", _make_mock_db_ctx()),
         patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
         patch.object(HeartbeatPoller, "_check_email", return_value=[{"id": "e1"}]),
         patch.object(HeartbeatPoller, "_classify_email", return_value="URGENT"),
@@ -97,17 +141,18 @@ def test_tick_urgent_broadcasts():
 
 def test_tick_defer_not_marked_seen():
     rules = MagicMock()
-    rules.get_seen_ids.return_value = set()
-    rules.load_triage_rules.return_value = {}
+    rules.get_seen_ids_with_conn.return_value = set()
+    rules.load_triage_rules_with_conn.return_value = {}
     hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), rules, [123])
 
     with (
+        patch("xibi.db.open_db", _make_mock_db_ctx()),
         patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
         patch.object(HeartbeatPoller, "_check_email", return_value=[{"id": "e1"}]),
         patch.object(HeartbeatPoller, "_classify_email", return_value="DEFER"),
     ):
         hp.tick()
-        rules.mark_seen.assert_not_called()
+        rules.mark_seen_with_conn.assert_not_called()
 
 
 def test_digest_tick_no_items_no_force():
@@ -121,6 +166,7 @@ def test_digest_tick_no_items_no_force():
     ):
         hp.digest_tick(force=False)
         mock_broadcast.assert_not_called()
+        rules.pop_digest_items.assert_called_once()
 
 
 def test_digest_tick_force_empty():
@@ -146,23 +192,28 @@ def test_digest_tick_with_items():
     ):
         hp.digest_tick()
         mock_broadcast.assert_called()
-        # update_watermark is no longer called directly — pop_digest_items handles it atomically
+        # pop_digest_items handles watermark update atomically — no separate update_watermark call
 
 
 def test_auto_noise_prefilter():
     rules = MagicMock()
-    rules.get_seen_ids.return_value = set()
-    rules.load_triage_rules.return_value = {}
+    rules.get_seen_ids_with_conn.return_value = set()
+    rules.load_triage_rules_with_conn.return_value = {}
     hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), rules, [123])
 
     with (
+        patch("xibi.db.open_db", _make_mock_db_ctx()),
         patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
         patch.object(HeartbeatPoller, "_check_email", return_value=[{"id": "e1", "from": "newsletter@domain.com"}]),
         patch.object(HeartbeatPoller, "_classify_email") as mock_classify,
     ):
         hp.tick()
         mock_classify.assert_not_called()
-        rules.log_triage.assert_called_with("e1", "newsletter@domain.com", "No Subject", "NOISE")
+        rules.log_triage_with_conn.assert_called_once()
+        call_args = rules.log_triage_with_conn.call_args[0]
+        assert call_args[1] == "e1"
+        assert call_args[2] == "newsletter@domain.com"
+        assert call_args[4] == "NOISE"
 
 
 def test_is_quiet_hours_same_start_end():
@@ -217,7 +268,11 @@ def test_classify_email_exception():
 def test_tick_task_reminder(tmp_path):
     db_path = tmp_path / "test.db"
     with sqlite3.connect(db_path) as conn:
-        conn.execute("CREATE TABLE tasks (id TEXT, goal TEXT, status TEXT, due_at TEXT)")
+        conn.executescript("""
+            CREATE TABLE tasks (id TEXT, goal TEXT, status TEXT, due_at TEXT);
+            CREATE TABLE heartbeat_state (key TEXT PRIMARY KEY, value TEXT);
+            CREATE TABLE seen_emails (email_id TEXT PRIMARY KEY, seen_at DATETIME);
+        """)
         conn.execute("INSERT INTO tasks VALUES ('1', 'do stuff', 'pending', '1970-01-01 00:00:00')")
 
     hp = HeartbeatPoller(Path("/tmp"), db_path, MagicMock(), MagicMock(), [123])
@@ -308,7 +363,12 @@ def test_should_escalate_no_match():
 
 def test_tick_no_tasks_table(tmp_path):
     db_path = tmp_path / "test.db"
-    # Empty DB, no tables
+    # DB with only heartbeat_state (no tasks table — poller should handle gracefully)
+    with sqlite3.connect(db_path) as conn:
+        conn.executescript("""
+            CREATE TABLE heartbeat_state (key TEXT PRIMARY KEY, value TEXT);
+            CREATE TABLE seen_emails (email_id TEXT PRIMARY KEY, seen_at DATETIME);
+        """)
     hp = HeartbeatPoller(Path("/tmp"), db_path, MagicMock(), MagicMock(), [123])
     with (
         patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
@@ -320,12 +380,13 @@ def test_tick_no_tasks_table(tmp_path):
 
 def test_tick_urgent_no_alert_msg():
     rules = MagicMock()
-    rules.get_seen_ids.return_value = set()
-    rules.load_triage_rules.return_value = {}
+    rules.get_seen_ids_with_conn.return_value = set()
+    rules.load_triage_rules_with_conn.return_value = {}
     rules.evaluate_email.return_value = None
     hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), rules, [123])
 
     with (
+        patch("xibi.db.open_db", _make_mock_db_ctx()),
         patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
         patch.object(HeartbeatPoller, "_check_email", return_value=[{"id": "e1"}]),
         patch.object(HeartbeatPoller, "_classify_email", return_value="URGENT"),

@@ -121,15 +121,14 @@ class HeartbeatPoller:
             logger.info("Quiet hours, skipping tick.")
             return
 
-        with xibi.db.open_db(self.db_path) as conn:
-            with conn:  # BEGIN / COMMIT or ROLLBACK
-                # Lock: use a sentinel row in heartbeat_state
-                conn.execute(
-                    "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('tick_lock', ?)",
-                    (str(time.time()),),
-                )
+        with xibi.db.open_db(self.db_path) as conn, conn:  # BEGIN / COMMIT or ROLLBACK
+            # Lock: use a sentinel row in heartbeat_state
+            conn.execute(
+                "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('tick_lock', ?)",
+                (str(time.time()),),
+            )
 
-                self._tick_with_conn(conn)
+            self._tick_with_conn(conn)
 
     def _tick_with_conn(self, conn: sqlite3.Connection) -> None:
         # 1. Check tasks
@@ -220,26 +219,17 @@ class HeartbeatPoller:
         if self._is_quiet_hours() and not force:
             return
 
-        with xibi.db.open_db(self.db_path) as conn:
-            with conn:
-                # Lock
-                conn.execute(
-                    "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('digest_lock', ?)",
-                    (str(time.time()),),
-                )
+        items = self.rules.pop_digest_items()
+        if not items:
+            if force:
+                self._broadcast("📥 Recap — no new emails triaged since last update. All quiet!")
+            return
 
-                items = self.rules.get_digest_items_with_conn(conn)
-                if not items:
-                    if force:
-                        self._broadcast("📥 Recap — no new emails triaged since last update. All quiet!")
-                    return
+        msg_lines = ["📥 **Digest Recap**"]
+        for item in items[:10]:
+            msg_lines.append(f"• {item['sender']}: {item['subject']} ({item['verdict']})")
 
-                msg_lines = ["📥 **Digest Recap**"]
-                for item in items[:10]:
-                    msg_lines.append(f"• {item['sender']}: {item['subject']} ({item['verdict']})")
-
-                self._broadcast("\n".join(msg_lines))
-                self.rules.update_watermark_with_conn(conn)
+        self._broadcast("\n".join(msg_lines))
 
     def recap_tick(self) -> None:
         logger.info("Running recap tick")
@@ -251,9 +241,7 @@ class HeartbeatPoller:
         try:
             with xibi.db.open_db(self.db_path) as conn:
                 # Check if already run today
-                cursor = conn.execute(
-                    "SELECT value FROM heartbeat_state WHERE key = 'ttl_cleanup_last_run'"
-                )
+                cursor = conn.execute("SELECT value FROM heartbeat_state WHERE key = 'ttl_cleanup_last_run'")
                 row = cursor.fetchone()
                 if row and row[0] == today:
                     return

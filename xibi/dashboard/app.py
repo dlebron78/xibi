@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -92,9 +93,8 @@ def create_app(config: DashboardConfig) -> Flask:
     app = Flask(__name__, template_folder=str(template_folder))
     app.config["DB_PATH"] = config.db_path
 
-    def get_db_conn() -> sqlite3.Connection:
-        conn = xibi.db.open_db(app.config["DB_PATH"])
-        return conn
+    def get_db_conn() -> AbstractContextManager[sqlite3.Connection]:
+        return xibi.db.open_db(app.config["DB_PATH"])  # type: ignore[return-value]
 
     @app.route("/health")
     def health_full() -> Any:
