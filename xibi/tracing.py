@@ -5,7 +5,10 @@ import sqlite3
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from xibi.quality import QualityScore
 
 
 @dataclass
@@ -109,6 +112,34 @@ class Tracer:
                 ]
         except Exception:
             return []
+
+    def record_quality(
+        self,
+        trace_id: str,
+        score: QualityScore,
+        query: str,
+    ) -> None:
+        """Persist a QualityScore as a span with operation='quality.judge'."""
+        import time
+
+        span = Span(
+            trace_id=trace_id,
+            span_id=self.new_span_id(),
+            parent_span_id=None,
+            operation="quality.judge",
+            component="quality",
+            start_ms=int(time.time() * 1000),
+            duration_ms=0,  # judge call duration not tracked here
+            status="ok",
+            attributes={
+                "relevance": score.relevance,
+                "groundedness": score.groundedness,
+                "composite": score.composite,
+                "reasoning": score.reasoning,
+                "query_preview": query[:80],
+            },
+        )
+        self.emit(span)
 
     def export_trace_json(self, trace_id: str) -> str:
         """Export spans as JSON array (OpenTelemetry-compatible field names)."""

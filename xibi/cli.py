@@ -15,6 +15,7 @@ except ImportError:
     readline = None  # type: ignore[assignment]
 
 from xibi.executor import LocalHandlerExecutor
+from xibi.quality import quality_score_span
 from xibi.react import handle_intent, run
 from xibi.router import Config
 from xibi.routing.control_plane import ControlPlaneRouter
@@ -37,6 +38,17 @@ def _spin(event: threading.Event) -> None:
         i += 1
     sys.stderr.write("\r" + " " * 20 + "\r")
     sys.stderr.flush()
+
+
+def load_profile() -> dict:
+    profile_path = Path.home() / ".xibi" / "profile.json"
+    if profile_path.exists():
+        try:
+            with open(profile_path) as f:
+                return cast(dict, json.load(f))
+        except Exception:
+            pass
+    return {"environment": "dev"}
 
 
 def load_config_with_env_fallback() -> Config:
@@ -81,6 +93,7 @@ def main() -> None:
 
     try:
         config = load_config_with_env_fallback()
+        profile = load_profile()
     except Exception as e:
         print(f"Error loading config: {e}")
         sys.exit(1)
@@ -138,6 +151,8 @@ def main() -> None:
 
     print("Xibi CLI Chat Interface. Type 'quit' or 'exit' to leave.")
     while True:
+        quality = None
+        result = None
         try:
             query = input("xibi> ").strip()
         except EOFError:
@@ -265,16 +280,28 @@ def main() -> None:
                         for err in result.error_summary:
                             print(f"   [{err.category.value}] {err.detail or err.message}")
 
+                # Score quality (non-blocking, non-crashing)
+                if result.exit_reason == "finish" and result.answer:
+                    tool_outputs = [
+                        str(s.tool_output)
+                        for s in result.steps
+                        if s.tool_output and s.tool not in ("finish", "ask_user", "error")
+                    ]
+                    quality = quality_score_span(query, result.answer, tool_outputs, config, profile)
+                    if quality and tracer and result.trace_id:
+                        tracer.record_quality(result.trace_id, quality, query)
+
                 # Persist turn
                 session.add_turn(query, result)
 
         duration = (time.time() - start_time) * 1000
-        parts = [f"via:{routed_via}", f"{duration:.0f}ms"]
-        if result and hasattr(result, "exit_reason") and result.exit_reason:
-            parts.append(f"exit:{result.exit_reason}")
-        if result and hasattr(result, "trace_id") and result.trace_id:
-            parts.append(f"trace:{result.trace_id}")
-        print(f"({', '.join(parts)})")
+        if result:
+            quality_str = ""
+            if quality:
+                quality_str = f" | quality:{quality.composite:.1f} (r:{quality.relevance} g:{quality.groundedness})"
+            print(f"\n(via:{routed_via} | steps:{len(result.steps)} | {result.exit_reason}{quality_str})")
+        else:
+            print(f"(via:{routed_via} | {duration:.0f}ms)")
         print()
 
 
