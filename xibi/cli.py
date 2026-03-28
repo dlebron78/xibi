@@ -18,6 +18,7 @@ from xibi.executor import LocalHandlerExecutor
 from xibi.react import handle_intent, run
 from xibi.router import Config
 from xibi.routing.control_plane import ControlPlaneRouter
+from xibi.routing.llm_classifier import LLMRoutingClassifier
 from xibi.routing.shadow import ShadowMatcher
 from xibi.session import SessionContext
 from xibi.skills.registry import SkillRegistry
@@ -103,6 +104,7 @@ def main() -> None:
     control_plane = ControlPlaneRouter()
     shadow = ShadowMatcher()
     shadow.load_manifests(args.skills_dir)
+    llm_classifier = LLMRoutingClassifier(config)
 
     _db_path = config.get("db_path") or Path.home() / ".xibi" / "data" / "xibi.db"
     session = SessionContext(session_id="cli:local", db_path=_db_path, config=config)
@@ -222,6 +224,14 @@ def main() -> None:
                 if match and match.tier == "hint":
                     routed_via = "shadow-hint"
                     print(f"[shadow:hint] {match.tool}")
+                elif not match:
+                    # BM25 returned nothing — try LLM fallback
+                    llm_decision = llm_classifier.classify(query, registry.get_skill_manifests())
+                    if llm_decision:
+                        routed_via = "llm-hint"
+                        print(f"[llm:hint] {llm_decision.skill}/{llm_decision.tool} ({llm_decision.confidence:.2f})")
+                        if args.debug:
+                            print(f"      reasoning: {llm_decision.reasoning}")
 
                 # 3. ReAct loop
                 _thinking.clear()
