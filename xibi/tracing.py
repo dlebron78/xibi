@@ -5,7 +5,10 @@ import sqlite3
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from xibi.quality import QualityScore
 
 
 @dataclass
@@ -113,13 +116,11 @@ class Tracer:
     def record_quality(
         self,
         trace_id: str,
-        score: "QualityScore",
+        score: QualityScore,
         query: str,
     ) -> None:
         """Persist a QualityScore as a span with operation='quality.judge'."""
         import time
-
-        from xibi.quality import QualityScore  # local import to avoid circular
 
         span = Span(
             trace_id=trace_id,

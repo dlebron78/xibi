@@ -27,9 +27,9 @@ def quality_score_span(
     query: str,
     answer: str,
     tool_outputs: list[str],
-    config: "Config",
+    config: Config,
     profile: dict,
-) -> "QualityScore | None":
+) -> QualityScore | None:
     """
     Run a fast LLM judge call to score the answer.
 
