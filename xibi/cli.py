@@ -1,10 +1,6 @@
 import argparse
 import atexit
-
-try:
-    import readline  # noqa: F401 — enables up-arrow history on Linux/macOS
-except ImportError:
-    readline = None
+import contextlib
 import json
 import os
 import sys
@@ -12,6 +8,11 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, cast
+
+try:
+    import readline  # noqa: F401 — enables up-arrow history on Linux/macOS
+except ImportError:
+    readline = None  # type: ignore[assignment]
 
 from xibi.executor import LocalHandlerExecutor
 from xibi.react import handle_intent, run
@@ -21,7 +22,6 @@ from xibi.routing.shadow import ShadowMatcher
 from xibi.session import SessionContext
 from xibi.skills.registry import SkillRegistry
 from xibi.tracing import Tracer
-
 
 _thinking = threading.Event()
 
@@ -73,9 +73,7 @@ def load_config_with_env_fallback() -> Config:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Xibi CLI Chat Interface")
     parser.add_argument("--debug", action="store_true", help="Print ReAct scratchpad steps")
-    parser.add_argument(
-        "--no-spinner", action="store_true", help="Disable thinking spinner (for CI/pipe)"
-    )
+    parser.add_argument("--no-spinner", action="store_true", help="Disable thinking spinner (for CI/pipe)")
     parser.add_argument("--skills-dir", type=str, default="xibi/skills/sample", help="Path to skills directory")
     parser.add_argument("--model", type=str, help="Force a provider (ollama|gemini)")
     args = parser.parse_args()
@@ -89,10 +87,8 @@ def main() -> None:
     if readline:
         history_file = Path.home() / ".xibi" / "cli_history"
         history_file.parent.mkdir(parents=True, exist_ok=True)
-        try:
+        with contextlib.suppress(FileNotFoundError):
             readline.read_history_file(history_file)
-        except FileNotFoundError:
-            pass
         readline.set_history_length(500)
         atexit.register(readline.write_history_file, history_file)
 
@@ -171,7 +167,7 @@ def main() -> None:
                     attrs = r.get("attributes", {})
                     er = attrs.get("exit_reason", "?")
                     q = attrs.get("query_preview", "")[:50]
-                    print(f"  {r['trace_id']}  {r['duration_ms']}ms  {er}  \"{q}\"")
+                    print(f'  {r["trace_id"]}  {r["duration_ms"]}ms  {er}  "{q}"')
             print()
             continue
 

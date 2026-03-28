@@ -1,9 +1,9 @@
 import json
+import sqlite3
 from unittest.mock import patch
 
 import pytest
 
-import sqlite3
 from xibi.cli import main
 from xibi.executor import LocalHandlerExecutor
 from xibi.skills.registry import SkillRegistry
@@ -103,7 +103,14 @@ def test_cli_control_plane_routes(mock_registry, test_db, capsys):
         patch("sys.argv", ["xibi"]),
         patch("builtins.input", side_effect=["hi", "quit"]),
         patch("xibi.cli.SkillRegistry", return_value=mock_registry),
-        patch("xibi.cli.load_config_with_env_fallback", return_value={"models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}}, "providers": {"ollama": {"base_url": "http://localhost:11434"}}, "db_path": test_db}),
+        patch(
+            "xibi.cli.load_config_with_env_fallback",
+            return_value={
+                "models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}},
+                "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+                "db_path": test_db,
+            },
+        ),
         patch("xibi.cli.run") as mock_run,
         patch("xibi.session.get_model"),
     ):
@@ -119,7 +126,14 @@ def test_cli_shadow_direct_routes(mock_registry, test_db, capsys):
         patch("sys.argv", ["xibi"]),
         patch("builtins.input", side_effect=["check my email", "quit"]),
         patch("xibi.cli.SkillRegistry", return_value=mock_registry),
-        patch("xibi.cli.load_config_with_env_fallback", return_value={"models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}}, "providers": {"ollama": {"base_url": "http://localhost:11434"}}, "db_path": test_db}),
+        patch(
+            "xibi.cli.load_config_with_env_fallback",
+            return_value={
+                "models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}},
+                "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+                "db_path": test_db,
+            },
+        ),
         patch("xibi.cli.run") as mock_run,
         patch("xibi.session.get_model"),
     ):
@@ -138,7 +152,14 @@ def test_cli_shadow_hint_routes(mock_registry, test_db, capsys):
         patch("sys.argv", ["xibi"]),
         patch("builtins.input", side_effect=["check email", "quit"]),
         patch("xibi.cli.SkillRegistry", return_value=mock_registry),
-        patch("xibi.cli.load_config_with_env_fallback", return_value={"models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}}, "providers": {"ollama": {"base_url": "http://localhost:11434"}}, "db_path": test_db}),
+        patch(
+            "xibi.cli.load_config_with_env_fallback",
+            return_value={
+                "models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}},
+                "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+                "db_path": test_db,
+            },
+        ),
         patch(
             "xibi.cli.run",
             return_value=ReActResult(answer="hinted answer", steps=[], exit_reason="finish", duration_ms=100),
@@ -160,7 +181,14 @@ def test_cli_react_fallthrough(mock_registry, test_db, capsys):
         patch("sys.argv", ["xibi"]),
         patch("builtins.input", side_effect=["something unknown", "quit"]),
         patch("xibi.cli.SkillRegistry", return_value=mock_registry),
-        patch("xibi.cli.load_config_with_env_fallback", return_value={"models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}}, "providers": {"ollama": {"base_url": "http://localhost:11434"}}, "db_path": test_db}),
+        patch(
+            "xibi.cli.load_config_with_env_fallback",
+            return_value={
+                "models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}},
+                "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+                "db_path": test_db,
+            },
+        ),
         patch(
             "xibi.cli.run",
             return_value=ReActResult(answer="react answer", steps=[], exit_reason="finish", duration_ms=100),
@@ -232,7 +260,14 @@ def test_cli_quit_exits_cleanly(mock_registry, test_db, capsys):
         patch("sys.argv", ["xibi"]),
         patch("builtins.input", side_effect=["quit"]),
         patch("xibi.cli.SkillRegistry", return_value=mock_registry),
-        patch("xibi.cli.load_config_with_env_fallback", return_value={"models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}}, "providers": {"ollama": {"base_url": "http://localhost:11434"}}, "db_path": test_db}),
+        patch(
+            "xibi.cli.load_config_with_env_fallback",
+            return_value={
+                "models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}},
+                "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+                "db_path": test_db,
+            },
+        ),
     ):
         main()
         out, _ = capsys.readouterr()
@@ -245,7 +280,14 @@ def test_slash_traces_no_crash_empty(mock_registry, test_db, capsys):
         patch("sys.argv", ["xibi"]),
         patch("builtins.input", side_effect=["/traces", "quit"]),
         patch("xibi.cli.SkillRegistry", return_value=mock_registry),
-        patch("xibi.cli.load_config_with_env_fallback", return_value={"models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}}, "providers": {"ollama": {"base_url": "http://localhost:11434"}}, "db_path": test_db}),
+        patch(
+            "xibi.cli.load_config_with_env_fallback",
+            return_value={
+                "models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}},
+                "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+                "db_path": test_db,
+            },
+        ),
         patch("xibi.tracing.Tracer.recent_traces", return_value=[]),
     ):
         main()
@@ -282,7 +324,14 @@ def test_step_callback_debug_output(mock_registry, test_db, capsys):
         patch("sys.argv", ["xibi", "--debug"]),
         patch("builtins.input", side_effect=["some query", "quit"]),
         patch("xibi.cli.SkillRegistry", return_value=mock_registry),
-        patch("xibi.cli.load_config_with_env_fallback", return_value={"models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}}, "providers": {"ollama": {"base_url": "http://localhost:11434"}}, "db_path": test_db}),
+        patch(
+            "xibi.cli.load_config_with_env_fallback",
+            return_value={
+                "models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}},
+                "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+                "db_path": test_db,
+            },
+        ),
         patch("xibi.cli.run", side_effect=mock_run_impl),
         patch("xibi.session.get_model"),
     ):
@@ -290,7 +339,7 @@ def test_step_callback_debug_output(mock_registry, test_db, capsys):
         out, _ = capsys.readouterr()
         assert "[1] list_emails" in out
         assert "thought: I should list emails" in out
-        assert "← {\"status\": \"ok\", \"emails\": []}" in out
+        assert '← {"status": "ok", "emails": []}' in out
 
 
 def test_no_spinner_flag(mock_registry, test_db):
@@ -300,7 +349,14 @@ def test_no_spinner_flag(mock_registry, test_db):
         patch("sys.argv", ["xibi", "--no-spinner"]),
         patch("builtins.input", side_effect=["some query", "quit"]),
         patch("xibi.cli.SkillRegistry", return_value=mock_registry),
-        patch("xibi.cli.load_config_with_env_fallback", return_value={"models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}}, "providers": {"ollama": {"base_url": "http://localhost:11434"}}, "db_path": test_db}),
+        patch(
+            "xibi.cli.load_config_with_env_fallback",
+            return_value={
+                "models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}},
+                "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+                "db_path": test_db,
+            },
+        ),
         patch(
             "xibi.cli.run",
             return_value=ReActResult(answer="hi", steps=[], exit_reason="finish", duration_ms=100),

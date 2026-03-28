@@ -59,9 +59,9 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
       - name: Lint
-        run: ruff check xibi/ tests/test_router.py tests/test_memory.py tests/test_tracing.py tests/conftest.py
+        run: ruff check xibi/ tests/test_router.py tests/test_memory.py tests/test_tracing.py tests/conftest.py tests/test_cli.py
       - name: Format check
-        run: ruff format --check xibi/ tests/test_router.py tests/test_memory.py tests/test_tracing.py tests/conftest.py
+        run: ruff format --check xibi/ tests/test_router.py tests/test_memory.py tests/test_tracing.py tests/conftest.py tests/test_cli.py
 
   typecheck:
     runs-on: ubuntu-latest
