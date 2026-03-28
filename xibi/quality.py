@@ -12,8 +12,8 @@ from xibi.router import get_model
 
 logger = logging.getLogger(__name__)
 
-QUALITY_FAILURE_THRESHOLD = 2.5   # composite score below this → trust failure
-QUALITY_SUCCESS_THRESHOLD = 3.5   # composite score at or above this → trust success
+QUALITY_FAILURE_THRESHOLD = 2.5  # composite score below this → trust failure
+QUALITY_SUCCESS_THRESHOLD = 3.5  # composite score at or above this → trust success
 
 RELEVANCE_WEIGHT = 0.6  # weight for relevance in composite score
 GROUNDEDNESS_WEIGHT = 0.4  # weight for groundedness in composite score
