@@ -241,8 +241,17 @@ def test_telegram_sends_failure_message(tmp_path):
     class MockCore:
         def __init__(self):
             self.registry = MagicMock()
+            self.registry.get_skill_manifests.return_value = []
             self.executor = MagicMock()
-            self.config = {"models": {}, "providers": {}}
+            self.config = {
+                "models": {
+                    "text": {
+                        "fast": {"provider": "ollama", "model": "m1"},
+                        "think": {"provider": "ollama", "model": "m2"},
+                    }
+                },
+                "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+            }
 
         def process_query(self, text):
             return ""
@@ -253,28 +262,39 @@ def test_telegram_sends_failure_message(tmp_path):
     core = MockCore()
 
     with (
-        patch.dict("os.environ", {"XIBI_TELEGRAM_TOKEN": "test"}),
+        patch.dict("os.environ", {"XIBI_TELEGRAM_TOKEN": "test", "XIBI_SYNC_SESSION": "1"}),
         patch("xibi.channels.telegram.TelegramAdapter._api_call") as mock_api,
         patch("xibi.react.run") as mock_run,
         patch("xibi.session.get_model"),
+        patch("xibi.react.get_model"),
     ):
         mock_run.return_value = ReActResult(answer="", steps=[], exit_reason="timeout", duration_ms=0)
         # mock_api return for typing action
         mock_api.return_value = {"ok": True}
-        adapter = TelegramAdapter(core, db_path=db_path)
+        adapter = TelegramAdapter(
+            config=core.config,
+            skill_registry=core.registry,
+            executor=core.executor,
+            db_path=db_path,
+        )
 
-        # We need to mock _api_call for sendMessage too
-        adapter._process_message(123, "hello")
+        # We need to mock send_message since it calls _api_call
+        with (
+            patch.object(adapter, "send_message") as mock_send,
+            patch.object(ReActResult, "user_facing_failure_message", return_value="too long"),
+        ):
+            # Also mock the result answer to be empty so it falls through to failure message
+            mock_run.return_value.answer = ""
+            adapter._handle_text(123, "hello")
 
-        # Check if sendMessage was called via _api_call
-        found = False
-        for call in mock_api.call_args_list:
-            if call.args and call.args[0] == "sendMessage":
-                params = call.args[1]
-                if "too long" in params.get("text", ""):
+            # Check if sendMessage was called
+            found = False
+            for call in mock_send.call_args_list:
+                text = call.args[1]
+                if "too long" in text:
                     found = True
                     break
-        assert found
+            assert found
 
 
 def test_get_timeout_falls_back_to_defaults():

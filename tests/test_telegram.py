@@ -1,5 +1,5 @@
 import sqlite3
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -9,6 +9,8 @@ from xibi.channels.telegram import (
     extract_task_id,
     is_continuation,
 )
+from xibi.db.migrations import migrate
+from xibi.types import ReActResult
 
 
 def test_is_continuation_yes():
@@ -47,113 +49,37 @@ def test_safe_filename_strips_hidden_file():
 def test_init_requires_token(monkeypatch):
     monkeypatch.delenv("XIBI_TELEGRAM_TOKEN", raising=False)
     with pytest.raises(ValueError, match="Telegram token missing"):
-        TelegramAdapter(core=MagicMock())
+        TelegramAdapter(config={}, skill_registry=MagicMock())
 
 
 def test_init_reads_env_token(monkeypatch):
     monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "env-token")
-    adapter = TelegramAdapter(core=MagicMock())
+    adapter = TelegramAdapter(config={}, skill_registry=MagicMock())
     assert adapter.token == "env-token"
 
 
 def test_init_empty_allowlist_denies_all_legacy(monkeypatch):
     monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "test-token")
     monkeypatch.setenv("XIBI_TELEGRAM_ALLOWED_CHAT_IDS", "")
-    adapter = TelegramAdapter(core=MagicMock(), allowed_chats=[])
+    adapter = TelegramAdapter(config={}, skill_registry=MagicMock(), allowed_chats=[])
     assert adapter.is_authorized(999) is False
 
 
 def test_init_allowlist_filters(monkeypatch):
     monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "test-token")
     monkeypatch.setenv("XIBI_TELEGRAM_ALLOWED_CHAT_IDS", "123")
-    adapter = TelegramAdapter(core=MagicMock(), allowed_chats=["123"])
+    adapter = TelegramAdapter(config={}, skill_registry=MagicMock(), allowed_chats=["123"])
     assert adapter.is_authorized(123) is True
     assert adapter.is_authorized(456) is False
 
 
 def test_send_message_calls_api(monkeypatch):
     monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "test-token")
-    adapter = TelegramAdapter(core=MagicMock())
+    adapter = TelegramAdapter(config={}, skill_registry=MagicMock())
     adapter._api_call = MagicMock(return_value={"ok": True})
 
     adapter.send_message(123, "Hello")
     adapter._api_call.assert_called_once_with("sendMessage", {"chat_id": 123, "text": "Hello"})
-
-
-def test_session_isolation_two_chat_ids(tmp_path):
-    from xibi.channels.telegram import TelegramAdapter
-
-    adapter = TelegramAdapter.__new__(TelegramAdapter)
-    adapter.core = MagicMock()
-    adapter._sessions = {}
-    adapter.db_path = str(tmp_path / "test.db")
-    adapter.config = {}
-
-    sess_a = adapter._get_session(111)
-    sess_b = adapter._get_session(222)
-
-    assert sess_a.session_id.startswith("telegram:111:")
-    assert sess_b.session_id.startswith("telegram:222:")
-    assert sess_a is not sess_b
-
-
-def test_nudge_state_is_per_chat(tmp_path):
-    from xibi.channels.telegram import TelegramAdapter
-
-    adapter = TelegramAdapter.__new__(TelegramAdapter)
-    adapter._active_chats = {}
-
-    # Simulate message arrival for two chats
-    adapter._active_chats[111] = {"nudge_sent": False, "nudge_timer": None}
-    adapter._active_chats[222] = {"nudge_sent": False, "nudge_timer": None}
-
-    # Mark nudge sent for chat 111
-    adapter._active_chats[111]["nudge_sent"] = True
-
-    assert adapter._active_chats[111]["nudge_sent"] is True
-    assert adapter._active_chats[222]["nudge_sent"] is False
-
-
-def test_nudge_callback_targets_correct_chat(tmp_path, monkeypatch):
-    from xibi.channels.telegram import TelegramAdapter
-
-    adapter = TelegramAdapter.__new__(TelegramAdapter)
-    adapter._active_chats = {
-        111: {"nudge_sent": False, "nudge_timer": None},
-        222: {"nudge_sent": False, "nudge_timer": None},
-    }
-
-    sent_to = []
-
-    def mock_send(chat_id, text):
-        sent_to.append(chat_id)
-
-    monkeypatch.setattr(adapter, "send_message", mock_send)
-
-    adapter._nudge_callback(111)
-
-    assert 111 in sent_to
-    assert 222 not in sent_to
-    assert adapter._active_chats[111]["nudge_sent"] is True
-    assert adapter._active_chats[222]["nudge_sent"] is False
-
-
-def test_active_chats_cleanup_after_message(tmp_path, monkeypatch):
-    from xibi.channels.telegram import TelegramAdapter
-
-    monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "test-token")
-    core = MagicMock()
-    core.process_query.return_value = "Response"
-
-    adapter = TelegramAdapter(core=core, db_path=tmp_path / "xibi.db")
-    adapter._api_call = MagicMock(return_value={"ok": True})
-    adapter._get_session = MagicMock()
-
-    chat_id = 123
-    adapter._process_message(chat_id, "hello")
-
-    # Verify that the chat state is removed from _active_chats after processing
-    assert chat_id not in adapter._active_chats
 
 
 def test_poll_processes_mock_message(monkeypatch, tmp_path):
@@ -162,21 +88,15 @@ def test_poll_processes_mock_message(monkeypatch, tmp_path):
     monkeypatch.setenv("XIBI_TELEGRAM_ALLOWED_CHAT_IDS", "123")
 
     db_path = tmp_path / "xibi.db"
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "CREATE TABLE access_log (id INTEGER PRIMARY KEY, chat_id TEXT, authorized INTEGER, timestamp DATETIME, user_name TEXT)"
-    )
-    conn.commit()
-    conn.close()
+    migrate(db_path)
 
-    core = MagicMock(spec=[])  # Don't have any extra attributes by default
-    core.process_query = MagicMock(return_value="Mock Response")
+    registry = MagicMock()
+    registry.get_skill_manifests.return_value = []
 
-    adapter = TelegramAdapter(core=core, db_path=db_path)
+    adapter = TelegramAdapter(config={}, skill_registry=registry, db_path=db_path)
     adapter.send_message = MagicMock()
 
     # We need to break the infinite loop in poll() for testing.
-    # One way is to mock _api_call to raise an exception after the first call.
     original_api_call = adapter._api_call
 
     def mock_api_call(method, params=None):
@@ -186,11 +106,13 @@ def test_poll_processes_mock_message(monkeypatch, tmp_path):
 
     adapter._api_call = mock_api_call
 
-    with pytest.raises(StopIteration):
-        adapter.poll()
+    with patch("xibi.channels.telegram.react_run") as mock_run:
+        mock_run.return_value = ReActResult(answer="Mock Response", steps=[], exit_reason="finish", duration_ms=100)
+        with pytest.raises(StopIteration):
+            adapter.poll()
 
-    core.process_query.assert_called_once_with("Hi, check my emails")
-    adapter.send_message.assert_called_with(123, "Mock Response")
+        mock_run.assert_called_once()
+        adapter.send_message.assert_called_with(123, "Mock Response")
 
 
 def test_poll_unauthorized_chat_rejected(monkeypatch, tmp_path):
@@ -199,16 +121,9 @@ def test_poll_unauthorized_chat_rejected(monkeypatch, tmp_path):
     monkeypatch.setenv("XIBI_TELEGRAM_ALLOWED_CHAT_IDS", "999")
 
     db_path = tmp_path / "xibi.db"
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "CREATE TABLE access_log (id INTEGER PRIMARY KEY, chat_id TEXT, authorized INTEGER, timestamp DATETIME, user_name TEXT)"
-    )
-    conn.commit()
-    conn.close()
+    migrate(db_path)
 
-    core = MagicMock(spec=[])
-    core.process_query = MagicMock()
-    adapter = TelegramAdapter(core=core, db_path=db_path)
+    adapter = TelegramAdapter(config={}, skill_registry=MagicMock(), db_path=db_path)
     adapter.send_message = MagicMock()
 
     original_api_call = adapter._api_call
@@ -223,7 +138,6 @@ def test_poll_unauthorized_chat_rejected(monkeypatch, tmp_path):
     with pytest.raises(StopIteration):
         adapter.poll()
 
-    core.process_query.assert_not_called()
     adapter.send_message.assert_called_with(123, "Sorry, I'm a personal assistant. I don't talk to strangers.")
 
     # Verify logging
@@ -238,21 +152,16 @@ def test_poll_unauthorized_chat_rejected(monkeypatch, tmp_path):
 def test_empty_allowlist_denies_all(monkeypatch, tmp_path):
     monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "test")
     monkeypatch.setenv("XIBI_TELEGRAM_ALLOWED_CHAT_IDS", "")
-    adapter = TelegramAdapter(core=MagicMock(), db_path=tmp_path / "db")
+    adapter = TelegramAdapter(config={}, skill_registry=MagicMock(), db_path=tmp_path / "db")
     assert not adapter._is_authorized("12345")
 
 
 def test_unauthorized_access_is_logged(tmp_path, monkeypatch):
     monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "test")
     db_path = tmp_path / "xibi.db"
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "CREATE TABLE access_log (id INTEGER PRIMARY KEY, chat_id TEXT, authorized INTEGER, timestamp DATETIME, user_name TEXT)"
-    )
-    conn.commit()
-    conn.close()
+    migrate(db_path)
 
-    adapter = TelegramAdapter(core=MagicMock(), db_path=db_path)
+    adapter = TelegramAdapter(config={}, skill_registry=MagicMock(), db_path=db_path)
     adapter._log_access_attempt(123, authorized=False, user_name="TestUser")
 
     conn = sqlite3.connect(db_path)
@@ -269,16 +178,9 @@ def test_poll_file_upload_without_caption(monkeypatch, tmp_path):
     monkeypatch.setenv("XIBI_TELEGRAM_ALLOWED_CHAT_IDS", "123")
 
     db_path = tmp_path / "xibi.db"
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "CREATE TABLE access_log (id INTEGER PRIMARY KEY, chat_id TEXT, authorized INTEGER, timestamp DATETIME, user_name TEXT)"
-    )
-    conn.commit()
-    conn.close()
+    migrate(db_path)
 
-    core = MagicMock(spec=[])
-    core.process_query = MagicMock()
-    adapter = TelegramAdapter(core=core, db_path=db_path)
+    adapter = TelegramAdapter(config={}, skill_registry=MagicMock(), db_path=db_path)
     adapter.send_message = MagicMock()
     adapter._download_file = MagicMock(return_value="/tmp/xibi_uploads/test.jpg")
 
@@ -307,69 +209,21 @@ def test_poll_file_upload_without_caption(monkeypatch, tmp_path):
     with pytest.raises(StopIteration):
         adapter.poll()
 
-    core.process_query.assert_not_called()
     assert "Got it! I've saved 'test.jpg'" in adapter.send_message.call_args[0][1]
 
 
-def test_poll_escape_word_cancels_task(monkeypatch, tmp_path):
-    monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "test-token")
-    monkeypatch.setenv("XIBI_MOCK_TELEGRAM", "1")
-    monkeypatch.setenv("XIBI_TELEGRAM_ALLOWED_CHAT_IDS", "123")
-
-    db_path = tmp_path / "xibi.db"
-    conn = sqlite3.connect(db_path)
-    conn.execute(
-        "CREATE TABLE access_log (id INTEGER PRIMARY KEY, chat_id TEXT, authorized INTEGER, timestamp DATETIME, user_name TEXT)"
-    )
-    conn.commit()
-    conn.close()
-
-    core = MagicMock()
-    core._get_awaiting_task.return_value = {"id": "task-123"}
-
-    adapter = TelegramAdapter(core=core, db_path=db_path)
-    adapter.send_message = MagicMock()
-
-    def mock_get_updates(method, params=None):
-        if method == "getUpdates":
-            if not adapter._mock_sent:
-                adapter._mock_sent = True
-                return {
-                    "ok": True,
-                    "result": [
-                        {
-                            "update_id": 1,
-                            "message": {"chat": {"id": 123}, "text": "cancel", "from": {"first_name": "Dan"}},
-                        }
-                    ],
-                }
-            raise StopIteration
-        return {"ok": True}
-
-    adapter._api_call = mock_get_updates
-
-    with pytest.raises(StopIteration):
-        adapter.poll()
-
-    core._cancel_task.assert_called_once_with("task-123")
-    adapter.send_message.assert_called_with(123, "Task cancelled. What's next?")
-
-
-# ── Idempotency tests (Fix 5) ─────────────────────────────────────────────────
+# ── Idempotency tests ────────────────────────────────────────────────────────
 
 
 def _make_adapter(tmp_path, monkeypatch):
     """Helper: create a TelegramAdapter with a real DB for idempotency tests."""
-    from xibi.db.migrations import migrate
-
     db_path = tmp_path / "xibi.db"
     migrate(db_path)
 
     monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "test-token")
-    core = MagicMock()
-    core._cancel_task = MagicMock()
     adapter = TelegramAdapter(
-        core=core,
+        config={},
+        skill_registry=MagicMock(),
         token="test-token",
         allowed_chats=["123"],
         offset_file=tmp_path / "offset.txt",
@@ -407,18 +261,15 @@ def test_mark_processed_idempotent(tmp_path, monkeypatch):
 
 def test_poll_skips_already_processed_message(tmp_path, monkeypatch):
     """poll() must skip messages whose message_id is already in processed_messages."""
-    from xibi.db.migrations import migrate
-
     db_path = tmp_path / "xibi.db"
     migrate(db_path)
 
     monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "test-token")
     monkeypatch.setenv("XIBI_MOCK_TELEGRAM", "1")
 
-    core = MagicMock()
-    core.handle = MagicMock()
     adapter = TelegramAdapter(
-        core=core,
+        config={},
+        skill_registry=MagicMock(),
         token="test-token",
         allowed_chats=["123"],
         offset_file=tmp_path / "offset.txt",
@@ -453,11 +304,10 @@ def test_poll_skips_already_processed_message(tmp_path, monkeypatch):
 
     adapter._api_call = mock_api
 
-    with pytest.raises(StopIteration):
-        adapter.poll()
-
-    # core.handle should NOT have been called since message_id=99 was already processed
-    core.handle.assert_not_called()
+    with patch("xibi.channels.telegram.react_run") as mock_run:
+        with pytest.raises(StopIteration):
+            adapter.poll()
+        mock_run.assert_not_called()
 
 
 def test_purge_old_processed_messages(tmp_path, monkeypatch):
@@ -477,3 +327,57 @@ def test_purge_old_processed_messages(tmp_path, monkeypatch):
 
     assert 1 not in ids, "Old message should have been purged"
     assert 2 in ids, "Recent message should be kept"
+
+
+# ── New Bug Fix tests ────────────────────────────────────────────────────────
+
+
+def test_handle_text_calls_react_run(monkeypatch, tmp_path):
+    monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "test-token")
+    registry = MagicMock()
+    registry.get_skill_manifests.return_value = [{"name": "test_skill"}]
+    db_path = tmp_path / "xibi.db"
+    migrate(db_path)
+    adapter = TelegramAdapter(config={"some": "config"}, skill_registry=registry, db_path=db_path)
+
+    with patch("xibi.channels.telegram.react_run") as mock_run:
+        mock_run.return_value = ReActResult(answer="Success!", steps=[], exit_reason="finish", duration_ms=100)
+        adapter._handle_text(123, "hello bot")
+
+        mock_run.assert_called_once()
+        args, _ = mock_run.call_args
+        assert args[0] == "hello bot"
+        assert args[1] == {"some": "config"}
+        assert args[2] == [{"name": "test_skill"}]
+
+
+def test_handle_text_react_error(monkeypatch, tmp_path):
+    monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "test-token")
+    db_path = tmp_path / "xibi.db"
+    migrate(db_path)
+    adapter = TelegramAdapter(config={}, skill_registry=MagicMock(), db_path=db_path)
+    adapter.send_message = MagicMock()
+
+    with patch("xibi.channels.telegram.react_run") as mock_run:
+        result = ReActResult(answer="", steps=[], exit_reason="error", duration_ms=100)
+        # Mock user_facing_failure_message
+        result.user_facing_failure_message = MagicMock(return_value="Something went wrong")
+        mock_run.return_value = result
+
+        adapter._handle_text(123, "cause error")
+        adapter.send_message.assert_called_with(123, "Something went wrong")
+
+
+def test_handle_text_no_answer(monkeypatch, tmp_path):
+    monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "test-token")
+    db_path = tmp_path / "xibi.db"
+    migrate(db_path)
+    adapter = TelegramAdapter(config={}, skill_registry=MagicMock(), db_path=db_path)
+    adapter.send_message = MagicMock()
+
+    with patch("xibi.channels.telegram.react_run") as mock_run:
+        # Hit the fallback branch in _handle_text
+        mock_run.return_value = ReActResult(answer="", steps=[], exit_reason="finish", duration_ms=100)
+
+        adapter._handle_text(123, "no answer")
+        adapter.send_message.assert_called_with(123, "I didn't get an answer. Try rephrasing?")

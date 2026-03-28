@@ -6,8 +6,13 @@ import sys
 from pathlib import Path
 
 import xibi.db
+from xibi.channels.telegram import TelegramAdapter
 from xibi.db import SchemaManager, init_workdir
 from xibi.db.migrations import SCHEMA_VERSION
+from xibi.executor import LocalHandlerExecutor
+from xibi.routing.control_plane import ControlPlaneRouter
+from xibi.routing.shadow import ShadowMatcher
+from xibi.skills.registry import SkillRegistry
 
 
 def cmd_init(args: argparse.Namespace) -> None:
@@ -86,6 +91,51 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_telegram(args: argparse.Namespace) -> None:
+    """Run the Telegram bot."""
+    workdir = Path(args.workdir).expanduser()
+    config_path = workdir / "config.json"
+    if not config_path.exists():
+        print(f"❌ config.json missing at {workdir}. Run 'xibi init' first.")
+        sys.exit(1)
+
+    try:
+        with config_path.open() as f:
+            config = json.load(f)
+    except Exception as e:
+        print(f"❌ Failed to load config: {e}")
+        sys.exit(1)
+
+    skills_dir = workdir / "skills"
+    if not skills_dir.exists():
+        skills_dir = Path("xibi/skills/sample")  # Fallback
+
+    registry = SkillRegistry(str(skills_dir))
+    executor = LocalHandlerExecutor(registry)
+    control_plane = ControlPlaneRouter()
+    shadow = ShadowMatcher()
+    shadow.load_manifests(str(skills_dir))
+
+    db_path = workdir / "data" / "xibi.db"
+
+    print(f"Starting Telegram bot with workdir {workdir}...")
+    try:
+        adapter = TelegramAdapter(
+            config=config,
+            skill_registry=registry,
+            executor=executor,
+            control_plane=control_plane,
+            shadow=shadow,
+            db_path=db_path,
+        )
+        adapter.poll()
+    except KeyboardInterrupt:
+        print("\nStopping Telegram bot...")
+    except Exception as e:
+        print(f"❌ Fatal error: {e}")
+        sys.exit(1)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="xibi", description="Xibi AI Assistant CLI")
     parser.add_argument(
@@ -101,12 +151,17 @@ def main() -> None:
     # doctor
     subparsers.add_parser("doctor", help="Check workdir health")
 
+    # telegram
+    subparsers.add_parser("telegram", help="Run the Telegram bot")
+
     args = parser.parse_args()
 
     if args.command == "init":
         cmd_init(args)
     elif args.command == "doctor":
         cmd_doctor(args)
+    elif args.command == "telegram":
+        cmd_telegram(args)
 
 
 if __name__ == "__main__":

@@ -14,8 +14,13 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from xibi import react
+from xibi.executor import Executor
+from xibi.react import run as react_run
+from xibi.router import Config
+from xibi.routing.control_plane import ControlPlaneRouter
+from xibi.routing.shadow import ShadowMatcher
 from xibi.session import SessionContext
+from xibi.skills.registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -72,13 +77,21 @@ def extract_task_id(text: str) -> str | None:
 class TelegramAdapter:
     def __init__(
         self,
-        core: Any,
+        config: Config,
+        skill_registry: SkillRegistry,
+        executor: Executor | None = None,
+        control_plane: ControlPlaneRouter | None = None,
+        shadow: ShadowMatcher | None = None,
         token: str | None = None,
         allowed_chats: list[str] | None = None,
         offset_file: Path | str | None = None,
         db_path: Path | str | None = None,
     ) -> None:
-        self.core = core
+        self.config = config
+        self.skill_registry = skill_registry
+        self.executor = executor
+        self.control_plane = control_plane
+        self.shadow = shadow
         self.token = token or os.environ.get("XIBI_TELEGRAM_TOKEN")
         if not self.token:
             raise ValueError("Telegram token missing (set XIBI_TELEGRAM_TOKEN env var or pass token arg)")
@@ -245,14 +258,11 @@ class TelegramAdapter:
     def _get_session(self, chat_id: int) -> SessionContext:
         if chat_id not in self._sessions:
             session_id = f"telegram:{chat_id}:{date.today().isoformat()}"
-            # self.core.config might not be accessible easily if it's a wrapper,
-            # but usually it is. If not, session uses default which is fine.
-            config = getattr(self.core, "config", None)
-            self._sessions[chat_id] = SessionContext(session_id, self.db_path, config=config)
+            self._sessions[chat_id] = SessionContext(session_id, self.db_path, config=self.config)
         return self._sessions[chat_id]
 
-    def _process_message(self, chat_id: int, user_text: str) -> None:
-        """Handle core engine interaction, task routing, and response sending."""
+    def _handle_text(self, chat_id: int, user_text: str) -> None:
+        """Handle core engine interaction and response sending."""
         self._api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
         timer = threading.Timer(NUDGE_DELAY, self._nudge_callback, args=(chat_id,))
         self._active_chats[chat_id] = {"nudge_sent": False, "nudge_timer": timer}
@@ -262,48 +272,35 @@ class TelegramAdapter:
 
         try:
             response = None
-            escape_words = {"cancel", "skip", "nevermind", "not now", "forget it", "move on"}
 
-            if hasattr(self.core, "_get_awaiting_task"):
-                awaiting = self.core._get_awaiting_task()
-                if awaiting:
-                    if user_text.strip().lower() in escape_words:
-                        self.core._cancel_task(awaiting["id"])
-                        response = "Task cancelled. What's next?"
-                    else:
-                        response = self.core._resume_task(awaiting["id"], user_text)
+            session = self._get_session(chat_id)
+            result = react_run(
+                user_text,
+                self.config,
+                self.skill_registry.get_skill_manifests(),
+                executor=self.executor,
+                control_plane=self.control_plane,
+                shadow=self.shadow,
+                session_context=session,
+            )
+            if result.answer:
+                response = result.answer
+            elif result.exit_reason in ("error", "timeout", "max_steps"):
+                response = result.user_facing_failure_message()
+            else:
+                response = "I didn't get an answer. Try rephrasing?"
 
-            if not response:
-                session = self._get_session(chat_id)
-                # We need access to registry and executor which are usually on core
-                registry = getattr(self.core, "registry", None)
-                executor = getattr(self.core, "executor", None)
-                config = getattr(self.core, "config", None)
-
-                if registry and executor and config:
-                    result = react.run(
-                        user_text,
-                        config,
-                        registry.get_skill_manifests(),
-                        executor=executor,
-                        session_context=session,
-                    )
-                    if result.answer:
-                        response = result.answer
-                    elif result.exit_reason in ("error", "timeout", "max_steps"):
-                        response = result.user_facing_failure_message()
-
-                    # Always add turn (even if empty answer)
-                    # Run in background to avoid blocking
-                    threading.Thread(target=session.add_turn, args=(user_text, result), daemon=True).start()
-                else:
-                    # Fallback if core doesn't expose them
-                    response = self.core.process_query(user_text)
+            # Always add turn (even if empty answer)
+            # Run in background to avoid blocking
+            if os.environ.get("XIBI_SYNC_SESSION") == "1":
+                session.add_turn(user_text, result)
+            else:
+                threading.Thread(target=session.add_turn, args=(user_text, result), daemon=True).start()
 
             if response:
                 self.send_message(chat_id, response)
 
-            # Clear attachment if processing was successful (indicated by "sent" or regular response)
+            # Clear attachment if processing was successful
             if pending_path:
                 self._pending_attachments.pop(chat_id, None)
         except Exception as e:
@@ -381,7 +378,7 @@ class TelegramAdapter:
                             self._pending_attachments[chat_id] = local_path
                             if caption:
                                 user_text = f"{caption} [attachment saved at {local_path}]"
-                                self._process_message(chat_id, user_text)
+                                self._handle_text(chat_id, user_text)
                             else:
                                 fname = os.path.basename(local_path)
                                 self.send_message(
@@ -412,7 +409,7 @@ class TelegramAdapter:
                     elif pending_path:
                         self._pending_attachments.pop(chat_id, None)
 
-                    self._process_message(chat_id, user_text)
+                    self._handle_text(chat_id, user_text)
                     try:
                         with sqlite3.connect(self.db_path, timeout=10) as _conn:
                             _conn.execute("PRAGMA journal_mode=WAL")

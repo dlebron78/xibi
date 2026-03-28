@@ -334,8 +334,23 @@ def run(
             else:
                 tool_output = dispatch(step.tool, step.tool_input, skill_registry, executor=executor)
                 step.tool_output = tool_output
-                if tool_output.get("status") == "error" and "_xibi_error" in tool_output:
+                step.duration_ms = int((time.time() - step_start_time) * 1000)  # now includes tool time
+
+                if tool_output.get("_xibi_error"):
                     step.error = tool_output["_xibi_error"]
+                elif tool_output.get("status") == "error":
+                    step.error = XibiError(
+                        category=ErrorCategory.UNKNOWN,
+                        message=tool_output.get("message", "Tool returned error without detail"),
+                        component=step.tool,
+                        detail=str(tool_output.get("detail") or ""),
+                    )
+                elif isinstance(tool_output.get("error"), str):
+                    step.error = XibiError(
+                        category=ErrorCategory.UNKNOWN,
+                        message=tool_output["error"],
+                        component=step.tool,
+                    )
 
             scratchpad.append(step)
 
