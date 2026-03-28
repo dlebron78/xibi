@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from xibi.router import Config, ModelClient
+    from xibi.trust.gradient import TrustGradient
 
 from xibi.router import get_model
 
@@ -118,8 +119,8 @@ def quality_score_span(
 
 
 def apply_quality_to_trust(
-    score: "QualityScore",
-    trust: "TrustGradient",
+    score: QualityScore,
+    trust: TrustGradient,
     specialty: str,
     effort: str,
 ) -> None:
