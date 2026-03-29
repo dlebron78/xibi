@@ -16,7 +16,7 @@
                 "show me what's in the workspace",
                 "what documents are available"
             ],
-            "parameters": []
+            "inputSchema": []
         },
         {
             "name": "read_file",
@@ -30,7 +30,7 @@
                 "show me the contents of config.json",
                 "open README.md"
             ],
-            "parameters": [
+            "inputSchema": [
                 {
                     "name": "filepath",
                     "type": "string",
@@ -49,7 +49,7 @@
                 "write a note to notes.txt",
                 "save this to output.md"
             ],
-            "parameters": [
+            "inputSchema": [
                 {
                     "name": "filepath",
                     "type": "string",
@@ -73,7 +73,7 @@
                 "add a note to BUGS_AND_ISSUES.md",
                 "append a log entry to activity.log"
             ],
-            "parameters": [
+            "inputSchema": [
                 {
                     "name": "filepath",
                     "type": "string",

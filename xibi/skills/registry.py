@@ -64,6 +64,16 @@ class SkillRegistry:
                 return skill_name
         return None
 
+    def register(self, manifest: dict[str, Any]) -> None:
+        """Register a synthetic manifest at runtime (e.g. from MCP)."""
+        name = manifest.get("name")
+        if not name:
+            logger.warning("Attempted to register manifest without 'name'")
+            return
+
+        # Synthetic skills don't have a physical path
+        self.skills[name] = SkillInfo(name=name, manifest=manifest, path=Path("/dev/null"))
+
     def validate(self) -> list[str]:
         warnings = []
         for skill_name, skill_info in self.skills.items():

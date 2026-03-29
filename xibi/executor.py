@@ -7,6 +7,7 @@ from typing import Any
 
 from xibi.circuit_breaker import CircuitBreaker, CircuitBreakerConfig, FailureType
 from xibi.errors import ErrorCategory, XibiError
+from xibi.mcp.registry import MCPServerRegistry
 from xibi.router import Config, get_timeout
 from xibi.skills.registry import SkillRegistry
 
@@ -19,14 +20,60 @@ _EXECUTOR_CAPACITY_WARNING = 6  # 75% of max_workers — warn before saturation
 TOOL_TIMEOUT_SECS = 15  # default; overridable per-tool in manifest via "timeout_secs"
 
 
+class MCPExecutor:
+    def __init__(self, registry: MCPServerRegistry) -> None:
+        self.registry = registry
+
+    def can_handle(self, tool_name: str) -> bool:
+        """True if tool_name is registered from any MCP server."""
+        skill_name = self.registry.skill_registry.find_skill_for_tool(tool_name)
+        if skill_name and skill_name.startswith("mcp_"):
+            return True
+        return False
+
+    def execute(self, tool_name: str, arguments: dict) -> dict:
+        """Look up which server owns this tool, call it, return result dict."""
+        skill_name = self.registry.skill_registry.find_skill_for_tool(tool_name)
+        if not skill_name:
+            return {"status": "error", "error": f"Tool {tool_name} not found"}
+
+        tool_meta = self.registry.skill_registry.get_tool_meta(skill_name, tool_name)
+        if not tool_meta:
+            return {"status": "error", "error": f"Tool {tool_name} meta not found"}
+
+        server_name = tool_meta.get("server")
+        original_name = tool_meta.get("original_name", tool_name)
+        client = self.registry.get_client(server_name)
+        if not client:
+            return {"status": "error", "error": f"MCP client for {server_name} not found"}
+
+        return client.call_tool(original_name, arguments)
+
+
 class Executor:
-    def __init__(self, registry: SkillRegistry, workdir: str | Path | None = None, config: Config | None = None):
+    def __init__(
+        self,
+        registry: SkillRegistry,
+        workdir: str | Path | None = None,
+        config: Config | None = None,
+        mcp_registry: MCPServerRegistry | None = None,
+    ):
         self.registry = registry
         self.workdir = Path(workdir) if workdir else None
         self.config = config or {}
         self.db_path = self.config.get("db_path") or Path.home() / ".xibi" / "data" / "xibi.db"
+        self.mcp_executor = MCPExecutor(mcp_registry) if mcp_registry else None
 
     def execute(self, tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+        # MCP check before local
+        if self.mcp_executor and self.mcp_executor.can_handle(tool_name):
+            # Collision check: local wins
+            local_skill = self.registry.find_skill_for_tool(tool_name)
+            if local_skill and not local_skill.startswith("mcp_"):
+                logger.warning(f"Tool name collision: '{tool_name}' exists in local skill '{local_skill}' and MCP. Local wins.")
+            else:
+                return self.mcp_executor.execute(tool_name, tool_input)
+
         # 1. Resolve skill
         skill_name = tool_name if tool_name in self.registry.skills else self.registry.find_skill_for_tool(tool_name)
 

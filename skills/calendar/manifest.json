@@ -12,7 +12,7 @@
         "schedule for tomorrow",
         "what's my day look like"
       ],
-      "parameters": {
+      "inputSchema": {
         "days": {
           "type": "integer",
           "description": "Number of days ahead to look (default: 7, max: 30)",
@@ -36,7 +36,7 @@
         "do i have a doctor's appointment",
         "find the sync with the engineering team"
       ],
-      "parameters": {
+      "inputSchema": {
         "query": {
           "type": "string",
           "description": "Search query to match against event titles and descriptions",
@@ -60,7 +60,7 @@
         "schedule lunch on friday",
         "create an event for the project kickoff"
       ],
-      "parameters": {
+      "inputSchema": {
         "title": {
           "type": "string",
           "description": "Event title / summary",

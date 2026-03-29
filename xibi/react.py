@@ -78,7 +78,7 @@ def dispatch(
     if command_layer is not None:
         # Resolve the tool's manifest_schema from skill_registry
         tool_manifest = next((t for t in skill_registry if t.get("name") == tool_name), None)
-        manifest_schema = tool_manifest.get("input_schema") if tool_manifest else None
+        manifest_schema = tool_manifest.get("inputSchema") if tool_manifest else None
 
         result = command_layer.check(tool_name, tool_input, manifest_schema)
         if not result.allowed:

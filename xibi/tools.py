@@ -76,7 +76,7 @@ def validate_schema(
     manifest_schema: dict[str, Any] | None,
 ) -> list[str]:
     """
-    Validate tool_input against manifest input_schema.
+    Validate tool_input against manifest inputSchema.
     Returns a list of error strings (empty list = valid).
 
     Validation rules:

@@ -24,7 +24,7 @@
                 "find information about the mars rover",
                 "what's the weather in Seattle"
             ],
-            "parameters": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "query": {
@@ -46,7 +46,7 @@
                 "summarize that webpage for me",
                 "fetch the content of the link"
             ],
-            "parameters": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "url": {
@@ -64,7 +64,7 @@
             "output_type": "action",
             "access": "operator",
             "description": "Configure the web search engine settings.",
-            "parameters": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "api_key": {
@@ -82,7 +82,7 @@
             "output_type": "synthesis",
             "access": "operator",
             "description": "Fallback web search via Tavily API. Use only when search_searxng is unavailable. Requires TAVILY_API_KEY in secrets.env.",
-            "parameters": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "query": {
