@@ -43,11 +43,118 @@ class SessionEntity:
 class SessionContext:
     FULL_WINDOW = 2  # Last N turns injected in full detail
     SUMMARY_WINDOW = 4  # Turns 3-6 injected as one-liner summaries
+    COMPRESS_WINDOW = 8  # max turns to read during compression
+    MAX_BELIEFS = 5  # max beliefs to extract per session
 
     def __init__(self, session_id: str, db_path: Path, config: Config | None = None) -> None:
         self.session_id = session_id
         self.db_path = db_path
         self.config = config
+
+    def compress_to_beliefs(self) -> int:
+        """
+        Extract durable facts from this session's turns and store them as beliefs.
+        Returns the number of beliefs written (0 on skip or error).
+        Never raises.
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                # Dedup check
+                sentinel_key = f"session:{self.session_id}:compressed"
+                exists = conn.execute("SELECT 1 FROM beliefs WHERE key = ?", (sentinel_key,)).fetchone()
+                if exists:
+                    return 0
+
+                # Fetch turns
+                rows = conn.execute(
+                    """
+                    SELECT query, answer FROM session_turns
+                    WHERE session_id = ?
+                    ORDER BY created_at ASC
+                    LIMIT ?
+                    """,
+                    (self.session_id, self.COMPRESS_WINDOW),
+                ).fetchall()
+
+                if not rows:
+                    return 0
+
+                exchanges = []
+                for r in rows:
+                    exchanges.append(f"User: {r['query']}\nXibi: {r['answer'][:300]}\n---")
+
+                exchanges_text = "\n".join(exchanges)[:2000]
+
+                prompt = f"""You are extracting durable facts from a conversation to remember for future sessions.
+Read the exchanges below and extract up to 5 facts that would be useful to recall later.
+
+Focus on:
+- User preferences ("user prefers X over Y")
+- Ongoing projects or topics ("project: Miami conference, deadline: April 5")
+- Recurring contacts or entities ("user's assistant is Jake at jacob@corp.com")
+- Decisions made ("user decided to reply to the invoice next week")
+
+Skip transient information (weather, one-off queries, ephemeral facts).
+
+Return JSON only:
+{{
+  "beliefs": [
+    {{"key": "short-key", "value": "one sentence fact", "confidence": 0.0-1.0}}
+  ]
+}}
+
+Exchanges:
+{exchanges_text}"""
+
+                llm = get_model(specialty="text", effort="fast", config=self.config)
+                response = llm.generate(prompt)
+
+                # Parse JSON
+                match = re.search(r"\{.*\}", response, re.DOTALL)
+                if not match:
+                    return 0
+
+                data = json.loads(match.group())
+                beliefs = data.get("beliefs", [])
+                written = 0
+                now = datetime.utcnow()
+                valid_until = (now + timedelta(days=30)).isoformat()
+
+                for b in beliefs[: self.MAX_BELIEFS]:
+                    confidence = b.get("confidence", 0.0)
+                    if confidence < 0.75:
+                        continue
+
+                    key = f"mem:{b.get('key', '')[:40]}"
+                    value = b.get("value", "")[:200]
+                    metadata = json.dumps(
+                        {"session_id": self.session_id, "turn_count": len(rows), "compressed_at": now.isoformat()}
+                    )
+
+                    conn.execute(
+                        """
+                        INSERT INTO beliefs (key, value, type, visibility, metadata, valid_until)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (key, value, "session_memory", "internal", metadata, valid_until),
+                    )
+                    written += 1
+
+                # Write sentinel
+                conn.execute(
+                    """
+                    INSERT INTO beliefs (key, value, type, visibility, valid_until)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (sentinel_key, "1", "session_compression_marker", "internal", valid_until),
+                )
+                conn.commit()
+                return written
+
+        except Exception as e:
+            logger.debug(f"Compression failed for session {self.session_id}: {e}")
+            return 0
 
     def add_turn(self, query: str, result: ReActResult) -> Turn:
         turn_id = str(uuid.uuid4())
@@ -90,6 +197,36 @@ class SessionContext:
         self.summarise_old_turns()
         return turn
 
+    def _get_session_memories(self) -> str:
+        """
+        Fetch recent session_memory beliefs for injection into context.
+        Returns "" if none found.
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute(
+                    """
+                    SELECT value FROM beliefs
+                    WHERE type = 'session_memory'
+                      AND (valid_until IS NULL OR valid_until > ?)
+                    ORDER BY updated_at DESC
+                    LIMIT ?
+                    """,
+                    (datetime.utcnow().isoformat(), self.MAX_BELIEFS),
+                ).fetchall()
+
+                if not rows:
+                    return ""
+
+                lines = ["\nWhat I remember from before:"]
+                for r in rows:
+                    lines.append(f"- {r['value']}")
+                return "\n".join(lines)
+        except Exception as e:
+            logger.debug(f"Failed to fetch session memories: {e}")
+            return ""
+
     def get_context_block(self) -> str:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
@@ -109,6 +246,7 @@ class SessionContext:
         # Stale session check (> 30 mins)
         last_turn_time = datetime.fromisoformat(rows[0]["created_at"])
         if datetime.utcnow() - last_turn_time > timedelta(minutes=30):
+            self.compress_to_beliefs()
             return ""
 
         turns = [
@@ -153,6 +291,11 @@ class SessionContext:
             for etype, values in by_type.items():
                 unique_values = sorted(list(set(values)))
                 lines.append(f"  {etype}: {', '.join(unique_values)}")
+
+        # Append memories from past sessions
+        memories = self._get_session_memories()
+        if memories:
+            lines.append(memories)
 
         return "\n".join(lines)
 
