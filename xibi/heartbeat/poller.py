@@ -280,7 +280,6 @@ class HeartbeatPoller:
                             db_path=str(self.db_path),
                             profile=self.profile,
                             interactive=False,  # ALWAYS non-interactive in heartbeat context
-                        trust_gradient=self.trust_gradient,
                         ),
                     )
 

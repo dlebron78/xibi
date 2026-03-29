@@ -5,7 +5,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from xibi.db import open_db
 from xibi.tools import PermissionTier, resolve_tier, validate_schema
@@ -44,8 +44,6 @@ class CommandLayer:
         db_path: str | None = None,
         profile: dict[str, Any] | None = None,
         interactive: bool = True,
-        *,
-        trust_gradient: TrustGradient | None = None,
     ) -> None:
         """
         db_path: SQLite database path for dedup + audit log.
@@ -56,7 +54,6 @@ class CommandLayer:
         self.db_path = db_path
         self.profile = profile or {}
         self.interactive = interactive
-        self.trust_gradient = trust_gradient
 
     def check(
         self,
