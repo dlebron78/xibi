@@ -7,9 +7,14 @@ import re
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from xibi.db import open_db
 from xibi.router import Config, get_model
+from xibi.trust.gradient import FailureType
+
+if TYPE_CHECKING:
+    from xibi.trust.gradient import TrustGradient
 
 logger = logging.getLogger(__name__)
 
@@ -302,7 +307,9 @@ def merge_intels(tier0: list[SignalIntel], tier1: list[SignalIntel]) -> list[Sig
     return merged
 
 
-def enrich_signals(db_path: Path, config: Config | None, batch_size: int = 20) -> int:
+def enrich_signals(
+    db_path: Path, config: Config | None, batch_size: int = 20, *, trust_gradient: TrustGradient | None = None
+) -> int:
     """Main entry point. Returns count of signals enriched. Never raises."""
     try:
         with open_db(db_path) as conn:
@@ -316,11 +323,34 @@ def enrich_signals(db_path: Path, config: Config | None, batch_size: int = 20) -
 
         signals = [dict(r) for r in rows]
 
+        # Ensure content_preview is always a string for re.search
+        for s in signals:
+            if s.get("content_preview") is None:
+                s["content_preview"] = ""
+
         # Tier 0 extraction (free)
         tier0_intels = [extract_tier0(s) for s in signals]
 
         # Tier 1 extraction (fast role batch call)
-        tier1_intels = extract_tier1_batch(signals, config)
+        run_tier1 = True
+        if trust_gradient is not None:
+            run_tier1 = trust_gradient.should_audit("text", "fast")
+
+        if run_tier1:
+            tier1_intels = extract_tier1_batch(signals, config)
+            # Record trust based on extraction quality
+            if trust_gradient is not None:
+                try:
+                    valid_count = sum(1 for t in tier1_intels if any([t.action_type, t.urgency, t.direction]))
+                    if valid_count == 0 and len(tier1_intels) > 0:
+                        trust_gradient.record_failure("text", "fast", FailureType.PERSISTENT)
+                    else:
+                        trust_gradient.record_success("text", "fast")
+                except Exception as e:
+                    logger.warning(f"Signal Intelligence: failed to record trust: {e}")
+        else:
+            # Trust says skip tier-1 this batch → use tier-0 only
+            tier1_intels = [SignalIntel(signal_id=s["id"]) for s in signals]
 
         # Merge: use tier1 fields where available, tier0 as fallback
         merged = merge_intels(tier0_intels, tier1_intels)

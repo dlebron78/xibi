@@ -6,7 +6,7 @@ import sqlite3
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import xibi.db
 from xibi.alerting.rules import RuleEngine
@@ -15,6 +15,9 @@ from xibi.command_layer import CommandLayer
 from xibi.observation import ObservationCycle
 from xibi.radiant import Radiant
 from xibi.router import get_model
+
+if TYPE_CHECKING:
+    from xibi.trust.gradient import TrustGradient
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +37,8 @@ class HeartbeatPoller:
         profile: dict[str, Any] | None = None,
         signal_intelligence_enabled: bool = True,
         radiant: Radiant | None = None,
+        *,
+        trust_gradient: TrustGradient | None = None,
     ) -> None:
         self.skills_dir = skills_dir
         self.db_path = db_path
@@ -47,6 +52,14 @@ class HeartbeatPoller:
         self.profile = profile or {}
         self.signal_intelligence_enabled = signal_intelligence_enabled
         self.radiant = radiant
+
+        if trust_gradient is None and self.db_path is not None:
+            from xibi.trust.gradient import TrustGradient
+
+            self.trust_gradient = TrustGradient(self.db_path)
+        else:
+            self.trust_gradient = trust_gradient
+
         self._last_reflection_date: Any = None  # Tracks date as string or None
         self._audit_tick_counter = 0
 
@@ -246,6 +259,7 @@ class HeartbeatPoller:
                     db_path=self.db_path,
                     config=self.profile if self.profile else None,  # type: ignore
                     batch_size=20,
+                    trust_gradient=self.trust_gradient,
                 )
                 if enriched > 0:
                     logger.debug(f"Signal intelligence: enriched {enriched} signals")
@@ -296,7 +310,7 @@ class HeartbeatPoller:
             audit_interval = self.profile.get("audit_interval_ticks", 20)
             if self._audit_tick_counter >= audit_interval:
                 self._audit_tick_counter = 0
-                self.radiant.run_audit(self.adapter)
+                self.radiant.run_audit(self.adapter, trust_gradient=self.trust_gradient)
 
     def digest_tick(self, force: bool = False) -> None:
         if self._is_quiet_hours() and not force:
