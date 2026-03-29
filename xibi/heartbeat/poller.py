@@ -9,11 +9,11 @@ from pathlib import Path
 from typing import Any
 
 import xibi.db
-from xibi.radiant import Radiant
 from xibi.alerting.rules import RuleEngine
 from xibi.channels.telegram import TelegramAdapter
 from xibi.command_layer import CommandLayer
 from xibi.observation import ObservationCycle
+from xibi.radiant import Radiant
 from xibi.router import get_model
 
 logger = logging.getLogger(__name__)
@@ -395,13 +395,13 @@ class HeartbeatPoller:
 
 def _infer_provider(role: str, config: dict[str, Any]) -> str:
     try:
-        return config["models"]["text"][role]["provider"]
+        return str(config["models"]["text"][role]["provider"])
     except KeyError:
         return "unknown"
 
 
 def _infer_model(role: str, config: dict[str, Any]) -> str:
     try:
-        return config["models"]["text"][role]["model"]
+        return str(config["models"]["text"][role]["model"])
     except KeyError:
         return "unknown"

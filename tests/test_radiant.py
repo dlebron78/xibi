@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from xibi.db import migrate
-from xibi.radiant import Radiant, COST_PER_TOKEN, _nudge_state
+from xibi.radiant import COST_PER_TOKEN, Radiant, _nudge_state
 
 
 @pytest.fixture

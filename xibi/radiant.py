@@ -152,7 +152,7 @@ class Radiant:
     def summary(self, days: int = 7) -> dict[str, Any]:
         """Return a summary of inference and cost data."""
         try:
-            summary = {
+            summary: dict[str, Any] = {
                 "inference_by_role": {
                     "fast": {"count": 0, "total_tokens": 0, "total_cost_usd": 0.0},
                     "think": {"count": 0, "total_tokens": 0, "total_cost_usd": 0.0},
