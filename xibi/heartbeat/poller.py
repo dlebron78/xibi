@@ -13,7 +13,7 @@ from xibi.alerting.rules import RuleEngine
 from xibi.channels.telegram import TelegramAdapter
 from xibi.command_layer import CommandLayer
 from xibi.observation import ObservationCycle
-from xibi.router import Config, get_model
+from xibi.router import get_model
 
 logger = logging.getLogger(__name__)
 
