@@ -7,7 +7,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 11  # increment when adding new migrations
+SCHEMA_VERSION = 12  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -41,6 +41,7 @@ class SchemaManager:
             (9, "session entities: cross-domain extraction", self._migration_9),
             (10, "tracing: spans table", self._migration_10),
             (11, "observation cycle tracking", self._migration_11),
+            (12, "signal intelligence + thread materialization", self._migration_12),
         ]
 
         for version, description, func in migrations:
@@ -325,6 +326,52 @@ class SchemaManager:
                 error_log              TEXT                         -- JSON: list of error strings, if any
             );
         """)
+
+    def _migration_12(self, conn: sqlite3.Connection) -> None:
+        # Create new tables
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS threads (
+                id          TEXT PRIMARY KEY,            -- e.g. "thread-abc123" (hash-based, stable)
+                name        TEXT NOT NULL,               -- short label: "Job search — Acme Corp"
+                status      TEXT DEFAULT 'active',       -- 'active' | 'resolved' | 'stale'
+                current_deadline TEXT,                   -- ISO date string, NULL if none
+                owner       TEXT,                        -- 'me' | 'them' | 'unclear'
+                key_entities TEXT NOT NULL DEFAULT '[]', -- JSON: ["contact-001", "contact-002"]
+                summary     TEXT,                        -- LLM-generated, updated periodically (NULL initially)
+                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                signal_count INTEGER NOT NULL DEFAULT 0,
+                source_channels TEXT NOT NULL DEFAULT '[]'  -- JSON: ["email", "chat"]
+            );
+
+            CREATE TABLE IF NOT EXISTS contacts (
+                id           TEXT PRIMARY KEY,           -- e.g. "contact-abc123" (email hash)
+                display_name TEXT NOT NULL,
+                email        TEXT,
+                organization TEXT,
+                relationship TEXT,                       -- 'vendor' | 'client' | 'recruiter' | 'colleague' | 'unknown'
+                first_seen   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_seen    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                signal_count INTEGER NOT NULL DEFAULT 0
+            );
+        """)
+
+        # Add columns to signals (each separately, idempotent)
+        new_cols = [
+            ("action_type", "TEXT"),    # 'request' | 'reply' | 'fyi' | 'confirmation'
+            ("urgency", "TEXT"),        # 'high' | 'medium' | 'low'
+            ("direction", "TEXT"),      # 'inbound' | 'outbound'
+            ("entity_org", "TEXT"),     # organization name from sender, NULL if none
+            ("is_direct", "INTEGER"),   # 1 if user is in To: (not CC), NULL if unknown
+            ("cc_count", "INTEGER"),    # number of CC recipients, NULL if unknown
+            ("thread_id", "TEXT"),      # FK ref to threads(id), NULL until matched
+            ("intel_tier", "INTEGER DEFAULT 0"), # highest extraction tier applied
+        ]
+        for col_name, col_type in new_cols:
+            try:
+                conn.execute(f"ALTER TABLE signals ADD COLUMN {col_name} {col_type}")
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
 
 def migrate(db_path: Path) -> list[int]:

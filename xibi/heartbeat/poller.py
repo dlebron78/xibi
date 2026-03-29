@@ -31,6 +31,7 @@ class HeartbeatPoller:
         quiet_end: int = 8,
         observation_cycle: ObservationCycle | None = None,
         profile: dict[str, Any] | None = None,
+        signal_intelligence_enabled: bool = True,
     ) -> None:
         self.skills_dir = skills_dir
         self.db_path = db_path
@@ -42,6 +43,7 @@ class HeartbeatPoller:
         self.quiet_end = quiet_end
         self.observation_cycle = observation_cycle
         self.profile = profile or {}
+        self.signal_intelligence_enabled = signal_intelligence_enabled
         self._last_reflection_date: Any = None  # Tracks date as string or None
 
     def _broadcast(self, text: str) -> None:
@@ -231,6 +233,19 @@ class HeartbeatPoller:
 
             # Mark seen
             self.rules.mark_seen_with_conn(conn, email_id)
+
+        if self.signal_intelligence_enabled:
+            try:
+                from xibi.signal_intelligence import enrich_signals
+                enriched = enrich_signals(
+                    db_path=self.db_path,
+                    config=self.profile,
+                    batch_size=20,
+                )
+                if enriched > 0:
+                    logger.debug(f"Signal intelligence: enriched {enriched} signals")
+            except Exception as e:
+                logger.warning(f"Signal intelligence enrichment failed: {e}")
 
         if self.observation_cycle is not None:
             try:

@@ -464,3 +464,16 @@ def test_digest_tick_uses_pop_digest_items(tmp_path):
         hp.digest_tick()
     rules.pop_digest_items.assert_called_once()
     rules.get_digest_items.assert_not_called()
+
+
+def test_poller_signal_intelligence_disabled():
+    rules = MagicMock()
+    hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), rules, [123], signal_intelligence_enabled=False)
+    with (
+        patch("xibi.db.open_db", _make_mock_db_ctx()),
+        patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
+        patch.object(HeartbeatPoller, "_check_email", return_value=[]),
+        patch("xibi.signal_intelligence.enrich_signals") as mock_enrich,
+    ):
+        hp.tick()
+        mock_enrich.assert_not_called()

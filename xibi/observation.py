@@ -290,7 +290,8 @@ class ObservationCycle:
         """
         Return all signals with id > watermark, ordered by id ASC.
         Each row returned as a dict with keys: id, timestamp, source, topic_hint,
-        entity_text, content_preview, ref_id, ref_source.
+        entity_text, content_preview, ref_id, ref_source, action_type, urgency,
+        direction, entity_org, is_direct, cc_count, thread_id, intel_tier.
         Returns at most 100 signals per cycle (hard cap to prevent context overflow).
         Never raises; returns [] on error.
         """
@@ -299,7 +300,7 @@ class ObservationCycle:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.execute(
                     """
-                    SELECT id, timestamp, source, topic_hint, entity_text, content_preview, ref_id, ref_source
+                    SELECT *
                     FROM signals WHERE id > ? ORDER BY id ASC LIMIT 100
                 """,
                     (watermark,),
@@ -309,6 +310,34 @@ class ObservationCycle:
             logger.warning(f"Error collecting signals: {e}")
             return []
 
+    def _get_thread_context(self, signals: list[dict[str, Any]]) -> str:
+        """
+        Query the DB for threads referenced by the signals in the dump.
+        Return a formatted string.
+        """
+        thread_ids = {s["thread_id"] for s in signals if s.get("thread_id")}
+        if not thread_ids:
+            return ""
+
+        try:
+            lines = []
+            with open_db(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                placeholders = ",".join(["?"] * len(thread_ids))
+                cursor = conn.execute(
+                    f"SELECT id, status, signal_count, name FROM threads WHERE id IN ({placeholders})",
+                    list(thread_ids)
+                )
+                for row in cursor.fetchall():
+                    count_label = "signal" if row["signal_count"] == 1 else "signals"
+                    lines.append(f"  {row['id']} [{row['status']}, {row['signal_count']} {count_label}]: {row['name']}")
+            return "\n".join(lines)
+        except sqlite3.OperationalError:
+            return "" # threads table might not exist yet
+        except Exception as e:
+            logger.warning(f"Error getting thread context: {e}")
+            return ""
+
     def _build_observation_dump(self, signals: list[dict[str, Any]]) -> str:
         """
         Format signals into a concise text dump for the review role.
@@ -316,21 +345,40 @@ class ObservationCycle:
         try:
             now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
             watermark = signals[0]["id"] - 1 if signals else 0
-            lines = [
+
+            header_lines = [
                 f"OBSERVATION DUMP — {now_str} UTC",
                 f"{len(signals)} new signals since last cycle (watermark: signal #{watermark})",
                 "",
-                "SIGNALS:",
             ]
 
+            thread_context = self._get_thread_context(signals)
+            if thread_context:
+                header_lines.append("THREADS:")
+                header_lines.append(thread_context)
+                header_lines.append("")
+
+            signal_lines = ["SIGNALS:"]
             for s in signals:
                 topic = s.get("topic_hint") or "(no topic)"
                 entity = s.get("entity_text") or "(no entity)"
                 preview = s.get("content_preview") or ""
-                lines.append(f"[{s['id']}] {s['timestamp']} | {s['source']} | {topic} | {entity}")
-                lines.append(f"  {preview[:200]}")
-                lines.append(f"  ref: {s['ref_source']}:{s['ref_id']}")
 
+                intel_parts = [f"id={s['id']}"]
+                if s.get("intel_tier", 0) >= 1:
+                    if s.get("thread_id"):
+                        intel_parts.append(f"thread={s['thread_id']}")
+                    if s.get("urgency"):
+                        intel_parts.append(f"urgency={s['urgency']}")
+                    if s.get("action_type"):
+                        intel_parts.append(f"action={s['action_type']}")
+
+                intel_str = ", ".join(intel_parts)
+                signal_lines.append(f"[{intel_str}] {s['timestamp']} | {s['source']} | {topic} | {entity}")
+                signal_lines.append(f"  {preview[:200]}")
+                signal_lines.append(f"  ref: {s['ref_source']}:{s['ref_id']}")
+
+            lines = header_lines + signal_lines
             lines.append("")
             lines.append("ACTIVE TASKS:")
             with open_db(self.db_path) as conn:
