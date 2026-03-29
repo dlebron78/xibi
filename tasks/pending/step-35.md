@@ -218,7 +218,7 @@ The following are explicitly deferred to later steps:
 ### 1. `test_mcp_client_initialize_success`
 Mock subprocess stdout to return a valid initialize response followed by a valid
 `tools/list` response. Assert `initialize()` returns a list of `MCPToolManifest` objects
-with correct `name`, `description`, `input_schema`, and `server_name`.
+with correct `name`, `description`, `inputSchema`, and `server_name`.
 
 ### 2. `test_mcp_client_call_tool_success`
 Mock subprocess to return `{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"hello"}],"isError":false}}`.
@@ -250,6 +250,57 @@ Configure two servers both exposing `read_file`. Assert registry namespaces them
 
 ---
 
+## Schema Field Rename — `"parameters"` → `"inputSchema"`
+
+This step owns the canonical field name fix. Do not skip it or treat it as an afterthought.
+
+**The problem:**
+- `react.py` line 81 reads `tool_manifest.get("input_schema")` — finds nothing
+- `tools.py` defines all tool schemas under `"parameters"` — never matched
+- All 5 skill manifests (`email`, `calendar`, `filesystem`, `memory`, `search`) use `"parameters"` — never matched
+- MCP sends `"inputSchema"` — also never matched
+- Result: `validate_schema()` returns `[]` for every tool in the system — validation is silently skipped everywhere today
+
+**The fix — canonical field name is `"inputSchema"` (matches MCP standard):**
+
+1. `react.py`: change `.get("input_schema")` → `.get("inputSchema")`
+2. `tools.py`: rename all `"parameters"` keys → `"inputSchema"` (10+ occurrences)
+3. `tools.py` `validate_schema()`: update field reference to match
+4. All 5 skill manifests: rename `"parameters"` → `"inputSchema"` in every tool definition
+5. `MCPToolManifest` in this step: store as `"inputSchema"` (not `"input_schema"`)
+
+**This rename requires test coverage before it is valid.** The following tests must pass
+and must specifically exercise the validation path — not just happy-path execution:
+
+### Schema validation tests (add to `tests/test_schema_validation.py`, new file)
+
+#### `test_local_tool_valid_input_passes_validation`
+Call `validate_schema()` with a tool manifest using `"inputSchema"` and a conforming
+input dict. Assert the result is an empty list (no errors).
+
+#### `test_local_tool_invalid_input_caught`
+Call `validate_schema()` with a tool manifest using `"inputSchema"` and a non-conforming
+input (missing required field). Assert the result contains at least one validation error.
+
+#### `test_missing_inputSchema_field_returns_empty`
+Call `validate_schema()` with a manifest that has no `"inputSchema"` key at all.
+Assert the result is `[]` — graceful degradation, not a crash.
+
+#### `test_all_local_skill_manifests_have_inputSchema`
+Load all manifests from `skills/*/manifest.json`. For each tool entry in each manifest,
+assert `"inputSchema"` is present and is a dict. This test will FAIL before the rename
+and PASS after — use it as the completion gate for this part of the step.
+
+#### `test_react_loop_validates_tool_input`
+Run a minimal ReAct loop with a mocked tool that has a required `"path"` field in its
+`"inputSchema"`. Call it without the `"path"` argument. Assert the loop returns a
+validation error rather than calling the tool handler.
+
+The rename and these 5 tests must land in the same commit. Do not merge a PR where
+any of these tests are skipped or marked xfail.
+
+---
+
 ## Constraints
 
 - No asyncio. Synchronous blocking I/O throughout.
@@ -257,3 +308,5 @@ Configure two servers both exposing `read_file`. Assert registry namespaces them
 - `source: "mcp"` field on every injected manifest — required for future belief protection.
 - Env var secrets resolved at subprocess launch time, never logged, never written to spans.
 - A server that fails to initialize is logged and skipped — it does not prevent startup.
+- Schema field rename (`"parameters"` → `"inputSchema"`) must ship with passing validation
+  tests — see section above. This is a hard requirement, not optional.
