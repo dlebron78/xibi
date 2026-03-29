@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import sqlite3
 import json
+import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -350,7 +350,7 @@ def get_trust_records(conn: sqlite3.Connection) -> list[dict]:
 
     results = []
     for r in rows:
-        data = dict(zip(query_cols, r))
+        data = dict(zip(query_cols, r, strict=False))
         total = data.get("total_outputs", 0)
         failures = data.get("total_failures", 0)
         data["failure_rate_pct"] = round((failures / total * 100), 1) if total > 0 else 0.0
