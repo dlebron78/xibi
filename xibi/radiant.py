@@ -6,10 +6,14 @@ import sqlite3
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from xibi.db import open_db
 from xibi.router import Config, get_model
+from xibi.trust.gradient import FailureType
+
+if TYPE_CHECKING:
+    from xibi.trust.gradient import TrustGradient
 
 logger = logging.getLogger(__name__)
 
@@ -154,7 +158,9 @@ class Radiant:
         except Exception as e:
             logger.error(f"Radiant: failed to check and nudge: {e}")
 
-    def run_audit(self, adapter: Any, lookback: int | None = None) -> dict[str, Any]:
+    def run_audit(
+        self, adapter: Any, lookback: int | None = None, *, trust_gradient: TrustGradient | None = None
+    ) -> dict[str, Any]:
         """Run a quality review of the last N observation cycles."""
         global _audit_run_date
         try:
@@ -284,6 +290,17 @@ class Radiant:
 
             # Alert if threshold breached
             threshold = float(self.profile.get("audit_alert_threshold", 0.6))
+
+            # Feed quality back into trust gradient
+            if trust_gradient is not None:
+                try:
+                    if quality_score < threshold:
+                        trust_gradient.record_failure("text", "review", FailureType.QUALITY_DEGRADATION)
+                    else:
+                        trust_gradient.record_success("text", "review")
+                except Exception as e:
+                    logger.warning(f"Radiant: failed to record trust: {e}")
+
             if quality_score < threshold:
                 total_flags = nudges_flagged + missed_signals + false_positives
                 alert_text = (
@@ -417,6 +434,36 @@ class Radiant:
                         (summary["audit"]["latest_audited_at"],),
                     )
                     summary["audit"]["cycles_since_last_audit"] = cursor.fetchone()[0]
+
+                # trust key
+                summary["trust"] = {"records": [], "roles_tracked": 0, "any_demoted": False}
+                try:
+                    cursor = conn.execute(
+                        """
+                        SELECT specialty, effort, audit_interval, consecutive_clean,
+                               total_outputs, total_failures, last_updated
+                        FROM trust_records
+                        ORDER BY specialty ASC, effort ASC
+                        """
+                    )
+                    rows = cursor.fetchall()
+                    for row in rows:
+                        role = f"{row['specialty']}.{row['effort']}"
+                        summary["trust"]["records"].append(
+                            {
+                                "role": role,
+                                "audit_interval": row["audit_interval"],
+                                "consecutive_clean": row["consecutive_clean"],
+                                "total_outputs": row["total_outputs"],
+                                "total_failures": row["total_failures"],
+                                "last_updated": row["last_updated"],
+                            }
+                        )
+                        if row["audit_interval"] < 5:  # default initial_audit_interval
+                            summary["trust"]["any_demoted"] = True
+                    summary["trust"]["roles_tracked"] = len(rows)
+                except sqlite3.OperationalError:
+                    pass
 
             return summary
         except Exception as e:

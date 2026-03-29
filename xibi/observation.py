@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from xibi.db import open_db
 from xibi.react import _parse_llm_response, dispatch
 from xibi.router import get_model
+from xibi.trust.gradient import FailureType, TrustGradient
 
 if TYPE_CHECKING:
     pass
@@ -64,6 +65,8 @@ class ObservationCycle:
         db_path: Path,
         profile: dict[str, Any] | None = None,
         skill_registry: list[dict[str, Any]] | None = None,
+        *,
+        trust_gradient: TrustGradient | None = None,
     ) -> None:
         """
         db_path: Path to the SQLite database.
@@ -73,6 +76,7 @@ class ObservationCycle:
         self.db_path = db_path
         self.profile = profile or {}
         self.skill_registry = skill_registry or []
+        self.trust_gradient = trust_gradient
         self.config = self._load_config()
 
     def _load_config(self) -> ObservationConfig:
@@ -496,6 +500,17 @@ class ObservationCycle:
             except Exception as e:
                 errors.append(f"LLM/Loop error ({effort}): {e}")
                 raise
+
+        # After the loop completes, record trust based on schema failure count
+        if self.trust_gradient is not None:
+            try:
+                schema_failures = sum(1 for a in actions_taken if a.get("output", {}).get("retry") is True)
+                if schema_failures > 0:
+                    self.trust_gradient.record_failure("text", effort, FailureType.PERSISTENT)
+                else:
+                    self.trust_gradient.record_success("text", effort)
+            except Exception as e:
+                logger.warning(f"ObservationCycle: failed to record trust: {e}")
 
         return actions_taken, errors
 
