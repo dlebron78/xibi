@@ -237,6 +237,7 @@ class HeartbeatPoller:
         if self.signal_intelligence_enabled:
             try:
                 from xibi.signal_intelligence import enrich_signals
+
                 enriched = enrich_signals(
                     db_path=self.db_path,
                     config=self.profile,

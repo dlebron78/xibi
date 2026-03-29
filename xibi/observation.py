@@ -325,15 +325,14 @@ class ObservationCycle:
                 conn.row_factory = sqlite3.Row
                 placeholders = ",".join(["?"] * len(thread_ids))
                 cursor = conn.execute(
-                    f"SELECT id, status, signal_count, name FROM threads WHERE id IN ({placeholders})",
-                    list(thread_ids)
+                    f"SELECT id, status, signal_count, name FROM threads WHERE id IN ({placeholders})", list(thread_ids)
                 )
                 for row in cursor.fetchall():
                     count_label = "signal" if row["signal_count"] == 1 else "signals"
                     lines.append(f"  {row['id']} [{row['status']}, {row['signal_count']} {count_label}]: {row['name']}")
             return "\n".join(lines)
         except sqlite3.OperationalError:
-            return "" # threads table might not exist yet
+            return ""  # threads table might not exist yet
         except Exception as e:
             logger.warning(f"Error getting thread context: {e}")
             return ""

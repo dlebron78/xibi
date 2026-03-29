@@ -358,20 +358,18 @@ class SchemaManager:
 
         # Add columns to signals (each separately, idempotent)
         new_cols = [
-            ("action_type", "TEXT"),    # 'request' | 'reply' | 'fyi' | 'confirmation'
-            ("urgency", "TEXT"),        # 'high' | 'medium' | 'low'
-            ("direction", "TEXT"),      # 'inbound' | 'outbound'
-            ("entity_org", "TEXT"),     # organization name from sender, NULL if none
-            ("is_direct", "INTEGER"),   # 1 if user is in To: (not CC), NULL if unknown
-            ("cc_count", "INTEGER"),    # number of CC recipients, NULL if unknown
-            ("thread_id", "TEXT"),      # FK ref to threads(id), NULL until matched
-            ("intel_tier", "INTEGER DEFAULT 0"), # highest extraction tier applied
+            ("action_type", "TEXT"),  # 'request' | 'reply' | 'fyi' | 'confirmation'
+            ("urgency", "TEXT"),  # 'high' | 'medium' | 'low'
+            ("direction", "TEXT"),  # 'inbound' | 'outbound'
+            ("entity_org", "TEXT"),  # organization name from sender, NULL if none
+            ("is_direct", "INTEGER"),  # 1 if user is in To: (not CC), NULL if unknown
+            ("cc_count", "INTEGER"),  # number of CC recipients, NULL if unknown
+            ("thread_id", "TEXT"),  # FK ref to threads(id), NULL until matched
+            ("intel_tier", "INTEGER DEFAULT 0"),  # highest extraction tier applied
         ]
         for col_name, col_type in new_cols:
-            try:
+            with contextlib.suppress(sqlite3.OperationalError):
                 conn.execute(f"ALTER TABLE signals ADD COLUMN {col_name} {col_type}")
-            except sqlite3.OperationalError:
-                pass  # column already exists
 
 
 def migrate(db_path: Path) -> list[int]:
