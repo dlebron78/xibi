@@ -96,6 +96,15 @@ def test_security_tables_exist(tmp_path: Path):
         assert "access_log" in tables
 
 
+def test_observation_tables_exist(tmp_path: Path):
+    db_path = tmp_path / "xibi.db"
+    migrate(db_path)
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = {row[0] for row in cursor.fetchall()}
+        assert "observation_cycles" in tables
+
+
 def test_default_rule_seeded(tmp_path: Path):
     db_path = tmp_path / "xibi.db"
     migrate(db_path)

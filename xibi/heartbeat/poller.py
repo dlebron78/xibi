@@ -11,6 +11,8 @@ from typing import Any
 import xibi.db
 from xibi.alerting.rules import RuleEngine
 from xibi.channels.telegram import TelegramAdapter
+from xibi.command_layer import CommandLayer
+from xibi.observation import ObservationCycle
 from xibi.router import get_model
 
 logger = logging.getLogger(__name__)
@@ -27,6 +29,8 @@ class HeartbeatPoller:
         interval_minutes: int = 15,
         quiet_start: int = 23,
         quiet_end: int = 8,
+        observation_cycle: ObservationCycle | None = None,
+        profile: dict[str, Any] | None = None,
     ) -> None:
         self.skills_dir = skills_dir
         self.db_path = db_path
@@ -36,6 +40,8 @@ class HeartbeatPoller:
         self.interval_minutes = interval_minutes
         self.quiet_start = quiet_start
         self.quiet_end = quiet_end
+        self.observation_cycle = observation_cycle
+        self.profile = profile or {}
         self._last_reflection_date: Any = None  # Tracks date as string or None
 
     def _broadcast(self, text: str) -> None:
@@ -225,6 +231,26 @@ class HeartbeatPoller:
 
             # Mark seen
             self.rules.mark_seen_with_conn(conn, email_id)
+
+        if self.observation_cycle is not None:
+            try:
+                obs_result = self.observation_cycle.run(
+                    executor=self.executor if hasattr(self, "executor") else None,
+                    command_layer=CommandLayer(
+                        db_path=str(self.db_path),
+                        profile=self.profile,
+                        interactive=False,  # ALWAYS non-interactive in heartbeat context
+                    ),
+                )
+                if obs_result.ran:
+                    logger.info(
+                        f"Observation cycle ran: {obs_result.signals_processed} signals, "
+                        f"role={obs_result.role_used}, actions={len(obs_result.actions_taken)}"
+                    )
+                else:
+                    logger.debug(f"Observation cycle skipped: {obs_result.skip_reason}")
+            except Exception as e:
+                logger.warning(f"Observation cycle trigger failed: {e}")
 
     def digest_tick(self, force: bool = False) -> None:
         if self._is_quiet_hours() and not force:
