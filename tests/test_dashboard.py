@@ -333,3 +333,235 @@ def test_full_health_endpoint(client, db_path, monkeypatch):
     assert "schema" in data
     assert "llm_provider" in data
     assert "status" in data
+
+
+def test_inference_stats_returns_structure(client, db_path: Path):
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS inference_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                recorded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                role TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                prompt_tokens INTEGER NOT NULL DEFAULT 0,
+                response_tokens INTEGER NOT NULL DEFAULT 0,
+                duration_ms INTEGER NOT NULL DEFAULT 0,
+                cost_usd REAL NOT NULL DEFAULT 0.0,
+                degraded INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO inference_events (role, provider, model, operation, prompt_tokens, response_tokens, cost_usd) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("fast", "mock", "m1", "op1", 10, 20, 0.001),
+        )
+        conn.execute(
+            "INSERT INTO inference_events (role, provider, model, operation, prompt_tokens, response_tokens, cost_usd) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("think", "mock", "m2", "op2", 50, 100, 0.005),
+        )
+        conn.commit()
+
+    response = client.get("/api/inference")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert "last_24h_tokens" in data
+    assert "last_24h_cost_usd" in data
+    assert "by_role_7d" in data
+    assert "recent" in data
+    assert len(data["recent"]) == 2
+    assert data["last_24h_tokens"] == 180
+    assert abs(data["last_24h_cost_usd"] - 0.006) < 1e-6
+
+
+def test_inference_stats_empty_table(client, db_path: Path):
+    # Ensure table doesn't exist
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DROP TABLE IF EXISTS inference_events")
+        conn.commit()
+
+    response = client.get("/api/inference")
+    assert response.status_code == 200
+    assert response.get_json() == {"error": "no data"}
+
+
+def test_trust_records_computes_failure_rate(client, db_path: Path):
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS trust_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                specialty TEXT NOT NULL,
+                effort TEXT NOT NULL,
+                audit_interval INTEGER NOT NULL DEFAULT 5,
+                consecutive_clean INTEGER NOT NULL DEFAULT 0,
+                total_outputs INTEGER NOT NULL DEFAULT 0,
+                total_failures INTEGER NOT NULL DEFAULT 0,
+                last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(specialty, effort)
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO trust_records (specialty, effort, total_outputs, total_failures) VALUES (?, ?, ?, ?)",
+            ("text", "fast", 10, 2),
+        )
+        conn.commit()
+
+    response = client.get("/api/trust")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert len(data) == 1
+    assert data[0]["failure_rate_pct"] == 20.0
+
+
+def test_audit_results_returns_latest(client, db_path: Path):
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS audit_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                audited_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                cycles_reviewed INTEGER NOT NULL DEFAULT 0,
+                quality_score REAL NOT NULL DEFAULT 1.0,
+                nudges_flagged INTEGER NOT NULL DEFAULT 0,
+                missed_signals INTEGER NOT NULL DEFAULT 0,
+                false_positives INTEGER NOT NULL DEFAULT 0,
+                findings_json TEXT NOT NULL DEFAULT '[]',
+                model_used TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO audit_results (audited_at, quality_score, findings_json) VALUES (?, ?, ?)",
+            ("2026-03-25 00:00:00", 0.7, '["bad"]'),
+        )
+        conn.execute(
+            "INSERT INTO audit_results (audited_at, quality_score, findings_json) VALUES (?, ?, ?)",
+            ("2026-03-25 01:00:00", 0.9, '["good"]'),
+        )
+        conn.commit()
+
+    response = client.get("/api/audit")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["latest"]["quality_score"] == 0.9
+    assert data["latest"]["findings_json"] == ["good"]
+    assert len(data["history"]) == 2
+    assert data["history"][0]["quality_score"] == 0.7  # Oldest first in history
+
+
+def test_spans_returns_waterfall(client, db_path: Path):
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS spans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                trace_id TEXT NOT NULL,
+                span_id TEXT NOT NULL UNIQUE,
+                parent_span_id TEXT,
+                operation TEXT NOT NULL,
+                component TEXT NOT NULL,
+                start_ms INTEGER NOT NULL,
+                duration_ms INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'ok',
+                attributes TEXT
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO spans (trace_id, span_id, operation, component, start_ms, duration_ms) VALUES (?, ?, ?, ?, ?, ?)",
+            ("t1", "s1", "op1", "react", 1000, 100),
+        )
+        conn.execute(
+            "INSERT INTO spans (trace_id, span_id, operation, component, start_ms, duration_ms) VALUES (?, ?, ?, ?, ?, ?)",
+            ("t1", "s2", "op2", "tool", 1100, 200),
+        )
+        conn.commit()
+
+    response = client.get("/api/spans")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["trace_id"] == "t1"
+    assert len(data["spans"]) == 2
+    assert data["total_duration_ms"] == 300
+    assert data["spans"][0]["offset_ms"] == 0
+    assert data["spans"][1]["offset_ms"] == 100
+
+
+def test_spans_empty_returns_gracefully(client, db_path: Path):
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("DROP TABLE IF EXISTS spans")
+        conn.commit()
+    response = client.get("/api/spans")
+    assert response.status_code == 200
+    assert response.get_json() == {"trace_id": None, "spans": []}
+
+
+def test_observation_cycles_returns_list(client, db_path: Path):
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS observation_cycles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                completed_at DATETIME,
+                last_signal_id INTEGER NOT NULL DEFAULT 0,
+                signals_processed INTEGER NOT NULL DEFAULT 0,
+                actions_taken TEXT NOT NULL DEFAULT '[]',
+                role_used TEXT NOT NULL DEFAULT 'review',
+                degraded INTEGER NOT NULL DEFAULT 0,
+                error_log TEXT
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO observation_cycles (started_at, signals_processed, error_log) VALUES (?, ?, ?)",
+            ("2026-03-25 00:00:00", 5, '["err1", "err2"]'),
+        )
+        conn.commit()
+
+    response = client.get("/api/cycles")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert len(data) == 1
+    assert data[0]["error_count"] == 2
+
+
+def test_recent_prefers_session_turns(client, db_path: Path):
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS session_turns (
+                turn_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                query TEXT NOT NULL,
+                answer TEXT NOT NULL,
+                tools_called TEXT NOT NULL DEFAULT '[]',
+                exit_reason TEXT NOT NULL DEFAULT 'finish',
+                summary TEXT NOT NULL DEFAULT '',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO conversation_history (user_message, bot_response, created_at) VALUES (?, ?, ?)",
+            ("old user", "old bot", "2026-03-24 00:00:00"),
+        )
+        conn.execute(
+            "INSERT INTO session_turns (turn_id, session_id, query, answer, created_at) VALUES (?, ?, ?, ?, ?)",
+            ("turn1", "sess1", "new query", "new answer", "2026-03-25 00:00:00"),
+        )
+        conn.commit()
+
+    response = client.get("/api/recent")
+    assert response.status_code == 200
+    data = response.get_json()
+    # Should have 2 entries from session_turns
+    assert len(data) == 2
+    assert data[0]["content"] == "new query"
+    assert data[1]["content"] == "new answer"
