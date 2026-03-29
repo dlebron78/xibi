@@ -172,7 +172,12 @@ def get_recent_signals(conn: sqlite3.Connection, limit: int = 20) -> list[dict]:
 
     created_at_col = "timestamp" if "timestamp" in cols else ("created_at" if "created_at" in cols else None)
 
-    query = f"SELECT {created_at_col}, source, ref_id"
+    query = f"SELECT {created_at_col}, source"
+    if "ref_id" in cols:
+        query += ", ref_id"
+    else:
+        query += ", 'N/A'"
+
     if "classification" in cols:
         query += ", classification"
     else:
