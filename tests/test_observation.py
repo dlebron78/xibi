@@ -142,6 +142,26 @@ def test_build_observation_dump_format(db_path):
     assert "Hello world" in dump
 
 
+def test_build_observation_dump_with_threads(db_path):
+    with open_db(db_path) as conn, conn:
+        conn.execute(
+            "INSERT INTO threads (id, name, status, signal_count) VALUES (?, ?, 'active', 1)",
+            ("thread-123", "Project Alpha")
+        )
+        conn.execute(
+            "INSERT INTO signals (source, content_preview, thread_id, intel_tier, urgency, action_type) VALUES (?, ?, ?, ?, ?, ?)",
+            ("email", "Hello", "thread-123", 1, "high", "request")
+        )
+    cycle = ObservationCycle(db_path=db_path)
+    signals = cycle._collect_signals(0)
+    dump = cycle._build_observation_dump(signals)
+    assert "THREADS:" in dump
+    assert "Project Alpha" in dump
+    assert "thread=thread-123" in dump
+    assert "urgency=high" in dump
+    assert "action=request" in dump
+
+
 def test_run_skips_when_idle(db_path):
     cycle = ObservationCycle(db_path=db_path, profile={"observation": {"idle_skip": True}})
     result = cycle.run()
