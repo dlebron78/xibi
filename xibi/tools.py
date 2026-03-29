@@ -76,11 +76,12 @@ def validate_schema(
     manifest_schema: dict[str, Any] | None,
 ) -> list[str]:
     """
-    Validate tool_input against manifest input_schema.
+    Validate tool_input against manifest inputSchema.
     Returns a list of error strings (empty list = valid).
 
     Validation rules:
-    - For each field in manifest_schema with no "default" key: check field present in tool_input.
+    - manifest_schema is expected to be a JSON Schema-like object (with 'properties' and optionally 'required').
+    - For each field in manifest_schema['properties'] with no "default" key AND listed in 'required': check field present.
     - For each field present in tool_input: check type matches manifest type if declared
       ("integer" → int, "string" → str, "boolean" → bool, "array" → list, "object" → dict).
     - Unknown fields in tool_input: allowed (not an error).
@@ -95,11 +96,15 @@ def validate_schema(
         if not isinstance(tool_input, dict):
             return ["tool_input must be a dictionary"]
 
-        # 1. Check required fields (no "default" key)
-        for field, props in manifest_schema.items():
+        properties = manifest_schema.get("properties", {})
+        required = manifest_schema.get("required", [])
+
+        # 1. Check required fields
+        for field, props in properties.items():
             if not isinstance(props, dict):
                 continue
-            if "default" not in props and field not in tool_input:
+            # If field is in required list and has no default, it's mandatory
+            if field in required and "default" not in props and field not in tool_input:
                 errors.append(f"Missing required field: {field}")
 
         # 2. Check types for present fields
@@ -112,8 +117,8 @@ def validate_schema(
         }
 
         for field, value in tool_input.items():
-            if field in manifest_schema:
-                props = manifest_schema[field]
+            if field in properties:
+                props = properties[field]
                 if not isinstance(props, dict):
                     continue
                 expected_type_str = props.get("type")

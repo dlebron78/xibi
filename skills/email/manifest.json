@@ -33,7 +33,7 @@
                 "do i have any unread messages",
                 "check my inbox"
             ],
-            "parameters": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "count": {
@@ -54,7 +54,7 @@
                 "read the email from dan",
                 "tell me what the invite says"
             ],
-            "parameters": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "email_id": {
@@ -74,7 +74,7 @@
             "access": "operator",
             "output_type": "action",
             "description": "Configure the email skill (Himalaya) with IMAP/SMTP credentials. ALWAYS recommend using an App Password for security.",
-            "parameters": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "email": {
@@ -113,7 +113,7 @@
                 "write back and tell them i'm available",
                 "reply all with the attached document"
             ],
-            "parameters": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "email_id": {
@@ -141,7 +141,7 @@
             "name": "list_drafts",
             "output_type": "raw",
             "description": "List all pending (unsent) email drafts saved in the Ledger. Use this when the user asks 'do I have any drafts?', 'show me my drafts', 'any emails in draft?', or similar.",
-            "parameters": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {}
             }
@@ -156,7 +156,7 @@
                 "send a message to sarah",
                 "shoot an email to the team"
             ],
-            "parameters": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "to": {
@@ -187,7 +187,7 @@
             "name": "discard_draft",
             "output_type": "raw",
             "description": "Discard a pending email draft by its ID. Use this when the user says 'forget that draft', 'delete the draft', or 'discard it'.",
-            "parameters": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "draft_id": {
@@ -207,7 +207,7 @@
                 "compose a message to sarah",
                 "start an email to dan"
             ],
-            "parameters": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "to": {
@@ -240,7 +240,7 @@
             "name": "search_emails",
             "output_type": "synthesis",
             "description": "Search the mailbox by proposing candidate keywords. Python handles query construction and retrieval planning — do NOT use OR, AND, or any query syntax. Just provide keyword lists.",
-            "parameters": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "subject_keywords": {
@@ -279,7 +279,7 @@
             "name": "account_info",
             "output_type": "raw",
             "description": "Fetch the configured email addresses for this Bregger instance. Use this if you need to know 'who am I?' or 'what is my email address?' before replying to or drafting an email.",
-            "parameters": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {}
             }

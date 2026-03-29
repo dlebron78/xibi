@@ -32,26 +32,26 @@ def test_schema_valid_no_required_fields():
 
 
 def test_schema_valid_with_optional_field():
-    schema = {"max_results": {"type": "integer", "default": 5}}
+    schema = {"properties": {"max_results": {"type": "integer", "default": 5}}}
     assert validate_schema("list_emails", {}, schema) == []
 
 
 def test_schema_missing_required_field():
-    schema = {"recipient": {"type": "string"}}
+    schema = {"properties": {"recipient": {"type": "string"}}, "required": ["recipient"]}
     errors = validate_schema("send_email", {}, schema)
     assert len(errors) > 0
     assert any("recipient" in e for e in errors)
 
 
 def test_schema_wrong_type():
-    schema = {"count": {"type": "integer"}}
+    schema = {"properties": {"count": {"type": "integer"}}}
     errors = validate_schema("tool", {"count": "five"}, schema)
     assert len(errors) > 0
     assert any("count" in e for e in errors)
 
 
 def test_schema_unknown_field_allowed():
-    schema = {"name": {"type": "string"}}
+    schema = {"properties": {"name": {"type": "string"}}}
     assert validate_schema("tool", {"name": "Alice", "extra": "ignored"}, schema) == []
 
 

@@ -16,7 +16,10 @@
                 "show me what's in the workspace",
                 "what documents are available"
             ],
-            "parameters": []
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
         },
         {
             "name": "read_file",
@@ -30,13 +33,16 @@
                 "show me the contents of config.json",
                 "open README.md"
             ],
-            "parameters": [
-                {
-                    "name": "filepath",
-                    "type": "string",
-                    "description": "Absolute path or filename of the file to read."
-                }
-            ]
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "filepath": {
+                        "type": "string",
+                        "description": "Absolute path or filename of the file to read."
+                    }
+                },
+                "required": ["filepath"]
+            }
         },
         {
             "name": "write_file",
@@ -49,18 +55,20 @@
                 "write a note to notes.txt",
                 "save this to output.md"
             ],
-            "parameters": [
-                {
-                    "name": "filepath",
-                    "type": "string",
-                    "description": "Absolute path to the file."
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "filepath": {
+                        "type": "string",
+                        "description": "Absolute path to the file."
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Content to write."
+                    }
                 },
-                {
-                    "name": "content",
-                    "type": "string",
-                    "description": "Content to write."
-                }
-            ]
+                "required": ["filepath", "content"]
+            }
         },
         {
             "name": "append_file",
@@ -73,18 +81,20 @@
                 "add a note to BUGS_AND_ISSUES.md",
                 "append a log entry to activity.log"
             ],
-            "parameters": [
-                {
-                    "name": "filepath",
-                    "type": "string",
-                    "description": "Absolute path to the file."
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "filepath": {
+                        "type": "string",
+                        "description": "Absolute path to the file."
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Content to append."
+                    }
                 },
-                {
-                    "name": "content",
-                    "type": "string",
-                    "description": "Content to append."
-                }
-            ]
+                "required": ["filepath", "content"]
+            }
         }
     ]
 }

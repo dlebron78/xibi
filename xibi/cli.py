@@ -15,6 +15,7 @@ except ImportError:
     readline = None  # type: ignore[assignment]
 
 from xibi.executor import LocalHandlerExecutor
+from xibi.mcp.registry import MCPServerRegistry
 from xibi.quality import apply_quality_to_trust, quality_score_span
 from xibi.react import handle_intent, run
 from xibi.router import Config
@@ -114,7 +115,11 @@ def main() -> None:
                 config["models"][specialty][effort]["provider"] = provider
 
     registry = SkillRegistry(args.skills_dir)
-    executor = LocalHandlerExecutor(registry)
+    mcp_registry = MCPServerRegistry(config, registry)
+    mcp_registry.initialize_all()
+    atexit.register(mcp_registry.shutdown_all)
+
+    executor = LocalHandlerExecutor(registry, config=config, mcp_registry=mcp_registry)
     control_plane = ControlPlaneRouter()
     shadow = ShadowMatcher()
     shadow.load_manifests(args.skills_dir)
