@@ -7,7 +7,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 10  # increment when adding new migrations
+SCHEMA_VERSION = 11  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -40,6 +40,7 @@ class SchemaManager:
             (8, "session turns: conversation continuity", self._migration_8),
             (9, "session entities: cross-domain extraction", self._migration_9),
             (10, "tracing: spans table", self._migration_10),
+            (11, "observation cycle tracking", self._migration_11),
         ]
 
         for version, description, func in migrations:
@@ -308,6 +309,21 @@ class SchemaManager:
             );
             CREATE INDEX IF NOT EXISTS idx_spans_trace ON spans(trace_id);
             CREATE INDEX IF NOT EXISTS idx_spans_start ON spans(start_ms DESC);
+        """)
+
+    def _migration_11(self, conn: sqlite3.Connection) -> None:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS observation_cycles (
+                id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at             DATETIME DEFAULT CURRENT_TIMESTAMP,
+                completed_at           DATETIME,
+                last_signal_id         INTEGER NOT NULL DEFAULT 0,  -- watermark: highest signal.id processed
+                signals_processed      INTEGER NOT NULL DEFAULT 0,
+                actions_taken          TEXT NOT NULL DEFAULT '[]',  -- JSON: list of {tool, thread_id, category}
+                role_used              TEXT NOT NULL DEFAULT 'review',  -- 'review', 'think', or 'reflex'
+                degraded               INTEGER NOT NULL DEFAULT 0,  -- 1 if ran in degraded mode
+                error_log              TEXT                         -- JSON: list of error strings, if any
+            );
         """)
 
 
