@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from xibi.alerting.rules import RuleEngine
-from xibi.heartbeat.poller import HeartbeatPoller
+from xibi.heartbeat.poller import HeartbeatPoller, _infer_model, _infer_provider
 
 
 def _make_mock_db_ctx() -> MagicMock:
@@ -477,3 +477,58 @@ def test_poller_signal_intelligence_disabled():
     ):
         hp.tick()
         mock_enrich.assert_not_called()
+
+
+def test_poller_skips_observation_when_throttled():
+    radiant = MagicMock()
+    radiant.ceiling_status.return_value = {"throttle": True}
+    obs = MagicMock()
+    hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), MagicMock(), [123], observation_cycle=obs, radiant=radiant)
+
+    with (
+        patch("xibi.db.open_db", _make_mock_db_ctx()),
+        patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
+        patch.object(HeartbeatPoller, "_check_email", return_value=[]),
+    ):
+        hp.tick()
+        obs.run.assert_not_called()
+
+
+def test_poller_records_after_observation():
+    radiant = MagicMock()
+    radiant.ceiling_status.return_value = {"throttle": False}
+    obs = MagicMock()
+    obs_result = MagicMock()
+    obs_result.ran = True
+    obs_result.role_used = "review"
+    obs.run.return_value = obs_result
+    profile = {"models": {"text": {"review": {"provider": "p1", "model": "m1"}}}}
+    hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), MagicMock(), [123], observation_cycle=obs, radiant=radiant, profile=profile)
+
+    with (
+        patch("xibi.db.open_db", _make_mock_db_ctx()),
+        patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
+        patch.object(HeartbeatPoller, "_check_email", return_value=[]),
+    ):
+        hp.tick()
+        radiant.record.assert_called_once()
+        radiant.check_and_nudge.assert_called_once()
+
+
+def test_poller_radiant_optional():
+    # Constructing without radiant should not crash during tick
+    hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), MagicMock(), [123], observation_cycle=MagicMock())
+    with (
+        patch("xibi.db.open_db", _make_mock_db_ctx()),
+        patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
+        patch.object(HeartbeatPoller, "_check_email", return_value=[]),
+    ):
+        hp.tick()
+
+
+def test_infer_helpers():
+    config = {"models": {"text": {"fast": {"provider": "p1", "model": "m1"}}}}
+    assert _infer_provider("fast", config) == "p1"
+    assert _infer_model("fast", config) == "m1"
+    assert _infer_provider("missing", config) == "unknown"
+    assert _infer_model("missing", config) == "unknown"

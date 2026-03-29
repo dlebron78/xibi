@@ -115,6 +115,15 @@ def test_intel_tables_exist(tmp_path: Path):
         assert "contacts" in tables
 
 
+def test_inference_events_table_exists(tmp_path: Path):
+    db_path = tmp_path / "xibi.db"
+    migrate(db_path)
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        tables = {row[0] for row in cursor.fetchall()}
+        assert "inference_events" in tables
+
+
 def test_default_rule_seeded(tmp_path: Path):
     db_path = tmp_path / "xibi.db"
     migrate(db_path)
@@ -169,6 +178,38 @@ def test_signals_has_intel_columns(tmp_path: Path):
         assert "cc_count" in columns
         assert "thread_id" in columns
         assert "intel_tier" in columns
+
+
+def test_schema_version_13_table(tmp_path: Path):
+    db_path = tmp_path / "xibi.db"
+    migrate(db_path)
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.execute("PRAGMA table_info(inference_events)")
+        columns = {row[1] for row in cursor.fetchall()}
+        expected = {
+            "id",
+            "recorded_at",
+            "role",
+            "provider",
+            "model",
+            "operation",
+            "prompt_tokens",
+            "response_tokens",
+            "duration_ms",
+            "cost_usd",
+            "degraded",
+        }
+        assert expected.issubset(columns)
+
+
+def test_inference_events_indexes(tmp_path: Path):
+    db_path = tmp_path / "xibi.db"
+    migrate(db_path)
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='inference_events'")
+        indexes = {row[0] for row in cursor.fetchall()}
+        assert "idx_inference_events_recorded" in indexes
+        assert "idx_inference_events_role" in indexes
 
 
 # --- CLI tests ---

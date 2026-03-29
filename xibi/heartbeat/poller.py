@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import xibi.db
+from xibi.radiant import Radiant
 from xibi.alerting.rules import RuleEngine
 from xibi.channels.telegram import TelegramAdapter
 from xibi.command_layer import CommandLayer
@@ -32,6 +33,7 @@ class HeartbeatPoller:
         observation_cycle: ObservationCycle | None = None,
         profile: dict[str, Any] | None = None,
         signal_intelligence_enabled: bool = True,
+        radiant: Radiant | None = None,
     ) -> None:
         self.skills_dir = skills_dir
         self.db_path = db_path
@@ -44,6 +46,7 @@ class HeartbeatPoller:
         self.observation_cycle = observation_cycle
         self.profile = profile or {}
         self.signal_intelligence_enabled = signal_intelligence_enabled
+        self.radiant = radiant
         self._last_reflection_date: Any = None  # Tracks date as string or None
 
     def _broadcast(self, text: str) -> None:
@@ -250,20 +253,39 @@ class HeartbeatPoller:
 
         if self.observation_cycle is not None:
             try:
-                obs_result = self.observation_cycle.run(
-                    executor=self.executor if hasattr(self, "executor") else None,
-                    command_layer=CommandLayer(
-                        db_path=str(self.db_path),
-                        profile=self.profile,
-                        interactive=False,  # ALWAYS non-interactive in heartbeat context
-                    ),
-                )
-                if obs_result.ran:
+                # Before running:
+                if self.radiant and self.radiant.ceiling_status()["throttle"]:
+                    logger.info("Radiant: cost ceiling reached, skipping observation cycle")
+                    # Instead of returning, we just skip this block so the rest of tick can finish
+                    obs_result = None
+                else:
+                    obs_result = self.observation_cycle.run(
+                        executor=self.executor if hasattr(self, "executor") else None,
+                        command_layer=CommandLayer(
+                            db_path=str(self.db_path),
+                            profile=self.profile,
+                            interactive=False,  # ALWAYS non-interactive in heartbeat context
+                        ),
+                    )
+
+                if obs_result and obs_result.ran:
                     logger.info(
                         f"Observation cycle ran: {obs_result.signals_processed} signals, "
                         f"role={obs_result.role_used}, actions={len(obs_result.actions_taken)}"
                     )
-                else:
+                    # After run() completes, record the inference event:
+                    if self.radiant:
+                        self.radiant.record(
+                            role=obs_result.role_used,
+                            provider=_infer_provider(obs_result.role_used, self.profile),
+                            model=_infer_model(obs_result.role_used, self.profile),
+                            operation="observation_cycle",
+                            prompt_tokens=0,  # ObservationCycle doesn't expose token counts yet — use 0
+                            response_tokens=0,
+                            duration_ms=0,  # ObservationResult doesn't have duration_ms yet
+                        )
+                        self.radiant.check_and_nudge(self.adapter)
+                elif obs_result:
                     logger.debug(f"Observation cycle skipped: {obs_result.skip_reason}")
             except Exception as e:
                 logger.warning(f"Observation cycle trigger failed: {e}")
@@ -369,3 +391,17 @@ class HeartbeatPoller:
                 logger.error(f"Error in heartbeat loop: {e}")
 
             time.sleep(interval_secs)
+
+
+def _infer_provider(role: str, config: dict[str, Any]) -> str:
+    try:
+        return config["models"]["text"][role]["provider"]
+    except KeyError:
+        return "unknown"
+
+
+def _infer_model(role: str, config: dict[str, Any]) -> str:
+    try:
+        return config["models"]["text"][role]["model"]
+    except KeyError:
+        return "unknown"
