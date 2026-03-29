@@ -561,15 +561,31 @@ Configurable audit intervals for the fast role. As the fast role earns a track r
 
 ---
 
-### Step 12: MCP Adapter Layer
+### Step 12: MCP Integration (Phased)
 **Status:** 🔜 After Phase 2.
 
-Generic adapter that wraps any MCP server as a channel or tool source. Auto-classification from MCP capabilities:
-- MCP resources with subscriptions → channel adapters (observations flow in).
-- MCP tools → tool registry (Green/Yellow/Red classification based on destructiveness).
-- MCP prompts → skill templates.
+MCP support ships in phases. See `xibi_architecture.md` MCP section for full detail.
 
-This dramatically accelerates Phase 3 channel expansion. Any MCP-compatible service (Slack, Google Drive, GitHub, Linear) becomes a Xibi channel or tool without writing a custom adapter from scratch.
+**Phase 1 — Foundation (stdio only, all RED):**
+- `MCPClient`: JSON-RPC 2.0 over stdio subprocess. Handshake, `tools/list`, `tools/call`. No asyncio.
+- `MCPServerRegistry`: reads `config.json["mcp_servers"]`, initializes clients, injects tools into `SkillRegistry.register()`.
+- `MCPExecutor`: routes tool calls to correct MCP server.
+- All MCP tools default to `PermissionTier.RED` — user confirms every call.
+- Every injected manifest carries `"source": "mcp"` for future belief protection.
+- Schema field fix: canonical field name is `"inputSchema"` throughout (matches MCP standard, fixes silent validation skip).
+
+**Phase 2 — Permission mapping + HTTP transport:**
+- MCP annotations drive automatic Green/Yellow/Red tier assignment.
+- Streamable HTTP transport for remote servers.
+- Per-server circuit breakers.
+- Belief protection: MCP-sourced session turns blocked from belief compression.
+
+**Phase 3 — Auto-classification + channel support (requires gateway layer):**
+- MCP resource subscriptions → channel adapters via gateway.
+- Any MCP-compatible service (Slack, Google Drive, GitHub, Linear) becomes a Xibi channel or tool.
+- Full capability provider model: MCP servers as swappable backends for built-in skills (send_email, filesystem_read, etc.).
+
+Note: MCP-as-channel (Slack, WhatsApp as inbound channels) requires the gateway layer — see architecture doc. Memory is non-replaceable via MCP regardless of phase.
 
 ---
 
@@ -698,24 +714,42 @@ Flip the repo to public once the codebase looks like a clean project, not a mono
 
 ## Implementation Order — Current Status
 
+The design steps below correspond to phases in the architecture doc. Build steps (tracked as numbered specs in `tasks/`) are finer-grained — multiple build steps can ship within a single design step.
+
 | Step | File | Description | Status |
 |---|---|---|---|
-| 1 | `xibi/router.py` | `get_model()`, provider abstraction, fallback chains | 🔜 **START HERE** |
-| 2 | `xibi/config.json` + `profile.json` | System config + deployment profile split | 🔜 |
-| 3 | `xibi/tools.py` + `executive.py` | Core tool registry + schema definitions | 🔜 |
-| 4 | `xibi/core.py` + `caretaker.py` + `heartbeat.py` + `reflex.py` | Rewire + monolith split | 🔜 |
-| 5 | `xibi/core.py` | Think role in ReAct + execution persistence | 🔜 |
-| 6 | `xibi/condensation.py` | Content pipeline — strip, ref IDs, phishing defense | 🔜 |
-| 7 | `xibi/executive.py` + `tools.py` | Command layer + schema validation gate + action dedup | 🔜 |
-| 8 | `xibi/observation.py` | Observation cycle MVP + activity-triggered frequency + degraded mode | 🔜 |
-| 8.5 | DB schema | Signal intelligence (2.5) + thread materialization (2.6) | 🔜 |
-| 9 | `xibi/radiant.py` | Observability + evaluation + economics | 🔜 |
-| 10 | Radiant config | Audit cycle — premium model quality check | 🔜 |
-| 11 | `xibi/core.py` + DB | Trust gradient MVP | 🔜 |
-| 12 | MCP adapter | Generic MCP → channel or tool wrapper | 🔜 |
-| 13 | `xibi/core.py` | Specialty dispatch + concurrent loops | 🔜 |
-| 14 | `xibi/core.py` | Voluntary escalation — prompt-guided + Python heuristics | 🔜 |
-| 15 | Channel adapters | iPhone thin client + droplet failover | 🔜 |
+| 1 | `xibi/router.py` | `get_model()`, provider abstraction, fallback chains | ✅ Done |
+| 2 | `xibi/config.json` + `profile.json` | System config + deployment profile split | ✅ Done |
+| 3 | `xibi/tools.py` + `executive.py` | Core tool registry + schema definitions | ✅ Done |
+| 4 | `xibi/core.py` + `caretaker.py` + `heartbeat.py` + `reflex.py` | Rewire + monolith split | ✅ Done |
+| 5 | `xibi/core.py` | Think role in ReAct + execution persistence | ✅ Done |
+| 6 | `xibi/condensation.py` | Content pipeline — strip, ref IDs, phishing defense | ✅ Done |
+| 7 | `xibi/executive.py` + `tools.py` | Command layer + schema validation gate + action dedup | ✅ Done |
+| 8 | `xibi/observation.py` | Observation cycle MVP + activity-triggered frequency + degraded mode | ✅ Done |
+| 8.5 | DB schema | Signal intelligence (2.5) + thread materialization (2.6) | ✅ Done |
+| 9 | `xibi/radiant.py` | Observability + evaluation + economics | ✅ Done |
+| 10 | Radiant config | Audit cycle — premium model quality check | ✅ Done |
+| 11 | `xibi/core.py` + DB | Trust gradient MVP | ✅ Done |
+| 11.5 | `xibi/trust.py` + wiring | Trust gradient integration (signal_intelligence, observation, radiant, heartbeat) | ✅ Done |
+| 12 | `xibi/dashboard.py` | Dashboard modernization | 🔄 In flight |
+| 12.5 | `xibi/mcp/` | MCP Foundation — stdio, MCPClient, MCPServerRegistry, MCPExecutor, schema fix | 🔜 Queued |
+| 13 | NucBox deployment | Xibi cutover from Bregger (xibi-telegram + xibi-heartbeat systemd services) | 🔜 Queued |
+| 14 | MCP Phase 2 | Permission mapping from annotations, HTTP transport, belief protection enforcement | 🔜 Future |
+| 15 | Gateway layer | Pluggable channels via gateway — MCP-as-channel, WhatsApp, iMessage, Slack inbound | 🔜 Future |
+| 16 | `xibi/core.py` | Specialty dispatch + concurrent loops | 🔜 Future |
+| 17 | `xibi/core.py` | Voluntary escalation — prompt-guided + Python heuristics | 🔜 Future |
+| 18 | Channel adapters | iPhone thin client + droplet failover | 🔜 Future |
+
+### Active Build Pipeline
+
+The build pipeline uses Jules (AI builder) → auto PR → pipeline reviewer → auto-merge. Build specs live in `tasks/pending/`, completed specs in `tasks/done/`.
+
+**Currently active (2026-03-29):**
+- **Step 34 (Dashboard):** Jules in flight, PR pending.
+- **Step 35 (MCP Foundation):** Spec ready in `tasks/pending/step-35.md`. Queued.
+- **Step 36 (NucBox Cutover):** Spec ready in `tasks/pending/step-36.md`. Queued.
+
+**Deployment note:** Xibi is fully built (steps 1–33) but not yet deployed. NucBox is still running the legacy Bregger stack. Step 36 executes the cutover — stops Bregger, starts Xibi as `xibi-telegram` and `xibi-heartbeat` systemd user services.
 
 ---
 

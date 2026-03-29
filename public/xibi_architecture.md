@@ -33,13 +33,28 @@ A **channel** is any system the user communicates through. Channels are bidirect
 | CRM (Afya) | Webhook receiver | Lead forms, bookings, revenue | Reports, follow-ups, confirmations |
 | Search | Tavily | Query results | — (read-only) |
 
-**Terminology rules:**
-- "Channel" = the pipe (email, chat, calendar, CRM). Always use this for architecture-level discussion.
-- "Adapter" = the Python code that connects to a channel (himalaya, Telegram poller, Google API).
+**Terminology rules (locked — these do not change):**
+- "Channel" = the delivery surface (email, chat, Slack, WhatsApp). Always use this for architecture-level discussion.
+- "Adapter" = the Python code that connects to a channel (himalaya, Telegram poller, Google API, MCP wrapper).
 - "Signal" = an observation extracted from channel activity. Every signal carries a `channel` tag.
 - "Action" = a command sent back through a channel. Every action targets a channel.
+- "Tool" = a callable function in the tool registry. Tools are what roles execute during ReAct loops.
+- "Skill" = a bundled collection of tools with a shared manifest. Skills are how tools are packaged and loaded.
+- "Transport" = the wire protocol between Xibi and an external server (stdio subprocess, HTTP, long-poll, webhook). Transport is an implementation detail of an adapter — not a channel or a tool.
+
+**Channels are not capabilities.** Email is not an email skill — it is a delivery surface. The send_email *tool* is a capability; email is the *channel* that tool targets. These are distinct. An MCP server that can send email provides an alternative backend for the send_email tool, not an alternative channel.
+
+**What makes something a channel (not a tool):** a channel has both inbound (messages arrive) and outbound (Xibi responds) sides, carries sender identity, and supports a reply expectation. A database tool is not a channel. A Slack integration is both a channel (inbound messages, sender identity) and a set of tools (post, react, search).
 
 Adding a channel = writing an adapter + registering in config. The role routing, condensation pipeline, observation cycle, and trust gradient are all channel-agnostic.
+
+### Gateway Layer — Pluggable Channel Support (Future)
+
+The current channel adapters (Telegram, himalaya/email) are hardcoded polling loops built directly into the heartbeat tick. This is fine for a fixed set of channels. When channels become dynamically configurable — add WhatsApp, remove Telegram, register Slack — a gateway layer is required.
+
+The gateway manages persistent listeners (long-polling or webhooks) per registered channel, routes arriving messages into the ReAct loop with a `channel_id` tag, and allows channels to be registered via config rather than code. MCP servers with resource subscriptions (inbound push) become channel adapters through the gateway layer — not directly.
+
+The gateway layer is not in the current build. It is the architectural prerequisite for MCP-as-channel (WhatsApp, iMessage, Slack as inbound sources) and for channels to be fully pluggable via config.
 
 ---
 
@@ -724,50 +739,51 @@ Command layer: posting/scheduling is Red tier → user confirms
 
 ---
 
-## MCP Integration — Auto-Classification of Third-Party Tools
+## MCP Integration — Phased Approach
 
-MCP (Model Context Protocol) servers expose three primitives. They map directly to our architecture:
+MCP (Model Context Protocol) is a JSON-RPC 2.0 protocol that standardizes how applications expose tools and resources to AI systems. Xibi's MCP support is phased: foundation first, broad auto-classification later.
+
+**The three MCP primitives and their Xibi mappings (target state):**
 
 | MCP Primitive | What it is | Maps to in Xibi |
 |---|---|---|
-| **Resources** | Read-only data providers. Push notifications on change. | **Channel adapter** (ingestion side) |
+| **Resources** | Read-only data providers. Push notifications on change. | **Channel adapter** (ingestion side, via gateway layer) |
 | **Tools** | Executable functions. Read or write. | **Tool registry** entries |
-| **Prompts** | Reusable instruction templates. | **Skill** templates |
+| **Prompts** | Reusable instruction templates. | **Skill** templates (future) |
 
-### Auto-Classification on Connection
+### Phase 1: Foundation (Current — stdio only, all RED)
 
-When an MCP server is connected, Python inspects its capability declarations and registers it automatically:
+The first MCP milestone (`MCPClient`, `MCPServerRegistry`, `MCPExecutor`) connects to MCP servers over stdio (subprocess) and injects their tools into the skill registry at startup. This is the "hand-picked servers" phase — the user explicitly configures which MCP servers to trust.
 
+**What's in the foundation:**
+- `MCPClient`: JSON-RPC 2.0 over stdio subprocess. Handles handshake, `tools/list`, `tools/call`. Synchronous blocking, no asyncio.
+- `MCPServerRegistry`: reads `config.json["mcp_servers"]`, initializes each client, injects discovered tools into `SkillRegistry.register()`.
+- `MCPExecutor`: sits alongside `LocalHandlerExecutor`. Routes tool calls to the right MCP server.
+- **All MCP tools default to `PermissionTier.RED`** — user confirms before every execution. This is intentional. Trust is earned, not assumed.
+- Every injected tool manifest carries `"source": "mcp"` and `"server": server_name`. These fields are required for future belief protection.
+
+**What's NOT in the foundation:**
+- No HTTP transport (stdio only).
+- No auto-classification from MCP annotations (all RED, no tier inference).
+- No MCP-as-channel (requires gateway layer, see above).
+- No per-server trust gradient.
+- No belief protection enforcement (source tagging is in place but enforcement deferred).
+
+**Config example (foundation phase):**
+```json
+"mcp_servers": [
+  {
+    "name": "filesystem",
+    "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp/xibi-sandbox"],
+    "env": {},
+    "max_response_bytes": 65536
+  }
+]
 ```
-New MCP server connected
-    ↓
-Python inspects capabilities:
-    ↓
-Has resource subscriptions? (pushes updates when data changes)
-    → YES: Register as CHANNEL ADAPTER
-        - Wire subscriptions into heartbeat tick
-        - Feed observations through condensation pipeline
-        - Assign channel tag for signals
-    ↓
-Exposes tools?
-    → YES: Register in TOOL REGISTRY
-        - Read-only annotation → Green tier (auto-execute)
-        - Write annotation → Yellow tier (execute + audit)
-        - Destructive (delete, send) → Red tier (user confirmation)
-        - Add to registry with allow/deny scoping
-    ↓
-Exposes prompts?
-    → YES: Register as SKILL templates
-    ↓
-Many servers are BOTH channel + tools:
-    - Gmail MCP: channel (subscription for new mail) + tools (send, draft, search)
-    - Slack MCP: channel (subscription for messages) + tools (post, react)
-    - Register as channel adapter AND add tools to registry
-```
 
-### MCP Permission Mapping
+### Phase 2: Permission Mapping (Future)
 
-MCP tool annotations declare read-only vs write behavior. This maps directly to the command layer:
+Once foundation is tested with hand-picked servers, MCP tool annotations drive automatic tier assignment:
 
 | MCP annotation | Xibi tier |
 |---|---|
@@ -775,27 +791,48 @@ MCP tool annotations declare read-only vs write behavior. This maps directly to 
 | Write | **Yellow** — execute + audit |
 | Destructive (delete, send, pay) | **Red** — user confirmation |
 
-### What This Means Practically
+This phase also adds HTTP transport (Streamable HTTP) for remote servers, per-server circuit breakers, and lazy subprocess initialization.
 
-Adding a new integration = install MCP server → Python reads capabilities → auto-registers as channel, tool, or both → command layer applies permissions → done. No manual classification, no custom adapter code, no config changes beyond pointing at the MCP server.
+### Phase 3: Auto-Classification + Channel Support (Future, requires gateway layer)
 
-This accelerates Phase 3 (multi-channel) significantly. Instead of writing a custom adapter for Google Calendar, Slack, Stripe — install their MCP servers, auto-classify, and the architecture handles the rest.
+When the gateway layer exists, MCP servers with resource subscriptions become channel adapters:
 
-```json
-{
-  "channels": {
-    "email": { "adapter": "himalaya" },
-    "calendar": { "adapter": "mcp", "server": "google-calendar-mcp" },
-    "slack": { "adapter": "mcp", "server": "slack-mcp" }
-  },
-  "tools": {
-    "database": { "provider": "mcp", "server": "postgres-mcp" },
-    "code_exec": { "provider": "mcp", "server": "sandbox-mcp" }
-  }
-}
+```
+New MCP server connected (with gateway layer)
+    ↓
+Has resource subscriptions? (pushes updates when data changes)
+    → YES: Register as CHANNEL ADAPTER via gateway
+        - Wire subscriptions into heartbeat tick
+        - Feed observations through condensation pipeline
+        - Assign channel tag for signals
+    ↓
+Exposes tools?
+    → YES: Register in TOOL REGISTRY (tier from annotations)
+    ↓
+Many servers are BOTH channel + tools:
+    - Gmail MCP: channel (subscription for new mail) + tools (send, draft, search)
+    - Slack MCP: channel (subscription for messages) + tools (post, react)
 ```
 
-The architecture doesn't care whether a channel adapter is custom Python or an MCP wrapper. It cares that observations flow in, actions flow out, and condensation applies.
+This is the "any MCP" future. Getting here requires the gateway layer, belief protection, multi-dimensional trust, and a tested foundation.
+
+### Belief Protection — MCP Responses and the Memory System
+
+**Memory is non-replaceable via MCP.** The belief system (SQLite `beliefs` table, `session_turns`, `compress_to_beliefs()`) is Xibi's core long-term memory. There is no MCP equivalent. Users cannot swap it out for an external memory MCP server — the compression, session context, and belief injection are deeply integrated with the ReAct loop.
+
+**The belief poisoning risk:** MCP tool responses flow into `session_turns`. The `compress_to_beliefs()` function compresses session turns into long-term beliefs on a 30-day rolling basis. If a malicious or misconfigured MCP server returns adversarial content ("the user prefers X", "always do Y"), it can be compressed into a belief and influence future behavior.
+
+**Mitigation — source tagging (Phase 1):** Every session turn sourced from an MCP tool response carries `"source": "mcp"` and `"server": server_name`. The compression function can filter or weight turns by source. Full enforcement (blocking MCP-sourced turns from belief compression) is deferred to Phase 2.
+
+**Why MCP can't replace memory:** No MCP server offers session turn compression, belief injection into LLM context, or 30-day rolling window semantics. The belief system is architectural, not a backend that can be swapped. Users who want different memory semantics must extend Xibi's memory system, not replace it.
+
+### Capability Provider Model (Future)
+
+Built-in action skills (send_email, calendar_write, filesystem_read) can declare a `capability` slot. A matching MCP server can be configured as an alternative backend — the skill interface stays the same, only the transport changes.
+
+Example: `send_email` today uses himalaya/SMTP. A Gmail MCP server could be configured as the backend for the same `send_email` capability. The rest of the system doesn't know or care.
+
+This is distinct from channels. A capability backend swaps the *how* of executing an action. A channel is the *surface* where observations arrive and actions are delivered. Memory is non-replaceable and has no capability slot.
 
 ---
 
