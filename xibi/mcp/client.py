@@ -4,26 +4,29 @@ import json
 import logging
 import os
 import re
-import subprocess
 import select
+import subprocess
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class MCPServerConfig:
-    name: str                          # e.g. "filesystem"
-    command: list[str]                 # e.g. ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    name: str  # e.g. "filesystem"
+    command: list[str]  # e.g. ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
     env: dict[str, str] = field(default_factory=dict)  # extra env vars, ${VAR} resolved from os.environ
-    max_response_bytes: int = 65536    # truncate large responses before passing to ReAct
+    max_response_bytes: int = 65536  # truncate large responses before passing to ReAct
+
 
 @dataclass
 class MCPToolManifest:
     name: str
     description: str
-    input_schema: dict                 # normalized — always "inputSchema" key inside Xibi
-    server_name: str                   # which server this came from
+    input_schema: dict  # normalized — always "inputSchema" key inside Xibi
+    server_name: str  # which server this came from
+
 
 class MCPClient:
     def __init__(self, config: MCPServerConfig) -> None:
@@ -54,11 +57,11 @@ class MCPClient:
                 stderr=subprocess.PIPE,
                 env=env,
                 text=True,
-                bufsize=1
+                bufsize=1,
             )
         except Exception as e:
             logger.error(f"Failed to spawn MCP server '{self.config.name}': {e}")
-            raise RuntimeError(f"Failed to spawn MCP server: {e}")
+            raise RuntimeError(f"Failed to spawn MCP server: {e}") from e
 
         # 1. Initialize Handshake
         init_id = self._next_id()
@@ -69,8 +72,8 @@ class MCPClient:
             "params": {
                 "protocolVersion": "2025-11-05",
                 "capabilities": {},
-                "clientInfo": {"name": "xibi", "version": "1.0"}
-            }
+                "clientInfo": {"name": "xibi", "version": "1.0"},
+            },
         }
 
         try:
@@ -79,41 +82,36 @@ class MCPClient:
                 raise RuntimeError(f"Handshake failed: ID mismatch (expected {init_id}, got {response.get('id')})")
         except Exception as e:
             self.close()
-            raise RuntimeError(f"Handshake failed: {e}")
+            raise RuntimeError(f"Handshake failed: {e}") from e
 
         # 2. Notification: initialized
-        notif_msg = {
-            "jsonrpc": "2.0",
-            "method": "notifications/initialized"
-        }
+        notif_msg = {"jsonrpc": "2.0", "method": "notifications/initialized"}
         self._send_notification(notif_msg)
 
         # 3. Discover Tools
         list_id = self._next_id()
-        list_msg = {
-            "jsonrpc": "2.0",
-            "id": list_id,
-            "method": "tools/list"
-        }
+        list_msg = {"jsonrpc": "2.0", "id": list_id, "method": "tools/list"}
 
         try:
             response = self._send_and_receive(list_msg)
             if response.get("id") != list_id:
-                raise RuntimeError(f"Tool discovery failed: ID mismatch")
+                raise RuntimeError("Tool discovery failed: ID mismatch")
 
             tools_data = response.get("result", {}).get("tools", [])
             manifests = []
             for t in tools_data:
-                manifests.append(MCPToolManifest(
-                    name=t.get("name", ""),
-                    description=t.get("description", ""),
-                    input_schema=t.get("inputSchema", {}),
-                    server_name=self.config.name
-                ))
+                manifests.append(
+                    MCPToolManifest(
+                        name=t.get("name", ""),
+                        description=t.get("description", ""),
+                        input_schema=t.get("inputSchema", {}),
+                        server_name=self.config.name,
+                    )
+                )
             return manifests
         except Exception as e:
             self.close()
-            raise RuntimeError(f"Tool discovery failed: {e}")
+            raise RuntimeError(f"Tool discovery failed: {e}") from e
 
     def _send_and_receive(self, message: dict, timeout: int = 15) -> dict:
         if not self.process or not self.process.stdin or not self.process.stdout:
@@ -135,7 +133,7 @@ class MCPClient:
             raise RuntimeError(f"Server closed connection. Stderr: {stderr}")
 
         logger.debug(f"MCP client <- {self.config.name}: {line.strip()}")
-        return json.loads(line)
+        return cast(dict, json.loads(line))
 
     def _send_notification(self, message: dict) -> None:
         if not self.process or not self.process.stdin:
@@ -144,7 +142,7 @@ class MCPClient:
         self.process.stdin.write(msg_json + "\n")
         self.process.stdin.flush()
 
-    def call_tool(self, name: str, arguments: dict) -> dict:
+    def call_tool(self, name: str, arguments: dict) -> dict[str, Any]:
         """
         Call a tool. Returns normalized Xibi result dict:
           {"status": "ok", "result": <str>}       on success
@@ -153,15 +151,7 @@ class MCPClient:
         Never raises — errors are always returned as dicts.
         """
         call_id = self._next_id()
-        call_msg = {
-            "jsonrpc": "2.0",
-            "id": call_id,
-            "method": "tools/call",
-            "params": {
-                "name": name,
-                "arguments": arguments
-            }
-        }
+        call_msg = {"jsonrpc": "2.0", "id": call_id, "method": "tools/call", "params": {"name": name, "arguments": arguments}}
 
         try:
             if not self.process or not self.process.stdin or not self.process.stdout:
@@ -181,7 +171,7 @@ class MCPClient:
             if not line:
                 return {"status": "error", "error": "connection closed"}
 
-            response = json.loads(line)
+            response = cast(dict, json.loads(line))
 
             if response.get("id") != call_id:
                 return {"status": "error", "error": f"ID mismatch: expected {call_id}, got {response.get('id')}"}
@@ -198,11 +188,13 @@ class MCPClient:
 
             full_text = "\n".join(text_parts)
 
-            if len(full_text.encode('utf-8')) > self.config.max_response_bytes:
-                 # Truncate to limit and append " [truncated]"
-                 # Truncating bytes is tricky in text mode, but we can do a rough char estimate and verify
-                 truncated_text = full_text.encode('utf-8')[:self.config.max_response_bytes].decode('utf-8', 'ignore') + " [truncated]"
-                 full_text = truncated_text
+            if len(full_text.encode("utf-8")) > self.config.max_response_bytes:
+                # Truncate to limit and append " [truncated]"
+                # Truncating bytes is tricky in text mode, but we can do a rough char estimate and verify
+                truncated_text = (
+                    full_text.encode("utf-8")[: self.config.max_response_bytes].decode("utf-8", "ignore") + " [truncated]"
+                )
+                full_text = truncated_text
 
             if is_error:
                 return {"status": "error", "error": full_text}

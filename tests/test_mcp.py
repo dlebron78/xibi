@@ -1,10 +1,10 @@
 import json
-import os
-import subprocess
 from unittest.mock import MagicMock, patch
+
 from xibi.mcp.client import MCPClient, MCPServerConfig
 from xibi.mcp.registry import MCPServerRegistry
 from xibi.skills.registry import SkillRegistry
+
 
 def test_mcp_client_initialize_success():
     config = MCPServerConfig(name="test", command=["test-cmd"])
@@ -98,7 +98,7 @@ def test_mcp_client_response_truncated():
         result = client.call_tool("tool1", {})
         assert result["status"] == "ok"
         assert result["result"].endswith("[truncated]")
-        assert len(result["result"].encode('utf-8')) <= 10 + len(" [truncated]".encode('utf-8'))
+        assert len(result["result"].encode('utf-8')) <= 10 + len(b" [truncated]")
 
 def test_mcp_registry_injects_tools():
     skill_reg = SkillRegistry("/tmp") # Dummy path
