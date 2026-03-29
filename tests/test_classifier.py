@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from xibi.routing.classifier import MessageModeClassifier, ModeScores
-from xibi.routing.llm_classifier import LLMRoutingClassifier, LLMRoutingDecision
+from xibi.routing.llm_classifier import LLMRoutingClassifier
 from xibi.routing.shadow import ShadowMatch, extract_tool_input
 
 

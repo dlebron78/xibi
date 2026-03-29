@@ -11,7 +11,7 @@ class PermissionTier(str, Enum):
 
 
 # Default tier for tools NOT listed below
-DEFAULT_TIER = PermissionTier.GREEN
+DEFAULT_TIER = PermissionTier.RED
 
 # Tier declarations for known tools.
 # Callers may override via profile.json: {"tool_permissions": {"send_email": "yellow"}}

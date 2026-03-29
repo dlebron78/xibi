@@ -113,7 +113,7 @@ class MCPClient:
             self.close()
             raise RuntimeError(f"Tool discovery failed: {e}") from e
 
-    def _send_and_receive(self, message: dict, timeout: int = 15) -> dict:
+    def _send_and_receive(self, message: dict[str, Any], timeout: int = 15) -> dict[str, Any]:
         if not self.process or not self.process.stdin or not self.process.stdout:
             raise RuntimeError("MCP server process not running")
 
@@ -133,7 +133,7 @@ class MCPClient:
             raise RuntimeError(f"Server closed connection. Stderr: {stderr}")
 
         logger.debug(f"MCP client <- {self.config.name}: {line.strip()}")
-        return cast(dict, json.loads(line))
+        return cast(dict[str, Any], json.loads(line))
 
     def _send_notification(self, message: dict) -> None:
         if not self.process or not self.process.stdin:
@@ -176,7 +176,7 @@ class MCPClient:
             if not line:
                 return {"status": "error", "error": "connection closed"}
 
-            response = cast(dict, json.loads(line))
+            response = cast(dict[str, Any], json.loads(line))
 
             if response.get("id") != call_id:
                 return {"status": "error", "error": f"ID mismatch: expected {call_id}, got {response.get('id')}"}

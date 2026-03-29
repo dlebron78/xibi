@@ -163,3 +163,11 @@ def test_dispatch_without_command_layer_unchanged():
     assert response["status"] == "ok"
     assert response["message"] == "called"
     mock_executor.execute.assert_called_once_with("list_emails", {})
+
+
+def test_command_layer_blocks_mcp_tool_non_interactive():
+    layer = CommandLayer(interactive=False)
+    # MCP tool not in TOOL_TIERS should default to RED and be blocked
+    result = layer.check("filesystem__read_file", {})
+    assert result.allowed is False
+    assert result.tier == "red"

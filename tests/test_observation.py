@@ -1,11 +1,11 @@
-import json
 import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from xibi.db import migrate, open_db
-from xibi.observation import ObservationConfig, ObservationCycle, ObservationResult
+from xibi.observation import ObservationCycle, ObservationResult
 
 
 @pytest.fixture
@@ -268,8 +268,8 @@ def test_command_layer_blocks_red_in_observation(db_path):
     signals = [{"id": 1, "topic_hint": "urgent", "content_preview": "p", "ref_source": "e", "ref_id": "1"}]
     mock_executor = MagicMock()
     # Mocking dispatch instead because _run_reflex_fallback calls dispatch
-    from xibi.observation import ObservationCycle
     from xibi.command_layer import CommandLayer
+    from xibi.observation import ObservationCycle
 
     cycle = ObservationCycle(db_path=db_path)
 

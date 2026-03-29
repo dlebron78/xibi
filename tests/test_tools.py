@@ -4,7 +4,12 @@ from xibi.tools import PermissionTier, resolve_tier, validate_schema
 
 
 def test_default_tier_for_unknown_tool():
-    assert resolve_tier("unknown_tool_xyz") == PermissionTier.GREEN
+    assert resolve_tier("unknown_tool_xyz") == PermissionTier.RED
+
+
+def test_known_green_tools_unchanged():
+    assert resolve_tier("list_emails") == PermissionTier.GREEN
+    assert resolve_tier("recall") == PermissionTier.GREEN
 
 
 def test_declared_red_tier():

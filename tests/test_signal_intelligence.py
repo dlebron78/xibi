@@ -6,15 +6,15 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from xibi.db import migrate, open_db
 from xibi.signal_intelligence import (
     SignalIntel,
+    assign_threads,
+    enrich_signals,
     extract_tier0,
     extract_tier1_batch,
-    assign_threads,
     upsert_contact,
-    enrich_signals,
-    merge_intels,
 )
 
 
