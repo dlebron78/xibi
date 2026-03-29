@@ -4,9 +4,10 @@ import json
 import sqlite3
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
-from xibi.db import SchemaManager, init_workdir, migrate
+from xibi.db import SchemaManager, init_workdir, migrate, open_db
 from xibi.db.migrations import SCHEMA_VERSION
 
 # --- Schema versioning tests ---
@@ -194,3 +195,30 @@ def test_doctor_fails_missing_workdir(tmp_path: Path):
     )
     assert result.returncode != 0
     assert "❌ Workdir missing." in result.stdout
+
+
+def test_open_db_enables_wal_mode(tmp_path: Path):
+    db_path = tmp_path / "test.db"
+    with open_db(db_path) as conn:
+        mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        assert mode.lower() == "wal"
+
+
+def test_open_db_sets_busy_timeout(tmp_path: Path):
+    db_path = tmp_path / "test.db"
+    with open_db(db_path) as conn:
+        timeout = conn.execute("PRAGMA busy_timeout").fetchone()[0]
+        assert timeout == 5000
+
+
+def test_open_db_allows_check_same_thread_false(tmp_path: Path):
+    db_path = tmp_path / "test.db"
+
+    with open_db(db_path) as conn:
+
+        def run_query(c):
+            c.execute("SELECT 1").fetchone()
+
+        thread = threading.Thread(target=run_query, args=(conn,))
+        thread.start()
+        thread.join()

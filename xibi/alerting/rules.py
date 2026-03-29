@@ -9,6 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from xibi.db import open_db
+
 logger = logging.getLogger(__name__)
 
 
@@ -22,7 +24,7 @@ class RuleEngine:
 
     def _ensure_tables(self) -> None:
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with open_db(self.db_path) as conn, conn:
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS rules (
                         id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -78,7 +80,7 @@ class RuleEngine:
     def _prewarm(self) -> None:
         try:
             self._rule_cache = []  # Clear before reloading
-            with sqlite3.connect(self.db_path) as conn:
+            with open_db(self.db_path) as conn:
                 cursor = conn.execute("SELECT type, condition, message FROM rules WHERE enabled=1")
                 for r_type, cond_json, msg in cursor.fetchall():
                     try:
@@ -123,7 +125,7 @@ class RuleEngine:
 
     def log_triage(self, email_id: str, sender: str, subject: str, verdict: str) -> None:
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with open_db(self.db_path) as conn, conn:
                 conn.execute(
                     "INSERT INTO triage_log (email_id, sender, subject, verdict) VALUES (?, ?, ?, ?)",
                     (email_id, sender, subject, verdict),
@@ -134,7 +136,7 @@ class RuleEngine:
     def load_triage_rules(self) -> dict[str, str]:
         rules = {}
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with open_db(self.db_path) as conn:
                 cursor = conn.execute(
                     "SELECT COALESCE(entity, content), status FROM ledger WHERE category='triage_rule'"
                 )
@@ -147,7 +149,7 @@ class RuleEngine:
 
     def get_digest_items(self) -> list[dict[str, Any]]:
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with open_db(self.db_path) as conn:
                 cursor = conn.execute(
                     """
                     SELECT sender, subject, verdict, timestamp FROM triage_log
@@ -172,55 +174,55 @@ class RuleEngine:
         callers to read the same items before either commits.
         """
         try:
-            conn = sqlite3.connect(self.db_path, timeout=10, check_same_thread=False, isolation_level=None)
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=5000")
-            try:
-                conn.execute("BEGIN IMMEDIATE")
-                # Read the current watermark from DB (not in-memory cache)
-                row = conn.execute("SELECT value FROM heartbeat_state WHERE key='last_digest_at'").fetchone()
-                db_watermark = row[0] if row else "1970-01-01 00:00:00"
+            with open_db(self.db_path) as conn:
+                conn.isolation_level = None  # autocommit mode for manual transaction control
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    # Read the current watermark from DB (not in-memory cache)
+                    row = conn.execute("SELECT value FROM heartbeat_state WHERE key='last_digest_at'").fetchone()
+                    db_watermark = row[0] if row else "1970-01-01 00:00:00"
 
-                # Fetch items since the DB watermark
-                cursor = conn.execute(
-                    """
-                    SELECT sender, subject, verdict, timestamp FROM triage_log
-                    WHERE timestamp > ? AND verdict != 'URGENT'
-                    ORDER BY timestamp ASC
-                    """,
-                    (db_watermark,),
-                )
-                rows = cursor.fetchall()
-                items = [{"sender": r[0], "subject": r[1], "verdict": r[2], "timestamp": r[3]} for r in rows]
-
-                if items:
-                    # Advance watermark atomically inside the same transaction
-                    conn.execute(
-                        "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('last_digest_at', datetime('now'))"
+                    # Fetch items since the DB watermark
+                    cursor = conn.execute(
+                        """
+                        SELECT sender, subject, verdict, timestamp FROM triage_log
+                        WHERE timestamp > ? AND verdict != 'URGENT'
+                        ORDER BY timestamp ASC
+                        """,
+                        (db_watermark,),
                     )
-                    # Refresh in-memory cache
-                    new_row = conn.execute("SELECT value FROM heartbeat_state WHERE key='last_digest_at'").fetchone()
-                    if new_row and isinstance(new_row[0], str):
-                        self._watermark_cache = new_row[0]
+                    rows = cursor.fetchall()
+                    items = [{"sender": r[0], "subject": r[1], "verdict": r[2], "timestamp": r[3]} for r in rows]
 
-                conn.execute("COMMIT")
-                return items
-            except Exception:
-                with contextlib.suppress(Exception):
-                    conn.execute("ROLLBACK")
-                raise
-            finally:
-                conn.close()
+                    if items:
+                        # Advance watermark atomically inside the same transaction
+                        conn.execute(
+                            "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('last_digest_at', datetime('now'))"
+                        )
+                        # Refresh in-memory cache
+                        new_row = conn.execute(
+                            "SELECT value FROM heartbeat_state WHERE key='last_digest_at'"
+                        ).fetchone()
+                        if new_row and isinstance(new_row[0], str):
+                            self._watermark_cache = new_row[0]
+
+                    conn.execute("COMMIT")
+                    return items
+                except Exception:
+                    with contextlib.suppress(Exception):
+                        conn.execute("ROLLBACK")
+                    raise
         except Exception as e:
             logger.warning(f"Error in pop_digest_items: {e}")
             return []
 
     def update_watermark(self) -> None:
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute(
-                    "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('last_digest_at', CURRENT_TIMESTAMP)"
-                )
+            with open_db(self.db_path) as conn:
+                with conn:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('last_digest_at', CURRENT_TIMESTAMP)"
+                    )
                 cursor = conn.execute("SELECT value FROM heartbeat_state WHERE key='last_digest_at'")
                 row = cursor.fetchone()
                 if row and isinstance(row[0], str):
@@ -241,14 +243,14 @@ class RuleEngine:
 
     def mark_seen(self, email_id: str) -> None:
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with open_db(self.db_path) as conn, conn:
                 conn.execute("INSERT OR IGNORE INTO seen_emails (email_id) VALUES (?)", (email_id,))
         except Exception as e:
             logger.warning(f"Failed to mark email {email_id} as seen: {e}")
 
     def get_seen_ids(self) -> set[str]:
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with open_db(self.db_path) as conn:
                 cursor = conn.execute("SELECT email_id FROM seen_emails")
                 return {row[0] for row in cursor.fetchall()}
         except Exception as e:
@@ -267,7 +269,7 @@ class RuleEngine:
     ) -> None:
         try:
             preview = (content_preview[:277] + "...") if len(content_preview) > 280 else content_preview
-            with sqlite3.connect(self.db_path) as conn:
+            with open_db(self.db_path) as conn:
                 if ref_id:
                     cursor = conn.execute(
                         "SELECT 1 FROM signals WHERE source = ? AND ref_id = ? AND date(timestamp) = date('now')",
@@ -276,24 +278,25 @@ class RuleEngine:
                     if cursor.fetchone():
                         return
 
-                conn.execute(
-                    """
-                    INSERT INTO signals (source, topic, entity_text, entity_type, content_preview, ref_id, ref_source)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                    (source, topic_hint, entity_text, entity_type, preview, str(ref_id), ref_source),
-                )
+                with conn:
+                    conn.execute(
+                        """
+                        INSERT INTO signals (source, topic, entity_text, entity_type, content_preview, ref_id, ref_source)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                        (source, topic_hint, entity_text, entity_type, preview, str(ref_id), ref_source),
+                    )
         except Exception as e:
             logger.warning(f"Failed to log signal: {e}")
 
     def log_background_event(self, content: str, topic: str) -> None:
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with open_db(self.db_path) as conn, conn:
                 conn.execute(
                     """
                     INSERT INTO ledger (id, category, content, entity, status)
                     VALUES (?, ?, ?, ?, ?)
-                """,
+                    """,
                     (str(uuid.uuid4()), "background_event", content, topic, "sent"),
                 )
         except Exception as e:
