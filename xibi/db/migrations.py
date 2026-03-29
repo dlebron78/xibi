@@ -7,7 +7,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 12  # increment when adding new migrations
+SCHEMA_VERSION = 13  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -42,6 +42,7 @@ class SchemaManager:
             (10, "tracing: spans table", self._migration_10),
             (11, "observation cycle tracking", self._migration_11),
             (12, "signal intelligence + thread materialization", self._migration_12),
+            (13, "radiant inference tracking", self._migration_13),
         ]
 
         for version, description, func in migrations:
@@ -370,6 +371,25 @@ class SchemaManager:
         for col_name, col_type in new_cols:
             with contextlib.suppress(sqlite3.OperationalError):
                 conn.execute(f"ALTER TABLE signals ADD COLUMN {col_name} {col_type}")
+
+    def _migration_13(self, conn: sqlite3.Connection) -> None:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS inference_events (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                recorded_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+                role            TEXT NOT NULL,      -- 'fast' | 'think' | 'review'
+                provider        TEXT NOT NULL,      -- 'ollama' | 'gemini' | 'openai' | 'anthropic'
+                model           TEXT NOT NULL,      -- e.g. 'qwen3.5:4b', 'gemini-2.5-flash'
+                operation       TEXT NOT NULL,      -- e.g. 'observation_cycle', 'heartbeat_tick', 'react_step', 'signal_extraction'
+                prompt_tokens   INTEGER NOT NULL DEFAULT 0,
+                response_tokens INTEGER NOT NULL DEFAULT 0,
+                duration_ms     INTEGER NOT NULL DEFAULT 0,
+                cost_usd        REAL NOT NULL DEFAULT 0.0,  -- estimated cost, 0 for local models
+                degraded        INTEGER NOT NULL DEFAULT 0  -- 1 if this call used a fallback role
+            );
+            CREATE INDEX IF NOT EXISTS idx_inference_events_recorded ON inference_events(recorded_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_inference_events_role ON inference_events(role, recorded_at DESC);
+        """)
 
 
 def migrate(db_path: Path) -> list[int]:
