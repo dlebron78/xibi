@@ -20,7 +20,7 @@ set -euo pipefail
 
 # ── Config ────────────────────────────────────────────────────────────────────
 COOLDOWN_MINUTES=30
-DAILY_CAP=5
+DAILY_CAP=12
 LOCKFILE="/tmp/jules_trigger.lock"
 STATE_DIR="${HOME}/.jules_trigger_state"
 LOG_FILE="${STATE_DIR}/trigger.log"
