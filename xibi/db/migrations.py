@@ -7,7 +7,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 13  # increment when adding new migrations
+SCHEMA_VERSION = 14  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -43,6 +43,7 @@ class SchemaManager:
             (11, "observation cycle tracking", self._migration_11),
             (12, "signal intelligence + thread materialization", self._migration_12),
             (13, "radiant inference tracking", self._migration_13),
+            (14, "radiant audit results", self._migration_14),
         ]
 
         for version, description, func in migrations:
@@ -389,6 +390,22 @@ class SchemaManager:
             );
             CREATE INDEX IF NOT EXISTS idx_inference_events_recorded ON inference_events(recorded_at DESC);
             CREATE INDEX IF NOT EXISTS idx_inference_events_role ON inference_events(role, recorded_at DESC);
+        """)
+
+    def _migration_14(self, conn: sqlite3.Connection) -> None:
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS audit_results (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                audited_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                cycles_reviewed INTEGER NOT NULL DEFAULT 0,
+                quality_score   REAL NOT NULL DEFAULT 1.0,  -- 0.0 = poor, 1.0 = perfect
+                nudges_flagged  INTEGER NOT NULL DEFAULT 0,  -- count of over-nudges identified
+                missed_signals  INTEGER NOT NULL DEFAULT 0,  -- count of missed-signal flags
+                false_positives INTEGER NOT NULL DEFAULT 0,  -- count of false positive nudges
+                findings_json   TEXT NOT NULL DEFAULT '[]',  -- JSON array of finding strings
+                model_used      TEXT NOT NULL DEFAULT ''     -- which model ran the audit
+            );
+            CREATE INDEX IF NOT EXISTS idx_audit_results_audited ON audit_results(audited_at DESC);
         """)
 
 

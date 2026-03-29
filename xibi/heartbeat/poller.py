@@ -48,6 +48,7 @@ class HeartbeatPoller:
         self.signal_intelligence_enabled = signal_intelligence_enabled
         self.radiant = radiant
         self._last_reflection_date: Any = None  # Tracks date as string or None
+        self._audit_tick_counter = 0
 
     def _broadcast(self, text: str) -> None:
         for chat_id in self.allowed_chat_ids:
@@ -289,6 +290,13 @@ class HeartbeatPoller:
                     logger.debug(f"Observation cycle skipped: {obs_result.skip_reason}")
             except Exception as e:
                 logger.warning(f"Observation cycle trigger failed: {e}")
+
+        if self.radiant:
+            self._audit_tick_counter += 1
+            audit_interval = self.profile.get("audit_interval_ticks", 20)
+            if self._audit_tick_counter >= audit_interval:
+                self._audit_tick_counter = 0
+                self.radiant.run_audit(self.adapter)
 
     def digest_tick(self, force: bool = False) -> None:
         if self._is_quiet_hours() and not force:
