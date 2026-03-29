@@ -12,6 +12,7 @@ from xibi.tracing import Span, Tracer
 from xibi.trust.gradient import FailureType, TrustGradient
 
 if TYPE_CHECKING:
+    from xibi.command_layer import CommandLayer
     from xibi.executor import Executor
     from xibi.routing.control_plane import ControlPlaneRouter, RoutingDecision
     from xibi.routing.shadow import ShadowMatcher
@@ -71,8 +72,30 @@ def dispatch(
     tool_input: dict[str, Any],
     skill_registry: list[dict[str, Any]],
     executor: Executor | None = None,
+    command_layer: CommandLayer | None = None,
 ) -> dict[str, Any]:
     """Invoke a tool from the registry."""
+    if command_layer is not None:
+        # Resolve the tool's manifest_schema from skill_registry
+        tool_manifest = next((t for t in skill_registry if t.get("name") == tool_name), None)
+        manifest_schema = tool_manifest.get("input_schema") if tool_manifest else None
+
+        result = command_layer.check(tool_name, tool_input, manifest_schema)
+        if not result.allowed:
+            if result.validation_errors:
+                return {"status": "error", "message": result.retry_hint, "retry": True}
+            if result.dedup_suppressed:
+                return {"status": "suppressed", "message": "duplicate action suppressed"}
+            if result.block_reason:
+                return {"status": "blocked", "message": result.block_reason}
+
+        output = (
+            executor.execute(tool_name, tool_input) if executor is not None else {"status": "ok", "message": "stub"}
+        )
+        if result.allowed and result.audit_required:
+            command_layer.audit(tool_name, tool_input, output)
+        return output
+
     if executor is not None:
         return executor.execute(tool_name, tool_input)
 
@@ -135,6 +158,7 @@ def run(
     max_steps: int = 10,
     max_secs: int = 60,
     executor: Executor | None = None,
+    command_layer: CommandLayer | None = None,
     control_plane: ControlPlaneRouter | None = None,
     shadow: ShadowMatcher | None = None,
     session_context: SessionContext | None = None,
@@ -187,7 +211,9 @@ def run(
         if match:
             if match.tier == "direct":
                 # Execute tool directly
-                tool_output = dispatch(match.tool, match.tool_input, skill_registry, executor=executor)
+                tool_output = dispatch(
+                    match.tool, match.tool_input, skill_registry, executor=executor, command_layer=command_layer
+                )
                 # Use a reasonable default for answer from tool output
                 answer = (
                     tool_output.get("answer")
@@ -332,7 +358,9 @@ def run(
                 step.tool_output = {"status": "error", "message": "Parse failure"}
                 tool_output = step.tool_output
             else:
-                tool_output = dispatch(step.tool, step.tool_input, skill_registry, executor=executor)
+                tool_output = dispatch(
+                    step.tool, step.tool_input, skill_registry, executor=executor, command_layer=command_layer
+                )
                 step.tool_output = tool_output
                 step.duration_ms = int((time.time() - step_start_time) * 1000)  # now includes tool time
 
