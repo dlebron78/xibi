@@ -107,8 +107,7 @@ class HeartbeatPoller:
             "DIGEST = worth a summary later.\n"
             "NOISE = automated/newsletters/irrelevant.\n\n"
             f"From: {sender}\n"
-            f"Subject: {subject}"
-            + (f"\nBody preview:\n{body_preview}" if body_preview else "")
+            f"Subject: {subject}" + (f"\nBody preview:\n{body_preview}" if body_preview else "")
         )
 
         try:
