@@ -13,7 +13,7 @@ from xibi.alerting.rules import RuleEngine
 from xibi.channels.telegram import TelegramAdapter
 from xibi.command_layer import CommandLayer
 from xibi.observation import ObservationCycle
-from xibi.router import get_model
+from xibi.router import Config, get_model
 
 logger = logging.getLogger(__name__)
 
@@ -240,7 +240,7 @@ class HeartbeatPoller:
 
                 enriched = enrich_signals(
                     db_path=self.db_path,
-                    config=self.profile,
+                    config=self.profile if self.profile else None,  # type: ignore
                     batch_size=20,
                 )
                 if enriched > 0:

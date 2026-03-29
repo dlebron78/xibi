@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from xibi.db import open_db
-from xibi.router import get_model
+from xibi.router import Config, get_model
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ def extract_tier0(signal_row: dict) -> SignalIntel:
     return intel
 
 
-def extract_tier1_batch(signals: list[dict], config: dict) -> list[SignalIntel]:
+def extract_tier1_batch(signals: list[dict], config: Config | None) -> list[SignalIntel]:
     """Batch fast role call. One LLM call for up to 20 signals."""
     if not signals:
         return []
@@ -302,7 +302,7 @@ def merge_intels(tier0: list[SignalIntel], tier1: list[SignalIntel]) -> list[Sig
     return merged
 
 
-def enrich_signals(db_path: Path, config: dict, batch_size: int = 20) -> int:
+def enrich_signals(db_path: Path, config: Config | None, batch_size: int = 20) -> int:
     """Main entry point. Returns count of signals enriched. Never raises."""
     try:
         with open_db(db_path) as conn:
