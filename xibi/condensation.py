@@ -4,16 +4,18 @@ import hashlib
 import re
 from dataclasses import dataclass
 
+
 @dataclass
 class CondensedContent:
-    ref_id: str          # stable identifier, e.g. "email-a1b2c3d4"
-    source: str          # "email" | "telegram" | "chat"
-    condensed: str       # stripped content for LLM consumption (≤ 2000 chars)
-    link_count: int      # number of URLs found in original
+    ref_id: str  # stable identifier, e.g. "email-a1b2c3d4"
+    source: str  # "email" | "telegram" | "chat"
+    condensed: str  # stripped content for LLM consumption (≤ 2000 chars)
+    link_count: int  # number of URLs found in original
     attachment_count: int
     phishing_flag: bool  # True if any phishing signal detected
-    phishing_reason: str # empty string if no flag, else short description
-    truncated: bool      # True if original was truncated to fit the 2000-char cap
+    phishing_reason: str  # empty string if no flag, else short description
+    truncated: bool  # True if original was truncated to fit the 2000-char cap
+
 
 def condense(
     content: str,
@@ -65,8 +67,13 @@ def condense(
 
             # 2. Strip legal footers
             deny_list = [
-                "confidentiality notice", "this email and any", "unsubscribe",
-                "privacy policy", "this message is intended", "disclaimer:", "all rights reserved"
+                "confidentiality notice",
+                "this email and any",
+                "unsubscribe",
+                "privacy policy",
+                "this message is intended",
+                "disclaimer:",
+                "all rights reserved",
             ]
             paragraphs = condensed.split("\n\n")
             clean_paragraphs = []
@@ -79,11 +86,10 @@ def condense(
             sigs = ["\n--\n", "\nBest,\n", "\nThanks,\n", "\nRegards,\n", "\nSincerely,\n"]
             for sig in sigs:
                 idx = condensed.rfind(sig)
-                if idx != -1:
+                if idx != -1 and idx > len(condensed) * 0.7:
                     # check if in last 30%
-                    if idx > len(condensed) * 0.7:
-                        condensed = condensed[:idx]
-                        break
+                    condensed = condensed[:idx]
+                    break
 
         # Step D: Strip excess whitespace
         # Strip leading/trailing whitespace per line
@@ -120,11 +126,12 @@ def condense(
 
         if display_name and domain:
             for brand in known_brands:
-                if brand.lower() in display_name.lower():
-                    if not (domain.endswith(f"{brand.lower()}.com") or domain.endswith(f"{brand.lower()}.net")):
-                        phishing_flag = True
-                        phishing_reason = f"Brand mismatch: {brand} display name with {domain} domain."
-                        break
+                if brand.lower() in display_name.lower() and not (
+                    domain.endswith(f"{brand.lower()}.com") or domain.endswith(f"{brand.lower()}.net")
+                ):
+                    phishing_flag = True
+                    phishing_reason = f"Brand mismatch: {brand} display name with {domain} domain."
+                    break
 
         # Urgency + wire transfer language
         if not phishing_flag:
@@ -154,10 +161,7 @@ def condense(
             # Truncate at a word boundary (last space before 2000 chars)
             truncated_text = condensed[:2000]
             last_space = truncated_text.rfind(" ")
-            if last_space != -1:
-                condensed = truncated_text[:last_space]
-            else:
-                condensed = truncated_text
+            condensed = truncated_text[:last_space] if last_space != -1 else truncated_text
 
         return CondensedContent(
             ref_id=actual_ref_id,
@@ -167,19 +171,24 @@ def condense(
             attachment_count=0,
             phishing_flag=phishing_flag,
             phishing_reason=phishing_reason,
-            truncated=truncated
+            truncated=truncated,
         )
 
-    except Exception as e:
+    except Exception:
         # Never raises. On any error, return safe defaults.
         safe_content = str(content)[:2000] if content else ""
+        # Ensure actual_ref_id is a string if it exists and is not None
+        error_ref_id = locals().get("actual_ref_id")
+        if not isinstance(error_ref_id, str):
+            error_ref_id = f"{source}-error"
+
         return CondensedContent(
-            ref_id=actual_ref_id if 'actual_ref_id' in locals() else f"{source}-error",
+            ref_id=error_ref_id,
             source=source,
             condensed=safe_content,
             link_count=0,
             attachment_count=0,
             phishing_flag=False,
             phishing_reason="",
-            truncated=len(safe_content) == 2000
+            truncated=len(safe_content) == 2000,
         )
