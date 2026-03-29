@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from xibi.db import open_db
+
 if TYPE_CHECKING:
     from xibi.quality import QualityScore
 
@@ -51,7 +53,7 @@ class Tracer:
 
     def _ensure_table(self) -> None:
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with open_db(self.db_path) as conn, conn:
                 conn.executescript(_CREATE_TABLE)
         except Exception:
             pass  # Never crash the caller — tracing is best-effort
@@ -59,7 +61,7 @@ class Tracer:
     def emit(self, span: Span) -> None:
         """Write a span. Silently swallows all errors — tracing must not break the caller."""
         try:
-            with sqlite3.connect(self.db_path, timeout=5) as conn:
+            with open_db(self.db_path) as conn, conn:
                 conn.execute(
                     """
                     INSERT OR IGNORE INTO spans
@@ -90,7 +92,7 @@ class Tracer:
     def get_trace(self, trace_id: str) -> list[Span]:
         """Return all spans for a trace, ordered by start_ms."""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with open_db(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 rows = conn.execute(
                     "SELECT * FROM spans WHERE trace_id = ? ORDER BY start_ms ASC",
@@ -165,7 +167,7 @@ class Tracer:
     def recent_traces(self, limit: int = 50) -> list[dict[str, Any]]:
         """Summary of recent trace root spans (react.run operations), newest first."""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with open_db(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 rows = conn.execute(
                     """

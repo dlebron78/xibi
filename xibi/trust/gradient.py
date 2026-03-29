@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 
+from xibi.db import open_db
+
 logger = logging.getLogger(__name__)
 
 
@@ -173,7 +175,7 @@ class TrustGradient:
 
     def get_record(self, specialty: str, effort: str) -> TrustRecord | None:
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with open_db(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.execute(
                     "SELECT * FROM trust_records WHERE specialty = ? AND effort = ?",
@@ -199,7 +201,7 @@ class TrustGradient:
 
     def get_all_records(self) -> list[TrustRecord]:
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with open_db(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.execute("SELECT * FROM trust_records ORDER BY specialty ASC, effort ASC")
                 rows = cursor.fetchall()
@@ -238,7 +240,7 @@ class TrustGradient:
         return record
 
     def _upsert_record(self, record: TrustRecord) -> None:
-        with sqlite3.connect(self.db_path) as conn:
+        with open_db(self.db_path) as conn, conn:
             cursor = conn.execute("PRAGMA table_info(trust_records)")
             cols = [r[1] for r in cursor.fetchall()]
 
@@ -271,4 +273,3 @@ class TrustGradient:
             placeholders = ", ".join(["?"] * len(fields))
             sql = f"INSERT OR REPLACE INTO trust_records ({', '.join(fields)}) VALUES ({placeholders})"
             conn.execute(sql, tuple(values))
-            conn.commit()

@@ -14,6 +14,7 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from xibi.db import open_db
 from xibi.executor import Executor
 from xibi.react import run as react_run
 from xibi.router import Config
@@ -143,8 +144,7 @@ class TelegramAdapter:
         Telegram's maximum re-delivery window is 24 h, so 7 days is very safe.
         """
         try:
-            with sqlite3.connect(self.db_path, timeout=10) as conn:
-                conn.execute("PRAGMA journal_mode=WAL")
+            with open_db(self.db_path) as conn, conn:
                 conn.execute("DELETE FROM processed_messages WHERE processed_at < datetime('now', '-7 days')")
         except Exception as e:
             logger.warning(f"Failed to purge old processed_messages: {e}")
@@ -243,7 +243,7 @@ class TelegramAdapter:
 
     def _log_access_attempt(self, chat_id: int, authorized: bool, user_name: str | None = None) -> None:
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with open_db(self.db_path) as conn, conn:
                 conn.execute(
                     "INSERT INTO access_log (chat_id, authorized, user_name) VALUES (?, ?, ?)",
                     (str(chat_id), 1 if authorized else 0, user_name),
@@ -337,8 +337,7 @@ class TelegramAdapter:
                     # Deduplication by message_id rather than offset so that a
                     # crash-restart cannot skip or re-deliver the same message.
                     try:
-                        with sqlite3.connect(self.db_path, timeout=10) as _idem_conn:
-                            _idem_conn.execute("PRAGMA journal_mode=WAL")
+                        with open_db(self.db_path) as _idem_conn:
                             if self._is_already_processed(_idem_conn, message_id):
                                 logger.debug(f"Skipping already-processed message_id={message_id}")
                                 self._save_offset(self.offset)
@@ -353,8 +352,7 @@ class TelegramAdapter:
                         self.send_message(chat_id, "Sorry, I'm a personal assistant. I don't talk to strangers.")
                         # Still mark as processed to avoid re-sending the rejection
                         try:
-                            with sqlite3.connect(self.db_path, timeout=10) as _conn:
-                                _conn.execute("PRAGMA journal_mode=WAL")
+                            with open_db(self.db_path) as _conn, _conn:
                                 self._mark_processed(_conn, message_id)
                         except Exception as _e:
                             logger.warning(f"Failed to mark unauthorized message as processed: {_e}")
@@ -389,8 +387,7 @@ class TelegramAdapter:
                             self.send_message(chat_id, "I couldn't download that file. Please try again.")
 
                         try:
-                            with sqlite3.connect(self.db_path, timeout=10) as _conn:
-                                _conn.execute("PRAGMA journal_mode=WAL")
+                            with open_db(self.db_path) as _conn, _conn:
                                 self._mark_processed(_conn, message_id)
                         except Exception as _e:
                             logger.warning(f"Failed to mark file message as processed: {_e}")
@@ -411,8 +408,7 @@ class TelegramAdapter:
 
                     self._handle_text(chat_id, user_text)
                     try:
-                        with sqlite3.connect(self.db_path, timeout=10) as _conn:
-                            _conn.execute("PRAGMA journal_mode=WAL")
+                        with open_db(self.db_path) as _conn, _conn:
                             self._mark_processed(_conn, message_id)
                     except Exception as _e:
                         logger.warning(f"Failed to mark text message as processed: {_e}")

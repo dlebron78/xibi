@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from xibi.db import open_db
 from xibi.router import get_model
 
 if TYPE_CHECKING:
@@ -58,7 +59,7 @@ class SessionContext:
         Never raises.
         """
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with open_db(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 # Dedup check
                 sentinel_key = f"session:{self.session_id}:compressed"
@@ -132,24 +133,25 @@ Exchanges:
                         {"session_id": self.session_id, "turn_count": len(rows), "compressed_at": now.isoformat()}
                     )
 
-                    conn.execute(
-                        """
-                        INSERT INTO beliefs (key, value, type, visibility, metadata, valid_until)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        """,
-                        (key, value, "session_memory", "internal", metadata, valid_until),
-                    )
+                    with conn:
+                        conn.execute(
+                            """
+                            INSERT INTO beliefs (key, value, type, visibility, metadata, valid_until)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                            (key, value, "session_memory", "internal", metadata, valid_until),
+                        )
                     written += 1
 
                 # Write sentinel
-                conn.execute(
-                    """
-                    INSERT INTO beliefs (key, value, type, visibility, valid_until)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                    (sentinel_key, "1", "session_compression_marker", "internal", valid_until),
-                )
-                conn.commit()
+                with conn:
+                    conn.execute(
+                        """
+                        INSERT INTO beliefs (key, value, type, visibility, valid_until)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (sentinel_key, "1", "session_compression_marker", "internal", valid_until),
+                    )
                 return written
 
         except Exception as e:
@@ -171,12 +173,12 @@ Exchanges:
             created_at=created_at,
         )
 
-        with sqlite3.connect(self.db_path) as conn:
+        with open_db(self.db_path) as conn, conn:
             conn.execute(
                 """
-                INSERT INTO session_turns (turn_id, session_id, query, answer, tools_called, exit_reason, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
+                    INSERT INTO session_turns (turn_id, session_id, query, answer, tools_called, exit_reason, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
                 (
                     turn.turn_id,
                     turn.session_id,
@@ -187,7 +189,6 @@ Exchanges:
                     turn.created_at,
                 ),
             )
-            conn.commit()
 
         # Phase 2: Extract entities from tool outputs
         tool_outputs = [step.tool_output for step in result.steps if step.tool_output]
@@ -203,7 +204,7 @@ Exchanges:
         Returns "" if none found.
         """
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with open_db(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 rows = conn.execute(
                     """
@@ -228,7 +229,7 @@ Exchanges:
             return ""
 
     def get_context_block(self) -> str:
-        with sqlite3.connect(self.db_path) as conn:
+        with open_db(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """
@@ -314,7 +315,7 @@ Exchanges:
 
         # Signal 2: Pending question
         signal2 = False
-        with sqlite3.connect(self.db_path) as conn:
+        with open_db(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             last_turn = conn.execute(
                 "SELECT exit_reason FROM session_turns WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
@@ -326,7 +327,7 @@ Exchanges:
         return (signal1 or signal2) and last_turn is not None
 
     def summarise_old_turns(self) -> None:
-        with sqlite3.connect(self.db_path) as conn:
+        with open_db(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             # Find turns that need summary (beyond FULL_WINDOW, but within SUMMARY_WINDOW + some buffer)
             # Actually, the spec says "turns beyond the FULL_WINDOW + SUMMARY_WINDOW range"
@@ -352,11 +353,12 @@ Exchanges:
                     summary = llm.generate(prompt).strip()
                     # Clean up quotes if model adds them
                     summary = summary.strip('"').strip("'")
-                    conn.execute("UPDATE session_turns SET summary = ? WHERE turn_id = ?", (summary, row["turn_id"]))
+                    with conn:
+                        conn.execute(
+                            "UPDATE session_turns SET summary = ? WHERE turn_id = ?", (summary, row["turn_id"])
+                        )
                 except Exception as e:
                     logger.warning(f"Failed to summarise turn {row['turn_id']}: {e}")
-
-            conn.commit()
 
     def extract_entities(self, turn: Turn, tool_outputs: list[dict]) -> list[SessionEntity]:
         # Concatenate content
@@ -412,7 +414,7 @@ Skip generic words. Confidence > 0.7 only."""
             return []
 
         # Persist with deduplication (upsert on session_id + entity_type + value)
-        with sqlite3.connect(self.db_path) as conn:
+        with open_db(self.db_path) as conn:
             for entity in extracted:
                 # Deduplication logic: "store it once per session (upsert on session_id + entity_type + value)"
                 # Since SQLite doesn't have a simple way to upsert without a unique constraint,
@@ -427,26 +429,26 @@ Skip generic words. Confidence > 0.7 only."""
                 ).fetchone()
 
                 if not exists:
-                    conn.execute(
-                        """
-                        INSERT INTO session_entities (session_id, turn_id, entity_type, value, source_tool, confidence)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            self.session_id,
-                            entity.source_turn_id,
-                            entity.entity_type,
-                            entity.value,
-                            entity.source_tool,
-                            entity.confidence,
-                        ),
-                    )
-            conn.commit()
+                    with conn:
+                        conn.execute(
+                            """
+                            INSERT INTO session_entities (session_id, turn_id, entity_type, value, source_tool, confidence)
+                            VALUES (?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                self.session_id,
+                                entity.source_turn_id,
+                                entity.entity_type,
+                                entity.value,
+                                entity.source_tool,
+                                entity.confidence,
+                            ),
+                        )
 
         return extracted
 
     def get_entities(self, entity_type: str | None = None) -> list[SessionEntity]:
-        with sqlite3.connect(self.db_path) as conn:
+        with open_db(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             query = "SELECT * FROM session_entities WHERE session_id = ?"
             params = [self.session_id]
