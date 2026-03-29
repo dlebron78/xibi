@@ -30,6 +30,7 @@ COST_PER_TOKEN = {
 
 LOCAL_PROVIDERS = {"ollama"}
 
+
 class Radiant:
     """
     Lightweight observability and cost-tracking module.
@@ -390,9 +391,7 @@ class Radiant:
                         continue
 
                 # audit
-                cursor = conn.execute(
-                    "SELECT quality_score, audited_at FROM audit_results ORDER BY id DESC LIMIT 1"
-                )
+                cursor = conn.execute("SELECT quality_score, audited_at FROM audit_results ORDER BY id DESC LIMIT 1")
                 row = cursor.fetchone()
                 if row:
                     summary["audit"] = {
