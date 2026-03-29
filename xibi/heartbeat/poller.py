@@ -85,10 +85,21 @@ class HeartbeatPoller:
         return list(emails)
 
     def _classify_email(self, email: dict[str, Any]) -> str:
+        from xibi.condensation import condense
+
         sender = email.get("from", email.get("sender", "unknown"))
         if isinstance(sender, dict):
             sender = sender.get("name") or sender.get("addr", "unknown")
         subject = email.get("subject", "No Subject")
+
+        body = email.get("body", email.get("text", ""))
+        body_preview = ""
+        if body:
+            cc = condense(body, source="email", ref_id=email.get("id"))
+            if cc.phishing_flag:
+                logger.info(f"Auto-noise: phishing detected in {email.get('id')}: {cc.phishing_reason}")
+                return "NOISE"
+            body_preview = cc.condensed[:500]
 
         prompt = (
             "Classify this email. Reply with exactly one word: URGENT, DIGEST, or NOISE.\n"
@@ -96,7 +107,7 @@ class HeartbeatPoller:
             "DIGEST = worth a summary later.\n"
             "NOISE = automated/newsletters/irrelevant.\n\n"
             f"From: {sender}\n"
-            f"Subject: {subject}"
+            f"Subject: {subject}" + (f"\nBody preview:\n{body_preview}" if body_preview else "")
         )
 
         try:
