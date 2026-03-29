@@ -6,10 +6,10 @@ import sqlite3
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from xibi.db import open_db
-from xibi.router import get_model
+from xibi.router import Config, get_model
 
 logger = logging.getLogger(__name__)
 
@@ -236,7 +236,7 @@ class Radiant:
                     "required": ["quality_score", "findings", "summary"],
                 }
 
-                model = get_model("text", "review", config=self.profile)
+                model = get_model("text", "review", config=cast(Config, self.profile))
                 model_used = f"{model.provider}/{model.model}"
                 start_time = time.time()
                 result = model.generate_structured(prompt, schema)
