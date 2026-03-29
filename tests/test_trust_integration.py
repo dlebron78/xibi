@@ -41,6 +41,7 @@ def tg(db_path):
 
 # --- enrich_signals tests ---
 
+
 def test_enrich_signals_records_success_on_valid_tier1(db_path, tg):
     with open_db(db_path) as conn, conn:
         conn.execute(
@@ -108,6 +109,7 @@ def test_enrich_signals_no_trust_gradient_no_error(db_path):
 
 
 # --- ObservationCycle tests ---
+
 
 def test_observation_cycle_records_success_on_clean_loop(db_path, tg, mock_profile):
     obs = ObservationCycle(db_path, profile=mock_profile, trust_gradient=tg)
@@ -185,6 +187,7 @@ def test_observation_cycle_no_trust_gradient_no_error(db_path, mock_profile):
 
 
 # --- Radiant tests ---
+
 
 def test_run_audit_demotes_trust_on_low_quality(db_path, tg, mock_profile):
     radiant = Radiant(db_path, profile=mock_profile)
@@ -280,6 +283,7 @@ def test_summary_trust_any_demoted_true_after_failure(db_path, tg):
 
 
 # --- HeartbeatPoller tests ---
+
 
 def test_poller_creates_trust_gradient_if_db_path_set(tmp_path):
     db_path = tmp_path / "test.db"
