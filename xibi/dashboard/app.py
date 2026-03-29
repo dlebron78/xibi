@@ -187,6 +187,31 @@ def create_app(config: DashboardConfig) -> Flask:
             data = queries.get_signal_pipeline(conn)
             return jsonify(data)
 
+    @app.route("/api/inference")
+    def inference() -> Any:
+        with get_db_conn() as conn:
+            return jsonify(queries.get_inference_stats(conn))
+
+    @app.route("/api/trust")
+    def trust() -> Any:
+        with get_db_conn() as conn:
+            return jsonify(queries.get_trust_records(conn))
+
+    @app.route("/api/audit")
+    def audit() -> Any:
+        with get_db_conn() as conn:
+            return jsonify(queries.get_audit_results(conn))
+
+    @app.route("/api/spans")
+    def spans() -> Any:
+        with get_db_conn() as conn:
+            return jsonify(queries.get_latest_spans(conn))
+
+    @app.route("/api/cycles")
+    def cycles() -> Any:
+        with get_db_conn() as conn:
+            return jsonify(queries.get_observation_cycles(conn))
+
     @app.route("/")
     def index() -> str:
         return render_template("index.html")

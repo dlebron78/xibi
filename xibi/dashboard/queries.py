@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -15,8 +16,29 @@ def get_last_trace(conn: sqlite3.Connection) -> dict[str, str] | None:
 
 
 def get_conversation_trends(conn: sqlite3.Connection, days: int = 30) -> dict[str, list]:
-    """Return conversation counts grouped by day for the last N days."""
+    """Return conversation counts grouped by day for the last N days. Prefers session_turns."""
     cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+
+    # Check if session_turns exists and has data
+    cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='session_turns'")
+    if cursor.fetchone():
+        cursor = conn.execute(
+            """
+            SELECT date(created_at) as day, COUNT(*) as count
+            FROM session_turns
+            WHERE created_at >= ?
+            GROUP BY day
+            ORDER BY day ASC
+            """,
+            (cutoff,),
+        )
+        rows = cursor.fetchall()
+        if rows:
+            labels = [r[0] for r in rows]
+            counts = [r[1] for r in rows]
+            return {"labels": labels, "counts": counts}
+
+    # Fallback to conversation_history
     cursor = conn.execute(
         """
         SELECT date(created_at) as day, COUNT(*) as count
@@ -65,11 +87,22 @@ def get_recent_errors(conn: sqlite3.Connection, limit: int = 20) -> list[dict]:
 
 
 def get_recent_conversations(conn: sqlite3.Connection, limit: int = 10) -> list[dict]:
-    """Return the most recent conversation turns."""
-    # conversation_history: id, user_message, bot_response, mode, created_at
-    # Requirement: [{"created_at": "...", "role": "user", "content": "..."}]
-    # This is tricky because one row has both user_message and bot_response.
-    # I should probably split them into two entries if the UI expects "role" and "content".
+    """Return the most recent conversation turns. Prefers session_turns if available."""
+    # Check if session_turns exists and has data
+    cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='session_turns'")
+    if cursor.fetchone():
+        cursor = conn.execute(
+            "SELECT created_at, query, answer FROM session_turns ORDER BY created_at DESC LIMIT ?", (limit,)
+        )
+        rows = cursor.fetchall()
+        if rows:
+            result = []
+            for r in rows:
+                result.append({"created_at": r[0], "role": "user", "content": r[1]})
+                result.append({"created_at": r[0], "role": "assistant", "content": r[2]})
+            return result[:limit]
+
+    # Fallback to conversation_history
     cursor = conn.execute(
         "SELECT created_at, user_message, bot_response FROM conversation_history ORDER BY created_at DESC LIMIT ?",
         (limit,),
@@ -206,3 +239,279 @@ def get_signal_pipeline(conn: sqlite3.Connection, days: int = 7) -> dict[str, in
         (cutoff,),
     )
     return {r[0]: r[1] for r in cursor.fetchall()}
+
+
+def get_inference_stats(conn: sqlite3.Connection) -> dict:
+    """
+    Returns:
+    {
+      "last_24h_tokens": int,
+      "last_24h_cost_usd": float,
+      "by_role_7d": [{"role": "fast", "day": "2026-03-28", "tokens": int}, ...],
+      "recent": [{"recorded_at": ..., "role": ..., "model": ..., "operation": ...,
+                  "prompt_tokens": int, "response_tokens": int, "duration_ms": int,
+                  "cost_usd": float}, ...]  # last 10
+    }
+    If inference_events table doesn't exist, return {"error": "no data"}.
+    """
+    cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='inference_events'")
+    if not cursor.fetchone():
+        return {"error": "no data"}
+
+    now = datetime.utcnow()
+    last_24h = (now - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
+    last_7d = (now - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
+
+    # Last 24h stats
+    cursor = conn.execute(
+        "SELECT SUM(prompt_tokens + response_tokens), SUM(cost_usd) FROM inference_events WHERE recorded_at >= ?",
+        (last_24h,),
+    )
+    row_24h = cursor.fetchone()
+    last_24h_tokens = row_24h[0] or 0
+    last_24h_cost_usd = row_24h[1] or 0.0
+
+    # By role 7d
+    cursor = conn.execute(
+        """
+        SELECT role, date(recorded_at) as day, SUM(prompt_tokens + response_tokens) as tokens
+        FROM inference_events
+        WHERE recorded_at >= ?
+        GROUP BY role, day
+        ORDER BY day ASC
+        """,
+        (last_7d,),
+    )
+    by_role_7d = [{"role": r[0], "day": r[1], "tokens": r[2]} for r in cursor.fetchall()]
+
+    # Recent 10
+    cursor = conn.execute(
+        """
+        SELECT recorded_at, role, model, operation, prompt_tokens, response_tokens, duration_ms, cost_usd
+        FROM inference_events
+        ORDER BY recorded_at DESC
+        LIMIT 10
+        """
+    )
+    recent = [
+        {
+            "recorded_at": r[0],
+            "role": r[1],
+            "model": r[2],
+            "operation": r[3],
+            "prompt_tokens": r[4],
+            "response_tokens": r[5],
+            "duration_ms": r[6],
+            "cost_usd": r[7],
+        }
+        for r in cursor.fetchall()
+    ]
+
+    return {
+        "last_24h_tokens": last_24h_tokens,
+        "last_24h_cost_usd": last_24h_cost_usd,
+        "by_role_7d": by_role_7d,
+        "recent": recent,
+    }
+
+
+def get_trust_records(conn: sqlite3.Connection) -> list[dict]:
+    """
+    Returns list of trust record rows, each with computed failure_rate_pct.
+    [{specialty, effort, audit_interval, consecutive_clean, total_outputs,
+      total_failures, failure_rate_pct, model_hash, last_failure_type, last_updated}]
+    If trust_records table doesn't exist or is empty, return [].
+    """
+    cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='trust_records'")
+    if not cursor.fetchone():
+        return []
+
+    # Get column names to handle different migration states
+    cursor = conn.execute("PRAGMA table_info(trust_records)")
+    columns = [info[1] for info in cursor.fetchall()]
+
+    query_cols = [
+        "specialty",
+        "effort",
+        "audit_interval",
+        "consecutive_clean",
+        "total_outputs",
+        "total_failures",
+        "last_updated",
+    ]
+    if "model_hash" in columns:
+        query_cols.append("model_hash")
+    if "last_failure_type" in columns:
+        query_cols.append("last_failure_type")
+
+    query = f"SELECT {', '.join(query_cols)} FROM trust_records"
+    cursor = conn.execute(query)
+    rows = cursor.fetchall()
+
+    results = []
+    for r in rows:
+        data = dict(zip(query_cols, r))
+        total = data.get("total_outputs", 0)
+        failures = data.get("total_failures", 0)
+        data["failure_rate_pct"] = round((failures / total * 100), 1) if total > 0 else 0.0
+        results.append(data)
+
+    return results
+
+
+def get_audit_results(conn: sqlite3.Connection, limit: int = 10) -> dict:
+    """
+    Returns:
+    {
+      "latest": {quality_score, nudges_flagged, missed_signals, false_positives,
+                 findings_json (parsed list), model_used, audited_at},
+      "history": [{"audited_at": ..., "quality_score": float}, ...]  # last 10, oldest first
+    }
+    If audit_results table doesn't exist or is empty, return {"latest": None, "history": []}.
+    """
+    cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='audit_results'")
+    if not cursor.fetchone():
+        return {"latest": None, "history": []}
+
+    # Latest row
+    cursor = conn.execute(
+        "SELECT quality_score, nudges_flagged, missed_signals, false_positives, findings_json, model_used, audited_at "
+        "FROM audit_results ORDER BY audited_at DESC LIMIT 1"
+    )
+    latest_row = cursor.fetchone()
+    if not latest_row:
+        return {"latest": None, "history": []}
+
+    try:
+        findings = json.loads(latest_row[4] or "[]")
+    except Exception:
+        findings = []
+
+    latest = {
+        "quality_score": latest_row[0],
+        "nudges_flagged": latest_row[1],
+        "missed_signals": latest_row[2],
+        "false_positives": latest_row[3],
+        "findings_json": findings,
+        "model_used": latest_row[5],
+        "audited_at": latest_row[6],
+    }
+
+    # History (last 10, oldest first)
+    cursor = conn.execute(
+        "SELECT audited_at, quality_score FROM audit_results ORDER BY audited_at DESC LIMIT ?", (limit,)
+    )
+    history = [{"audited_at": r[0], "quality_score": r[1]} for r in cursor.fetchall()]
+    history.reverse()
+
+    return {"latest": latest, "history": history}
+
+
+def get_latest_spans(conn: sqlite3.Connection) -> dict:
+    """
+    Fetch all spans for the most recent trace_id (by max start_ms).
+    Returns:
+    {
+      "trace_id": str,
+      "spans": [{"span_id", "parent_span_id", "operation", "component",
+                 "start_ms", "duration_ms", "status", "attributes", "offset_ms"}],
+      "total_duration_ms": int,
+      "error_count": int
+    }
+    If spans table doesn't exist or is empty, return {"trace_id": None, "spans": []}.
+    """
+    cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='spans'")
+    if not cursor.fetchone():
+        return {"trace_id": None, "spans": []}
+
+    # Get most recent trace_id
+    cursor = conn.execute("SELECT trace_id FROM spans ORDER BY start_ms DESC LIMIT 1")
+    row = cursor.fetchone()
+    if not row:
+        return {"trace_id": None, "spans": []}
+    trace_id = row[0]
+
+    # Get all spans for this trace
+    cursor = conn.execute(
+        "SELECT span_id, parent_span_id, operation, component, start_ms, duration_ms, status, attributes "
+        "FROM spans WHERE trace_id = ? ORDER BY start_ms ASC",
+        (trace_id,),
+    )
+    rows = cursor.fetchall()
+    if not rows:
+        return {"trace_id": trace_id, "spans": []}
+
+    min_start = min(r[4] for r in rows)
+    max_end = max(r[4] + r[5] for r in rows)
+    total_duration = max_end - min_start
+    error_count = sum(1 for r in rows if r[6] != "ok")
+
+    spans = []
+    for r in rows:
+        try:
+            attrs = json.loads(r[7]) if r[7] else {}
+        except Exception:
+            attrs = {}
+        spans.append(
+            {
+                "span_id": r[0],
+                "parent_span_id": r[1],
+                "operation": r[2],
+                "component": r[3],
+                "start_ms": r[4],
+                "duration_ms": r[5],
+                "status": r[6],
+                "attributes": attrs,
+                "offset_ms": r[4] - min_start,
+            }
+        )
+
+    return {
+        "trace_id": trace_id,
+        "spans": spans,
+        "total_duration_ms": total_duration,
+        "error_count": error_count,
+    }
+
+
+def get_observation_cycles(conn: sqlite3.Connection, limit: int = 10) -> list[dict]:
+    """
+    Returns last N observation cycles, newest first.
+    [{started_at, completed_at, role_used, signals_processed, degraded,
+      error_count (len of error_log JSON array), actions_taken (parsed list)}]
+    If table doesn't exist, return [].
+    """
+    cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='observation_cycles'")
+    if not cursor.fetchone():
+        return []
+
+    cursor = conn.execute(
+        "SELECT started_at, completed_at, role_used, signals_processed, degraded, error_log, actions_taken "
+        "FROM observation_cycles ORDER BY started_at DESC LIMIT ?",
+        (limit,),
+    )
+    rows = cursor.fetchall()
+    results = []
+    for r in rows:
+        try:
+            errors = json.loads(r[5] or "[]")
+        except Exception:
+            errors = []
+
+        try:
+            actions = json.loads(r[6] or "[]")
+        except Exception:
+            actions = []
+
+        results.append(
+            {
+                "started_at": r[0],
+                "completed_at": r[1],
+                "role_used": r[2],
+                "signals_processed": r[3],
+                "degraded": bool(r[4]),
+                "error_count": len(errors),
+                "actions_taken": actions,
+            }
+        )
+    return results
