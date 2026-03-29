@@ -83,45 +83,30 @@ updated = data.get('updateTime', '')
 if created: print(f'Created: {created}')
 if updated: print(f'Updated: {updated}')
 
-print('')
-
-# Messages / comments from Jules
-messages = data.get('messages', [])
-if messages:
-    print(f'Messages ({len(messages)} total):')
-    print('────────────────────────────────────────')
-    # Show last 5 messages
-    for msg in messages[-5:]:
-        role = msg.get('role', 'unknown').upper()
-        content = msg.get('content', '')
-        ts = msg.get('createTime', '')
-        if isinstance(content, list):
-            # Content may be a list of parts
-            text = ' '.join(p.get('text','') for p in content if isinstance(p, dict))
-        else:
-            text = str(content)
-        # Truncate long messages
-        if len(text) > 800:
-            text = text[:800] + '... [truncated]'
-        print(f'[{role}] {ts}')
-        print(text)
-        print('')
-else:
-    print('No messages in session yet.')
+# Jules web UI URL (check-in comments only visible here — not in API)
+url = data.get('url', '')
+if url:
+    print(f'UI URL:  {url}')
 
 print('')
+print('Note: Jules check-in comments are only visible in the web UI (see URL above).')
+print('      The API does not expose session messages.')
+print('')
 
-# Detect if Jules is waiting for input
+# Detect state
 waiting_states = ['WAITING_FOR_INPUT', 'PAUSED', 'NEEDS_RESPONSE']
 is_waiting = state in waiting_states
 if is_waiting:
-    print('⚠️  JULES IS WAITING FOR INPUT — session needs a response to continue.')
-elif state == 'RUNNING':
+    print('⚠️  JULES IS WAITING FOR INPUT — open the UI URL above to see what it needs.')
+elif state in ('IN_PROGRESS', 'RUNNING'):
     print('✓  Jules is actively working.')
 elif state in ('DONE', 'SUCCEEDED', 'COMPLETED'):
     print('✓  Session complete.')
 elif state in ('FAILED', 'ERROR'):
-    print('✗  Session failed.')
+    print('✗  Session FAILED — needs re-triggering.')
+    print('   To re-trigger: move spec back to pending and push, or run jules_trigger.sh manually.')
+    if url:
+        print(f'   Check UI for failure details: {url}')
 else:
     print(f'   Status: {state}')
 " 2>/dev/null || {
