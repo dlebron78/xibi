@@ -8,9 +8,11 @@ from pathlib import Path
 
 # Add project root to sys.path to allow importing from the root
 import sys
+
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 from bregger_utils import normalize_topic
+
 
 def run(params: dict) -> dict:
     action = params.get("action_type")
@@ -25,10 +27,10 @@ def run(params: dict) -> dict:
             with sqlite3.connect(db_path) as conn:
                 cursor = conn.execute("SELECT topic, created_at FROM pinned_topics ORDER BY created_at DESC")
                 rows = cursor.fetchall()
-            
+
             if not rows:
                 return {"status": "success", "message": "You don't have any pinned topics right now."}
-            
+
             pinned = [{"topic": row[0], "pinned_since": row[1]} for row in rows]
             return {"status": "success", "pinned_topics": pinned}
         except Exception as e:
@@ -44,7 +46,10 @@ def run(params: dict) -> dict:
         try:
             with sqlite3.connect(db_path) as conn:
                 conn.execute("INSERT OR REPLACE INTO pinned_topics (topic) VALUES (?)", (topic,))
-            return {"status": "success", "message": f"Successfully pinned the topic '{topic}'. Related signals will now be escalated."}
+            return {
+                "status": "success",
+                "message": f"Successfully pinned the topic '{topic}'. Related signals will now be escalated.",
+            }
         except Exception as e:
             return {"status": "error", "message": f"Failed to pin topic: {e}"}
 

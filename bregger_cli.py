@@ -17,11 +17,12 @@ DEFAULT_WORKDIR = os.path.expanduser("~/.bregger")
 CONFIG_FILE = "config.json"
 DB_FILE = "bregger.db"
 
+
 def cmd_init(args):
     """Initialize Bregger environment."""
     workdir_path = Path(args.workdir)
     print(f"Initializing Bregger at {workdir_path}...")
-    
+
     # 1. Create directory structure
     try:
         workdir_path.mkdir(parents=True, exist_ok=True)
@@ -37,25 +38,12 @@ def cmd_init(args):
     config_path = workdir_path / CONFIG_FILE
     if not config_path.exists():
         default_config = {
-            "assistant": {
-                "name": "El Guardian",
-                "timezone": "AST",
-                "security_level": "high"
-            },
-            "llm": {
-                "provider": "ollama",
-                "model": "llama3.1:8b",
-                "base_url": "http://localhost:11434"
-            },
-            "channels": {
-                "telegram": {
-                    "enabled": True,
-                    "token_env": "BREGGER_TELEGRAM_TOKEN"
-                }
-            }
+            "assistant": {"name": "El Guardian", "timezone": "AST", "security_level": "high"},
+            "llm": {"provider": "ollama", "model": "llama3.1:8b", "base_url": "http://localhost:11434"},
+            "channels": {"telegram": {"enabled": True, "token_env": "BREGGER_TELEGRAM_TOKEN"}},
         }
         try:
-            with open(config_path, 'w') as f:
+            with open(config_path, "w") as f:
                 json.dump(default_config, f, indent=4)
             print(f"✅ Created {CONFIG_FILE}.")
         except Exception as e:
@@ -69,9 +57,9 @@ def cmd_init(args):
     try:
         with sqlite3.connect(db_path) as conn:
             cursor = conn.cursor()
-            
+
             # Beliefs table
-            cursor.execute('''
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS beliefs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     key TEXT,
@@ -83,10 +71,10 @@ def cmd_init(args):
                     valid_until DATETIME,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
-            ''')
-            
+            """)
+
             # Ledger table (flexible memory)
-            cursor.execute('''
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS ledger (
                     id TEXT PRIMARY KEY,
                     category TEXT DEFAULT 'note',
@@ -97,10 +85,10 @@ def cmd_init(args):
                     notes TEXT,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
-            ''')
-            
+            """)
+
             # Traces table
-            cursor.execute('''
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS traces (
                     id TEXT PRIMARY KEY,
                     intent TEXT,
@@ -109,10 +97,8 @@ def cmd_init(args):
                     status TEXT,
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
-            ''')
-            
+            """)
 
-            
             conn.commit()
         print(f"✅ Initialized {DB_FILE}.")
     except Exception as e:
@@ -121,12 +107,13 @@ def cmd_init(args):
 
     print("\n🎉 Bregger is initialized! Run 'bregger doctor' to verify your setup.")
 
+
 def cmd_doctor(args):
     """Check health of the Bregger environment."""
     workdir_path = Path(args.workdir)
     print(f"Checking health at {workdir_path}...\n")
     failed = False
-    
+
     # Check directory
     if workdir_path.exists():
         print("✅ Workdir exists.")
@@ -139,7 +126,7 @@ def cmd_doctor(args):
     config = {}
     if config_path.exists():
         try:
-            with open(config_path, 'r') as f:
+            with open(config_path, "r") as f:
                 config = json.load(f)
             print("✅ config.json is valid.")
         except Exception as e:
@@ -176,7 +163,7 @@ def cmd_doctor(args):
         local_himalaya = Path.home() / ".local" / "bin" / "himalaya"
         if local_himalaya.exists():
             himalaya_path = str(local_himalaya)
-            
+
     if himalaya_path:
         print(f"✅ himalaya binary found at {himalaya_path}.")
     else:
@@ -211,19 +198,23 @@ def cmd_doctor(args):
     else:
         print("\n✨ Health check complete. Ready to bregar.")
 
+
 def cmd_world(args):
     """Set the user's 'World' context (beliefs)."""
     db_path = Path(args.workdir) / "data" / DB_FILE
-    
+
     if not db_path.exists():
         print("❌ Database missing. Run 'init' first.")
         sys.exit(1)
 
     beliefs = []
-    if args.name: beliefs.append(("user_name", args.name))
-    if args.startup: beliefs.append(("user_startup", args.startup))
-    if args.focus: beliefs.append(("user_focus", args.focus))
-    
+    if args.name:
+        beliefs.append(("user_name", args.name))
+    if args.startup:
+        beliefs.append(("user_startup", args.startup))
+    if args.focus:
+        beliefs.append(("user_focus", args.focus))
+
     if not beliefs:
         print("❓ No world updates provided. Use --name, --startup, or --focus.")
         return
@@ -231,11 +222,14 @@ def cmd_world(args):
     try:
         with sqlite3.connect(db_path) as conn:
             for key, value in beliefs:
-                conn.execute('''
+                conn.execute(
+                    """
                     INSERT INTO beliefs (key, value, type, visibility)
                     VALUES (?, ?, 'context', 'user')
                     ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
-                ''', (key, value))
+                """,
+                    (key, value),
+                )
             conn.commit()
         print("✅ World context updated in beliefs.")
     except Exception as e:
@@ -243,11 +237,12 @@ def cmd_world(args):
         sys.exit(1)
 
 
-
 def main():
     parser = argparse.ArgumentParser(description="Bregger CLI - Manage your personal AI fixer.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
-    parser.add_argument("--workdir", default=DEFAULT_WORKDIR, help="Directory where Bregger is installed") # Moved workdir to global
+    parser.add_argument(
+        "--workdir", default=DEFAULT_WORKDIR, help="Directory where Bregger is installed"
+    )  # Moved workdir to global
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
     # Init command
@@ -262,8 +257,6 @@ def main():
     world_parser.add_argument("--startup", help="Your startup name")
     world_parser.add_argument("--focus", help="Your current top priority/focus")
 
-
-
     args = parser.parse_args()
 
     if args.command == "init":
@@ -274,6 +267,7 @@ def main():
         cmd_world(args)
     else:
         parser.print_help()
+
 
 if __name__ == "__main__":
     main()

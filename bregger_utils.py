@@ -15,29 +15,30 @@ from pathlib import Path
 #       provider.generate(...)
 inference_lock = threading.RLock()
 
+
 def normalize_topic(topic: str | None) -> str | None:
     """Consolidates fragmented topics (e.g. scheduling -> schedule)."""
     if not topic:
         return None
-    
+
     # 1. Lowercase + cleanup
     t = topic.lower().replace("_", " ").strip()
-    
+
     # 2. Stopwords
     stopwords = {"my", "the", "a", "an", "this", "our", "your", "on", "for"}
     words = [w for w in t.split() if w not in stopwords]
     if not words:
         return t  # fallback to raw if we stripped everything
-        
+
     t = " ".join(words)
-    
+
     # 3. Simple Stemming (suffix stripping)
     suffixes = ["ing", "s"]
     for suffix in suffixes:
         if t.endswith(suffix) and len(t) > len(suffix) + 2:
-            t = t[:-len(suffix)]
+            t = t[: -len(suffix)]
             break
-            
+
     # 4. Synonym Mapping
     synonyms = {
         "calendar": "schedule",
@@ -47,9 +48,10 @@ def normalize_topic(topic: str | None) -> str | None:
         "inbox": "email",
         "message": "chat",
         "presentation_deck": "presentation deck",
-        "deck": "presentation deck"
+        "deck": "presentation deck",
     }
     return synonyms.get(t, t)
+
 
 def get_active_threads(db_path: Path, window_days: int = 7, min_count: int = 2, limit: int = 7) -> list:
     """Return topics seen min_count+ times in the last window_days days.
@@ -70,7 +72,7 @@ def get_active_threads(db_path: Path, window_days: int = 7, min_count: int = 2, 
                 "WHERE topic_hint IS NOT NULL "
                 "  AND timestamp > datetime('now', ?) "
                 "  AND (env IS NULL OR env = 'production') ",
-                (f"-{window_days} days",)
+                (f"-{window_days} days",),
             )
             rows = cursor.fetchall()
 
@@ -161,14 +163,12 @@ def ensure_signals_schema(db_path) -> None:
                     pass  # Column already exists
 
             # Backfill: ensure no NULLs hide signals from reflection queries
-            conn.execute(
-                "UPDATE signals SET proposal_status = 'active' WHERE proposal_status IS NULL"
-            )
+            conn.execute("UPDATE signals SET proposal_status = 'active' WHERE proposal_status IS NULL")
     except Exception as e:
         print(f"⚠️ [ensure_signals_schema] Failed: {e}", flush=True)
 
 
-def parse_semantic_datetime(token: str, ref_tz: str = "America/New_York") -> __import__('datetime').datetime:
+def parse_semantic_datetime(token: str, ref_tz: str = "America/New_York") -> __import__("datetime").datetime:
     """
     Parses semantic temporal tokens like 'tomorrow_1400' or 'friday_0930'.
     Falls back to strict ISO 8601 parsing if no semantic pattern matches.
@@ -183,15 +183,15 @@ def parse_semantic_datetime(token: str, ref_tz: str = "America/New_York") -> __i
         tz = zoneinfo.ZoneInfo("America/New_York")
 
     now = datetime.now(tz)
-    
+
     # 1. Semantic parsing: format <day>_<HHMM>
-    match = re.match(r'^([a-z]+)_(\d{4})$', token.lower())
+    match = re.match(r"^([a-z]+)_(\d{4})$", token.lower())
     if match:
         day_str, time_str = match.groups()
         hour, minute = int(time_str[:2]), int(time_str[2:])
-        
+
         target_date = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        
+
         if day_str == "today":
             pass
         elif day_str == "tomorrow":
@@ -202,16 +202,16 @@ def parse_semantic_datetime(token: str, ref_tz: str = "America/New_York") -> __i
             if day_str in days_of_week:
                 target_dow = days_of_week.index(day_str)
                 current_dow = now.weekday()
-                
+
                 # Calculate days ahead: if today is target_dow, and time has passed, assume next week.
                 days_ahead = target_dow - current_dow
                 if days_ahead < 0 or (days_ahead == 0 and now >= target_date):
                     days_ahead += 7
-                
+
                 target_date += timedelta(days=days_ahead)
             else:
                 raise ValueError(f"Unknown day format in semantic token: {day_str}")
-                
+
         return target_date
 
     # 2. Strict ISO format fallback

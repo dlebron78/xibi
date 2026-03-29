@@ -49,6 +49,7 @@ def test_record_failure_resets_consecutive_clean(trust_gradient: TrustGradient):
 
 def test_record_failure_quality_decrements_consecutive_clean(trust_gradient: TrustGradient):
     from xibi.trust.gradient import FailureType
+
     for _ in range(5):
         trust_gradient.record_success("text", "fast")
 
@@ -58,6 +59,7 @@ def test_record_failure_quality_decrements_consecutive_clean(trust_gradient: Tru
 
 def test_record_failure_quality_demotes_interval(db_path: Path):
     from xibi.trust.gradient import FailureType
+
     config = {"text.fast": TrustConfig(10, 10, True, 2, 50)}
     tg = TrustGradient(db_path, config=config)
 

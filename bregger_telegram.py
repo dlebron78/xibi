@@ -11,6 +11,7 @@ from bregger_core import BreggerCore
 # Temporary store: chat_id -> local file path of the most recently uploaded file.
 _pending_attachments: dict = {}
 
+
 def is_continuation(text: str) -> bool:
     """Check if text is a brief confirmation/continuation to resume a task."""
     text_lower = text.strip().lower()
@@ -18,29 +19,45 @@ def is_continuation(text: str) -> bool:
     if len(text_lower.split()) > 4:
         return False
     continuations = (
-        "yes", "y", "no", "n", "send it", "go ahead", "do it", 
-        "cancel", "stop", "nevermind", "sure", "ok", "okay", "yeah", "yep", "nope"
+        "yes",
+        "y",
+        "no",
+        "n",
+        "send it",
+        "go ahead",
+        "do it",
+        "cancel",
+        "stop",
+        "nevermind",
+        "sure",
+        "ok",
+        "okay",
+        "yeah",
+        "yep",
+        "nope",
     )
     return any(text_lower.startswith(c) for c in continuations)
+
 
 def extract_task_id(text: str) -> str | None:
     """Extract a task ID bracket tag like [task:abc123] from message text."""
     m = re.search(r"\[task:([a-zA-Z0-9-_]+)\]", text)
     return m.group(1) if m else None
 
+
 class BreggerTelegramAdapter:
     """Zero-dependency Telegram Bot adapter for Bregger."""
-    
+
     def __init__(self, core: BreggerCore):
         self.core = core
         self.token = os.environ.get("BREGGER_TELEGRAM_TOKEN")
         if not self.token:
             raise ValueError("BREGGER_TELEGRAM_TOKEN environment variable not set.")
-        
+
         # Security: Allowlist of chat IDs
         self.allowed_chats = os.environ.get("BREGGER_TELEGRAM_ALLOWED_CHAT_IDS", "").split(",")
         self.allowed_chats = [c.strip() for c in self.allowed_chats if c.strip()]
-        
+
         self.base_url = f"https://api.telegram.org/bot{self.token}"
         self.offset_file = Path(core.workdir) / "data" / "telegram_offset.txt"
         self.offset = self._load_offset()
@@ -69,9 +86,9 @@ class BreggerTelegramAdapter:
         """Make a call to the Telegram Bot API (or mock it)."""
         if os.environ.get("BREGGER_MOCK_TELEGRAM") == "1":
             return self._mock_api_call(method, params)
-            
+
         url = f"{self.base_url}/{method}"
-        
+
         try:
             # Use POST with JSON body for everything except getUpdates
             if method == "getUpdates":
@@ -80,11 +97,7 @@ class BreggerTelegramAdapter:
                 req = urllib.request.Request(url)
             else:
                 data = json.dumps(params).encode("utf-8") if params else b""
-                req = urllib.request.Request(
-                    url, 
-                    data=data, 
-                    headers={"Content-Type": "application/json"}
-                )
+                req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
 
             # Timeout must be > the 30s long poll timeout
             with urllib.request.urlopen(req, timeout=35) as response:
@@ -103,14 +116,16 @@ class BreggerTelegramAdapter:
                 self._mock_sent = True
                 return {
                     "ok": True,
-                    "result": [{
-                        "update_id": 1,
-                        "message": {
-                            "chat": {"id": 123},
-                            "text": "Hi Bregger, check my emails",
-                            "from": {"first_name": "Dan"}
+                    "result": [
+                        {
+                            "update_id": 1,
+                            "message": {
+                                "chat": {"id": 123},
+                                "text": "Hi Bregger, check my emails",
+                                "from": {"first_name": "Dan"},
+                            },
                         }
-                    }]
+                    ],
                 }
             time.sleep(2)
             return {"ok": True, "result": []}
@@ -120,10 +135,7 @@ class BreggerTelegramAdapter:
         """Send a message to a specific chat."""
         print(f"🤖 Bregger: {text}", flush=True)
         # Note: Removing parse_mode to avoid crashes on unescaped LLM output.
-        params = {
-            "chat_id": chat_id,
-            "text": text
-        }
+        params = {"chat_id": chat_id, "text": text}
         return self._api_call("sendMessage", params)
 
     def _on_react_step(self, step_info: str):
@@ -167,7 +179,7 @@ class BreggerTelegramAdapter:
     def is_authorized(self, chat_id: int) -> bool:
         """Check if a chat ID is allowed to talk to Bregger."""
         if not self.allowed_chats:
-            return True # Open if not set (default)
+            return True  # Open if not set (default)
         return str(chat_id) in self.allowed_chats
 
     def poll(self):
@@ -179,7 +191,7 @@ class BreggerTelegramAdapter:
         while True:
             params = {"offset": self.offset, "timeout": 20}
             updates = self._api_call("getUpdates", params)
-            
+
             if updates.get("ok"):
                 for update in updates.get("result", []):
                     self.offset = update["update_id"] + 1
@@ -227,7 +239,7 @@ class BreggerTelegramAdapter:
                                 fname = os.path.basename(local_path)
                                 self.send_message(
                                     chat_id,
-                                    f"📎 Got it! I've saved '{fname}'. Now just tell me where to send it — e.g. 'Send my resume to name@email.com'"
+                                    f"📎 Got it! I've saved '{fname}'. Now just tell me where to send it — e.g. 'Send my resume to name@email.com'",
                                 )
                         else:
                             self.send_message(chat_id, "⚠️ I couldn't download that file. Please try again.")
@@ -258,7 +270,7 @@ class BreggerTelegramAdapter:
 
                     try:
                         response = None
-                        
+
                         # Single Active Slot routing
                         _ESCAPE_WORDS = {"cancel", "skip", "nevermind", "not now", "forget it", "move on"}
                         awaiting = self.core._get_awaiting_task()
@@ -271,7 +283,7 @@ class BreggerTelegramAdapter:
 
                         if not response:
                             response = self.core.process_query(user_text)
-                            
+
                         self._active_chat_id = None
                         self.send_message(chat_id, response)
                         # Clear attachment after a successful send (LLM consumed it)
@@ -279,22 +291,23 @@ class BreggerTelegramAdapter:
                             _pending_attachments.pop(chat_id, None)
                     except Exception as e:
                         import traceback
+
                         print(f"❌ Error processing query from {user_name}: {e}", flush=True)
                         traceback.print_exc()
                         self.send_message(chat_id, "Sorry, I had a brain fart. Please try again.")
 
-
-            
             time.sleep(1)
+
 
 if __name__ == "__main__":
     import sys
+
     config_path = sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser("~/.bregger/config.json")
-    
+
     if not os.path.exists(config_path):
         print(f"❌ Config not found at {config_path}. Run 'bregger init' first.", flush=True)
         sys.exit(1)
-        
+
     try:
         core_engine = BreggerCore(config_path)
         adapter = BreggerTelegramAdapter(core_engine)

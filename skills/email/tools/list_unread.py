@@ -7,8 +7,7 @@ from datetime import datetime, timedelta
 PAGE_SIZE = 5
 FETCH_SIZE = 50  # Pull a large batch from Himalaya to filter from
 
-NUMBER_EMOJI = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣",
-                "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+NUMBER_EMOJI = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
 
 
 def _friendly_date(date_str: str) -> str:
@@ -61,10 +60,7 @@ def format_page(emails: list, offset: int, total_unread: int) -> str:
     for i, email in enumerate(emails):
         emoji = NUMBER_EMOJI[i] if i < len(NUMBER_EMOJI) else f"{offset + i + 1}."
         subject = email.get("subject", "No Subject")
-        sender = (
-            email.get("from", {}).get("name")
-            or email.get("from", {}).get("addr", "Unknown")
-        )
+        sender = email.get("from", {}).get("name") or email.get("from", {}).get("addr", "Unknown")
         date = _friendly_date(email.get("date", ""))
         lines.append(f"{emoji} {sender} — {date}\n   {subject}")
 
@@ -91,8 +87,13 @@ def run(params):
             himalaya_bin = "himalaya"
 
     cmd = [
-        himalaya_bin, "--output", "json",
-        "envelope", "list", "--page-size", str(FETCH_SIZE),
+        himalaya_bin,
+        "--output",
+        "json",
+        "envelope",
+        "list",
+        "--page-size",
+        str(FETCH_SIZE),
     ]
 
     try:

@@ -11,6 +11,7 @@ import zoneinfo
 from _google_auth import gcal_request
 from bregger_utils import parse_semantic_datetime
 
+
 def run(params: dict) -> dict:
     title = params.get("title", "").strip()
     start_dt_raw = params.get("start_datetime", "").strip()
@@ -19,7 +20,7 @@ def run(params: dict) -> dict:
 
     timezone = params.get("timezone", "America/New_York")
     description = params.get("description", "")
-    
+
     # Parse start time
     try:
         start_parsed = parse_semantic_datetime(start_dt_raw, timezone)
@@ -32,7 +33,7 @@ def run(params: dict) -> dict:
         duration_mins = int(params.get("duration_mins", 60))
     except (ValueError, TypeError):
         duration_mins = 60
-        
+
     end_dt = (start_parsed + timedelta(minutes=duration_mins)).isoformat()
 
     event_body = {
@@ -51,6 +52,5 @@ def run(params: dict) -> dict:
         "status": "success",
         "message": f"Event created: '{title}' on {start_dt}.",
         "event_id": resp.get("id", ""),
-        "html_link": resp.get("htmlLink", "")
+        "html_link": resp.get("htmlLink", ""),
     }
-

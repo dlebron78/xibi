@@ -36,12 +36,12 @@ def test_all_local_skill_manifests_have_input_schema():
             manifest = json.load(f)
         for tool in manifest.get("tools", []):
             assert "inputSchema" in tool, f"Tool '{tool.get('name')}' in {manifest_path} missing 'inputSchema'"
-            assert isinstance(
-                tool["inputSchema"], dict
-            ), f"'inputSchema' for tool '{tool.get('name')}' in {manifest_path} must be a dict"
-            assert (
-                tool["inputSchema"].get("type") == "object"
-            ), f"'inputSchema' for tool '{tool.get('name')}' in {manifest_path} must have type 'object'"
+            assert isinstance(tool["inputSchema"], dict), (
+                f"'inputSchema' for tool '{tool.get('name')}' in {manifest_path} must be a dict"
+            )
+            assert tool["inputSchema"].get("type") == "object", (
+                f"'inputSchema' for tool '{tool.get('name')}' in {manifest_path} must have type 'object'"
+            )
 
 
 def test_react_loop_validates_tool_input():

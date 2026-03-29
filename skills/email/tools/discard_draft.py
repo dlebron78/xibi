@@ -17,13 +17,12 @@ def run(params):
 
     try:
         with sqlite3.connect(db_path) as conn:
-            cursor = conn.execute("UPDATE ledger SET status='discarded' WHERE id=? AND category='draft_email'", (draft_id,))
+            cursor = conn.execute(
+                "UPDATE ledger SET status='discarded' WHERE id=? AND category='draft_email'", (draft_id,)
+            )
             if cursor.rowcount == 0:
                 return {"status": "error", "message": f"Draft ID {draft_id[:8]} not found or not a draft."}
 
-        return {
-            "status": "success",
-            "message": f"Draft {draft_id[:8]} discarded."
-        }
+        return {"status": "success", "message": f"Draft {draft_id[:8]} discarded."}
     except Exception as e:
         return {"status": "error", "message": str(e)}

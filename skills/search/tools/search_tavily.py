@@ -70,8 +70,7 @@ def run(params):
         return {
             "status": "error",
             "message": (
-                "Search is not configured yet. "
-                "Please provide your Tavily API key using the 'configure_search' tool."
+                "Search is not configured yet. Please provide your Tavily API key using the 'configure_search' tool."
             ),
         }
 
@@ -80,7 +79,7 @@ def run(params):
         "api_key": api_key,
         "query": query,
         "search_depth": depth,
-        "include_answer": True,   # always request the synthesised answer
+        "include_answer": True,  # always request the synthesised answer
         "max_results": 5,
     }
 

@@ -132,7 +132,17 @@ def test_audit_writes_to_access_log(temp_db):
 def test_dispatch_with_command_layer_blocks_red_non_interactive():
     mock_executor = MagicMock()
     # Now dispatch expects skill manifest list
-    skill_registry = [{"name": "skill1", "tools": [{"name": "send_email", "inputSchema": {"properties": {"recipient": {"type": "string"}}, "required": ["recipient"]}}]}]
+    skill_registry = [
+        {
+            "name": "skill1",
+            "tools": [
+                {
+                    "name": "send_email",
+                    "inputSchema": {"properties": {"recipient": {"type": "string"}}, "required": ["recipient"]},
+                }
+            ],
+        }
+    ]
     layer = CommandLayer(interactive=False)
 
     # Red tool, non-interactive

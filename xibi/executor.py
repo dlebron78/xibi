@@ -45,7 +45,7 @@ class MCPExecutor:
 
                         client = self.registry.get_client(server_name)
                         if not client:
-                             return {"status": "error", "error": f"MCP client for '{server_name}' not found"}
+                            return {"status": "error", "error": f"MCP client for '{server_name}' not found"}
 
                         # Use original_name if it exists (for namespaced tools)
                         actual_tool_name = tool.get("original_name", tool_name)
@@ -55,7 +55,13 @@ class MCPExecutor:
 
 
 class Executor:
-    def __init__(self, registry: SkillRegistry, workdir: str | Path | None = None, config: Config | None = None, mcp_registry: MCPServerRegistry | None = None):
+    def __init__(
+        self,
+        registry: SkillRegistry,
+        workdir: str | Path | None = None,
+        config: Config | None = None,
+        mcp_registry: MCPServerRegistry | None = None,
+    ):
         self.registry = registry
         self.workdir = Path(workdir) if workdir else None
         self.config = config or {}
@@ -70,12 +76,12 @@ class Executor:
         mcp_match = self.mcp_executor.can_handle(tool_name) if self.mcp_executor else False
 
         if skill_name and mcp_match:
-             logger.warning(f"Tool name collision: '{tool_name}' exists in local skills and MCP. Preferring local.")
+            logger.warning(f"Tool name collision: '{tool_name}' exists in local skills and MCP. Preferring local.")
 
         if not skill_name:
             if mcp_match:
-                 # Route to MCP
-                 return self.mcp_executor.execute(tool_name, tool_input) # type: ignore
+                # Route to MCP
+                return self.mcp_executor.execute(tool_name, tool_input)  # type: ignore
 
             error = XibiError(
                 category=ErrorCategory.TOOL_NOT_FOUND,

@@ -89,7 +89,11 @@ class MCPServerRegistry:
 
                 if synthetic_tools:
                     self.skill_registry.register(
-                        {"name": f"mcp_{name}", "description": f"MCP tools from server '{name}'", "tools": synthetic_tools}
+                        {
+                            "name": f"mcp_{name}",
+                            "description": f"MCP tools from server '{name}'",
+                            "tools": synthetic_tools,
+                        }
                     )
 
                 logger.info(f"Successfully initialized MCP server '{name}' with {len(synthetic_tools)} tools")

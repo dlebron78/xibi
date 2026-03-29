@@ -5,10 +5,11 @@ Fetches and extracts clean text from a URL using trafilatura.
 The caller (LLM) decides when to invoke this, typically after search_searxng
 returns a URL that needs deeper reading.
 """
+
 import urllib.request
 
-_MAX_CHARS = 4000    # Token budget: keep context lean for the 9B model
-_TIMEOUT = 10        # seconds
+_MAX_CHARS = 4000  # Token budget: keep context lean for the 9B model
+_TIMEOUT = 10  # seconds
 
 
 def run(params: dict) -> dict:
@@ -47,12 +48,13 @@ def _extract(url: str) -> str:
     """Fetch page and extract main content using trafilatura."""
     try:
         import trafilatura
+
         req = urllib.request.Request(
             url,
             headers={
                 "User-Agent": "Mozilla/5.0 (compatible; Bregger/1.0)",
                 "Accept-Language": "en-US,en;q=0.9",
-            }
+            },
         )
         with urllib.request.urlopen(req, timeout=_TIMEOUT) as response:
             html = response.read()

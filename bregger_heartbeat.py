@@ -41,12 +41,13 @@ from bregger_utils import (
 
 POLL_INTERVAL_MINUTES = int(os.environ.get("HEARTBEAT_INTERVAL_MIN", "15"))
 QUIET_HOUR_START = int(os.environ.get("HEARTBEAT_QUIET_START", "23"))
-QUIET_HOUR_END   = int(os.environ.get("HEARTBEAT_QUIET_END",   "8"))
+QUIET_HOUR_END = int(os.environ.get("HEARTBEAT_QUIET_END", "8"))
 
 
 # ---------------------------------------------------------------------------
 # Telegram Notifier (zero-dependency, reuses same pattern as bregger_telegram.py)
 # ---------------------------------------------------------------------------
+
 
 class TelegramNotifier:
     def __init__(self, token: str, allowed_chats: list[str]):
@@ -73,6 +74,7 @@ class TelegramNotifier:
 # ---------------------------------------------------------------------------
 # Rule Engine
 # ---------------------------------------------------------------------------
+
 
 class RuleEngine:
     """
@@ -128,14 +130,10 @@ class RuleEngine:
                 cursor = conn.execute("SELECT type, condition, message FROM rules WHERE enabled=1")
                 for r_type, cond_json, msg in cursor.fetchall():
                     try:
-                        self._rule_cache.append({
-                            "type": r_type,
-                            "condition": json.loads(cond_json),
-                            "message": msg
-                        })
+                        self._rule_cache.append({"type": r_type, "condition": json.loads(cond_json), "message": msg})
                     except Exception as e:
                         print(f"⚠️ [rule_cache] Failed to parse rule JSON: {e}", flush=True)
-                
+
                 # 2. Warm watermark
                 cursor = conn.execute("SELECT value FROM heartbeat_state WHERE key='last_digest_at'")
                 row = cursor.fetchone()
@@ -173,7 +171,7 @@ class RuleEngine:
             with sqlite3.connect(self.db_path) as conn:
                 conn.execute(
                     "INSERT INTO triage_log (email_id, sender, subject, verdict) VALUES (?, ?, ?, ?)",
-                    (email_id, sender, subject, verdict)
+                    (email_id, sender, subject, verdict),
                 )
         except Exception as e:
             print(f"⚠️ [log_triage] Failed to log triage result for email {email_id}: {e}", flush=True)
@@ -183,14 +181,17 @@ class RuleEngine:
         try:
             # Use RAM watermark (Reference Data)
             watermark = self._watermark_cache
-            
+
             with sqlite3.connect(self.db_path) as conn:
                 # Query triage_log (excluding URGENT as they were alerted immediately)
-                cursor = conn.execute("""
+                cursor = conn.execute(
+                    """
                     SELECT sender, subject, verdict, timestamp FROM triage_log 
                     WHERE timestamp > ? AND verdict != 'URGENT'
                     ORDER BY timestamp ASC
-                """, (watermark,))
+                """,
+                    (watermark,),
+                )
                 rows = cursor.fetchall()
                 return [{"sender": r[0], "subject": r[1], "verdict": r[2], "timestamp": r[3]} for r in rows]
         except Exception as e:
@@ -227,11 +228,15 @@ class RuleEngine:
         """Persist a proactive event (like a digest) to the Ledger for bot awareness."""
         try:
             import uuid
+
             with sqlite3.connect(self.db_path) as conn:
-                conn.execute('''
+                conn.execute(
+                    """
                     INSERT INTO ledger (id, category, content, entity, status)
                     VALUES (?, ?, ?, ?, ?)
-                ''', (str(uuid.uuid4()), 'background_event', content, topic, 'sent'))
+                """,
+                    (str(uuid.uuid4()), "background_event", content, topic, "sent"),
+                )
         except Exception as e:
             print(f"⚠️ Error logging background event: {e}", flush=True)
 
@@ -257,7 +262,6 @@ class RuleEngine:
             print(f"⚠️ Failed to load triage rules: {e}", flush=True)
         return rules
 
-
     def log_signal(self, source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source):
         """Insert a signal into the signals table."""
         try:
@@ -265,20 +269,22 @@ class RuleEngine:
             # Ensure schema is current (delegates to bregger_utils — single source of truth)
             ensure_signals_schema(self.db_path)
             with sqlite3.connect(self.db_path) as conn:
-
                 # Dedup check: skip if same source+ref_id was logged today
                 if ref_id:
                     cursor = conn.execute(
                         "SELECT 1 FROM signals WHERE source = ? AND ref_id = ? AND date(timestamp) = date('now')",
-                        (source, str(ref_id))
+                        (source, str(ref_id)),
                     )
                     if cursor.fetchone():
                         return
 
-                conn.execute('''
+                conn.execute(
+                    """
                     INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, env)
                     VALUES (?, ?, ?, ?, ?, ?, ?, 'production')
-                ''', (source, topic_hint, entity_text, entity_type, preview, str(ref_id), ref_source))
+                """,
+                    (source, topic_hint, entity_text, entity_type, preview, str(ref_id), ref_source),
+                )
         except Exception as e:
             print(f"⚠️ Heartbeat: Failed to log signal: {e}", flush=True)
 
@@ -286,25 +292,25 @@ class RuleEngine:
         """Simple Python keyword extractor for email subjects."""
         if not subject or subject == "No Subject":
             return None, None, None
-            
+
         # Normalize: strip common prefixes, lowercase, remove special chars
         clean = re.sub(r"^(Re:|Fwd:|\[.*?\]|\(.*?\))\s*", "", subject, flags=re.IGNORECASE).strip().lower()
         clean = re.sub(r"[^a-z0-9\s_-]", "", clean)
-        
+
         # Topic candidates: first 2-3 meaningful words
-        words = [w for w in clean.split() if len(w) > 2 and w not in {'the', 'and', 'for', 'your', 'from', 'with'}]
+        words = [w for w in clean.split() if len(w) > 2 and w not in {"the", "and", "for", "your", "from", "with"}]
         topic = "_".join(words[:2]) if words else None
-        
+
         # Entity candidates: look for project/org patterns in ORIGINAL subject
         # Brackets [Afya-fit] often contain the most reliable metadata.
         entity_text = None
         entity_type = None
-        
-        m = re.search(r"\[(.*?)\]", subject) # Check original for brackets
+
+        m = re.search(r"\[(.*?)\]", subject)  # Check original for brackets
         if m:
-            entity_text = m.group(1).split("/")[0] # e.g. [Afya-fit/...] -> Afya-fit
+            entity_text = m.group(1).split("/")[0]  # e.g. [Afya-fit/...] -> Afya-fit
             entity_type = "project" if "-" in entity_text or "afya" in entity_text.lower() else "org"
-            
+
         return topic, entity_text, entity_type
 
     def evaluate_email(self, email: dict, rules: list[dict]) -> str | None:
@@ -337,6 +343,7 @@ class RuleEngine:
 # Email Checker
 # ---------------------------------------------------------------------------
 
+
 def _run_tool(skill_dir: Path, tool_name: str, params: dict) -> dict:
     """Dynamically load and run a skill tool Python file."""
     tool_file = skill_dir / "tools" / f"{tool_name}.py"
@@ -368,6 +375,7 @@ def check_email(skills_dir: Path) -> list[dict]:
 # Ollama Intelligence
 # ---------------------------------------------------------------------------
 
+
 def _batch_extract_topics(emails: list[dict], model: str = "llama3.2:latest") -> dict[str, dict]:
     """
     Batch LLM call to extract topic + entity from email subjects.
@@ -384,8 +392,8 @@ def _batch_extract_topics(emails: list[dict], model: str = "llama3.2:latest") ->
         email_id = str(email.get("id", ""))
         sender = _extract_sender(email)
         subject = email.get("subject", "No Subject")
-        lines.append(f"{i+1}. From: {sender} | Subject: {subject}")
-        id_map[i+1] = email_id
+        lines.append(f"{i + 1}. From: {sender} | Subject: {subject}")
+        id_map[i + 1] = email_id
 
     prompt = (
         "Extract the main topic and any named entity from each email below.\n"
@@ -398,18 +406,13 @@ def _batch_extract_topics(emails: list[dict], model: str = "llama3.2:latest") ->
         "JSON:"
     )
 
-    payload = json.dumps({
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "options": {"num_predict": 300, "temperature": 0}
-    }).encode()
+    payload = json.dumps(
+        {"model": model, "prompt": prompt, "stream": False, "options": {"num_predict": 300, "temperature": 0}}
+    ).encode()
 
     try:
         req = urllib.request.Request(
-            "http://localhost:11434/api/generate",
-            data=payload,
-            headers={"Content-Type": "application/json"}
+            "http://localhost:11434/api/generate", data=payload, headers={"Content-Type": "application/json"}
         )
         with inference_lock:
             with urllib.request.urlopen(req, timeout=30) as r:
@@ -491,27 +494,24 @@ def classify_email(email: dict, model: str = "llama3.2:latest") -> str:
         "Strict Rule: If it looks like a mass-email or automated notification, it is NOISE unless it's clearly an update you requested.\n\n"
         "Verdict:"
     )
-    
-    payload = json.dumps({
-        "model": model, 
-        "prompt": prompt,
-        "stream": False,
-        "options": {"num_predict": 10, "temperature": 0}
-    }).encode()
+
+    payload = json.dumps(
+        {"model": model, "prompt": prompt, "stream": False, "options": {"num_predict": 10, "temperature": 0}}
+    ).encode()
 
     try:
         # 15s timeout for classification
         req = urllib.request.Request(
-            "http://localhost:11434/api/generate",
-            data=payload,
-            headers={"Content-Type": "application/json"}
+            "http://localhost:11434/api/generate", data=payload, headers={"Content-Type": "application/json"}
         )
         with inference_lock:
             with urllib.request.urlopen(req, timeout=15) as r:
                 resp = json.loads(r.read())
                 verdict = resp.get("response", "").strip().upper()
-                if "URGENT" in verdict: return "URGENT"
-                if "NOISE" in verdict: return "NOISE"
+                if "URGENT" in verdict:
+                    return "URGENT"
+                if "NOISE" in verdict:
+                    return "NOISE"
                 return "DIGEST"
     except Exception as e:
         print(f"⚠️ Classification error: {e}", flush=True)
@@ -556,17 +556,18 @@ def _should_escalate(
 
 def _synthesize_digest(items: list[dict], model: str = "llama3.2:latest") -> str:
     """Ask Ollama to turn the digest into a conversational story."""
-    if not items: return "No new updates."
+    if not items:
+        return "No new updates."
 
     # Prepare the list for the LLM
     digest_lines = []
     noise_senders = []
     for item in items:
-        if item['verdict'] == 'DIGEST':
+        if item["verdict"] == "DIGEST":
             digest_lines.append(f"- {item['sender']}: {item['subject']}")
         else:
-            noise_senders.append(item['sender'])
-    
+            noise_senders.append(item["sender"])
+
     # Deduplicate noise senders
     noise_senders = sorted(list(set(noise_senders)))
 
@@ -577,18 +578,13 @@ def _synthesize_digest(items: list[dict], model: str = "llama3.2:latest") -> str
         "Write 2-4 sentences summarizing. Group similar things. Lead with notable ones. Be friendly but concise."
     )
 
-    payload = json.dumps({
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "options": {"num_predict": 150, "temperature": 0.7}
-    }).encode()
+    payload = json.dumps(
+        {"model": model, "prompt": prompt, "stream": False, "options": {"num_predict": 150, "temperature": 0.7}}
+    ).encode()
 
     try:
         req = urllib.request.Request(
-            "http://localhost:11434/api/generate",
-            data=payload,
-            headers={"Content-Type": "application/json"}
+            "http://localhost:11434/api/generate", data=payload, headers={"Content-Type": "application/json"}
         )
         with inference_lock:
             with urllib.request.urlopen(req, timeout=30) as r:
@@ -599,12 +595,13 @@ def _synthesize_digest(items: list[dict], model: str = "llama3.2:latest") -> str
                 return ""
     except Exception as e:
         print(f"⚠️ [synthesize_digest] LLM synthesis failed: {e}", flush=True)
-        return "" # Fallback
+        return ""  # Fallback
 
 
 # ---------------------------------------------------------------------------
 # Quiet Hours
 # ---------------------------------------------------------------------------
+
 
 def is_quiet_hours() -> bool:
     hour = datetime.now().hour
@@ -617,6 +614,7 @@ def is_quiet_hours() -> bool:
 # ---------------------------------------------------------------------------
 # Seen-ID tracking (avoid duplicate alerts)
 # ---------------------------------------------------------------------------
+
 
 def _seen_ids(db_path: Path) -> set:
     try:
@@ -637,10 +635,7 @@ def _seen_ids(db_path: Path) -> set:
 def _mark_seen(db_path: Path, email_id: str):
     try:
         with sqlite3.connect(db_path) as conn:
-            conn.execute(
-                "INSERT OR IGNORE INTO heartbeat_seen (email_id) VALUES (?)",
-                (email_id,)
-            )
+            conn.execute("INSERT OR IGNORE INTO heartbeat_seen (email_id) VALUES (?)", (email_id,))
     except Exception as e:
         print(f"⚠️ [mark_seen] Failed to mark email {email_id} as seen: {e}", flush=True)
 
@@ -649,112 +644,157 @@ def _mark_seen(db_path: Path, email_id: str):
 # Task Layer V1 (check_tasks)
 # ---------------------------------------------------------------------------
 
+
 def check_tasks(notifier: TelegramNotifier, db_path: Path):
     """Fire scheduled tasks, nudge paused ones, and expire stale tasks."""
+
     def _log_task_trace(trace_id, intent, plan_data):
         """Log a task event directly to the traces table."""
         try:
             with sqlite3.connect(db_path) as c:
-                c.execute("INSERT INTO traces (id, intent, plan, status) VALUES (?, ?, ?, ?)",
-                          (trace_id, intent, json.dumps(plan_data), "completed"))
+                c.execute(
+                    "INSERT INTO traces (id, intent, plan, status) VALUES (?, ?, ?, ?)",
+                    (trace_id, intent, json.dumps(plan_data), "completed"),
+                )
         except Exception:
             pass  # Best-effort — don't crash the heartbeat
 
     try:
         with sqlite3.connect(db_path) as conn:
             conn.row_factory = sqlite3.Row
-            
+
             # Check if the active slot is occupied
-            slot_occupied = conn.execute("SELECT id FROM tasks WHERE status='awaiting_reply' LIMIT 1").fetchone() is not None
-            
+            slot_occupied = (
+                conn.execute("SELECT id FROM tasks WHERE status='awaiting_reply' LIMIT 1").fetchone() is not None
+            )
+
             # 1. Fire Scheduled tasks
-            scheduled = conn.execute("SELECT id, goal, urgency FROM tasks WHERE status = 'scheduled' AND due <= datetime('now')").fetchall()
+            scheduled = conn.execute(
+                "SELECT id, goal, urgency FROM tasks WHERE status = 'scheduled' AND due <= datetime('now')"
+            ).fetchall()
             for row in scheduled:
-                task_id = row['id']
-                goal = row['goal']
-                urgency = row['urgency'] or 'normal'
-                
-                if slot_occupied and urgency != 'critical':
+                task_id = row["id"]
+                goal = row["goal"]
+                urgency = row["urgency"] or "normal"
+
+                if slot_occupied and urgency != "critical":
                     # Slot is busy — skip this promotion, heartbeat will retry next tick
                     continue
-                
+
                 # Promote to awaiting_reply (taking the slot)
-                if slot_occupied and urgency == 'critical':
+                if slot_occupied and urgency == "critical":
                     # Critical preemption: demote current slot holder
-                    conn.execute("UPDATE tasks SET status='paused', updated_at=CURRENT_TIMESTAMP WHERE status='awaiting_reply'")
+                    conn.execute(
+                        "UPDATE tasks SET status='paused', updated_at=CURRENT_TIMESTAMP WHERE status='awaiting_reply'"
+                    )
                     slot_occupied = False  # Slot is now free
-                
+
                 msg = f"\u23f0 Scheduled Task:\n{goal}\n[task:{task_id}]"
                 notifier.send(msg)
-                conn.execute("UPDATE tasks SET status='awaiting_reply', nudge_count=1, last_nudged_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?", (task_id,))
+                conn.execute(
+                    "UPDATE tasks SET status='awaiting_reply', nudge_count=1, last_nudged_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                    (task_id,),
+                )
                 slot_occupied = True  # This task now holds the slot
                 print(f"\u23f0 Fired scheduled task: {task_id}", flush=True)
                 _log_task_trace(f"task_fire_{task_id}", "task_fired", {"task_id": task_id, "goal": goal[:100]})
 
             # 2. Nudge Paused tasks (only if slot is free)
-            intervals = {"critical": 4, "normal": 24, "low": 168} # hours
+            intervals = {"critical": 4, "normal": 24, "low": 168}  # hours
             max_nudges = {"critical": 6, "normal": 3, "low": 1}
-            
-            paused = conn.execute("SELECT id, goal, urgency, nudge_count, last_nudged_at FROM tasks WHERE status = 'paused'").fetchall()
+
+            paused = conn.execute(
+                "SELECT id, goal, urgency, nudge_count, last_nudged_at FROM tasks WHERE status = 'paused'"
+            ).fetchall()
             for row in paused:
-                task_id = row['id']
-                urgency = row['urgency'] or 'normal'
-                nudge_count = row['nudge_count'] or 0
+                task_id = row["id"]
+                urgency = row["urgency"] or "normal"
+                nudge_count = row["nudge_count"] or 0
                 max_n = max_nudges.get(urgency, 3)
-                
+
                 if nudge_count >= max_n:
                     continue
-                
+
                 # Slot check: suppress nudges if occupied (unless critical preemption)
-                if slot_occupied and urgency != 'critical':
+                if slot_occupied and urgency != "critical":
                     continue
-                    
+
                 hours_wait = intervals.get(urgency, 24)
-                
+
                 should_nudge = False
-                if not row['last_nudged_at']:
+                if not row["last_nudged_at"]:
                     should_nudge = True
                 else:
                     # SQLite CURRENT_TIMESTAMP is UTC
-                    last_nudge = datetime.fromisoformat(row['last_nudged_at'].replace('Z', ''))
+                    last_nudge = datetime.fromisoformat(row["last_nudged_at"].replace("Z", ""))
                     hours_since = (datetime.utcnow() - last_nudge).total_seconds() / 3600
                     if hours_since >= hours_wait:
                         should_nudge = True
-                        
+
                 if should_nudge:
                     # Critical preemption
-                    if slot_occupied and urgency == 'critical':
-                        conn.execute("UPDATE tasks SET status='paused', updated_at=CURRENT_TIMESTAMP WHERE status='awaiting_reply'")
+                    if slot_occupied and urgency == "critical":
+                        conn.execute(
+                            "UPDATE tasks SET status='paused', updated_at=CURRENT_TIMESTAMP WHERE status='awaiting_reply'"
+                        )
                         slot_occupied = False
-                    
+
                     msg = f"\u23f3 Pending Task:\n{row['goal']}\n(Reply to resume, or ignore)\n[task:{task_id}]"
                     notifier.send(msg)
-                    conn.execute("UPDATE tasks SET status='awaiting_reply', nudge_count=nudge_count+1, last_nudged_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?", (task_id,))
+                    conn.execute(
+                        "UPDATE tasks SET status='awaiting_reply', nudge_count=nudge_count+1, last_nudged_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                        (task_id,),
+                    )
                     slot_occupied = True
                     print(f"\u23f3 Nudged task: {task_id} (promoted to awaiting_reply)", flush=True)
-                    
+
             # 3. Expire stale tasks
-            expired = conn.execute("SELECT id, goal FROM tasks WHERE status='paused' AND updated_at < datetime('now', '-7 days')").fetchall()
+            expired = conn.execute(
+                "SELECT id, goal FROM tasks WHERE status='paused' AND updated_at < datetime('now', '-7 days')"
+            ).fetchall()
             for row in expired:
-                _log_task_trace(f"task_expire_{row['id']}", "task_expired", {"task_id": row['id'], "goal": row['goal'][:100]})
-            conn.execute("UPDATE tasks SET status='expired', updated_at=CURRENT_TIMESTAMP WHERE status='paused' AND updated_at < datetime('now', '-7 days')")
+                _log_task_trace(
+                    f"task_expire_{row['id']}", "task_expired", {"task_id": row["id"], "goal": row["goal"][:100]}
+                )
+            conn.execute(
+                "UPDATE tasks SET status='expired', updated_at=CURRENT_TIMESTAMP WHERE status='paused' AND updated_at < datetime('now', '-7 days')"
+            )
             # Expire stale awaiting_reply (slot held > 24h)
-            stale_awaiting = conn.execute("SELECT id, goal FROM tasks WHERE status='awaiting_reply' AND updated_at < datetime('now', '-1 day')").fetchall()
+            stale_awaiting = conn.execute(
+                "SELECT id, goal FROM tasks WHERE status='awaiting_reply' AND updated_at < datetime('now', '-1 day')"
+            ).fetchall()
             for row in stale_awaiting:
-                _log_task_trace(f"task_expire_{row['id']}", "task_expired", {"task_id": row['id'], "goal": row['goal'][:100]})
-            conn.execute("UPDATE tasks SET status='expired', updated_at=CURRENT_TIMESTAMP WHERE status='awaiting_reply' AND updated_at < datetime('now', '-1 day')")
+                _log_task_trace(
+                    f"task_expire_{row['id']}", "task_expired", {"task_id": row["id"], "goal": row["goal"][:100]}
+                )
+            conn.execute(
+                "UPDATE tasks SET status='expired', updated_at=CURRENT_TIMESTAMP WHERE status='awaiting_reply' AND updated_at < datetime('now', '-1 day')"
+            )
 
     except Exception as e:
         import traceback
+
         traceback.print_exc()
         print(f"⚠️ Error in check_tasks: {e}", flush=True)
+
 
 # ---------------------------------------------------------------------------
 # Reflection Loop (Intelligence Layer)
 # ---------------------------------------------------------------------------
 
-_DEADLINE_WORDS = {"deadline", "renewal", "expiry", "expires", "due", "overdue",
-                   "payment", "invoice", "certificate", "registration"}
+_DEADLINE_WORDS = {
+    "deadline",
+    "renewal",
+    "expiry",
+    "expires",
+    "due",
+    "overdue",
+    "payment",
+    "invoice",
+    "certificate",
+    "registration",
+}
+
 
 def should_propose(entity: str, topic: str, freq: int) -> Optional[dict]:
     """Deterministic rule engine for V1 proposals."""
@@ -763,6 +803,7 @@ def should_propose(entity: str, topic: str, freq: int) -> Optional[dict]:
     if freq >= 3 and any(w in topic.lower() for w in _DEADLINE_WORDS):
         return {"goal": f"Check status of {topic} for {entity}", "urgency": "normal"}
     return None
+
 
 def _synthesize_reflection(patterns: list[dict], beliefs: list[dict], model: str = "llama3.2:latest") -> Optional[dict]:
     """
@@ -801,18 +842,13 @@ def _synthesize_reflection(patterns: list[dict], beliefs: list[dict], model: str
         "JSON or NONE:"
     )
 
-    payload = json.dumps({
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "options": {"num_predict": 200, "temperature": 0}
-    }).encode()
+    payload = json.dumps(
+        {"model": model, "prompt": prompt, "stream": False, "options": {"num_predict": 200, "temperature": 0}}
+    ).encode()
 
     try:
         req = urllib.request.Request(
-            "http://localhost:11434/api/generate",
-            data=payload,
-            headers={"Content-Type": "application/json"}
+            "http://localhost:11434/api/generate", data=payload, headers={"Content-Type": "application/json"}
         )
         with inference_lock:
             with urllib.request.urlopen(req, timeout=30) as r:
@@ -842,6 +878,7 @@ def _synthesize_reflection(patterns: list[dict], beliefs: list[dict], model: str
 def reflect(notifier: TelegramNotifier, db_path: Path, model: str = "llama3.2:latest"):
     """Reflection loop: detect signal patterns → LLM synthesis → propose tasks (gated by user)."""
     import time, uuid, json
+
     t0 = time.time()
     trace_id = f"reflect_{uuid.uuid4().hex[:8]}"
     patterns_scanned = 0
@@ -876,9 +913,12 @@ def reflect(notifier: TelegramNotifier, db_path: Path, model: str = "llama3.2:la
             # Step 2: Load beliefs for context
             beliefs = []
             try:
-                beliefs = [dict(r) for r in conn.execute(
-                    "SELECT key, value FROM beliefs WHERE valid_until IS NULL LIMIT 10"
-                ).fetchall()]
+                beliefs = [
+                    dict(r)
+                    for r in conn.execute(
+                        "SELECT key, value FROM beliefs WHERE valid_until IS NULL LIMIT 10"
+                    ).fetchall()
+                ]
             except Exception:
                 pass
 
@@ -908,7 +948,7 @@ def reflect(notifier: TelegramNotifier, db_path: Path, model: str = "llama3.2:la
                     existing = conn.execute(
                         "SELECT 1 FROM tasks WHERE goal LIKE '%' || ? || '%' AND goal LIKE '%' || ? || '%' "
                         "AND status NOT IN ('done','expired','cancelled')",
-                        (entity, topic)
+                        (entity, topic),
                     ).fetchone()
                     if existing:
                         continue
@@ -931,7 +971,7 @@ def reflect(notifier: TelegramNotifier, db_path: Path, model: str = "llama3.2:la
                 existing = conn.execute(
                     "SELECT 1 FROM tasks WHERE goal LIKE '%' || ? || '%' AND goal LIKE '%' || ? || '%' "
                     "AND status NOT IN ('done','expired','cancelled')",
-                    (primary_entity, primary_topic)
+                    (primary_entity, primary_topic),
                 ).fetchone()
                 if existing:
                     return
@@ -942,17 +982,20 @@ def reflect(notifier: TelegramNotifier, db_path: Path, model: str = "llama3.2:la
             # Enforce single slot
             conn.execute("UPDATE tasks SET status='paused', updated_at=CURRENT_TIMESTAMP WHERE status='awaiting_reply'")
 
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO tasks (id, goal, status, exit_type, urgency, context_compressed, scratchpad_json, origin, trace_id)
                 VALUES (?, ?, 'awaiting_reply', 'ask_user', ?, '', '[]', 'reflection', ?)
-            """, (task_id, goal, urgency, trace_id))
+            """,
+                (task_id, goal, urgency, trace_id),
+            )
 
             # Update signals
             if primary_entity and primary_topic:
                 conn.execute(
                     "UPDATE signals SET proposal_status='proposed' "
                     "WHERE entity_text = ? AND topic_hint = ? AND proposal_status='active'",
-                    (primary_entity, primary_topic)
+                    (primary_entity, primary_topic),
                 )
 
             # Notify via Telegram
@@ -963,6 +1006,7 @@ def reflect(notifier: TelegramNotifier, db_path: Path, model: str = "llama3.2:la
 
     except Exception as e:
         import traceback
+
         traceback.print_exc()
         print(f"⚠️ Error in reflect: {e}", flush=True)
 
@@ -972,22 +1016,32 @@ def reflect(notifier: TelegramNotifier, db_path: Path, model: str = "llama3.2:la
         with sqlite3.connect(db_path) as conn:
             conn.execute(
                 "INSERT INTO traces (id, intent, plan, status) VALUES (?, ?, ?, ?)",
-                (trace_id, "reflection", json.dumps({
-                    "patterns_scanned": patterns_scanned,
-                    "proposals_sent": proposals_sent,
-                    "synthesis": synthesis_used,
-                    "duration_ms": duration_ms
-                }), "completed")
+                (
+                    trace_id,
+                    "reflection",
+                    json.dumps(
+                        {
+                            "patterns_scanned": patterns_scanned,
+                            "proposals_sent": proposals_sent,
+                            "synthesis": synthesis_used,
+                            "duration_ms": duration_ms,
+                        }
+                    ),
+                    "completed",
+                ),
             )
     except Exception:
         pass
+
 
 # ---------------------------------------------------------------------------
 # Main heartbeat tick
 # ---------------------------------------------------------------------------
 
-def tick(skills_dir: Path, db_path: Path, notifier: TelegramNotifier,
-         rules: RuleEngine, model: str = "llama3.2:latest"):
+
+def tick(
+    skills_dir: Path, db_path: Path, notifier: TelegramNotifier, rules: RuleEngine, model: str = "llama3.2:latest"
+):
     if is_quiet_hours():
         print(f"🌙 Quiet hours — skipping heartbeat tick", flush=True)
         return
@@ -1043,7 +1097,7 @@ def tick(skills_dir: Path, db_path: Path, notifier: TelegramNotifier,
             entity_type=entity_type,
             content_preview=f"{sender}: {subject}",
             ref_id=email_id,
-            ref_source="email"
+            ref_source="email",
         )
 
         if not email_id or email_id in seen:
@@ -1071,7 +1125,7 @@ def tick(skills_dir: Path, db_path: Path, notifier: TelegramNotifier,
 
         # Determine if we should ping or digest — skip LLM if rule or pre-filter matched
         verdict = rule_verdict if rule_verdict else classify_email(email, model=model)
-        
+
         # ── Cross-Channel Escalation Check ──
         if verdict == "DIGEST" and topic:
             verdict, subject = _should_escalate(verdict, topic, subject, tick_priority_topics)
@@ -1080,7 +1134,7 @@ def tick(skills_dir: Path, db_path: Path, notifier: TelegramNotifier,
 
         if verdict == "DEFER":
             print(f"⏳ Ollama busy, deferring triage for {email_id}", flush=True)
-            continue # Try again next tick (we won't mark as seen)
+            continue  # Try again next tick (we won't mark as seen)
 
         if verdict == "URGENT":
             alert = rules.evaluate_email(email, email_rules)
@@ -1098,15 +1152,22 @@ def tick(skills_dir: Path, db_path: Path, notifier: TelegramNotifier,
         try:
             with sqlite3.connect(db_path) as conn:
                 import uuid as _uuid
+
                 conn.execute(
                     "INSERT INTO traces (id, intent, plan, status) VALUES (?, ?, ?, ?)",
-                    (f"batch_extract_{_uuid.uuid4().hex[:8]}", "batch_extract",
-                     json.dumps({
-                         "total_emails": len(emails),
-                         "llm_extracted": _llm_extracted,
-                         "regex_fallback": _regex_fallback,
-                         "success_rate_pct": round(_llm_extracted / len(emails) * 100, 1) if emails else 0
-                     }), "completed")
+                    (
+                        f"batch_extract_{_uuid.uuid4().hex[:8]}",
+                        "batch_extract",
+                        json.dumps(
+                            {
+                                "total_emails": len(emails),
+                                "llm_extracted": _llm_extracted,
+                                "regex_fallback": _regex_fallback,
+                                "success_rate_pct": round(_llm_extracted / len(emails) * 100, 1) if emails else 0,
+                            }
+                        ),
+                        "completed",
+                    ),
                 )
         except Exception:
             pass
@@ -1114,7 +1175,6 @@ def tick(skills_dir: Path, db_path: Path, notifier: TelegramNotifier,
     # --- Reflection Loop ----------------------------------------------------
     # Run intelligence cycle after emails have been ingested
     reflect(notifier, db_path, model=model)
-
 
 
 def digest_tick(notifier: TelegramNotifier, rules: RuleEngine, model: str = "llama3.2:latest", force: bool = False):
@@ -1130,31 +1190,31 @@ def digest_tick(notifier: TelegramNotifier, rules: RuleEngine, model: str = "lla
         return
 
     # Filter out pure noise for hourly updates unless force=True
-    has_notable = any(i['verdict'] == 'DIGEST' for i in items)
+    has_notable = any(i["verdict"] == "DIGEST" for i in items)
     if not has_notable and not force:
         print(f"🔇 Skipping hourly digest: {len(items)} items are all NOISE", flush=True)
         return
 
     print(f"📦 Sending summary ({len(items)} items)", flush=True)
-    
+
     # Try conversational synthesis
     summary = _synthesize_digest(items, model=model)
-    
+
     if not summary:
         # Fallback to Quick Mode
         lines = ["📥 **Email recap** *(quick mode)*"]
-        notable = [i for i in items if i['verdict'] == 'DIGEST']
-        noise = [i['sender'] for i in items if i['verdict'] == 'NOISE']
-        
+        notable = [i for i in items if i["verdict"] == "DIGEST"]
+        noise = [i["sender"] for i in items if i["verdict"] == "NOISE"]
+
         if notable:
             lines.append("Notable:")
             for item in notable[:15]:
                 lines.append(f"• {item['sender']}: {item['subject']}")
-        
+
         if noise:
             unique_noise = sorted(list(set(noise)))
             lines.append(f"\nOther: {', '.join(unique_noise[:20])}")
-        
+
         summary = "\n".join(lines)
 
     notifier.send(summary)
@@ -1166,13 +1226,13 @@ def _run_memory_decay(db_path: Path):
     """Mark ledger rows as expired if past their decay_days."""
     try:
         with sqlite3.connect(db_path) as conn:
-            cursor = conn.execute('''
+            cursor = conn.execute("""
                 UPDATE ledger 
                 SET status = 'expired'
                 WHERE decay_days IS NOT NULL
                   AND (status IS NULL OR status != 'expired')
                   AND julianday('now') - julianday(created_at) > decay_days
-            ''')
+            """)
             if cursor.rowcount > 0:
                 print(f"🧹 Memory Decay: Expired {cursor.rowcount} stale ledger rows", flush=True)
     except Exception as e:
@@ -1185,25 +1245,25 @@ def _normalize_topic(topic: str | None) -> str | None:
     """Consolidates fragmented topics (e.g. scheduling -> schedule)."""
     if not topic:
         return None
-    
+
     # 1. Lowercase + cleanup
     t = topic.lower().replace("_", " ").strip()
-    
+
     # 2. Stopwords
     stopwords = {"my", "the", "a", "an", "this", "our", "your", "on", "for"}
     words = [w for w in t.split() if w not in stopwords]
     if not words:
         return t  # fallback to raw if we stripped everything
-        
+
     t = " ".join(words)
-    
+
     # 3. Simple Stemming (suffix stripping)
     suffixes = ["ing", "s"]
     for suffix in suffixes:
         if t.endswith(suffix) and len(t) > len(suffix) + 2:
-            t = t[:-len(suffix)]
+            t = t[: -len(suffix)]
             break
-            
+
     # 4. Synonym Mapping
     synonyms = {
         "calendar": "schedule",
@@ -1225,10 +1285,11 @@ def _normalize_topic(topic: str | None) -> str | None:
 
 
 def _synthesize_threads(threads: list, model: str) -> str:
-    if not threads: return ""
-    
+    if not threads:
+        return ""
+
     thread_lines = [f"- {t['topic']} ({t['count']} signals)" for t in threads]
-    
+
     prompt = (
         "You are Bregger, a personal assistant. Synthesize this list of active "
         "topics from the user's signals this week into a short, natural language summary. "
@@ -1236,18 +1297,13 @@ def _synthesize_threads(threads: list, model: str) -> str:
         "THREADS:\n" + "\n".join(thread_lines)
     )
 
-    payload = json.dumps({
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "options": {"num_predict": 100, "temperature": 0.7}
-    }).encode()
+    payload = json.dumps(
+        {"model": model, "prompt": prompt, "stream": False, "options": {"num_predict": 100, "temperature": 0.7}}
+    ).encode()
 
     try:
         req = urllib.request.Request(
-            "http://localhost:11434/api/generate",
-            data=payload,
-            headers={"Content-Type": "application/json"}
+            "http://localhost:11434/api/generate", data=payload, headers={"Content-Type": "application/json"}
         )
         with inference_lock:
             with urllib.request.urlopen(req, timeout=30) as r:
@@ -1293,7 +1349,7 @@ def reflection_tick(notifier: TelegramNotifier, rules: RuleEngine, db_path: Path
         with sqlite3.connect(db_path) as conn:
             conn.execute(
                 "INSERT OR IGNORE INTO traces (id, intent, plan, status) VALUES (?, ?, ?, ?)",
-                (str(_uuid.uuid4()), "reflection_tick", "{}", "completed")
+                (str(_uuid.uuid4()), "reflection_tick", "{}", "completed"),
             )
     except Exception as e:
         print(f"⚠️ Failed to log reflection_tick trace: {e}", flush=True)
@@ -1311,10 +1367,12 @@ def recap_tick(notifier: TelegramNotifier, rules: RuleEngine, model: str = "llam
 # Entry point
 # ---------------------------------------------------------------------------
 
+
 def _load_secrets(workdir: Path):
     for candidate in [
         workdir / "secrets.env",
-        Path(os.environ.get("XIBI_DEPLOY_DIR", os.path.join(os.path.expanduser("~"), "bregger_deployment"))) / "secrets.env",
+        Path(os.environ.get("XIBI_DEPLOY_DIR", os.path.join(os.path.expanduser("~"), "bregger_deployment")))
+        / "secrets.env",
     ]:
         if candidate.exists():
             for line in candidate.read_text().splitlines():
@@ -1348,11 +1406,7 @@ def main():
         print("❌ BREGGER_TELEGRAM_TOKEN not set. Heartbeat cannot send notifications.", flush=True)
         sys.exit(1)
 
-    allowed_chats = [
-        c.strip()
-        for c in os.environ.get("BREGGER_TELEGRAM_ALLOWED_CHAT_IDS", "").split(",")
-        if c.strip()
-    ]
+    allowed_chats = [c.strip() for c in os.environ.get("BREGGER_TELEGRAM_ALLOWED_CHAT_IDS", "").split(",") if c.strip()]
     if not allowed_chats:
         print("⚠️ BREGGER_TELEGRAM_ALLOWED_CHAT_IDS not set — notifications will be broadcast to no one.", flush=True)
 
@@ -1374,11 +1428,11 @@ def main():
     while True:
         try:
             tick(skills_dir, db_path, notifier, rules, model=triage_model)
-            
+
             # Run digest summary every ~1 hour
             tick_count += 1
             now = datetime.now()
-            
+
             # AM Recap (9:00 - 9:15) or PM Recap (18:00 - 18:15)
             # Use small windows to avoid double-firing within the 15min tick
             is_recap_window = (now.hour == 9 and now.minute < 16) or (now.hour == 18 and now.minute < 16)
@@ -1392,7 +1446,7 @@ def main():
                 tick_count = 0
 
             # Reflection (7:00 - 7:15 AM)
-            is_reflection_window = (now.hour == 7 and now.minute < 16)
+            is_reflection_window = now.hour == 7 and now.minute < 16
             if is_reflection_window:
                 sent_today = False
                 try:
@@ -1401,17 +1455,19 @@ def main():
                         row = cursor.fetchone()
                         if row and row[0].startswith(now.strftime("%Y-%m-%d")):
                             sent_today = True
-                except Exception: 
+                except Exception:
                     pass
-                
+
                 if not sent_today:
                     reflection_tick(notifier, rules, db_path, model=triage_model)
                     try:
                         with sqlite3.connect(db_path) as conn:
-                            conn.execute("INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('last_reflection_at', CURRENT_TIMESTAMP)")
-                    except Exception: 
+                            conn.execute(
+                                "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('last_reflection_at', CURRENT_TIMESTAMP)"
+                            )
+                    except Exception:
                         pass
-                
+
         except Exception as e:
             print(f"❌ Heartbeat tick error: {e}", flush=True)
         time.sleep(interval_secs)

@@ -42,18 +42,20 @@ def run(params: dict) -> dict:
             end = item.get("end", {})
             start_str = start.get("dateTime", start.get("date", ""))
             end_str = end.get("dateTime", end.get("date", ""))
-            
-            all_events.append({
-                "title": item.get("summary", "(No title)"),
-                "when": format_date_label(start_str, now),
-                "start_time": format_event_time(start_str),
-                "end_time": format_event_time(end_str),
-                "calendar": cal_name,
-                "location": item.get("location", ""),
-                "description": (item.get("description", "") or "")[:200],
-                "id": item.get("id", ""),
-                "_start_iso": start_str
-            })
+
+            all_events.append(
+                {
+                    "title": item.get("summary", "(No title)"),
+                    "when": format_date_label(start_str, now),
+                    "start_time": format_event_time(start_str),
+                    "end_time": format_event_time(end_str),
+                    "calendar": cal_name,
+                    "location": item.get("location", ""),
+                    "description": (item.get("description", "") or "")[:200],
+                    "id": item.get("id", ""),
+                    "_start_iso": start_str,
+                }
+            )
 
     # Dedup by event ID (shared events appear in multiple calendars)
     seen = set()
@@ -70,12 +72,7 @@ def run(params: dict) -> dict:
     for e in unique_events:
         e.pop("_start_iso", None)
 
-    result = {
-        "status": "success",
-        "as_of": today_str,
-        "count": len(unique_events),
-        "events": unique_events
-    }
+    result = {"status": "success", "as_of": today_str, "count": len(unique_events), "events": unique_events}
     if errors:
         result["calendar_errors"] = errors
     if not unique_events:

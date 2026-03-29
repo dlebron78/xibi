@@ -151,7 +151,12 @@ class MCPClient:
         Never raises — errors are always returned as dicts.
         """
         call_id = self._next_id()
-        call_msg = {"jsonrpc": "2.0", "id": call_id, "method": "tools/call", "params": {"name": name, "arguments": arguments}}
+        call_msg = {
+            "jsonrpc": "2.0",
+            "id": call_id,
+            "method": "tools/call",
+            "params": {"name": name, "arguments": arguments},
+        }
 
         try:
             if not self.process or not self.process.stdin or not self.process.stdout:
@@ -192,7 +197,8 @@ class MCPClient:
                 # Truncate to limit and append " [truncated]"
                 # Truncating bytes is tricky in text mode, but we can do a rough char estimate and verify
                 truncated_text = (
-                    full_text.encode("utf-8")[: self.config.max_response_bytes].decode("utf-8", "ignore") + " [truncated]"
+                    full_text.encode("utf-8")[: self.config.max_response_bytes].decode("utf-8", "ignore")
+                    + " [truncated]"
                 )
                 full_text = truncated_text
 

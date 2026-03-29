@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 """
 model_benchmark.py — LLM Benchmarking Script for Ollama on NucBox
@@ -247,6 +246,7 @@ TEST_SUITE = [
 # System Profiling
 # ---------------------------------------------------------------------------
 
+
 def _run_cmd(cmd: str, default: str = "unknown") -> str:
     try:
         result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=5)
@@ -260,7 +260,9 @@ def get_system_profile() -> dict:
     return {
         "timestamp": datetime.now().isoformat(),
         "kernel": _run_cmd("uname -r"),
-        "os": _run_cmd("lsb_release -ds 2>/dev/null || cat /etc/os-release | grep PRETTY_NAME | cut -d'=' -f2 | tr -d '\"'"),
+        "os": _run_cmd(
+            "lsb_release -ds 2>/dev/null || cat /etc/os-release | grep PRETTY_NAME | cut -d'=' -f2 | tr -d '\"'"
+        ),
         "cpu_model": _run_cmd("lscpu | grep 'Model name' | cut -d':' -f2 | xargs"),
         "cpu_cores": _run_cmd("nproc"),
         "ram_total": _run_cmd("free -h | awk '/^Mem:/{print $2}'"),
@@ -277,6 +279,7 @@ def get_system_profile() -> dict:
 # ---------------------------------------------------------------------------
 # Ollama API Helpers
 # ---------------------------------------------------------------------------
+
 
 def get_installed_models() -> list[str]:
     try:
@@ -334,7 +337,7 @@ def query_model(model: str, prompt: str, max_tokens: int = 500) -> dict:
     if api_think is False:
         payload_dict["think"] = False  # explicitly disable thinking (Qwen no_think)
     elif isinstance(thinking, str) and thinking.startswith("budget:"):
-        payload_dict["think"] = True   # budget mode: thinking on, but we strip the trace
+        payload_dict["think"] = True  # budget mode: thinking on, but we strip the trace
 
     payload = json.dumps(payload_dict).encode()
 
@@ -356,7 +359,9 @@ def query_model(model: str, prompt: str, max_tokens: int = 500) -> dict:
                 "elapsed": round(elapsed, 2),
                 "prompt_tokens": resp.get("prompt_eval_count", 0),
                 "output_tokens": resp.get("eval_count", 0),
-                "thinking_mode": "no_think" if thinking is False else (thinking if isinstance(thinking, str) else "default"),
+                "thinking_mode": "no_think"
+                if thinking is False
+                else (thinking if isinstance(thinking, str) else "default"),
                 "error": None,
             }
     except Exception as e:
@@ -373,6 +378,7 @@ def query_model(model: str, prompt: str, max_tokens: int = 500) -> dict:
 # ---------------------------------------------------------------------------
 # Scoring Engine
 # ---------------------------------------------------------------------------
+
 
 def strip_thinking(response: str) -> str:
     """Strip <think>...</think> blocks produced by reasoning models like Qwen 3.5."""
@@ -392,7 +398,6 @@ def check_accuracy(response: str, test: dict) -> bool:
     return False
 
 
-
 def compute_scores(results: list[dict], model_names: list[str]) -> dict:
     """
     Compute normalized sub-scores and composite scores.
@@ -401,7 +406,7 @@ def compute_scores(results: list[dict], model_names: list[str]) -> dict:
     - Efficiency: normalized by tokens used per correct answer
     """
     scores = {}
-    
+
     # Compute raw accuracy and speed per model
     for model in model_names:
         model_results = [r for r in results if r["model"] == model and not r["error"]]
@@ -452,6 +457,7 @@ def compute_scores(results: list[dict], model_names: list[str]) -> dict:
 # Display
 # ---------------------------------------------------------------------------
 
+
 def print_banner():
     print()
     print("=" * 72)
@@ -465,7 +471,9 @@ def print_leaderboard(scores: dict):
 
     print()
     print()
-    print(f"{'#':<3} {'Model':<28} {'Score':>6} {'Acc':>6} {'Speed':>6} {'Eff':>6} {f'✓/{len(TEST_SUITE)}':>6} {'Avg(s)':>8} {'Tok/s':>7} {'Tokens':>7}")
+    print(
+        f"{'#':<3} {'Model':<28} {'Score':>6} {'Acc':>6} {'Speed':>6} {'Eff':>6} {f'✓/{len(TEST_SUITE)}':>6} {'Avg(s)':>8} {'Tok/s':>7} {'Tokens':>7}"
+    )
     print("-" * 88)
 
     for rank, (model, s) in enumerate(ranked, 1):
@@ -499,6 +507,7 @@ def print_system_profile(profile: dict):
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main():
     print_banner()
@@ -563,19 +572,21 @@ def main():
 
             print(f"   {test['id']:<4} {test['category']:<22} {status:<10} {res['elapsed']:>7.2f}s  {short_resp}")
 
-            all_results.append({
-                "model": model,
-                "test_id": test["id"],
-                "category": test["category"],
-                "prompt": test["prompt"][:80] + "...",
-                "expected": test["expected"],
-                "response": res["response"],
-                "correct": correct,
-                "elapsed": res["elapsed"],
-                "prompt_tokens": res["prompt_tokens"],
-                "output_tokens": res["output_tokens"],
-                "error": res["error"],
-            })
+            all_results.append(
+                {
+                    "model": model,
+                    "test_id": test["id"],
+                    "category": test["category"],
+                    "prompt": test["prompt"][:80] + "...",
+                    "expected": test["expected"],
+                    "response": res["response"],
+                    "correct": correct,
+                    "elapsed": res["elapsed"],
+                    "prompt_tokens": res["prompt_tokens"],
+                    "output_tokens": res["output_tokens"],
+                    "error": res["error"],
+                }
+            )
         print()
 
         # Unload this model from VRAM before moving to the next one.

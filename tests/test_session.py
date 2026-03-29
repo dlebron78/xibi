@@ -204,9 +204,7 @@ def test_compress_to_beliefs_writes_beliefs(mock_get_model, db_path):
         assert row["key"] == "mem:user-prefers-email"
         assert row["value"] == "User prefers email over Slack."
 
-        sentinel = conn.execute(
-            "SELECT * FROM beliefs WHERE key = ?", (f"session:test_session:compressed",)
-        ).fetchone()
+        sentinel = conn.execute("SELECT * FROM beliefs WHERE key = ?", (f"session:test_session:compressed",)).fetchone()
         assert sentinel is not None
         assert sentinel["type"] == "session_compression_marker"
 
@@ -281,7 +279,12 @@ def test_get_context_block_injects_memories(mock_get_model, db_path):
     with sqlite3.connect(db_path) as conn:
         conn.execute(
             "INSERT INTO beliefs (key, value, type, valid_until) VALUES (?, ?, ?, ?)",
-            ("mem:past", "I remember you like coffee", "session_memory", (datetime.utcnow() + timedelta(days=1)).isoformat()),
+            (
+                "mem:past",
+                "I remember you like coffee",
+                "session_memory",
+                (datetime.utcnow() + timedelta(days=1)).isoformat(),
+            ),
         )
         conn.commit()
 

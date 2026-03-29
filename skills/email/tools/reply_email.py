@@ -11,8 +11,9 @@ from pathlib import Path
 
 def _normalize_addr(addr):
     """Extract bare email address from 'Name <addr@domain.com>' format."""
-    if not addr: return ""
-    m = re.search(r'[\w.+-]+@[\w-]+\.\w+', addr)
+    if not addr:
+        return ""
+    m = re.search(r"[\w.+-]+@[\w-]+\.\w+", addr)
     return m.group(0).lower() if m else addr.strip().lower()
 
 
@@ -39,10 +40,10 @@ def run(params):
     - body: the reply text (required)
     - reply_all: bool (default False) — if True, CC all original recipients
     """
-    email_id      = str(params.get("email_id", "")).strip()
+    email_id = str(params.get("email_id", "")).strip()
     subject_query = params.get("subject_query", "").strip()
-    body          = params.get("body", "").strip()
-    reply_all     = bool(params.get("reply_all", False))
+    body = params.get("body", "").strip()
+    reply_all = bool(params.get("reply_all", False))
 
     if not email_id and not subject_query:
         return {
@@ -59,6 +60,7 @@ def run(params):
 
     # ── Fetch the original email metadata ──────────────────────────────────
     import sys
+
     sys.path.insert(0, str(Path(__file__).parents[3]))
     from skills.email.tools.summarize_email import run as summarize_run
 
@@ -67,12 +69,12 @@ def run(params):
     if original.get("status") != "success":
         return original  # surface the error (email not found, etc.)
 
-    data       = original.get("data", {})
-    from_addr  = data.get("from", "")
-    reply_to   = data.get("reply_to", "").strip()
-    to_header  = data.get("to", "").strip()
-    cc_header  = data.get("cc", "").strip()
-    subject    = data.get("subject", "")
+    data = original.get("data", {})
+    from_addr = data.get("from", "")
+    reply_to = data.get("reply_to", "").strip()
+    to_header = data.get("to", "").strip()
+    cc_header = data.get("cc", "").strip()
+    subject = data.get("subject", "")
     message_id = data.get("message_id", "")
 
     # Primary recipient: prefer Reply-To (mailing lists etc.), else use From
@@ -90,7 +92,7 @@ def run(params):
         user_addr_raw = os.environ.get("BREGGER_EMAIL_FROM", "")
         user_addr_norm = _normalize_addr(user_addr_raw)
         primary_to_norm = _normalize_addr(primary_to)
-        
+
         # Combine all original recipients, strip blanks
         all_addrs = [a.strip() for a in f"{to_header},{cc_header}".split(",") if a.strip()]
         # Exclude the primary_to (already in To:) and the user's own address
@@ -99,7 +101,7 @@ def run(params):
             a_norm = _normalize_addr(a)
             if a_norm and a_norm != primary_to_norm and a_norm != user_addr_norm:
                 cc_list.append(a)
-        
+
         cc = ", ".join(cc_list)
 
     # ── Normalise subject ────────────────────────────────────────────────────
@@ -116,10 +118,16 @@ def run(params):
     workdir = params.get("_workdir") or os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.bregger"))
     db_path = Path(workdir) / "data" / "bregger.db"
     try:
-        payload_json = json.dumps({
-            "to": primary_to, "cc": cc, "subject": reply_subject, "body": body,
-            "in_reply_to": message_id, "draft_id": draft_id
-        })
+        payload_json = json.dumps(
+            {
+                "to": primary_to,
+                "cc": cc,
+                "subject": reply_subject,
+                "body": body,
+                "in_reply_to": message_id,
+                "draft_id": draft_id,
+            }
+        )
         with sqlite3.connect(db_path) as conn:
             conn.execute(
                 "INSERT INTO ledger (id, category, content, entity, status) VALUES (?, ?, ?, ?, ?)",

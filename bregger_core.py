@@ -1,4 +1,3 @@
-
 import os
 import sys
 import re
@@ -23,8 +22,10 @@ from bregger_utils import (
     get_pinned_topics as _get_pinned_topics_shared,
     ensure_signals_schema,
 )
+
 try:
     import psutil as _psutil
+
     _PSUTIL_OK = True
 except ImportError:
     _psutil = None
@@ -64,9 +65,11 @@ def _read_token_sink() -> dict:
 # Step — reflectable ReAct scratchpad entry
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class Step:
     """One step in a ReAct reasoning loop."""
+
     step_num: int
     thought: str = ""
     tool: str = ""
@@ -96,7 +99,7 @@ class Step:
 
     def one_line_summary(self) -> str:
         """Compressed one-liner for older steps."""
-        input_summary = json.dumps(self.tool_input, separators=(',', ':'))[:60]
+        input_summary = json.dumps(self.tool_input, separators=(",", ":"))[:60]
         output_hint = ""
         if self.tool_output.get("status") == "error":
             output_hint = f"ERROR: {self.tool_output.get('message', '?')[:60]}"
@@ -112,6 +115,7 @@ class Step:
 # ---------------------------------------------------------------------------
 # ReAct helper functions
 # ---------------------------------------------------------------------------
+
 
 def compress_scratchpad(scratchpad: List["Step"], current_step: int) -> str:
     """Progressive compression: full detail for recent 2 steps, one-liners for older."""
@@ -142,17 +146,14 @@ def is_repeat(step: "Step", scratchpad: List["Step"]) -> bool:
 
 
 _CONFIRMATION_RE = re.compile(
-    r"\b(yes|yeah|yep|yup|confirm|go\s+ahead|do\s+it|sure|ok|okay|proceed|send\s+it)\b",
-    re.IGNORECASE
+    r"\b(yes|yeah|yep|yup|confirm|go\s+ahead|do\s+it|sure|ok|okay|proceed|send\s+it)\b", re.IGNORECASE
 )
-_NEGATION_RE = re.compile(
-    r"^\s*(no\b|nope|nah|never|cancel|stop|don't|do\s+not|don't)\b",
-    re.IGNORECASE
-)
+_NEGATION_RE = re.compile(r"^\s*(no\b|nope|nah|never|cancel|stop|don't|do\s+not|don't)\b", re.IGNORECASE)
+
 
 def _resolve_relative_time(token: str) -> Optional[str]:
     """Resolve a semantic time token into a YYYY-MM-DD string.
-    Supported: 
+    Supported:
     - 1w_ago, 2w_ago, ... 6w_ago
     - 1mo_ago, 2mo_ago, 3mo_ago, 6mo_ago
     - 1yr_ago
@@ -161,24 +162,24 @@ def _resolve_relative_time(token: str) -> Optional[str]:
     """
     if not token or not isinstance(token, str):
         return None
-        
+
     token = token.lower().strip().replace(" ", "_").replace(".", "")
     # Robustness: strip common model 'hallucination' headers
     token = token.replace("after_date=", "").replace("before_date=", "").replace("relative_time=", "")
     now = datetime.now()
-    
+
     # Simple day offsets
     if token == "today":
         return now.strftime("%Y-%m-%d")
     if token == "yesterday":
         return (now - timedelta(days=1)).strftime("%Y-%m-%d")
-        
+
     # Weeks ago: 6w_ago
     match = re.match(r"(\d+)w(_?ago)?", token)
     if match:
         weeks = int(match.group(1))
         return (now - timedelta(weeks=weeks)).strftime("%Y-%m-%d")
-        
+
     # Months ago: 2mo_ago, 2m_ago
     match = re.match(r"(\d+)m(o)?(_?ago)?", token)
     if match:
@@ -191,15 +192,15 @@ def _resolve_relative_time(token: str) -> Optional[str]:
             year -= 1
         day = min(now.day, 28)
         return datetime(year, month, day).strftime("%Y-%m-%d")
-        
+
     # Year ago: 1yr_ago, 1y_ago
     match = re.match(r"(\d+)y(r)?(_?ago)?", token)
     if match:
         years = int(match.group(1))
         try:
             return now.replace(year=now.year - years).strftime("%Y-%m-%d")
-        except ValueError: # Leap year
-            return (now - timedelta(days=365*years)).strftime("%Y-%m-%d")
+        except ValueError:  # Leap year
+            return (now - timedelta(days=365 * years)).strftime("%Y-%m-%d")
 
     # This/Next Weekday: this_monday, next_friday
     weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
@@ -210,7 +211,7 @@ def _resolve_relative_time(token: str) -> Optional[str]:
             if "next" in token:
                 days_ahead += 7
             elif "this" in token and days_ahead < 0:
-                # If it's Saturday and they say 'this monday', they likely meant next monday 
+                # If it's Saturday and they say 'this monday', they likely meant next monday
                 # or the monday that just passed. In a 'this' context, we usually look forward.
                 days_ahead += 7
             return (now + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
@@ -218,7 +219,7 @@ def _resolve_relative_time(token: str) -> Optional[str]:
     # If it's already YYYY-MM-DD, return as-is
     if re.match(r"^\d{4}-\d{2}-\d{2}$", token):
         return token
-        
+
     return None
 
 
@@ -232,7 +233,7 @@ def is_confirmation(text: str) -> bool:
 
 class MessageModeClassifier:
     """Categorizes incoming messages into command, conversation, drafting, or confirmation."""
-    
+
     def classify(self, message: str, state: dict) -> str:
         """
         Returns: 'command' | 'conversation' | 'drafting' | 'confirmation'
@@ -241,69 +242,69 @@ class MessageModeClassifier:
         message_lower = message.lower().strip()
         tokens = message_lower.split()
         num_tokens = len(tokens)
-        
+
         scores = {"command": 0, "conversation": 0, "drafting": 0, "confirmation": 0}
-        
+
         # 1. State-based signals (Highest Weight)
         if state.get("pending_action"):
             # If we have a pending action, it's almost certainly a confirmation or cancellation
             scores["confirmation"] += 10
-        
+
         if state.get("draft_active"):
             # If a draft is currently being edited/composed
             scores["drafting"] += 8
-            
+
         if state.get("last_turn_type") == "clarifying_question":
             # If the bot just asked a question, user is likely replying conversationally
             scores["conversation"] += 5
-            
+
         # 2. Heuristic signals
         # Command leaning
         if num_tokens <= 6:
             scores["command"] += 3
-            
+
         domain_nouns = {"inbox", "email", "mail", "search", "weather", "calendar", "event", "remind", "note", "task"}
         if any(token in domain_nouns for token in tokens):
             scores["command"] += 3
-            
+
         # Conversation leaning
         if num_tokens >= 15:
             scores["conversation"] += 4
-            
+
         narrative_starts = ("i ", "when i", "we ", "they ", "it was", "as i")
         if any(message_lower.startswith(start) for start in narrative_starts):
             scores["conversation"] += 5
-            
+
         narrative_markers = {"i decided", "i was", "i thought", "i wanted", "i noticed", "i am"}
         if any(marker in message_lower for marker in narrative_markers):
             scores["conversation"] += 5
-            
+
         if "?" in message:
             scores["conversation"] += 2
-            
+
         # Confirmation/Negation markers
         if is_confirmation(message):
             scores["confirmation"] += 8
         if _NEGATION_RE.match(message_lower):
             scores["confirmation"] += 8
-            
+
         # 3. Decision
         mode = max(scores, key=scores.get)
-        
+
         # Safe fallback: if the 'winning' score is too low, or if it's a tie, default to conversation
         max_score = scores[mode]
         # If it's a tie among top categories, default to 'conversation' for safety
         winners = [m for m, s in scores.items() if s == max_score and s > 0]
-        
+
         if max_score < 3 or len(winners) > 1:
             return "conversation"
-            
+
         return mode
 
 
 class SkillRegistry:
     """Dynamically loads and manages Bregger skills."""
-    
+
     def __init__(self, skills_dir: str):
         self.skills_dir = Path(skills_dir)
         self.skills = {}
@@ -316,15 +317,12 @@ class SkillRegistry:
 
         for manifest_path in self.skills_dir.glob("*/manifest.json"):
             try:
-                with open(manifest_path, 'r') as f:
+                with open(manifest_path, "r") as f:
                     manifest = json.load(f)
-                
+
                 skill_name = manifest.get("name")
                 if skill_name:
-                    self.skills[skill_name] = {
-                        "manifest": manifest,
-                        "path": manifest_path.parent
-                    }
+                    self.skills[skill_name] = {"manifest": manifest, "path": manifest_path.parent}
                     print(f"📦 Loaded skill: {skill_name}", flush=True)
             except Exception as e:
                 print(f"⚠️ Error loading skill from {manifest_path}: {e}", flush=True)
@@ -341,24 +339,27 @@ class SkillRegistry:
             # 1. Basic properties
             if not manifest.get("name") or not manifest.get("description"):
                 print(f"⚠️  Manifest {name}: Missing 'name' or 'description'", flush=True)
-            
+
             # 2. Tools validation
             for tool in manifest.get("tools", []):
                 tname = tool.get("name", "unknown")
                 if not tool.get("description"):
                     print(f"⚠️  Skill {name}, Tool {tname}: Missing description", flush=True)
-                
+
                 ot = tool.get("output_type")
                 if ot not in valid_output_types:
                     print(f"⚠️  Skill {name}, Tool {tname}: Invalid output_type '{ot}'", flush=True)
-                
+
                 if tool.get("risk") == "irreversible" and ot != "action":
-                    print(f"⚠️  Skill {name}, Tool {tname}: 'irreversible' risk requires output_type 'action'", flush=True)
+                    print(
+                        f"⚠️  Skill {name}, Tool {tname}: 'irreversible' risk requires output_type 'action'", flush=True
+                    )
 
     def get_tool_min_tier(self, skill_name: str, tool_name: str) -> int:
         """Helper to check if a tool requires a minimum inference tier."""
         skill = self.skills.get(skill_name)
-        if not skill: return 1
+        if not skill:
+            return 1
         for tool in skill["manifest"].get("tools", []):
             if tool.get("name") == tool_name:
                 return tool.get("min_tier", 1)
@@ -367,7 +368,8 @@ class SkillRegistry:
     def get_tool_meta(self, skill_name: str, tool_name: str) -> Optional[Dict[str, Any]]:
         """Return the full tool manifest dict for a given skill+tool, or None."""
         skill = self.skills.get(skill_name)
-        if not skill: return None
+        if not skill:
+            return None
         for tool in skill["manifest"].get("tools", []):
             if tool.get("name") == tool_name:
                 return tool
@@ -376,11 +378,14 @@ class SkillRegistry:
 
 class LLMProvider:
     """Base class for LLM backends (Ollama, Gemini, etc.)."""
+
     def generate(self, prompt: str, system: str = "", json_format: bool = False) -> str:
         raise NotImplementedError
 
+
 class OllamaProvider(LLMProvider):
     """Ollama-specific implementation via urllib."""
+
     def __init__(self, base_url: str, model: str):
         self.base_url = base_url
         self.model = model
@@ -403,11 +408,7 @@ class OllamaProvider(LLMProvider):
 
         url = f"{self.base_url}/api/generate"
         data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=data,
-            headers={"Content-Type": "application/json"}
-        )
+        req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
         _clear_token_sink()
         with inference_lock:
             try:
@@ -421,10 +422,16 @@ class OllamaProvider(LLMProvider):
                     _token_sink.prompt_tokens = prompt_tokens
                     _token_sink.response_tokens = response_tokens
                     _token_sink.tok_per_sec = tok_per_sec
-                    print(f"📊 TOKENS: prompt={prompt_tokens} | response={response_tokens} | {tok_per_sec} tok/s", flush=True)
+                    print(
+                        f"📊 TOKENS: prompt={prompt_tokens} | response={response_tokens} | {tok_per_sec} tok/s",
+                        flush=True,
+                    )
                     return res_data.get("response", "").strip()
             except urllib.error.HTTPError as e:
-                print(f"🔴 OLLAMA DEBUG: HTTPError {e.code} | URL: {url} | Model: {self.model} | Payload size: {len(data)} bytes | Reason: {e.reason}", flush=True)
+                print(
+                    f"🔴 OLLAMA DEBUG: HTTPError {e.code} | URL: {url} | Model: {self.model} | Payload size: {len(data)} bytes | Reason: {e.reason}",
+                    flush=True,
+                )
                 try:
                     body = e.read().decode("utf-8")[:500]
                     print(f"🔴 OLLAMA DEBUG: Response body: {body}", flush=True)
@@ -434,23 +441,30 @@ class OllamaProvider(LLMProvider):
                 if e.code == 500:
                     try:
                         import sqlite3 as _sqlite3, os as _os
-                        _workdir = _os.environ.get("BREGGER_WORKDIR",
-                                                   _os.path.expanduser("~/.bregger"))
+
+                        _workdir = _os.environ.get("BREGGER_WORKDIR", _os.path.expanduser("~/.bregger"))
                         _db = _os.path.join(_workdir, "data", "bregger.db")
                         with _sqlite3.connect(_db, timeout=2) as _conn:
                             _conn.execute(
                                 "INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview) "
                                 "VALUES (?, ?, ?, ?, ?)",
-                                ("ollama", "gpu_hang", self.model, "error",
-                                 f"HTTP 500 | payload={len(data)}b | reason={e.reason}")
+                                (
+                                    "ollama",
+                                    "gpu_hang",
+                                    self.model,
+                                    "error",
+                                    f"HTTP 500 | payload={len(data)}b | reason={e.reason}",
+                                ),
                             )
                         print(f"📈 [gpu_hang] Logged crash event for model={self.model}", flush=True)
                     except Exception as _sig_err:
                         print(f"⚠️ [gpu_hang] Failed to log signal: {_sig_err}", flush=True)
                 raise
 
+
 class GeminiProvider(LLMProvider):
     """Gemini-specific implementation via urllib (Google AI Studio)."""
+
     def __init__(self, api_key: str, model: str):
         self.api_key = api_key
         self.model = model
@@ -463,7 +477,7 @@ class GeminiProvider(LLMProvider):
             "generationConfig": {
                 "maxOutputTokens": 2048,
                 "temperature": 0.1,
-            }
+            },
         }
         if system:
             payload["system_instruction"] = {"parts": [{"text": system}]}
@@ -472,9 +486,7 @@ class GeminiProvider(LLMProvider):
             payload["generationConfig"]["responseMimeType"] = "application/json"
 
         req = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"}
+            url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"}
         )
 
         with inference_lock:
@@ -482,14 +494,15 @@ class GeminiProvider(LLMProvider):
                 res_data = json.loads(response.read().decode("utf-8"))
                 try:
                     # Gemini response path: candidates[0].content.parts[0].text
-                    return res_data['candidates'][0]['content']['parts'][0]['text'].strip()
+                    return res_data["candidates"][0]["content"]["parts"][0]["text"].strip()
                 except (KeyError, IndexError):
                     error_msg = res_data.get("error", {}).get("message", "Unknown Gemini error")
                     raise Exception(f"Gemini API Error: {error_msg}")
 
+
 class BreggerRouter:
     """Handles LLM communication to generate Plans (The 'P' in P-D-A-R)."""
-    
+
     SYSTEM_PROMPT = """You are {assistant_name}. {assistant_persona}
 Your job is to take user input and generate a JSON PLAN based on available skills.
 
@@ -587,37 +600,65 @@ ORIGINAL REQUEST: {user_message}
 What is your next step?"""
 
     REACT_TOOL_OVERRIDES = {
-        "list_files": {"category": "observation", "description": "List files in the workspace. Use when you need to find a file but don't know the exact name."},
-        "recall": {"category": "observation", "description": "Look up people, contacts, facts, or context from memory. Use when you need someone's email, business details, or stored information."},
-        "read_file": {"category": "observation", "description": "Read the contents of a specific file. Requires the exact filepath from list_files."},
-        "read_email": {"category": "observation", "description": "Read a specific email by ID. Use to inspect email content before replying."},
-        "search_emails": {"category": "observation", "description": "Search emails by sender, subject, or time range. Returns email summaries."},
-        "list_unread": {"category": "observation", "description": "List unread emails. Returns summaries of recent unread messages."},
-        "draft_email": {"category": "action", "description": "Compose and save a new email or edit an existing draft. Use this whenever you need to WRITE an email. Do NOT write email content inside finish/final_answer."},
-        "send_email": {"category": "action", "description": "Send an email. REQUIRES: recipient email from recall (never guess). REQUIRES: user confirmation via finish first (Rule 2)."},
-        "reply_email": {"category": "action", "description": "Reply to a previously-read email. REQUIRES: you must have used read_email earlier in this session. Do NOT use for new emails."},
-        "search_searxng": {"category": "action", "description": "Search the web for external information. Use only for facts not in your workspace or memory."},
+        "list_files": {
+            "category": "observation",
+            "description": "List files in the workspace. Use when you need to find a file but don't know the exact name.",
+        },
+        "recall": {
+            "category": "observation",
+            "description": "Look up people, contacts, facts, or context from memory. Use when you need someone's email, business details, or stored information.",
+        },
+        "read_file": {
+            "category": "observation",
+            "description": "Read the contents of a specific file. Requires the exact filepath from list_files.",
+        },
+        "read_email": {
+            "category": "observation",
+            "description": "Read a specific email by ID. Use to inspect email content before replying.",
+        },
+        "search_emails": {
+            "category": "observation",
+            "description": "Search emails by sender, subject, or time range. Returns email summaries.",
+        },
+        "list_unread": {
+            "category": "observation",
+            "description": "List unread emails. Returns summaries of recent unread messages.",
+        },
+        "draft_email": {
+            "category": "action",
+            "description": "Compose and save a new email or edit an existing draft. Use this whenever you need to WRITE an email. Do NOT write email content inside finish/final_answer.",
+        },
+        "send_email": {
+            "category": "action",
+            "description": "Send an email. REQUIRES: recipient email from recall (never guess). REQUIRES: user confirmation via finish first (Rule 2).",
+        },
+        "reply_email": {
+            "category": "action",
+            "description": "Reply to a previously-read email. REQUIRES: you must have used read_email earlier in this session. Do NOT use for new emails.",
+        },
+        "search_searxng": {
+            "category": "action",
+            "description": "Search the web for external information. Use only for facts not in your workspace or memory.",
+        },
         "remember": {"category": "action", "description": "Store a fact, preference, or rule in long-term memory."},
     }
 
     def __init__(self, config: Dict):
         self.config = config
         self.llm_conf = config.get("llm", {})
-        
+
         # Primary local provider (Ollama)
         ollama_base = self.llm_conf.get("base_url", "http://localhost:11434")
         ollama_model = self.llm_conf.get("chat_model") or self.llm_conf.get("model", "llama3.2:latest")
-        
-        self.providers = {
-            "ollama": OllamaProvider(ollama_base, ollama_model)
-        }
-        
+
+        self.providers = {"ollama": OllamaProvider(ollama_base, ollama_model)}
+
         # Gemini provider (if key present in env)
         gemini_key = os.environ.get("GOOGLE_API_KEY")
         if gemini_key:
             gemini_model = self.llm_conf.get("tier4_model", "gemini-1.5-flash")
             self.providers["gemini"] = GeminiProvider(gemini_key, gemini_model)
-            
+
         self.default_provider = "ollama"
 
     def _get_provider(self, name: str = None) -> LLMProvider:
@@ -625,16 +666,23 @@ What is your next step?"""
         name = name or self.default_provider
         return self.providers.get(name, self.providers["ollama"])
 
-    def generate_plan(self, user_input: str, manifests: List[Dict], context: str = "", assistant_name: str = "Bregger", assistant_persona: str = "") -> Dict:
+    def generate_plan(
+        self,
+        user_input: str,
+        manifests: List[Dict],
+        context: str = "",
+        assistant_name: str = "Bregger",
+        assistant_persona: str = "",
+    ) -> Dict:
         """Call LLM to generate a structured plan."""
         prompt = f"User Input: {user_input}\n\nOutput JSON Plan:"
         system = self.SYSTEM_PROMPT.format(
             assistant_name=assistant_name,
             assistant_persona=assistant_persona,
-            manifests=json.dumps(manifests, indent=2), 
-            context=context
+            manifests=json.dumps(manifests, indent=2),
+            context=context,
         )
-        
+
         try:
             provider = self._get_provider()
             response = provider.generate(prompt, system=system, json_format=True)
@@ -650,7 +698,7 @@ What is your next step?"""
         context: str = "",
         step_num: int = 1,
         assistant_name: str = "Bregger",
-        assistant_persona: str = ""
+        assistant_persona: str = "",
     ) -> Step:
         """Generate one ReAct step: Thought → Action → Action Input.
 
@@ -665,7 +713,7 @@ What is your next step?"""
             for t in m.get("tools", []):
                 if t.get("operational", True) is False or t.get("access") == "operator":
                     continue
-                
+
                 # Check for override
                 override = self.REACT_TOOL_OVERRIDES.get(t["name"], {})
                 desc = override.get("description", t.get("description", ""))
@@ -683,18 +731,17 @@ What is your next step?"""
                     param_names = list(props.keys()) if isinstance(props, dict) else []
                 else:
                     param_names = []
-                
+
                 param_str = f"({', '.join(param_names)})" if param_names else "()"
                 line = f"- {t['name']}{param_str}: {desc}"
-                
+
                 if category == "observation":
                     obs_lines.append(line)
                 else:
                     act_lines.append(line)
-        
+
         obs_list = "\n".join(obs_lines) or "No observation tools."
         act_list = "\n".join(act_lines) or "No action tools."
-
 
         scratchpad_text = self._compress_scratchpad(scratchpad, step_num)
 
@@ -704,10 +751,10 @@ What is your next step?"""
         ctx_parts = []
         ctx_body = context or "No user context available."
         ctx_parts.append(f"USER CONTEXT (do NOT use a tool if the answer is here):\n{ctx_body}")
-        
+
         if scratchpad_text:
             ctx_parts.append(f"PROGRESS SO FAR:\n{scratchpad_text}")
-            
+
         convo_history = "\n\n".join(ctx_parts)
 
         prompt = self.REACT_SYSTEM_PROMPT
@@ -721,6 +768,7 @@ What is your next step?"""
 
         # Full prompt logging — always on during platform build
         import os as _os
+
         print(f"📋 PROMPT [{len(prompt)} chars] context=[{len(context)} chars]", flush=True)
         if _os.environ.get("BREGGER_DEBUG") == "1":
             print(f"📄 FULL PROMPT:\n{prompt}\n---END PROMPT---", flush=True)
@@ -731,6 +779,7 @@ What is your next step?"""
             print(f"🔬 RAW STEP {step_num} [{len(raw_response)} chars]:\n{raw_response[:600]}\n---", flush=True)
         except Exception as e:
             import traceback
+
             print(f"🔴 GENERATE_STEP EXCEPTION:", flush=True)
             traceback.print_exc()
             return Step(
@@ -740,18 +789,21 @@ What is your next step?"""
                 tool_input={"final_answer": f"I encountered a technical error: {e}"},
             )
 
-        thought_m  = re.search(r"Thought:\s*(.+?)(?=\nAction:|\Z)", raw_response, re.DOTALL)
-        thought    = thought_m.group(1).strip() if thought_m else raw_response[:200]
-        
+        thought_m = re.search(r"Thought:\s*(.+?)(?=\nAction:|\Z)", raw_response, re.DOTALL)
+        thought = thought_m.group(1).strip() if thought_m else raw_response[:200]
+
         # Signal is no longer requested in the ReAct prompt. Default to None.
         signal = None
 
-        action_m   = re.search(r"Action:\s*([a-zA-Z0-9_]+)", raw_response)
-        input_m    = re.search(r"Action Input:\s*(\{.*?\}|\[.*?\])", raw_response, re.DOTALL)
+        action_m = re.search(r"Action:\s*([a-zA-Z0-9_]+)", raw_response)
+        input_m = re.search(r"Action Input:\s*(\{.*?\}|\[.*?\])", raw_response, re.DOTALL)
 
-        action     = action_m.group(1).strip().lower() if action_m else "finish"
+        action = action_m.group(1).strip().lower() if action_m else "finish"
         if not action_m and "Action Input:" in raw_response:
-             print("⚠️ PARSE WARNING: No 'Action:' line found but 'Action Input:' exists. Falling back to finish.", flush=True)
+            print(
+                "⚠️ PARSE WARNING: No 'Action:' line found but 'Action Input:' exists. Falling back to finish.",
+                flush=True,
+            )
         tool_input = {}
 
         # Truncation guard: if Action Input exists but has no valid JSON closure, treat as truncated
@@ -779,8 +831,11 @@ What is your next step?"""
             try:
                 tool_input = json.loads(input_m.group(1))
             except Exception as e:
-                print(f"⚠️ PARSE WARNING: Action Input JSON failed to parse: {e} | Text: {input_m.group(1)[:150]}", flush=True)
-                
+                print(
+                    f"⚠️ PARSE WARNING: Action Input JSON failed to parse: {e} | Text: {input_m.group(1)[:150]}",
+                    flush=True,
+                )
+
                 # Robust fallback: Try to extract final_answer from raw broken JSON if it exists
                 # Extensive multi-line text (like drafts) can break JSON parsing. Use best-effort fallback.
                 fallback_m = re.search(r'"final_answer"\s*:\s*"(.*)"', input_m.group(1), re.DOTALL)
@@ -797,15 +852,24 @@ What is your next step?"""
             if scoped_input_m:
                 try:
                     tool_input = json.loads(scoped_input_m.group(1))
-                    print(f"⚠️ PARSE WARNING: Used 'Input:' shorthand fallback for action '{action}'. Params: {str(tool_input)[:100]}", flush=True)
+                    print(
+                        f"⚠️ PARSE WARNING: Used 'Input:' shorthand fallback for action '{action}'. Params: {str(tool_input)[:100]}",
+                        flush=True,
+                    )
                 except Exception:
-                    print(f"⚠️ PARSE WARNING: 'Input:' fallback found but JSON failed for action '{action}'. Defaulting to empty dict.", flush=True)
+                    print(
+                        f"⚠️ PARSE WARNING: 'Input:' fallback found but JSON failed for action '{action}'. Defaulting to empty dict.",
+                        flush=True,
+                    )
                     tool_input = {}
             elif action == "finish":
                 # Only use thought as last-resort fallback when there is truly no JSON answer block
                 tool_input = {"final_answer": thought}
             else:
-                print(f"⚠️ PARSE WARNING: Action is '{action}' but no Action Input found. Defaulting to empty dict.", flush=True)
+                print(
+                    f"⚠️ PARSE WARNING: Action is '{action}' but no Action Input found. Defaulting to empty dict.",
+                    flush=True,
+                )
                 tool_input = {}
 
         print(f"🔧 PARSED: tool={action} params={str(tool_input)[:150]}", flush=True)
@@ -829,7 +893,7 @@ What is your next step?"""
             _RESERVED = {"status", "message"}
             raw_data = {k: v for k, v in step.tool_output.items() if k not in _RESERVED}
             densified_out = self._densify_data(raw_data, step.tool) if raw_data else "No supplementary data."
-            
+
             # Reconstruct the tool output dict cleanly for the LLM
             clean_output = {"status": step.tool_output.get("status", "success")}
             if "message" in step.tool_output:
@@ -854,18 +918,17 @@ What is your next step?"""
                 result.append(text)
             else:
                 # One-liner
-                input_summary = json.dumps(step.tool_input, separators=(',', ':'))[:60]
+                input_summary = json.dumps(step.tool_input, separators=(",", ":"))[:60]
                 output_hint = out_str[:80]
                 result.append(f"Step {step.step_num}: {step.tool}({input_summary}) → {output_hint}")
 
         return "\n\n".join(result) if result else "No steps taken yet."
 
-
     def _resolve_temporal_context(self, user_input: str) -> str:
         """
-        Injects a static baseline of relative dates plus dynamically resolved 
+        Injects a static baseline of relative dates plus dynamically resolved
         temporal expressions found in the user input.
-        
+
         Nothing is injected unless the user's message contains temporal language.
         This prevents the model from autonomously applying date filters on
         non-time-related requests (e.g. "open the email from Miranda").
@@ -873,20 +936,28 @@ What is your next step?"""
         now = datetime.now()
         text = user_input.lower()
 
-        WEEKDAYS = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday']
+        WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
         # Temporal trigger check — only inject if the user message contains time-related language
         _STATIC_TRIGGERS = {
-            'today', 'tonight', 'now',
-            'tomorrow', 'yesterday',
-            'this morning', 'this afternoon', 'this evening', 'this week',
-            'last week', 'next week', 'this weekend', 'next weekend',
-            'this month', 'last month', 'next month',
+            "today",
+            "tonight",
+            "now",
+            "tomorrow",
+            "yesterday",
+            "this morning",
+            "this afternoon",
+            "this evening",
+            "this week",
+            "last week",
+            "next week",
+            "this weekend",
+            "next weekend",
+            "this month",
+            "last month",
+            "next month",
         }
-        has_temporal = (
-            any(t in text for t in _STATIC_TRIGGERS) or
-            any(day in text for day in WEEKDAYS)
-        )
+        has_temporal = any(t in text for t in _STATIC_TRIGGERS) or any(day in text for day in WEEKDAYS)
 
         if not has_temporal:
             return ""  # No date context injected — model won't apply phantom date filters
@@ -898,17 +969,17 @@ What is your next step?"""
 
         base = {
             "CURRENT DATE": now.strftime(date_format),
-            "YESTERDAY":    (now - timedelta(days=1)).strftime(date_format),
-            "TOMORROW":     (now + timedelta(days=1)).strftime(date_format),
-            "NEXT WEEK":    (now + timedelta(weeks=1)).strftime(date_format),
+            "YESTERDAY": (now - timedelta(days=1)).strftime(date_format),
+            "TOMORROW": (now + timedelta(days=1)).strftime(date_format),
+            "NEXT WEEK": (now + timedelta(weeks=1)).strftime(date_format),
             "THIS WEEKEND": (now + timedelta(days=(5 - now.weekday()) % 7 or 7)).strftime(date_format),
         }
-        
+
         # 2. Dynamic Resolution (re + calendar)
         resolved = {}
 
         # next <weekday>
-        m = re.search(r'next (monday|tuesday|wednesday|thursday|friday|saturday|sunday)', text)
+        m = re.search(r"next (monday|tuesday|wednesday|thursday|friday|saturday|sunday)", text)
         if m:
             day_name = m.group(1)
             target = WEEKDAYS.index(day_name)
@@ -916,7 +987,7 @@ What is your next step?"""
             resolved[f"NEXT {day_name.upper()}"] = (now + timedelta(days=days_ahead)).strftime(date_format)
 
         # last <weekday> of the month
-        m = re.search(r'last (monday|tuesday|wednesday|thursday|friday|saturday|sunday) of (?:the )?month', text)
+        m = re.search(r"last (monday|tuesday|wednesday|thursday|friday|saturday|sunday) of (?:the )?month", text)
         if m:
             day_name = m.group(1)
             target = WEEKDAYS.index(day_name)
@@ -927,7 +998,7 @@ What is your next step?"""
             resolved[f"LAST {day_name.upper()} OF THE MONTH"] = d.strftime(date_format)
 
         # next month
-        if 'next month' in text:
+        if "next month" in text:
             m = now.month % 12 + 1
             y = now.year + (1 if now.month == 12 else 0)
             _, last_in_next = calendar.monthrange(y, m)
@@ -939,10 +1010,8 @@ What is your next step?"""
             lines.append("RESOLVED FROM REQUEST:")
             for k, v in resolved.items():
                 lines.append(f"  {k}: {v}")
-        
+
         return "\n".join(lines)
-
-
 
     def _densify_data(self, data: Any, tool: str) -> str:
         """
@@ -967,8 +1036,10 @@ What is your next step?"""
                         # Local current time on the NucBox
                         now = datetime.now().astimezone()  # aware, local time
                         # Convert email date to NucBox local timezone
-                        dt_local = dt.astimezone() if dt.tzinfo else dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
-                        
+                        dt_local = (
+                            dt.astimezone() if dt.tzinfo else dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
+                        )
+
                         # Generate local time string
                         hour = dt_local.strftime("%I").lstrip("0") or "12"
                         minute = dt_local.strftime("%M")
@@ -980,7 +1051,7 @@ What is your next step?"""
                             return f"Today {time_str}"
                         elif dt_local.date() == (now - timedelta(days=1)).date():
                             return f"Yesterday {time_str}"
-                        
+
                         # Fallback to relative days/weeks
                         delta = now - dt_local
                         days_ago = delta.days
@@ -1031,6 +1102,7 @@ What is your next step?"""
                 date_str = email.get("date", "")
                 try:
                     from datetime import datetime
+
                     dt = datetime.fromisoformat(date_str)
                     dt_local = dt.astimezone() if dt.tzinfo else dt
                     friendly = f"{dt_local.strftime('%b')} {dt_local.day}"
@@ -1062,26 +1134,27 @@ What is your next step?"""
         if tool == "summarize_email" and isinstance(data, dict):
             # Detect nesting (summarize_email tool returns findings inside "data")
             inner = data.get("data") if "data" in data else data
-            
+
             subject = inner.get("subject", "")
-            sender  = inner.get("from", "")
-            body    = inner.get("body", "")
-            
-            # Strip MIME-style headers if present. 
+            sender = inner.get("from", "")
+            body = inner.get("body", "")
+
+            # Strip MIME-style headers if present.
             body_text = body.strip()
             if body_text:
                 import re
                 from urllib.parse import urlparse
-                parts = re.split(r'\r?\n\r?\n', body_text, 1)
-                if len(parts) > 1 and ': ' in parts[0] and len(parts[0]) < 1000:
+
+                parts = re.split(r"\r?\n\r?\n", body_text, 1)
+                if len(parts) > 1 and ": " in parts[0] and len(parts[0]) < 1000:
                     body_text = parts[1].strip()
 
                 def _shorten_url(match):
                     url = match.group(0)
                     try:
-                        parse_url = url if url.startswith('http') else f"http://{url}"
+                        parse_url = url if url.startswith("http") else f"http://{url}"
                         domain = urlparse(parse_url).netloc
-                        if domain.startswith('www.'):
+                        if domain.startswith("www."):
                             domain = domain[4:]
                         if domain:
                             return f"[LINK: {domain}]"
@@ -1093,26 +1166,28 @@ What is your next step?"""
                 # 0. Remove <style>, <script>, and HTML comment blocks entirely first.
                 #    Critical for MJML/SES marketing emails whose inline CSS can be 10-20KB,
                 #    which would consume the entire 4000-char token budget before any content.
-                body_text = re.sub(r'<style[^>]*>.*?</style>', ' ', body_text, flags=re.DOTALL | re.IGNORECASE)
-                body_text = re.sub(r'<script[^>]*>.*?</script>', ' ', body_text, flags=re.DOTALL | re.IGNORECASE)
-                body_text = re.sub(r'<!--.*?-->', ' ', body_text, flags=re.DOTALL)
+                body_text = re.sub(r"<style[^>]*>.*?</style>", " ", body_text, flags=re.DOTALL | re.IGNORECASE)
+                body_text = re.sub(r"<script[^>]*>.*?</script>", " ", body_text, flags=re.DOTALL | re.IGNORECASE)
+                body_text = re.sub(r"<!--.*?-->", " ", body_text, flags=re.DOTALL)
                 # 1. Remove remaining HTML tags
-                body_text = re.sub(r'<[^>]+>', ' ', body_text)
+                body_text = re.sub(r"<[^>]+>", " ", body_text)
                 # 2. Shorten URLs to include only their domain
                 body_text = re.sub(r'https?://[^\s<>"]+|www\.[^\s<>"]+', _shorten_url, body_text)
                 # 3. Collapse horizontal whitespace but PRESERVE single newlines for readability.
                 #    Collapse 3+ newlines into 2 (paragraph break).
-                body_text = re.sub(r'[^\S\r\n]+', ' ', body_text)
-                body_text = re.sub(r'\n{3,}', '\n\n', body_text)
+                body_text = re.sub(r"[^\S\r\n]+", " ", body_text)
+                body_text = re.sub(r"\n{3,}", "\n\n", body_text)
                 body_text = body_text.strip()
             else:
                 body_text = "(no body)"
-                
+
             lines = []
-            if subject: lines.append(f"Subject: {subject}")
-            if sender:  lines.append(f"From: {sender}")
+            if subject:
+                lines.append(f"Subject: {subject}")
+            if sender:
+                lines.append(f"From: {sender}")
             lines.append("")
-            lines.append(body_text[:4000]) # Increased to 4000, now packed with pure text
+            lines.append(body_text[:4000])  # Increased to 4000, now packed with pure text
             return "\n".join(lines)
 
         # Fallback: compact JSON (no whitespace)
@@ -1147,44 +1222,48 @@ What is your next step?"""
         # Collect ALL payload keys — tools may use any key (data, content, items, draft, etc.)
         _RESERVED = {"status", "message"}
         raw_data = {k: v for k, v in results.items() if k not in _RESERVED}
-        
+
         # Densify data before sending to LLM
         tool_name = plan.get("tool", "none")
         densified_data = self._densify_data(raw_data, tool_name) if raw_data else "No supplementary data."
-        
+
         # Construct specific prompt for the 'Report' phase
         # Note: If msg is None, we don't mention it to avoid LLM confusion
         msg_context = f"Tool Message: {msg}\n" if msg else ""
-        
-        prompt = (f"RAW TOOL DATA (FACTS):\n{densified_data}\n\n"
-                  f"User Input: {user_input}\n"
-                  f"Action Taken: {tool_name}\n"
-                  f"Status: {status}\n"
-                  f"{msg_context}"
-                  f"REPORTING GUIDELINES:\n"
-                  f"1. Base your answer entirely on the 'RAW TOOL DATA' or 'Tool Message' provided above.\n"
-                  f"2. Synthesize the raw data into a friendly, proactive 1-2 sentence summary.\n"
-                  f"3. Present information conversationally. Avoid bulleted lists unless explicitly requested by the user.\n"
-                  f"4. If a tool failed, summarize the results professionally and suggest a fix if configuration led to the failure.\n"
-                  f"5. Maintain a concise and helpful tone.\n\n"
-                  f"User Context (for reference only):\n{context}")
-        
+
+        prompt = (
+            f"RAW TOOL DATA (FACTS):\n{densified_data}\n\n"
+            f"User Input: {user_input}\n"
+            f"Action Taken: {tool_name}\n"
+            f"Status: {status}\n"
+            f"{msg_context}"
+            f"REPORTING GUIDELINES:\n"
+            f"1. Base your answer entirely on the 'RAW TOOL DATA' or 'Tool Message' provided above.\n"
+            f"2. Synthesize the raw data into a friendly, proactive 1-2 sentence summary.\n"
+            f"3. Present information conversationally. Avoid bulleted lists unless explicitly requested by the user.\n"
+            f"4. If a tool failed, summarize the results professionally and suggest a fix if configuration led to the failure.\n"
+            f"5. Maintain a concise and helpful tone.\n\n"
+            f"User Context (for reference only):\n{context}"
+        )
+
         try:
             provider = self._get_provider()
             text = provider.generate(prompt, json_format=False)
-            
+
             # Standardize: remove repeated legacy prefixes (case-insensitive)
             text = re.sub(r"^((Bregger|Assistant|AI|System):\s*)+", "", text, flags=re.IGNORECASE)
             return text
         except Exception as e:
             import traceback
+
             print(f"🔴 GENERATE_REPORT EXCEPTION:", flush=True)
             traceback.print_exc()
             return f"Action complete: {results.get('message', str(results))}"
 
+
 class BreggerExecutive:
     """Validates and executes tools (The 'D' and 'A' in P-D-A-R)."""
-    
+
     def __init__(self, registry: SkillRegistry):
         self.registry = registry
 
@@ -1193,16 +1272,16 @@ class BreggerExecutive:
         intent = plan.get("intent")
         skill_name = plan.get("skill")
         tool_name = plan.get("tool")
-        
+
         # Treat missing or 'fallback' skill as "none"
         if skill_name is None or skill_name.lower() in ["none", "fallback", "null"]:
             skill_name = "none"
             plan["skill"] = "none"
-            
+
         # Allow plans that don't need skills (greetings, fallbacks handled by router)
         if skill_name == "none":
             return True
-            
+
         if skill_name not in self.registry.skills:
             # Fallback: check if the 'skill_name' provided is actually a tool name
             for s_name, s_info in self.registry.skills.items():
@@ -1212,7 +1291,7 @@ class BreggerExecutive:
                     break
             else:
                 return False
-            
+
         manifest = self.registry.skills[skill_name]["manifest"]
         tool_exists = any(t["name"] == tool_name for t in manifest.get("tools", []))
         return tool_exists
@@ -1225,7 +1304,7 @@ class BreggerExecutive:
         # execute_plan() injects _workdir, beliefs etc. into params — without a copy,
         # those injections bleed back into step.tool_input and appear in the scratchpad.
         params = dict(plan.get("parameters", {}))
-        
+
         if skill_name not in self.registry.skills:
             if skill_name == "none":
                 return {"status": "success", "message": "No action required."}
@@ -1233,19 +1312,19 @@ class BreggerExecutive:
 
         skill_path = self.registry.skills[skill_name]["path"]
         tool_file = skill_path / "tools" / f"{tool_name}.py"
-        
+
         if not tool_file.exists():
             return {"status": "error", "message": f"Tool implementation file missing: {tool_file}"}
 
         # Inject workdir so skills never need to rely on BREGGER_WORKDIR env var
-        if hasattr(self, 'workdir') and self.workdir:
+        if hasattr(self, "workdir") and self.workdir:
             params["_workdir"] = str(self.workdir)
 
         # Inject beliefs (Reference Data) as context
         if beliefs:
             # Flatten or pass as-is? Let's pass as-is so tools can access anything
             for k, v in beliefs.items():
-                if k not in params: # Don't overwrite explicit params
+                if k not in params:  # Don't overwrite explicit params
                     params[k] = v
 
         # Resolve Semantic Time Tokens
@@ -1258,7 +1337,7 @@ class BreggerExecutive:
                 # Map to 'after_date' by default for email search tools
                 if "after_date" not in params:
                     params["after_date"] = resolved
-        
+
         # Check other date fields for tokens (e.g. after_date: "2w_ago")
         for k in list(params.keys()):
             if k.endswith("_date") or k in ["since", "before"]:
@@ -1297,7 +1376,7 @@ class BreggerExecutive:
                 spec = importlib.util.spec_from_file_location(tool_name, tool_file)
                 module = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(module)
-                
+
                 if hasattr(module, "run"):
                     return module.run(params)
                 else:
@@ -1307,6 +1386,7 @@ class BreggerExecutive:
                     sys.path.remove(tools_dir)
         except Exception as e:
             return {"status": "error", "message": f"Execution error: {str(e)}"}
+
 
 class MockRouter:
     """A deterministic router for testing without a live LLM."""
@@ -1319,7 +1399,7 @@ class MockRouter:
 
     def _get_provider(self, name=None):
         return self
-    
+
     def generate(self, prompt, system="", json_format=False):
         return "MOCK SUMMARY: This is a compacted history summary."
 
@@ -1331,12 +1411,7 @@ class MockRouter:
     def generate_plan(self, user_input: str, manifests: List[Dict], context: str = "") -> Dict:
         user_input = user_input.lower()
         if "email" in user_input:
-            return {
-                "skill": "email",
-                "tool": "list_unread",
-                "parameters": {"count": 3},
-                "intent": "check_email"
-            }
+            return {"skill": "email", "tool": "list_unread", "parameters": {"count": 3}, "intent": "check_email"}
         # A simple greeting context check for mock
         if "hi" in user_input and "Dan" in context:
             return {"intent": "greet", "skill": "none", "tool": "none"}
@@ -1351,7 +1426,7 @@ class MockRouter:
         context: str = "",
         step_num: int = 1,
         assistant_name: str = "Bregger",
-        assistant_persona: str = ""
+        assistant_persona: str = "",
     ) -> Step:
         """Return the next scripted step, or a finish step if sequence exhausted."""
         if self._step_idx < len(self._step_sequence):
@@ -1374,16 +1449,17 @@ class MockRouter:
 
             # Guard against missing startup context
             if "startup: " in context:
-                startup_line = context.split('startup: ')[1]
-                startup_name = startup_line.split('\n')[0]
+                startup_line = context.split("startup: ")[1]
+                startup_name = startup_line.split("\n")[0]
             else:
                 startup_name = "your project"
             return f"Hello Dan! I see you are working on {startup_name}."
         return f"[Mock Report] Context: {context[:30]}... Results: {results.get('message', str(results))}"
 
+
 class Caretaker:
     """The proactive layer of Bregger that nudges the user based on context."""
-    
+
     def __init__(self, db_path: Path):
         self.db_path = db_path
 
@@ -1403,24 +1479,37 @@ class Caretaker:
                     return {
                         "type": "recovery",
                         "reason": f"Last action '{failed[0]}' failed. Should I try a different approach?",
-                        "meta": failed[1]
+                        "meta": failed[1],
                     }
         except Exception as e:
             print(f"⚠️ Caretaker error: {e}")
         return None
+
 
 # ---------------------------------------------------------------------------
 # Control Plane — deterministic fast path (5 locked intents, read-only)
 # ---------------------------------------------------------------------------
 
 # Domain nouns that disqualify bare "search ___" from matching search_web
-_DOMAIN_NOUNS = {"email", "emails", "inbox", "mail", "task", "tasks",
-                 "reminder", "reminders", "weather", "forecast", "clima"}
+_DOMAIN_NOUNS = {
+    "email",
+    "emails",
+    "inbox",
+    "mail",
+    "task",
+    "tasks",
+    "reminder",
+    "reminders",
+    "weather",
+    "forecast",
+    "clima",
+}
+
 
 def normalize_input(text: str) -> str:
     """Lowercase, collapse whitespace, strip outer punctuation."""
     t = (text or "").strip().lower()
-    t = re.sub(r"[^\w\s]", " ", t)   # punctuation → space
+    t = re.sub(r"[^\w\s]", " ", t)  # punctuation → space
     t = re.sub(r"\s+", " ", t).strip()
     return t
 
@@ -1451,18 +1540,23 @@ class KeywordRouter:
             patterns.append((re.compile(regex), intent, extractor))
 
         # --- greeting -----------------------------------------------
-        _add(r"^(hi|hello|hey|howdy|sup|yo|hola|greetings|good\s+morning|good\s+afternoon|good\s+evening)[.!?\s]*$",
-             "greet")
+        _add(
+            r"^(hi|hello|hey|howdy|sup|yo|hola|greetings|good\s+morning|good\s+afternoon|good\s+evening)[.!?\s]*$",
+            "greet",
+        )
 
         # --- capability_check -------------------------------------------------
-        _add(r"\b(what|which|do you have|can you|do you support|list)\b.*\b(tool|tools|skill|skills|capability|capabilities)\b",
-             "capability_check")
-        _add(r"\b(do you see|do you know about|are you aware of)\b.*\b(tool|skill|filesystem|email|memory|search)\b",
-             "capability_check")
+        _add(
+            r"\b(what|which|do you have|can you|do you support|list)\b.*\b(tool|tools|skill|skills|capability|capabilities)\b",
+            "capability_check",
+        )
+        _add(
+            r"\b(do you see|do you know about|are you aware of)\b.*\b(tool|skill|filesystem|email|memory|search)\b",
+            "capability_check",
+        )
 
         # --- status_check -----------------------------------------------------
-        _add(r"^(status|ping|are you up|system status|health check)$",
-             "status_check")
+        _add(r"^(status|ping|are you up|system status|health check)$", "status_check")
 
         # --- reset -----------------------------------------------------------
         _add(r"^(reset|clear|forget|restart|/reset|/clear)$", "reset")
@@ -1549,34 +1643,66 @@ class IntentMapper:
         if intent in self._MAP:
             # Existing static logic...
             if intent == "status_check":
-                return {"intent": "status_check", "skill": "none", "tool": "none",
-                        "parameters": {}, "routed_by": "control_plane"}
+                return {
+                    "intent": "status_check",
+                    "skill": "none",
+                    "tool": "none",
+                    "parameters": {},
+                    "routed_by": "control_plane",
+                }
             if intent == "capability_check":
-                return {"intent": "capability_check", "skill": "none", "tool": "none",
-                        "parameters": {}, "routed_by": "control_plane"}
+                return {
+                    "intent": "capability_check",
+                    "skill": "none",
+                    "tool": "none",
+                    "parameters": {},
+                    "routed_by": "control_plane",
+                }
             if intent == "reset":
-                return {"intent": "reset", "skill": "none", "tool": "none",
-                        "parameters": {}, "routed_by": "control_plane"}
+                return {
+                    "intent": "reset",
+                    "skill": "none",
+                    "tool": "none",
+                    "parameters": {},
+                    "routed_by": "control_plane",
+                }
             if intent == "greet":
-                return {"intent": "greet", "skill": "none", "tool": "none",
-                        "parameters": {}, "routed_by": "control_plane"}
+                return {
+                    "intent": "greet",
+                    "skill": "none",
+                    "tool": "none",
+                    "parameters": {},
+                    "routed_by": "control_plane",
+                }
             if intent == "update_assistant_name":
-                return {"intent": "update_assistant_name", "skill": "none", "tool": "none",
-                        "parameters": {"assistant_name": intent_obj["entities"]["name"]}, 
-                        "routed_by": "control_plane"}
+                return {
+                    "intent": "update_assistant_name",
+                    "skill": "none",
+                    "tool": "none",
+                    "parameters": {"assistant_name": intent_obj["entities"]["name"]},
+                    "routed_by": "control_plane",
+                }
             if intent == "update_user_name":
-                return {"intent": "update_user_name", "skill": "none", "tool": "none",
-                        "parameters": {"user_name": intent_obj["entities"]["name"]}, 
-                        "routed_by": "control_plane"}
+                return {
+                    "intent": "update_user_name",
+                    "skill": "none",
+                    "tool": "none",
+                    "parameters": {"user_name": intent_obj["entities"]["name"]},
+                    "routed_by": "control_plane",
+                }
             if intent == "read_traces":
-                return {"intent": "read_traces", "skill": "none", "tool": "none",
-                        "parameters": {"limit": intent_obj["entities"]["limit"]}, 
-                        "routed_by": "control_plane"}
+                return {
+                    "intent": "read_traces",
+                    "skill": "none",
+                    "tool": "none",
+                    "parameters": {"limit": intent_obj["entities"]["limit"]},
+                    "routed_by": "control_plane",
+                }
 
         # Check dynamic map
         if intent in self._dynamic_map:
             mapping = self._dynamic_map[intent]
-            
+
             # min_tier check (Phase 9): If tool requires Tier 3+, skip Tier 1 path
             if self.registry:
                 min_tier = self.registry.get_tool_min_tier(mapping["skill"], mapping["tool"])
@@ -1592,12 +1718,12 @@ class IntentMapper:
                 if tool_meta:
                     output_type = tool_meta.get("output_type", "synthesis")
             return {
-                "intent": intent, 
-                "skill": mapping["skill"], 
+                "intent": intent,
+                "skill": mapping["skill"],
                 "tool": mapping["tool"],
                 "parameters": params,
                 "output_type": output_type,
-                "routed_by": "control_plane"
+                "routed_by": "control_plane",
             }
 
         return None
@@ -1605,19 +1731,21 @@ class IntentMapper:
 
 class BreggerCore:
     """The central engine for P-D-A-R."""
-    
+
     def __init__(self, config_path: str):
-        with open(config_path, 'r') as f:
+        with open(config_path, "r") as f:
             self.config = json.load(f)
         # Priority: config["assistant"]["workdir"] > BREGGER_WORKDIR env var > ~/.bregger
         env_workdir = os.environ.get("BREGGER_WORKDIR")
-        self.workdir = Path(self.config.get("assistant", {}).get("workdir", env_workdir or os.path.expanduser("~/.bregger")))
+        self.workdir = Path(
+            self.config.get("assistant", {}).get("workdir", env_workdir or os.path.expanduser("~/.bregger"))
+        )
         self.db_path = self.workdir / "data" / "bregger.db"
         self.registry = SkillRegistry(str(self.workdir / "skills"))
-        
+
         self.shadow_matcher = ShadowMatcher()
         self.shadow_matcher.load_manifests(str(self.workdir / "skills"))
-        
+
         self._ensure_conversation_history_table()
         self._ensure_signals_table()
         self._ensure_tasks_table()
@@ -1625,7 +1753,7 @@ class BreggerCore:
         self._ensure_traces_table_migration()
         self._ensure_beliefs_table_migration()
         self._ensure_ledger_table_migration()
-        
+
         self._load_secrets()
 
         # Use MockRouter if env var is set
@@ -1633,16 +1761,16 @@ class BreggerCore:
             self.router = MockRouter()
         else:
             self.router = BreggerRouter(self.config)
-            
+
         self.executive = BreggerExecutive(self.registry)
         self.executive.workdir = self.workdir
         self.caretaker = Caretaker(self.db_path)
-        
+
         # Skill Contract (Phase 9): Registry-aware mapping and validation
         self.control_plane = KeywordRouter()
         self.intent_mapper = IntentMapper(self.registry)
         self.registry.validate_manifests()
-        
+
         # Register dynamic triggers from manifests
         self._register_skill_triggers()
 
@@ -1653,13 +1781,12 @@ class BreggerCore:
 
         # ReAct state
         self._pending_action: Optional[Dict] = None  # confirmation gate
-        self.step_callback = None                     # injected by channel adapter
-        self._inference_active = False                # contention guard
+        self.step_callback = None  # injected by channel adapter
+        self._inference_active = False  # contention guard
 
         # Email pagination state (Rule 10 — RAM, not DB, session-scoped)
-        self._cached_unread: list = []         # full unread list from last list_unread fetch
-        self._email_page_offset: int = 0       # current page position
-
+        self._cached_unread: list = []  # full unread list from last list_unread fetch
+        self._email_page_offset: int = 0  # current page position
 
         # Message Mode Classifer (Phase 9 Prerequisite)
         self.classifier = MessageModeClassifier()
@@ -1668,7 +1795,10 @@ class BreggerCore:
 
     def _load_secrets(self):
         """Load environment variables from secrets.env if it exists."""
-        secrets_path = Path(os.environ.get("XIBI_DEPLOY_DIR", os.path.join(os.path.expanduser("~"), "bregger_deployment"))) / "secrets.env"
+        secrets_path = (
+            Path(os.environ.get("XIBI_DEPLOY_DIR", os.path.join(os.path.expanduser("~"), "bregger_deployment")))
+            / "secrets.env"
+        )
         if secrets_path.exists():
             for line in secrets_path.read_text().splitlines():
                 if line.startswith("export "):
@@ -1683,14 +1813,14 @@ class BreggerCore:
             triggers = manifest.get("control_plane_triggers", [])
             if not isinstance(triggers, list):
                 continue
-                
+
             for trigger in triggers:
                 regex = trigger.get("regex")
                 intent = trigger.get("intent")
                 tool = trigger.get("tool")
                 # Allow trigger to override the skill (e.g. "none" for inline handlers)
                 mapped_skill = trigger.get("skill", skill_name)
-                
+
                 if regex and intent and tool:
                     # Special-case: intents that need regex group extraction
                     extractor = None
@@ -1716,12 +1846,12 @@ class BreggerCore:
                             safe_phrase = re.escape(phrase.strip().lower())
                             regex = f"^{safe_phrase}[.!?\\s]*$"
                             intent = f"shortcut_{skill_name}_{tool}"
-                            
+
                             self.control_plane.register(regex, intent)
                             self.intent_mapper.register(intent, skill_name, tool)
                             print(f"🎛️ Registered user shortcut: '{phrase}' → {skill_name}:{tool}", flush=True)
                 except sqlite3.OperationalError:
-                    pass # Ledger not set up yet
+                    pass  # Ledger not set up yet
         except Exception as e:
             print(f"⚠️ Failed to load user shortcuts: {e}", flush=True)
 
@@ -1729,7 +1859,7 @@ class BreggerCore:
         """Create the conversation_history table if it doesn't exist."""
         try:
             with sqlite3.connect(self.db_path) as conn:
-                conn.execute('''
+                conn.execute("""
                     CREATE TABLE IF NOT EXISTS conversation_history (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         user_message TEXT NOT NULL,
@@ -1737,12 +1867,12 @@ class BreggerCore:
                         mode TEXT,
                         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                     )
-                ''')
+                """)
                 # Migration: Add mode column if it doesn't exist
                 try:
                     conn.execute("ALTER TABLE conversation_history ADD COLUMN mode TEXT")
                 except sqlite3.OperationalError:
-                    pass # Already exists
+                    pass  # Already exists
         except Exception as e:
             print(f"⚠️ Error creating conversation_history table: {e}", flush=True)
 
@@ -1754,9 +1884,19 @@ class BreggerCore:
         """
         ensure_signals_schema(self.db_path)
 
-    def _create_task(self, goal: str, exit_type: str, urgency: str, due: Optional[str], context_compressed: str, scratchpad_json: str, trace_id: str) -> str:
+    def _create_task(
+        self,
+        goal: str,
+        exit_type: str,
+        urgency: str,
+        due: Optional[str],
+        context_compressed: str,
+        scratchpad_json: str,
+        trace_id: str,
+    ) -> str:
         """Create a new task. ask_user tasks get awaiting_reply (single active slot)."""
         import uuid
+
         task_id = str(uuid.uuid4())
         trace_id = trace_id or str(uuid.uuid4())
         if exit_type == "schedule":
@@ -1769,11 +1909,16 @@ class BreggerCore:
             with sqlite3.connect(self.db_path) as conn:
                 # Single Active Slot: demote any existing awaiting_reply task
                 if status == "awaiting_reply":
-                    conn.execute("UPDATE tasks SET status='paused', updated_at=CURRENT_TIMESTAMP WHERE status='awaiting_reply'")
-                conn.execute('''
+                    conn.execute(
+                        "UPDATE tasks SET status='paused', updated_at=CURRENT_TIMESTAMP WHERE status='awaiting_reply'"
+                    )
+                conn.execute(
+                    """
                     INSERT INTO tasks (id, goal, status, exit_type, urgency, due, context_compressed, scratchpad_json, trace_id)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (task_id, goal, status, exit_type, urgency, due, context_compressed, scratchpad_json, trace_id))
+                """,
+                    (task_id, goal, status, exit_type, urgency, due, context_compressed, scratchpad_json, trace_id),
+                )
             return task_id
         except Exception as e:
             print(f"⚠️ Failed to create task: {e}", flush=True)
@@ -1783,6 +1928,7 @@ class BreggerCore:
         """Resume a task by restoring its scratchpad and re-entering the process_query loop."""
         import json
         import dataclasses
+
         task = None
         try:
             with sqlite3.connect(self.db_path) as conn:
@@ -1795,32 +1941,38 @@ class BreggerCore:
 
         if not task:
             return "Sorry, I couldn't find that pending task."
-            
+
         # Build a synthetic scratchpad step representing "Progress So Far"
         pseudo_step = Step(
             step_num=1,
             thought="Resuming paused task.",
             tool="resume_task",
             tool_input={"user_reply": user_input},
-            tool_output={"system_note": f"RESUMED TASK.\\nPROGRESS SO FAR:\\n{task.get('context_compressed', '')}\\n\\nUser replied: {user_input}"}
+            tool_output={
+                "system_note": f"RESUMED TASK.\\nPROGRESS SO FAR:\\n{task.get('context_compressed', '')}\\n\\nUser replied: {user_input}"
+            },
         )
-        
+
         # Mark as done so it doesn't get resumed again
         try:
             with sqlite3.connect(self.db_path) as conn:
                 conn.execute("UPDATE tasks SET status='done', updated_at=CURRENT_TIMESTAMP WHERE id=?", (task_id,))
                 # Mark proposed signals as confirmed
-                conn.execute(
-                    "UPDATE signals SET proposal_status='confirmed' WHERE proposal_status='proposed'"
-                )
+                conn.execute("UPDATE signals SET proposal_status='confirmed' WHERE proposal_status='proposed'")
         except Exception as e:
             print(f"⚠️ Failed to mark task {task_id} done: {e}", flush=True)
-            
+
         print(f"🔄 Resuming task {task_id} with user reply: {user_input}", flush=True)
         original_trace = task.get("trace_id", "local_resume")
         resume_trace = f"{original_trace}_resume"
-        self.log_trace(resume_trace, "task_resumed", {"task_id": task_id, "original_trace": original_trace, "goal": task.get('goal', '')[:100]})
-        return self._process_query_internal(task.get("goal", ""), force_react=True, _resume_scratchpad=[pseudo_step], trace_id=resume_trace)
+        self.log_trace(
+            resume_trace,
+            "task_resumed",
+            {"task_id": task_id, "original_trace": original_trace, "goal": task.get("goal", "")[:100]},
+        )
+        return self._process_query_internal(
+            task.get("goal", ""), force_react=True, _resume_scratchpad=[pseudo_step], trace_id=resume_trace
+        )
 
     def _get_awaiting_task(self) -> Optional[dict]:
         """Get the single task in awaiting_reply state (the active slot)."""
@@ -1851,9 +2003,13 @@ class BreggerCore:
         """Called by heartbeat to expire old tasks."""
         try:
             with sqlite3.connect(self.db_path) as conn:
-                conn.execute("UPDATE tasks SET status='expired', updated_at=CURRENT_TIMESTAMP WHERE status='paused' AND updated_at < datetime('now', '-7 days')")
+                conn.execute(
+                    "UPDATE tasks SET status='expired', updated_at=CURRENT_TIMESTAMP WHERE status='paused' AND updated_at < datetime('now', '-7 days')"
+                )
                 # Expire stale awaiting_reply tasks (24h — slot shouldn't be held forever)
-                conn.execute("UPDATE tasks SET status='expired', updated_at=CURRENT_TIMESTAMP WHERE status='awaiting_reply' AND updated_at < datetime('now', '-1 day')")
+                conn.execute(
+                    "UPDATE tasks SET status='expired', updated_at=CURRENT_TIMESTAMP WHERE status='awaiting_reply' AND updated_at < datetime('now', '-1 day')"
+                )
         except Exception as e:
             pass
 
@@ -1861,7 +2017,7 @@ class BreggerCore:
         """Create the tasks table for the Task Layer."""
         try:
             with sqlite3.connect(self.db_path) as conn:
-                conn.execute('''
+                conn.execute("""
                     CREATE TABLE IF NOT EXISTS tasks (
                         id TEXT PRIMARY KEY,
                         goal TEXT NOT NULL,
@@ -1879,7 +2035,7 @@ class BreggerCore:
                         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                     )
-                ''')
+                """)
         except Exception as e:
             print(f"⚠️ Failed to ensure tasks table: {e}", flush=True)
 
@@ -1887,33 +2043,33 @@ class BreggerCore:
         """Create the pinned_topics table if it doesn't exist."""
         try:
             with sqlite3.connect(self.db_path) as conn:
-                conn.execute('''
+                conn.execute("""
                     CREATE TABLE IF NOT EXISTS pinned_topics (
                         topic TEXT PRIMARY KEY,
                         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                     )
-                ''')
+                """)
         except Exception as e:
             print(f"⚠️ Failed to ensure pinned_topics table: {e}", flush=True)
 
     def _ensure_traces_table_migration(self):
         """Add observability columns to traces table if they don't exist."""
         new_columns = [
-            ("steps_detail",          "TEXT"),
-            ("route",                 "TEXT"),
-            ("model",                 "TEXT"),
-            ("raw_prompt",            "TEXT"),
-            ("started_at",            "TEXT"),
-            ("total_ms",              "INTEGER"),
-            ("step_count",            "INTEGER"),
-            ("total_prompt_tokens",   "INTEGER"),
+            ("steps_detail", "TEXT"),
+            ("route", "TEXT"),
+            ("model", "TEXT"),
+            ("raw_prompt", "TEXT"),
+            ("started_at", "TEXT"),
+            ("total_ms", "INTEGER"),
+            ("step_count", "INTEGER"),
+            ("total_prompt_tokens", "INTEGER"),
             ("total_response_tokens", "INTEGER"),
-            ("overall_tok_per_sec",   "REAL"),
-            ("final_answer_length",   "INTEGER"),
-            ("ram_start_pct",         "REAL"),
-            ("ram_end_pct",           "REAL"),
-            ("proc_rss_mb",           "REAL"),
-            ("tier2_shadow",          "TEXT"),
+            ("overall_tok_per_sec", "REAL"),
+            ("final_answer_length", "INTEGER"),
+            ("ram_start_pct", "REAL"),
+            ("ram_end_pct", "REAL"),
+            ("proc_rss_mb", "REAL"),
+            ("tier2_shadow", "TEXT"),
         ]
         try:
             with sqlite3.connect(self.db_path) as conn:
@@ -1922,8 +2078,8 @@ class BreggerCore:
                     if col_name not in existing:
                         conn.execute(f"ALTER TABLE traces ADD COLUMN {col_name} {col_type}")
                         print(f"✅ Migrated traces table: added {col_name}", flush=True)
-                        
-                conn.execute('''
+
+                conn.execute("""
                     CREATE TABLE IF NOT EXISTS shadow_phrases (
                         phrase TEXT,
                         tool TEXT,
@@ -1933,7 +2089,7 @@ class BreggerCore:
                         source TEXT DEFAULT 'manifest',
                         PRIMARY KEY (phrase, tool)
                     )
-                ''')
+                """)
         except Exception as e:
             print(f"⚠️ Failed to migrate traces/shadow table: {e}", flush=True)
 
@@ -1947,7 +2103,7 @@ class BreggerCore:
                     return  # Already migrated
 
                 # SQLite cannot ALTER constraints, so we recreate the table
-                conn.executescript('''
+                conn.executescript("""
                     CREATE TABLE IF NOT EXISTS beliefs_new (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         key TEXT,
@@ -1967,8 +2123,11 @@ class BreggerCore:
                     DROP TABLE beliefs;
 
                     ALTER TABLE beliefs_new RENAME TO beliefs;
-                ''')
-                print("✅ Migrated beliefs table: bi-temporal schema (valid_from, valid_until, UNIQUE removed)", flush=True)
+                """)
+                print(
+                    "✅ Migrated beliefs table: bi-temporal schema (valid_from, valid_until, UNIQUE removed)",
+                    flush=True,
+                )
         except Exception as e:
             print(f"⚠️ Failed to migrate beliefs table: {e}", flush=True)
 
@@ -1993,15 +2152,18 @@ class BreggerCore:
                 if ref_id:
                     cursor = conn.execute(
                         "SELECT 1 FROM signals WHERE source = ? AND ref_id = ? AND date(timestamp) = date('now')",
-                        (source, str(ref_id))
+                        (source, str(ref_id)),
                     )
                     if cursor.fetchone():
                         return
-                        
-                conn.execute('''
+
+                conn.execute(
+                    """
                     INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, env)
                     VALUES (?, ?, ?, ?, ?, ?, ?, 'production')
-                ''', (source, topic_hint, entity_text, entity_type, preview, str(ref_id), ref_source))
+                """,
+                    (source, topic_hint, entity_text, entity_type, preview, str(ref_id), ref_source),
+                )
         except Exception as e:
             print(f"⚠️ Failed to log signal: {e}", flush=True)
 
@@ -2010,7 +2172,7 @@ class BreggerCore:
         try:
             with sqlite3.connect(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
-                query = '''
+                query = """
                     SELECT topic_hint, COUNT(*) as mentions, 
                            COUNT(DISTINCT source) as channels,
                            MAX(timestamp) as last_seen
@@ -2021,8 +2183,8 @@ class BreggerCore:
                     HAVING COUNT(*) > 1
                     ORDER BY channels DESC, last_seen DESC
                     LIMIT 5
-                '''
-                return [dict(row) for row in conn.execute(query, (f'-{days} days',)).fetchall()]
+                """
+                return [dict(row) for row in conn.execute(query, (f"-{days} days",)).fetchall()]
         except Exception as e:
             print(f"⚠️ Failed to get active threads: {e}", flush=True)
             return []
@@ -2077,7 +2239,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
             # needing a separate outer lock here.
             provider = self.router._get_provider()
             response = provider.generate(prompt, system="You are an extraction utility that only outputs JSON or NONE.")
-            
+
             if response.strip() == "NONE":
                 self.update_trace(pm_id, {"status": "skipped", "reason": "NONE"}, "completed")
                 return
@@ -2113,6 +2275,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
             # 4b. Log chat signal (Phase 1.75 Fix 2)
             if signal_data and signal_data.get("topic"):
                 from bregger_utils import normalize_topic as _normalize_topic
+
                 raw_topic = "_".join(signal_data["topic"].lower().split()[:3])
                 topic = _normalize_topic(raw_topic) or raw_topic
                 self._log_signal(
@@ -2122,7 +2285,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                     entity_type=signal_data.get("entity_type"),
                     content_preview=user_input[:280],
                     ref_id=pm_id,
-                    ref_source="passive_memory"
+                    ref_source="passive_memory",
                 )
                 print(f"🧠 [passive_memory] Chat signal logged: topic={topic}", flush=True)
 
@@ -2135,35 +2298,35 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                     entity = item.get("entity", "")
                     if not category or not content:
                         continue
-                    
+
                     # Dedup check for ledger items (7 days)
                     if category not in ["preference", "fact", "contact"]:
                         cursor = conn.execute(
                             "SELECT 1 FROM ledger WHERE entity = ? AND category = ? AND content LIKE ? AND created_at > datetime('now', '-7 days')",
-                            (entity, category, f"%{content[:20]}%")
+                            (entity, category, f"%{content[:20]}%"),
                         )
                         if cursor.fetchone():
                             continue
                     else:
                         # Dedup check for beliefs
                         key = entity if entity else content[:50]
-                        cursor = conn.execute("SELECT 1 FROM beliefs WHERE key = ? AND value = ? AND valid_until IS NULL", (key, content))
+                        cursor = conn.execute(
+                            "SELECT 1 FROM beliefs WHERE key = ? AND value = ? AND valid_until IS NULL", (key, content)
+                        )
                         if cursor.fetchone():
                             continue
 
                     plan = {
                         "skill": "memory",
                         "tool": "remember",
-                        "parameters": {
-                            "category": category,
-                            "content": content,
-                            "entity": entity
-                        }
+                        "parameters": {"category": category, "content": content, "entity": entity},
                     }
                     self.executive.execute_plan(plan, beliefs=self._belief_cache)
                     inserted += 1
 
-            self.update_trace(pm_id, {"status": "success", "extracted": len(extracted), "inserted": inserted}, "completed")
+            self.update_trace(
+                pm_id, {"status": "success", "extracted": len(extracted), "inserted": inserted}, "completed"
+            )
 
         except Exception as e:
             print(f"⚠️ [passive_memory] Extraction failed: {e}", flush=True)
@@ -2174,8 +2337,8 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
         try:
             with sqlite3.connect(self.db_path) as conn:
                 conn.execute(
-                    'INSERT INTO conversation_history (user_message, bot_response, mode) VALUES (?, ?, ?)',
-                    (user_message[:1000], bot_response[:2000], self._last_mode)
+                    "INSERT INTO conversation_history (user_message, bot_response, mode) VALUES (?, ?, ?)",
+                    (user_message[:1000], bot_response[:2000], self._last_mode),
                 )
         except Exception as e:
             print(f"⚠️ Error logging conversation: {e}", flush=True)
@@ -2186,7 +2349,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
         self._tool_cache.clear()
         try:
             with sqlite3.connect(self.db_path) as conn:
-                conn.execute('DELETE FROM conversation_history')
+                conn.execute("DELETE FROM conversation_history")
         except Exception as e:
             print(f"⚠️ Error resetting history: {e}", flush=True)
             print(f"⚠️ Error logging conversation: {e}", flush=True)
@@ -2196,21 +2359,19 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
         try:
             with sqlite3.connect(self.db_path) as conn:
                 # 1. Pre-warm traces (Working Memory)
-                cursor = conn.execute('''
+                cursor = conn.execute("""
                     SELECT intent, status, created_at FROM traces 
                     WHERE status = 'completed' AND intent != 'fallback' AND intent != 'none'
                     ORDER BY created_at DESC LIMIT 3
-                ''')
+                """)
                 for row in reversed(cursor.fetchall()):
-                    self._tool_cache.append({
-                        "intent": row[0],
-                        "status": row[1],
-                        "timestamp": row[2]
-                    })
-                
+                    self._tool_cache.append({"intent": row[0], "status": row[1], "timestamp": row[2]})
+
                 # 2. Pre-warm beliefs (Reference Data)
                 # Load both user-facing and system-level configuration beliefs, filtering out invalidated ones
-                cursor = conn.execute("SELECT key, value FROM beliefs WHERE visibility IN ('user', 'system') AND valid_until IS NULL")
+                cursor = conn.execute(
+                    "SELECT key, value FROM beliefs WHERE visibility IN ('user', 'system') AND valid_until IS NULL"
+                )
                 for key, value in cursor.fetchall():
                     self._belief_cache[key] = value
         except Exception as e:
@@ -2221,8 +2382,9 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.execute(
-                    'SELECT user_message, bot_response FROM conversation_history '
-                    'ORDER BY created_at DESC, id DESC LIMIT ?', (n,)
+                    "SELECT user_message, bot_response FROM conversation_history "
+                    "ORDER BY created_at DESC, id DESC LIMIT ?",
+                    (n,),
                 )
                 rows = cursor.fetchall()
             if not rows:
@@ -2235,6 +2397,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
             return "\n".join(turns)
         except Exception as e:
             import traceback
+
             print(f"⚠️ [_prewarm_memory] Failed to load history into RAM: {e}", flush=True)
             traceback.print_exc()
             return ""
@@ -2243,7 +2406,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
         """Fetch the last N successful tool executions from RAM."""
         if not self._tool_cache:
             return ""
-        
+
         lines = []
         for trace in self._tool_cache:
             created_at = trace["timestamp"]
@@ -2266,23 +2429,23 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
         raw_turns = []
         for user_msg, bot_resp in reversed(history_rows):
             raw_turns.append(f"User: {user_msg}\nBregger: {bot_resp}")
-        
+
         full_history = "\n".join(raw_turns)
         threshold = self.config.get("loop", {}).get("conversation_history_compaction_threshold", 2000)
-        
+
         if _estimate_tokens(full_history) <= threshold:
             return full_history
 
         # Split: last 2 turns (verbatim) vs older turns (summarized)
-        recent_rows = history_rows[:2] # history_rows is most-recent-first
+        recent_rows = history_rows[:2]  # history_rows is most-recent-first
         older_rows = history_rows[2:]
-        
+
         if not older_rows:
             return full_history
 
         recent_verbatim = "\n".join(reversed([f"User: {u}\nBregger: {b}" for u, b in recent_rows]))
         older_text = "\n".join(reversed([f"User: {u}\nBregger: {b}" for u, b in older_rows]))
-        
+
         compaction_prompt = (
             "Summarize the following conversation history into a concise SESSION SUMMARY. "
             "Focus on: CURRENT GOAL, KEY FACTS extracted, and STATUS of tasks. "
@@ -2295,9 +2458,14 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
             # Use the local provider for compaction
             if not hasattr(self.router, "_get_provider"):
                 return full_history
-                
-            summary = self.router._get_provider().generate(compaction_prompt, system="You are a context compaction utility.")
-            print(f"📉 History compacted ({_estimate_tokens(full_history)} -> {_estimate_tokens(summary)} tokens)", flush=True)
+
+            summary = self.router._get_provider().generate(
+                compaction_prompt, system="You are a context compaction utility."
+            )
+            print(
+                f"📉 History compacted ({_estimate_tokens(full_history)} -> {_estimate_tokens(summary)} tokens)",
+                flush=True,
+            )
             return f"SESSION SUMMARY:\n{summary}\n\n{recent_verbatim}"
         except Exception as e:
             print(f"⚠️ History compaction failed: {e}. Falling back to raw history.", flush=True)
@@ -2357,11 +2525,11 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.execute(
-                    'SELECT user_message, bot_response FROM conversation_history '
-                    'ORDER BY created_at DESC, id DESC LIMIT 10'
+                    "SELECT user_message, bot_response FROM conversation_history "
+                    "ORDER BY created_at DESC, id DESC LIMIT 10"
                 )
                 rows = cursor.fetchall()  # most-recent-first
-            
+
             if rows:
                 history = self._compact_history(rows)
                 if history:
@@ -2386,6 +2554,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                     context_parts.append(f"\nRECENT BACKGROUND ACTIVITY (RECAPS/ALERTS):\n{events_str}")
         except Exception as e:
             import traceback
+
             print(f"⚠️ [_get_user_context] Failed to load background events: {e}", flush=True)
             traceback.print_exc()
 
@@ -2398,7 +2567,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
 
     def process_query(self, user_input: str, force_react: bool = False):
         """Execute the full P-D-A-R loop with Control Plane fast path.
-        
+
         Args:
             user_input: The user's message.
             force_react: If True, skip mode classification and the Control Plane
@@ -2411,7 +2580,13 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
         finally:
             self._inference_active = False
 
-    def _process_query_internal(self, user_input: str, force_react: bool = False, _resume_scratchpad: Optional[List['Step']] = None, trace_id: Optional[str] = None):
+    def _process_query_internal(
+        self,
+        user_input: str,
+        force_react: bool = False,
+        _resume_scratchpad: Optional[List["Step"]] = None,
+        trace_id: Optional[str] = None,
+    ):
         trace_id = trace_id or str(uuid.uuid4())
         t0 = time.time()
         context = self._get_user_context()
@@ -2425,11 +2600,16 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
             intent_obj = None
             print(f"🧩 MODE: react (force_react)", flush=True)
         else:
-            mode = self.classifier.classify(user_input, {
-                "pending_action": self._pending_action,
-                "draft_active": self._pending_action.get("intent") == "draft_email" if self._pending_action else False,
-                "last_turn_type": self._last_turn_type
-            })
+            mode = self.classifier.classify(
+                user_input,
+                {
+                    "pending_action": self._pending_action,
+                    "draft_active": self._pending_action.get("intent") == "draft_email"
+                    if self._pending_action
+                    else False,
+                    "last_turn_type": self._last_turn_type,
+                },
+            )
             self._last_mode = mode
             print(f"🧩 MODE: {mode} (scorecard match)", flush=True)
 
@@ -2438,14 +2618,12 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
         intent_obj = None
         if not force_react and mode == "command":
             intent_obj = self.control_plane.match(user_input)
-        
+
         if intent_obj is not None:
             plan = self.intent_mapper.to_plan(intent_obj)
             if plan is not None:
                 latency_ms = int((time.time() - t0) * 1000)
-                self._log_control_plane_metric(
-                    trace_id, user_input, normalized, intent_obj, latency_ms
-                )
+                self._log_control_plane_metric(trace_id, user_input, normalized, intent_obj, latency_ms)
 
                 # CLEAR PENDING ACTION if we match a new intent in the Control Plane
                 # (Unless the intent is already handled by the gate, but Control Plane takes precedence)
@@ -2461,7 +2639,9 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                         report = self._format_capabilities()
                     elif plan.get("intent") == "greet":
                         name = self._belief_cache.get("user_name", "")
-                        greeting = f"Hey {name}! What can I help you with?" if name else "Hey! What can I help you with?"
+                        greeting = (
+                            f"Hey {name}! What can I help you with?" if name else "Hey! What can I help you with?"
+                        )
                         report = greeting
                     elif plan.get("intent") == "reset":
                         self.reset_state()
@@ -2483,18 +2663,33 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                                     cursor = conn.execute(
                                         "SELECT intent, plan, status, created_at, act_results, steps_detail, "
                                         "ram_start_pct, ram_end_pct, proc_rss_mb "
-                                        "FROM traces ORDER BY rowid DESC LIMIT ?", (limit,))
+                                        "FROM traces ORDER BY rowid DESC LIMIT ?",
+                                        (limit,),
+                                    )
                                     rows = cursor.fetchall()
                                 except sqlite3.OperationalError:
-                                    cursor = conn.execute("SELECT intent, plan, status, created_at, act_results, NULL as steps_detail, NULL, NULL, NULL FROM traces ORDER BY rowid DESC LIMIT ?", (limit,))
+                                    cursor = conn.execute(
+                                        "SELECT intent, plan, status, created_at, act_results, NULL as steps_detail, NULL, NULL, NULL FROM traces ORDER BY rowid DESC LIMIT ?",
+                                        (limit,),
+                                    )
                                     rows = cursor.fetchall()
-                                
+
                             if not rows:
                                 report = "No logs found in the trace database."
                             else:
                                 report = f"**Last {len(rows)} Execution Traces:**\n\n"
                                 for i, row in enumerate(rows, 1):
-                                    t_intent, t_plan_json, t_status, t_created_at, t_act_results_json, t_steps_detail_json, t_ram_start, t_ram_end, t_proc_rss = row
+                                    (
+                                        t_intent,
+                                        t_plan_json,
+                                        t_status,
+                                        t_created_at,
+                                        t_act_results_json,
+                                        t_steps_detail_json,
+                                        t_ram_start,
+                                        t_ram_end,
+                                        t_proc_rss,
+                                    ) = row
                                     t_plan_dict = {}
                                     if t_plan_json:
                                         try:
@@ -2512,7 +2707,9 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                                                 total_ms = sum(s.get("ms", 0) for s in t_steps)
                                                 total_p = sum(s.get("prompt_tokens", 0) for s in t_steps)
                                                 total_r = sum(s.get("response_tokens", 0) for s in t_steps)
-                                                avg_tps = round(sum(s.get("tok_per_sec", 0.0) for s in t_steps) / len(t_steps), 1)
+                                                avg_tps = round(
+                                                    sum(s.get("tok_per_sec", 0.0) for s in t_steps) / len(t_steps), 1
+                                                )
                                                 ram_info = ""
                                                 if t_ram_start is not None and t_ram_end is not None:
                                                     ram_info = f" | **RAM**: {t_ram_start:.0f}%→{t_ram_end:.0f}%"
@@ -2521,22 +2718,28 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                                                 report += f"• **Steps**: {len(t_steps)} | **Time**: {total_ms}ms | **Tokens**: {total_p}p + {total_r}r @ {avg_tps} tok/s{ram_info}\n"
                                                 report += "• **Steps Detail**:\n"
                                                 for step in t_steps:
-                                                    step_tool    = step.get('tool', 'unknown')
-                                                    step_dur     = step.get('ms', 0)
-                                                    step_out     = step.get('output_hint', '')
-                                                    step_thought = step.get('thought', '')
-                                                    step_error   = step.get('error')
-                                                    step_p       = step.get('prompt_tokens', 0)
-                                                    step_r       = step.get('response_tokens', 0)
-                                                    step_tps     = step.get('tok_per_sec', 0.0)
+                                                    step_tool = step.get("tool", "unknown")
+                                                    step_dur = step.get("ms", 0)
+                                                    step_out = step.get("output_hint", "")
+                                                    step_thought = step.get("thought", "")
+                                                    step_error = step.get("error")
+                                                    step_p = step.get("prompt_tokens", 0)
+                                                    step_r = step.get("response_tokens", 0)
+                                                    step_tps = step.get("tok_per_sec", 0.0)
                                                     step_out = step_out[:60] + "..." if len(step_out) > 60 else step_out
-                                                    tok_info = f" [{step_p}p+{step_r}r @ {step_tps}t/s]" if step_p else ""
+                                                    tok_info = (
+                                                        f" [{step_p}p+{step_r}r @ {step_tps}t/s]" if step_p else ""
+                                                    )
                                                     report += f"  ↳ *Step {step.get('step')}*: `{step_tool}` ({step_dur}ms){tok_info}\n"
                                                     if step_thought:
-                                                        thought_short = step_thought[:120] + "…" if len(step_thought) > 120 else step_thought
+                                                        thought_short = (
+                                                            step_thought[:120] + "…"
+                                                            if len(step_thought) > 120
+                                                            else step_thought
+                                                        )
                                                         report += f"    💭 _{thought_short}_\n"
-                                                    if step.get('probes'):
-                                                        for p in step['probes']:
+                                                    if step.get("probes"):
+                                                        for p in step["probes"]:
                                                             report += f"    🔍 `{p.get('q', '')}` → {p.get('hits', 0)} hit(s)\n"
                                                     if step_error:
                                                         report += f"    ❌ **Error**: {step_error[:100]}\n"
@@ -2557,21 +2760,22 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                             report = f"⚠️ Failed to clear traces: {e}"
                     elif plan.get("intent") == "email_more":
                         from skills.email.tools.list_unread import format_page, PAGE_SIZE
+
                         if not self._cached_unread:
-                            report = "📬 No email list cached. Say \"check email\" first."
+                            report = '📬 No email list cached. Say "check email" first.'
                         else:
                             next_offset = self._email_page_offset + PAGE_SIZE
                             if next_offset >= len(self._cached_unread):
                                 report = "📬 You're all caught up — no more unread emails."
                             else:
                                 self._email_page_offset = next_offset
-                                page = self._cached_unread[next_offset:next_offset + PAGE_SIZE]
+                                page = self._cached_unread[next_offset : next_offset + PAGE_SIZE]
                                 report = format_page(page, next_offset, len(self._cached_unread))
 
                     elif plan.get("intent") == "email_open":
                         num = plan["parameters"].get("num")
                         if not self._cached_unread:
-                            report = "📬 No email list cached. Say \"check email\" first."
+                            report = '📬 No email list cached. Say "check email" first.'
                         elif num is None:
                             report = "Which email? Reply with a number from the list."
                         else:
@@ -2579,13 +2783,12 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                             page_start = self._email_page_offset
                             page_end = self._email_page_offset + PAGE_SIZE
                             if idx < 0 or idx >= len(self._cached_unread):
-                                report = f"⚠️ Email {num} not found. Say \"check email\" to refresh the list."
+                                report = f'⚠️ Email {num} not found. Say "check email" to refresh the list.'
                             else:
                                 email = self._cached_unread[idx]
                                 email_id = str(email.get("id", ""))
                                 subject = email.get("subject", "")
-                                sender = (email.get("from", {}).get("name")
-                                          or email.get("from", {}).get("addr", ""))
+                                sender = email.get("from", {}).get("name") or email.get("from", {}).get("addr", "")
                                 # Execute summarize_email via the executive
                                 read_plan = {
                                     "skill": "email",
@@ -2595,20 +2798,22 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                                 }
                                 if self.executive.validate_plan(read_plan):
                                     read_results = self.executive.execute_plan(read_plan, beliefs=self._belief_cache)
-                                    report = self.router.generate_report(user_input, read_plan, read_results, context=context)
+                                    report = self.router.generate_report(
+                                        user_input, read_plan, read_results, context=context
+                                    )
                                 else:
                                     report = f"⚠️ Couldn't open email from {sender}."
                     else:
                         report = self._format_status()
-                    
+
                     self._log_conversation(user_input, report)
-                    
+
                     # If the report is a question, mark it as clarifying
                     if report.strip().endswith("?") or "(yes/no)" in report:
                         self._last_turn_type = "clarifying_question"
                     else:
                         self._last_turn_type = "tool_result"
-                        
+
                     return report
 
                 # Validate & Execute
@@ -2621,24 +2826,24 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                     if plan.get("tool") == "list_unread" and results.get("status") == "success":
                         self._cached_unread = results.get("emails", [])
                         self._email_page_offset = 0
-                    
-                    report = self.router.generate_report(
-                        user_input, plan, results, context=context
-                    )
+
+                    report = self.router.generate_report(user_input, plan, results, context=context)
                     status = "completed" if results.get("status") != "error" else "failed"
-                    
+
                     output_summary = str(results)[:80] + "..." if len(str(results)) > 80 else str(results)
                     if "status" in results:
                         output_summary = f"[{results['status']}] {output_summary}"
-                        
-                    step_telemetry = [{
-                        "step": 1,
-                        "tool": plan.get("tool", "unknown"),
-                        "input": plan.get("parameters", {}),
-                        "output_hint": output_summary,
-                        "ms": duration_ms
-                    }]
-                    
+
+                    step_telemetry = [
+                        {
+                            "step": 1,
+                            "tool": plan.get("tool", "unknown"),
+                            "input": plan.get("parameters", {}),
+                            "output_hint": output_summary,
+                            "ms": duration_ms,
+                        }
+                    ]
+
                     self.update_trace(trace_id, results, status, steps_detail=step_telemetry)
                     self._log_conversation(user_input, report)
                     self._last_turn_type = "tool_result"
@@ -2657,6 +2862,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                     smtp_payload = plan.get("_smtp_payload") or plan.get("parameters", {})
                     try:
                         from skills.email.tools.send_email import send_smtp
+
                         results = send_smtp(smtp_payload)
                         # Flip Ledger status to sent if we have a draft_id
                         if results.get("status") == "success":
@@ -2664,10 +2870,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                             if draft_id:
                                 try:
                                     with sqlite3.connect(self.db_path) as conn:
-                                        conn.execute(
-                                            "UPDATE ledger SET status='sent' WHERE id=?",
-                                            (draft_id,)
-                                        )
+                                        conn.execute("UPDATE ledger SET status='sent' WHERE id=?", (draft_id,))
                                 except Exception as e:
                                     print(f"⚠️ [ledger_update] Failed to mark draft as sent: {e}", flush=True)
                     except Exception as e:
@@ -2678,9 +2881,9 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                         with sqlite3.connect(self.db_path) as conn:
                             conn.execute(
                                 "INSERT OR REPLACE INTO beliefs (key, value, type, visibility) VALUES (?, ?, ?, ?)",
-                                ("assistant_name", new_name, "user_request", "system")
+                                ("assistant_name", new_name, "user_request", "system"),
                             )
-                        self._prewarm_memory() # Refresh cache
+                        self._prewarm_memory()  # Refresh cache
                         results = {"status": "success", "message": f"My name is now {new_name}."}
                     except Exception as e:
                         results = {"status": "error", "message": f"Failed to update name: {e}"}
@@ -2690,9 +2893,9 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                         with sqlite3.connect(self.db_path) as conn:
                             conn.execute(
                                 "INSERT OR REPLACE INTO beliefs (key, value, type, visibility) VALUES (?, ?, ?, ?)",
-                                ("user_name", new_name, "user_request", "system")
+                                ("user_name", new_name, "user_request", "system"),
                             )
-                        self._prewarm_memory() # Refresh cache
+                        self._prewarm_memory()  # Refresh cache
                         results = {"status": "success", "message": f"Your name is now {new_name}."}
                     except Exception as e:
                         results = {"status": "error", "message": f"Failed to update name: {e}"}
@@ -2705,21 +2908,23 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
 
                 report = self.router.generate_report(user_input, plan, results, context=context)
                 status = "completed" if results.get("status") != "error" else "failed"
-                
+
                 # We reuse the t_exec_start or default to 0 ms for internal updates
-                duration_ms = int((time.time() - t_exec_start) * 1000) if 't_exec_start' in locals() else 0
+                duration_ms = int((time.time() - t_exec_start) * 1000) if "t_exec_start" in locals() else 0
                 output_summary = str(results)[:80] + "..." if len(str(results)) > 80 else str(results)
                 if "status" in results:
                     output_summary = f"[{results['status']}] {output_summary}"
-                    
-                step_telemetry = [{
-                    "step": 1,
-                    "tool": plan.get("tool", "unknown"),
-                    "input": plan.get("parameters", {}),
-                    "output_hint": output_summary,
-                    "ms": duration_ms
-                }]
-                
+
+                step_telemetry = [
+                    {
+                        "step": 1,
+                        "tool": plan.get("tool", "unknown"),
+                        "input": plan.get("parameters", {}),
+                        "output_hint": output_summary,
+                        "ms": duration_ms,
+                    }
+                ]
+
                 self.update_trace(trace_id, results, status, steps_detail=step_telemetry)
                 self._log_conversation(user_input, report)
                 self._last_turn_type = "tool_result"
@@ -2727,20 +2932,17 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
             else:
                 # Discarded
                 report = "Got it. Action cancelled."
-                
+
                 # Implicit discard: if rejecting a send_email, flip Ledger status to discarded
                 if self._pending_action and self._pending_action.get("tool") == "send_email":
                     draft_id = self._pending_action.get("_smtp_payload", {}).get("draft_id")
                     if draft_id:
                         try:
                             with sqlite3.connect(self.db_path) as conn:
-                                conn.execute(
-                                    "UPDATE ledger SET status='discarded' WHERE id=?",
-                                    (draft_id,)
-                                )
+                                conn.execute("UPDATE ledger SET status='discarded' WHERE id=?", (draft_id,))
                         except Exception as e:
                             print(f"⚠️ [ledger_discard] Failed to mark draft as discarded: {e}", flush=True)
-                            
+
                 self._pending_action = None  # Any non-confirmation clears the gate
                 self._log_conversation(user_input, report)
                 self._last_turn_type = "tool_result"
@@ -2748,32 +2950,35 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
 
         # ── ReAct Loop (Tier 2 — Multi-Step) ────────────────────────
         manifests = self.registry.get_skill_manifests()
-        loop_conf      = self.config.get("loop", {})
-        MAX_STEPS      = loop_conf.get("max_steps", 12)
-        MAX_SECS       = loop_conf.get("max_secs", 60)
-        
+        loop_conf = self.config.get("loop", {})
+        MAX_STEPS = loop_conf.get("max_steps", 12)
+        MAX_SECS = loop_conf.get("max_secs", 60)
+
         # Save and guarantee restore of provider after loop
         orig_provider = self.router.default_provider
 
         # Escalation Check (Tier 4) — protect local model against context overflow
         escalation_conf = self.config.get("escalation", {})
-        threshold_pct   = escalation_conf.get("threshold_pct", 70) # Default 70%
-        
+        threshold_pct = escalation_conf.get("threshold_pct", 70)  # Default 70%
+
         # Estimate context tokens (rough chars/4)
         # bulk of context is history + tools summary (~4k typically)
         tools_summary = self._available_tools_summary()
         approx_tokens = (len(context) + len(user_input) + len(str(tools_summary)) + 2000) // 4
-        
-        num_ctx = 8192 # Baseline for gemma2:9b on this machine
+
+        num_ctx = 8192  # Baseline for gemma2:9b on this machine
         if approx_tokens > (num_ctx * threshold_pct / 100) and self.router.providers.get("gemini"):
-            print(f"🚀 [escalation] Prompt context (~{approx_tokens} tokens) exceeds {threshold_pct}% of budget. Escalating to Gemini.", flush=True)
+            print(
+                f"🚀 [escalation] Prompt context (~{approx_tokens} tokens) exceeds {threshold_pct}% of budget. Escalating to Gemini.",
+                flush=True,
+            )
             self.router.default_provider = "gemini"
-        
+
         scratchpad: List[Step] = _resume_scratchpad or []
         consecutive_errors = 0
         retry_counts = defaultdict(int)
-        step_telemetry = [] # Collect lightweight step data for the DB
-        
+        step_telemetry = []  # Collect lightweight step data for the DB
+
         # Insert the initial trace row for this ReAct request.
         # update_trace() later fills in results — but it's an UPDATE, so the row
         # must exist first. Without this INSERT, all ReAct traces silently disappear.
@@ -2784,17 +2989,20 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
         # Shadow Tier 2 — observe only
         _shadow_prediction = self.shadow_matcher.match(user_input)
         if _shadow_prediction:
-            print(f"👻 Shadow predicts: {_shadow_prediction['predicted_tool']} ({_shadow_prediction['score']:.2f})", flush=True)
+            print(
+                f"👻 Shadow predicts: {_shadow_prediction['predicted_tool']} ({_shadow_prediction['score']:.2f})",
+                flush=True,
+            )
 
         # Snapshot system resources at request start
         _ram_start_pct = _psutil.virtual_memory().percent if _PSUTIL_OK else None
-        _proc_rss_mb   = round(_psutil.Process().memory_info().rss / 1024 / 1024, 1) if _PSUTIL_OK else None
+        _proc_rss_mb = round(_psutil.Process().memory_info().rss / 1024 / 1024, 1) if _PSUTIL_OK else None
 
         t_start = time.time()
         for step_num in range(1, MAX_STEPS + 1):
             if (time.time() - t_start) > MAX_SECS:
                 break
-            
+
             # 1. Generate next step
             t_step = time.time()
             assistant_name = self._belief_cache.get("assistant_name", "Bregger")
@@ -2813,10 +3021,14 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                 _step_tokens = _read_token_sink()
             except Exception as e:
                 import traceback
+
                 traceback.print_exc()
                 print(f"⚠️ ReAct generation failure: {e}", flush=True)
-                self.log_trace(f"{trace_id}_parse_err", "react_parse_failure",
-                               {"step": step_num, "error": str(e)[:200], "user_input": user_input[:100]})
+                self.log_trace(
+                    f"{trace_id}_parse_err",
+                    "react_parse_failure",
+                    {"step": step_num, "error": str(e)[:200], "user_input": user_input[:100]},
+                )
                 break
 
             # Log parse warnings to the trace DB so they appear in the dashboard
@@ -2825,7 +3037,12 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                 self.log_trace(
                     f"{trace_id}_parse_{step_num}",
                     "react_parse_warning",
-                    {"step": step_num, "warning": step.parse_warning, "tool": step.tool, "user_input": user_input[:100]}
+                    {
+                        "step": step_num,
+                        "warning": step.parse_warning,
+                        "tool": step.tool,
+                        "user_input": user_input[:100],
+                    },
                 )
 
             # 2. Step visibility callback (typing indicator per step)
@@ -2839,9 +3056,10 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
             if step.tool in ("finish", "ask_user", "schedule"):
                 # Python-level persistence gate (Case 1):
                 last_step = scratchpad[-1] if scratchpad else None
-                if step.tool == "finish" and last_step and (
-                    last_step.tool_output.get("status") == "error"
-                    or last_step.tool_output.get("error")
+                if (
+                    step.tool == "finish"
+                    and last_step
+                    and (last_step.tool_output.get("status") == "error" or last_step.tool_output.get("error"))
                 ):
                     # Inject a retry signal and keep looping
                     step.tool_output = {
@@ -2860,6 +3078,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                     final_answer = question
                     try:
                         import dataclasses
+
                         scratchpad_json = json.dumps([dataclasses.asdict(s) for s in scratchpad])
                     except Exception:
                         scratchpad_json = "[]"
@@ -2871,23 +3090,27 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                         due=None,
                         context_compressed=context_compressed,
                         scratchpad_json=scratchpad_json,
-                        trace_id=trace_id
+                        trace_id=trace_id,
                     )
                 elif step.tool == "schedule":
                     goal = step.tool_input.get("goal") or "Reminder"
                     raw_due = step.tool_input.get("due")
-                    
+
                     if not raw_due:
                         step.tool_output = {"status": "error", "message": "The 'due' parameter is required."}
                         scratchpad.append(step)
                         continue
-                        
+
                     try:
                         from bregger_utils import parse_semantic_datetime
+
                         user_tz = os.environ.get("BREGGER_TZ", "America/New_York")
                         due = parse_semantic_datetime(raw_due, user_tz).isoformat()
                     except Exception as e:
-                        step.tool_output = {"status": "error", "message": f"Invalid due date format: '{raw_due}'. Try 'tomorrow_1400' or similar."}
+                        step.tool_output = {
+                            "status": "error",
+                            "message": f"Invalid due date format: '{raw_due}'. Try 'tomorrow_1400' or similar.",
+                        }
                         print(f"⚠️ PARSE WARNING: schedule date invalid '{raw_due}': {e}", flush=True)
                         scratchpad.append(step)
                         continue
@@ -2896,6 +3119,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                     final_answer = f"Got it. I'll remind you about: {goal}"
                     try:
                         import dataclasses
+
                         scratchpad_json = json.dumps([dataclasses.asdict(s) for s in scratchpad])
                     except Exception:
                         scratchpad_json = "[]"
@@ -2907,7 +3131,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                         due=due,
                         context_compressed=context_compressed,
                         scratchpad_json=scratchpad_json,
-                        trace_id=trace_id
+                        trace_id=trace_id,
                     )
 
                 self.log_trace(f"{trace_id}_{step.tool}", f"react_{step.tool}", {"steps": step_num})
@@ -2932,9 +3156,10 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                         "ram_end_pct": _ram_end_pct,
                         "proc_rss_mb": _proc_rss_mb,
                     }
-                    self.update_trace(trace_id, {"steps": step_num}, "completed",
-                                      steps_detail=step_telemetry, request_meta=_req_meta)
-                                      
+                    self.update_trace(
+                        trace_id, {"steps": step_num}, "completed", steps_detail=step_telemetry, request_meta=_req_meta
+                    )
+
                     if _shadow_prediction:
                         actual_tools = [s["tool"] for s in step_telemetry if s.get("tool")]
                         match = _shadow_prediction["predicted_tool"] in actual_tools
@@ -2943,10 +3168,10 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                             "score": _shadow_prediction["score"],
                             "phrase_matched": _shadow_prediction["phrase_matched"],
                             "actual_tools": actual_tools,
-                            "match": match
+                            "match": match,
                         }
                         self._update_trace_shadow(trace_id, tier2_data)
-                        
+
                 self._log_conversation(user_input, final_answer)
                 self._last_turn_type = "tool_result"
 
@@ -2956,7 +3181,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                 found_sig = next((s.signal for s in scratchpad if s.signal), None)
                 if not found_sig and step.signal:
                     found_sig = step.signal
-                    
+
                 self._log_signal(
                     source="chat",
                     topic_hint=found_sig.get("topic") if found_sig else None,
@@ -2964,9 +3189,9 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                     entity_type=found_sig.get("entity_type") if found_sig else None,
                     content_preview=user_input,
                     ref_id=trace_id,
-                    ref_source="traces"
+                    ref_source="traces",
                 )
-                
+
                 # Passive Memory extraction (L2 — Aware)
                 should_extract = True
                 if len(scratchpad) > 0:
@@ -2974,12 +3199,10 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                     read_only = {"account_info", "recall", "list_unread"}
                     if set(tools_used).issubset(read_only):
                         should_extract = False
-                
+
                 if should_extract:
                     threading.Thread(
-                        target=self._extract_passive_memory,
-                        args=(user_input, final_answer, scratchpad),
-                        daemon=True
+                        target=self._extract_passive_memory, args=(user_input, final_answer, scratchpad), daemon=True
                     ).start()
 
                 return final_answer
@@ -3057,7 +3280,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                 found_sig = next((s.signal for s in scratchpad if s.signal), None)
                 if not found_sig and step.signal:
                     found_sig = step.signal
-                    
+
                 self._log_signal(
                     source="chat",
                     topic_hint=found_sig.get("topic") if found_sig else None,
@@ -3065,7 +3288,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                     entity_type=found_sig.get("entity_type") if found_sig else None,
                     content_preview=user_input,
                     ref_id=trace_id,
-                    ref_source="traces"
+                    ref_source="traces",
                 )
                 # Close the trace row as awaiting_confirmation (not completed — pending user yes/no)
                 if trace_id != "local":
@@ -3080,8 +3303,13 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                         "total_prompt_tokens": sum(s.get("prompt_tokens", 0) for s in step_telemetry),
                         "total_response_tokens": sum(s.get("response_tokens", 0) for s in step_telemetry),
                     }
-                    self.update_trace(trace_id, {"steps": step_num, "awaiting_confirmation": True},
-                                      "awaiting_confirmation", steps_detail=step_telemetry, request_meta=_req_meta)
+                    self.update_trace(
+                        trace_id,
+                        {"steps": step_num, "awaiting_confirmation": True},
+                        "awaiting_confirmation",
+                        steps_detail=step_telemetry,
+                        request_meta=_req_meta,
+                    )
                 return reply
 
             # 10. Error tracking + retry guard
@@ -3098,9 +3326,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
             # 11. Repetition detection
             if is_repeat(step, scratchpad):
                 step.tool_output["warning"] = "You already tried a very similar query."
-                step.tool_output["instruction"] = (
-                    "Do not repeat yourself. Try a different approach or use finish."
-                )
+                step.tool_output["instruction"] = "Do not repeat yourself. Try a different approach or use finish."
 
             # 12. Error-based escalation only (Tier 4)
             # Escalate to Gemini only after 3+ consecutive hard tool errors.
@@ -3111,7 +3337,11 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                     step.tool_output["system_note"] = (
                         "SYSTEM: Multiple tool failures detected. Escalating reasoning to Tier 4 (Gemini)."
                     )
-                    self.log_trace(f"{trace_id}_reasoning", "reasoning_escalation", {"reason": "consecutive_errors", "step": step_num})
+                    self.log_trace(
+                        f"{trace_id}_reasoning",
+                        "reasoning_escalation",
+                        {"reason": "consecutive_errors", "step": step_num},
+                    )
             elif consecutive_errors >= 3:
                 step.tool_output["system_note"] = (
                     f"SYSTEM: You've had {consecutive_errors} consecutive failures. "
@@ -3120,12 +3350,14 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                 )
 
             scratchpad.append(step)
-            
+
             # Record lightweight telemetry for the trace DB
-            output_summary = str(step.tool_output)[:80] + "..." if len(str(step.tool_output)) > 80 else str(step.tool_output)
+            output_summary = (
+                str(step.tool_output)[:80] + "..." if len(str(step.tool_output)) > 80 else str(step.tool_output)
+            )
             if isinstance(step.tool_output, dict) and "status" in step.tool_output:
                 output_summary = f"[{step.tool_output['status']}] {output_summary}"
-                
+
             # Capture error message if the tool failed
             _step_error = None
             if isinstance(step.tool_output, dict):
@@ -3141,20 +3373,22 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                 if raw_probes and isinstance(raw_probes, list):
                     _step_probes = [{"q": p.get("query", ""), "hits": p.get("hits", 0)} for p in raw_probes]
 
-            step_telemetry.append({
-                "step": step.step_num,
-                "thought": step.thought[:300] if step.thought else None,
-                "tool": step.tool,
-                "params": step.tool_input,
-                "input": step.tool_input,
-                "output_hint": output_summary,
-                "probes": _step_probes,
-                "error": _step_error,
-                "prompt_tokens": _step_tokens.get("prompt_tokens", 0),
-                "response_tokens": _step_tokens.get("response_tokens", 0),
-                "tok_per_sec": _step_tokens.get("tok_per_sec", 0.0),
-                "ms": step.duration_ms
-            })
+            step_telemetry.append(
+                {
+                    "step": step.step_num,
+                    "thought": step.thought[:300] if step.thought else None,
+                    "tool": step.tool,
+                    "params": step.tool_input,
+                    "input": step.tool_input,
+                    "output_hint": output_summary,
+                    "probes": _step_probes,
+                    "error": _step_error,
+                    "prompt_tokens": _step_tokens.get("prompt_tokens", 0),
+                    "response_tokens": _step_tokens.get("response_tokens", 0),
+                    "tok_per_sec": _step_tokens.get("tok_per_sec", 0.0),
+                    "ms": step.duration_ms,
+                }
+            )
 
         # Force-finish: limits hit
         last_useful = {}
@@ -3163,11 +3397,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                 last_useful = s.tool_output
                 break
 
-        content = (
-            last_useful.get("content")
-            or last_useful.get("message")
-            or str(last_useful)
-        )
+        content = last_useful.get("content") or last_useful.get("message") or str(last_useful)
 
         # Gemini Escalation (Tier 4) cache trigger
         if "gemini" in self.router.providers:
@@ -3176,11 +3406,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
             try:
                 # Use Gemini to synthesize the gathered data into a final answer
                 # Create a pseudo-plan for the report generator
-                synthesis_plan = {
-                    "skill": "search",
-                    "tool": "search_searxng",
-                    "parameters": {}
-                }
+                synthesis_plan = {"skill": "search", "tool": "search_searxng", "parameters": {}}
                 force_reply = self.router.generate_report(user_input, synthesis_plan, last_useful, context=context)
                 # Log and close the gemini sub-trace
                 self.log_trace(f"{trace_id}_gemini", "gemini_escalation", {"steps": step_num, "status": "success"})
@@ -3196,18 +3422,16 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                     entity_type=found_sig.get("entity_type") if found_sig else None,
                     content_preview=user_input,
                     ref_id=trace_id,
-                    ref_source="traces"
+                    ref_source="traces",
                 )
-                
+
                 # Passive Memory extraction (L2 — Aware)
                 if len(scratchpad) > 0:
                     tools_used = [s.tool for s in scratchpad]
                     read_only = {"account_info", "recall", "list_unread"}
                     if not set(tools_used).issubset(read_only):
                         threading.Thread(
-                            target=self._extract_passive_memory,
-                            args=(user_input, force_reply, scratchpad),
-                            daemon=True
+                            target=self._extract_passive_memory, args=(user_input, force_reply, scratchpad), daemon=True
                         ).start()
 
                 # Close the original react trace row
@@ -3227,24 +3451,28 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                         "overall_tok_per_sec": round(_r_tok / (_total_ms / 1000), 1) if _total_ms > 0 else 0.0,
                         "final_answer_length": len(force_reply) if force_reply else 0,
                     }
-                    self.update_trace(trace_id, {"steps": step_num, "escalated": True}, "completed",
-                                      steps_detail=step_telemetry, request_meta=_req_meta)
+                    self.update_trace(
+                        trace_id,
+                        {"steps": step_num, "escalated": True},
+                        "completed",
+                        steps_detail=step_telemetry,
+                        request_meta=_req_meta,
+                    )
 
                 return force_reply
             except Exception as e:
                 print(f"⚠️ Gemini escalation failed: {e}", flush=True)
-                self.log_trace(f"{trace_id}_gemini", "gemini_escalation", {"steps": step_num, "status": "failed", "error": str(e)})
+                self.log_trace(
+                    f"{trace_id}_gemini", "gemini_escalation", {"steps": step_num, "status": "failed", "error": str(e)}
+                )
             finally:
                 self.router.default_provider = orig_provider
-        
+
         # Reset provider in case reasoning escalation was active
         self.router.default_provider = "ollama"
 
         # Standard fallback if Gemini is missing or fails
-        force_reply = (
-            f"I wasn't able to fully complete your request in time. "
-            f"Here's what I found:\n{content}"
-        )
+        force_reply = f"I wasn't able to fully complete your request in time. Here's what I found:\n{content}"
         self.log_trace(f"{trace_id}_force", "react_force_finish", {"steps": step_num})
         if trace_id != "local":
             _total_ms = int((time.time() - t_start) * 1000)
@@ -3263,8 +3491,13 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                 "overall_tok_per_sec": _overall_tps,
                 "final_answer_length": len(force_reply) if force_reply else 0,
             }
-            self.update_trace(trace_id, {"steps": step_num, "force_finished": True}, "completed",
-                              steps_detail=step_telemetry, request_meta=_req_meta)
+            self.update_trace(
+                trace_id,
+                {"steps": step_num, "force_finished": True},
+                "completed",
+                steps_detail=step_telemetry,
+                request_meta=_req_meta,
+            )
         self._log_conversation(user_input, force_reply)
 
         # ── Log Signal (Force-Finish Path) ──────────────────
@@ -3276,7 +3509,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
             entity_type=found_sig.get("entity_type") if found_sig else None,
             content_preview=user_input,
             ref_id=trace_id,
-            ref_source="traces"
+            ref_source="traces",
         )
 
         # Passive Memory extraction (L2 — Aware)
@@ -3285,9 +3518,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
             read_only = {"account_info", "recall", "list_unread"}
             if not set(tools_used).issubset(read_only):
                 threading.Thread(
-                    target=self._extract_passive_memory,
-                    args=(user_input, force_reply, scratchpad),
-                    daemon=True
+                    target=self._extract_passive_memory, args=(user_input, force_reply, scratchpad), daemon=True
                 ).start()
 
         return force_reply
@@ -3321,7 +3552,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
 
     def _validate_tool_input(self, tool_name: str, params: Dict, tool_meta: Dict) -> Optional[Dict]:
         """Run lightweight pre-execution input validation. Returns error dict or None.
-        
+
         Phase 1: Generic JSON-Schema type enforcement (string vs list mismatch).
         Phase 2: Tool-specific semantic checks (required fields, format guards).
         """
@@ -3344,7 +3575,10 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                 if len(value) == 1:
                     # Safe coercion — single-element list, just unwrap it
                     params[param_name] = str(value[0]).strip()
-                    print(f"⚠️ [schema_validation] Coerced list→string for '{param_name}' in {tool_name}: {value}", flush=True)
+                    print(
+                        f"⚠️ [schema_validation] Coerced list→string for '{param_name}' in {tool_name}: {value}",
+                        flush=True,
+                    )
                 else:
                     # Multi-element list — model is trying to batch. Block and self-correct.
                     return {
@@ -3392,8 +3626,6 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
 
         return None
 
-
-
     def _format_status(self) -> str:
         """Quick inline status response — no LLM needed."""
         skills = list(self.registry.skills.keys())
@@ -3427,9 +3659,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
             lines.append(f"• **{skill_name}**: {', '.join(tools) if tools else 'no tools'}")
         return "\n".join(lines)
 
-    def _log_control_plane_metric(self, trace_id: str, raw: str,
-                                   normalized: str, intent_obj: Dict,
-                                   latency_ms: int):
+    def _log_control_plane_metric(self, trace_id: str, raw: str, normalized: str, intent_obj: Dict, latency_ms: int):
         """Log metrics for every control plane match."""
         metric = {
             "raw_input": raw[:200],
@@ -3445,26 +3675,29 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
             with sqlite3.connect(self.db_path) as conn:
                 conn.execute(
                     "INSERT INTO traces (id, intent, plan, status) VALUES (?, ?, ?, ?)",
-                    (f"metric_{trace_id}", "control_plane_metric",
-                     json.dumps(metric), "logged")
+                    (f"metric_{trace_id}", "control_plane_metric", json.dumps(metric), "logged"),
                 )
         except Exception as e:
             print(f"⚠️ [metrics] Failed to log control plane metric: {e}", flush=True)
 
     def log_trace(self, trace_id: str, intent: str, plan: Dict, status: str = "pending"):
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute('''
+            conn.execute(
+                """
                 INSERT INTO traces (id, intent, plan, status)
                 VALUES (?, ?, ?, ?)
-            ''', (trace_id, intent, json.dumps(plan), status))
+            """,
+                (trace_id, intent, json.dumps(plan), status),
+            )
 
-    def update_trace(self, trace_id: str, act_results: Any, status: str,
-                     steps_detail: List[Dict] = None,
-                     request_meta: Dict = None):
+    def update_trace(
+        self, trace_id: str, act_results: Any, status: str, steps_detail: List[Dict] = None, request_meta: Dict = None
+    ):
         with sqlite3.connect(self.db_path) as conn:
             if steps_detail is not None:
                 meta = request_meta or {}
-                conn.execute('''
+                conn.execute(
+                    """
                     UPDATE traces 
                     SET act_results = ?, status = ?, steps_detail = ?,
                         route = ?, model = ?, raw_prompt = ?, started_at = ?, total_ms = ?,
@@ -3473,22 +3706,37 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                         final_answer_length = ?,
                         ram_start_pct = ?, ram_end_pct = ?, proc_rss_mb = ?
                     WHERE id = ?
-                ''', (
-                    json.dumps(act_results), status, json.dumps(steps_detail),
-                    meta.get("route"), meta.get("model"), meta.get("raw_prompt"), meta.get("started_at"),
-                    meta.get("total_ms"), meta.get("step_count"),
-                    meta.get("total_prompt_tokens"), meta.get("total_response_tokens"),
-                    meta.get("overall_tok_per_sec"), meta.get("final_answer_length"),
-                    meta.get("ram_start_pct"), meta.get("ram_end_pct"), meta.get("proc_rss_mb"),
-                    trace_id
-                ))
+                """,
+                    (
+                        json.dumps(act_results),
+                        status,
+                        json.dumps(steps_detail),
+                        meta.get("route"),
+                        meta.get("model"),
+                        meta.get("raw_prompt"),
+                        meta.get("started_at"),
+                        meta.get("total_ms"),
+                        meta.get("step_count"),
+                        meta.get("total_prompt_tokens"),
+                        meta.get("total_response_tokens"),
+                        meta.get("overall_tok_per_sec"),
+                        meta.get("final_answer_length"),
+                        meta.get("ram_start_pct"),
+                        meta.get("ram_end_pct"),
+                        meta.get("proc_rss_mb"),
+                        trace_id,
+                    ),
+                )
             else:
-                conn.execute('''
+                conn.execute(
+                    """
                     UPDATE traces 
                     SET act_results = ?, status = ?
                     WHERE id = ?
-                ''', (json.dumps(act_results), status, trace_id))
-            
+                """,
+                    (json.dumps(act_results), status, trace_id),
+                )
+
             # Update Working Memory (RAM) immediately on success
             if status == "completed":
                 # Need to find the intent for this trace_id
@@ -3498,40 +3746,39 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                     intent = row[0]
                     timestamp = row[1]
                     if intent != "fallback" and intent != "none":
-                        self._tool_cache.append({
-                            "intent": intent,
-                            "status": status,
-                            "timestamp": timestamp
-                        })
+                        self._tool_cache.append({"intent": intent, "status": status, "timestamp": timestamp})
 
     def _update_trace_shadow(self, trace_id: str, data: Dict):
         """Log shadow tier 2 prediction and grade the matched phrase."""
-        if trace_id == "local": return
+        if trace_id == "local":
+            return
         try:
             with sqlite3.connect(self.db_path) as conn:
-                conn.execute(
-                    "UPDATE traces SET tier2_shadow = ? WHERE id = ?",
-                    (json.dumps(data), trace_id)
-                )
-                
+                conn.execute("UPDATE traces SET tier2_shadow = ? WHERE id = ?", (json.dumps(data), trace_id))
+
                 phrase = data.get("phrase_matched")
                 tool = data.get("predicted_tool")
                 match = data.get("match", False)
-                
+
                 if phrase and tool:
-                    conn.execute('''
+                    conn.execute(
+                        """
                         INSERT INTO shadow_phrases (phrase, tool, hits, correct, last_seen)
                         VALUES (?, ?, 1, ?, CURRENT_TIMESTAMP)
                         ON CONFLICT(phrase, tool) DO UPDATE SET
                             hits = hits + 1,
                             correct = correct + ?,
                             last_seen = CURRENT_TIMESTAMP
-                    ''', (phrase, tool, 1 if match else 0, 1 if match else 0))
+                    """,
+                        (phrase, tool, 1 if match else 0, 1 if match else 0),
+                    )
         except Exception as e:
             print(f"⚠️ [shadow_grade] Failed to update shadow grade: {e}", flush=True)
 
+
 if __name__ == "__main__":
     import sys
+
     config_p = sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser("~/.bregger/config.json")
     if os.path.exists(config_p):
         core = BreggerCore(config_p)

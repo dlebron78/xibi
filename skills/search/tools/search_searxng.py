@@ -6,6 +6,7 @@ keyless, private web search and return structured results.
 
 Returns up to 10 results with title, URL, and snippet.
 """
+
 import urllib.request
 import urllib.parse
 import json
@@ -21,18 +22,17 @@ def run(params: dict) -> dict:
     if not query:
         return {"status": "error", "message": "No search query provided."}
 
-    args = urllib.parse.urlencode({
-        "q": query,
-        "format": "json",
-        "safesearch": "0",
-    })
+    args = urllib.parse.urlencode(
+        {
+            "q": query,
+            "format": "json",
+            "safesearch": "0",
+        }
+    )
     url = f"{_SEARXNG_URL}?{args}"
 
     try:
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": "Bregger/1.0 (local-assistant)"}
-        )
+        req = urllib.request.Request(url, headers={"User-Agent": "Bregger/1.0 (local-assistant)"})
         with urllib.request.urlopen(req, timeout=_TIMEOUT) as response:
             data = json.loads(response.read().decode("utf-8"))
     except Exception as e:
@@ -52,16 +52,18 @@ def run(params: dict) -> dict:
         title = r.get("title", "")
         if len(title) > 80:
             title = title[:77] + "..."
-            
+
         snippet = r.get("content", "")
         if len(snippet) > 300:
             snippet = snippet[:297] + "..."
 
-        results.append({
-            "title": title,
-            "url": r.get("url", ""),
-            "snippet": snippet,
-        })
+        results.append(
+            {
+                "title": title,
+                "url": r.get("url", ""),
+                "snippet": snippet,
+            }
+        )
 
     return {
         "status": "success",
