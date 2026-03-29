@@ -25,11 +25,12 @@ class ObservationConfig:
     Configuration for the observation cycle. Read from profile["observation"].
     All fields have safe defaults so the cycle works without any profile config.
     """
-    min_interval_minutes: int = 120        # minimum time between cycles (2h default)
-    max_interval_minutes: int = 480        # maximum time between cycles (8h default)
-    trigger_threshold: int = 5             # new signals since last cycle to trigger early
-    idle_skip: bool = True                 # skip if no new signals
-    cost_ceiling_daily: float = 5.0        # not enforced this step — stored for future
+
+    min_interval_minutes: int = 120  # minimum time between cycles (2h default)
+    max_interval_minutes: int = 480  # maximum time between cycles (8h default)
+    trigger_threshold: int = 5  # new signals since last cycle to trigger early
+    idle_skip: bool = True  # skip if no new signals
+    cost_ceiling_daily: float = 5.0  # not enforced this step — stored for future
 
 
 @dataclass
@@ -37,11 +38,12 @@ class ObservationResult:
     """
     Outcome of a single observation cycle run.
     """
-    ran: bool                              # False = skipped (idle, interval, error)
-    skip_reason: str = ""                  # non-empty when ran=False
+
+    ran: bool  # False = skipped (idle, interval, error)
+    skip_reason: str = ""  # non-empty when ran=False
     signals_processed: int = 0
     actions_taken: list[dict[str, Any]] = field(default_factory=list)
-    role_used: str = "review"              # 'review', 'think', or 'reflex'
+    role_used: str = "review"  # 'review', 'think', or 'reflex'
     degraded: bool = False
     errors: list[str] = field(default_factory=list)
     new_watermark: int = 0
@@ -438,9 +440,7 @@ class ObservationCycle:
                 if output.get("status") in ("blocked", "suppressed"):
                     allowed = False
 
-                actions_taken.append(
-                    {"tool": tool_name, "input": tool_input, "output": output, "allowed": allowed}
-                )
+                actions_taken.append({"tool": tool_name, "input": tool_input, "output": output, "allowed": allowed})
                 messages.append({"role": "user", "content": f"Tool output: {json.dumps(output)}"})
 
                 if output.get("status") == "error":
@@ -472,9 +472,7 @@ class ObservationCycle:
 
             topic = (s.get("topic_hint") or "").lower()
             content = (s.get("content_preview") or "").lower()
-            is_urgent = any(k in topic for k in urgent_keywords) or any(
-                k in content for k in urgent_keywords
-            )
+            is_urgent = any(k in topic for k in urgent_keywords) or any(k in content for k in urgent_keywords)
 
             if is_urgent:
                 tool_name = "nudge"
@@ -498,9 +496,7 @@ class ObservationCycle:
                 else:
                     nudges_count += 1
 
-                actions_taken.append(
-                    {"tool": tool_name, "input": tool_input, "output": output, "allowed": allowed}
-                )
+                actions_taken.append({"tool": tool_name, "input": tool_input, "output": output, "allowed": allowed})
 
         return actions_taken, errors
 
