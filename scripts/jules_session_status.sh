@@ -62,57 +62,111 @@ RESPONSE=$(curl -sf \
   exit 1
 }
 
-# Pretty print the full session response
+# Pretty print the session summary
 echo "${RESPONSE}" | python3 -c "
 import json, sys
 
 data = json.load(sys.stdin)
 
-# State
 state = data.get('state', 'UNKNOWN')
 print(f'State:   {state}')
 
-# Title
 title = data.get('title', '')
 if title:
     print(f'Title:   {title}')
 
-# Created / updated
 created = data.get('createTime', '')
 updated = data.get('updateTime', '')
 if created: print(f'Created: {created}')
 if updated: print(f'Updated: {updated}')
 
-# Jules web UI URL (check-in comments only visible here — not in API)
 url = data.get('url', '')
 if url:
     print(f'UI URL:  {url}')
 
-print('')
-print('Note: Jules check-in comments are only visible in the web UI (see URL above).')
-print('      The API does not expose session messages.')
-print('')
-
-# Detect state
 waiting_states = ['WAITING_FOR_INPUT', 'PAUSED', 'NEEDS_RESPONSE']
 is_waiting = state in waiting_states
+print('')
 if is_waiting:
-    print('⚠️  JULES IS WAITING FOR INPUT — open the UI URL above to see what it needs.')
+    print('⚠️  JULES IS WAITING FOR INPUT')
 elif state in ('IN_PROGRESS', 'RUNNING'):
     print('✓  Jules is actively working.')
 elif state in ('DONE', 'SUCCEEDED', 'COMPLETED'):
     print('✓  Session complete.')
 elif state in ('FAILED', 'ERROR'):
     print('✗  Session FAILED — needs re-triggering.')
-    print('   To re-trigger: move spec back to pending and push, or run jules_trigger.sh manually.')
-    if url:
-        print(f'   Check UI for failure details: {url}')
 else:
     print(f'   Status: {state}')
 " 2>/dev/null || {
   echo "Raw response (parse failed):"
   echo "${RESPONSE}" | python3 -m json.tool 2>/dev/null || echo "${RESPONSE}"
 }
+
+# ── Fetch activities (Jules messages, check-ins, progress updates) ────────────
+echo ""
+echo "Activities:"
+echo "────────────────────────────────────────"
+
+ACTIVITIES=$(curl -sf \
+  -H "X-Goog-Api-Key: ${JULES_API_KEY}" \
+  "${JULES_API}/${SESSION_ID}/activities?pageSize=50" 2>/dev/null) || {
+  echo "Could not fetch activities."
+  ACTIVITIES="{}"
+}
+
+echo "${ACTIVITIES}" | python3 -c "
+import json, sys
+
+data = json.load(sys.stdin)
+activities = data.get('activities', [])
+
+if not activities:
+    print('No activities found.')
+else:
+    print(f'{len(activities)} activities total. Showing agent messages and progress updates:')
+    print('')
+    shown = 0
+    for act in activities:
+        originator = act.get('originator', '')
+        description = act.get('description', '')
+        create_time = act.get('createTime', '')
+
+        # Agent messages — Jules speaking
+        agent_msg = act.get('agentMessaged', {})
+        if agent_msg:
+            text = agent_msg.get('message', agent_msg.get('text', str(agent_msg)))
+            if len(text) > 1000: text = text[:1000] + '... [truncated]'
+            print(f'[JULES] {create_time}')
+            print(text)
+            print('')
+            shown += 1
+
+        # Progress updates — Jules check-ins
+        progress = act.get('progressUpdated', {})
+        if progress:
+            text = progress.get('message', progress.get('text', str(progress)))
+            if len(text) > 500: text = text[:500] + '... [truncated]'
+            print(f'[PROGRESS] {create_time}')
+            print(text)
+            print('')
+            shown += 1
+
+        # User messages
+        user_msg = act.get('userMessaged', {})
+        if user_msg:
+            text = user_msg.get('message', user_msg.get('text', str(user_msg)))
+            if len(text) > 500: text = text[:500] + '... [truncated]'
+            print(f'[USER] {create_time}')
+            print(text)
+            print('')
+            shown += 1
+
+    if shown == 0:
+        print('No agent messages or progress updates in activities.')
+        print('Raw activity descriptions:')
+        for act in activities[-5:]:
+            print(f'  [{act.get(\"originator\",\"?\")}] {act.get(\"createTime\",\"\")} — {act.get(\"description\",\"(no description)\")}')
+" 2>/dev/null || echo "Could not parse activities response."
 
 # ── Check-stall mode: exit code signals pipeline reviewer ─────────────────────
 if [[ "${1:-}" == "--check-stall" ]]; then
