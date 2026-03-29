@@ -3,16 +3,18 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
-import time
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from xibi.db import open_db
-from xibi.router import get_model
-from xibi.command_layer import CommandLayer
 from xibi.react import _parse_llm_response, dispatch
+from xibi.router import get_model
+
+if TYPE_CHECKING:
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -103,10 +105,8 @@ class ObservationCycle:
             if "max_interval" in obs_profile:
                 config.max_interval_minutes = parse_interval(obs_profile["max_interval"], config.max_interval_minutes)
             if "trigger_threshold" in obs_profile:
-                try:
+                with suppress(ValueError, TypeError):
                     config.trigger_threshold = int(obs_profile["trigger_threshold"])
-                except (ValueError, TypeError):
-                    pass
             if "idle_skip" in obs_profile:
                 config.idle_skip = bool(obs_profile["idle_skip"])
 
@@ -205,7 +205,7 @@ class ObservationCycle:
         Never raises. Catches all exceptions, logs them, returns ObservationResult with errors[].
         """
         result = ObservationResult(ran=False)
-        cycle_id = None
+        cycle_id: int | None = None
         try:
             should, reason = self.should_run()
             if not should:
@@ -225,7 +225,8 @@ class ObservationCycle:
             if not signals:
                 result.ran = True
                 result.new_watermark = watermark
-                self._persist_cycle(cycle_id, result)
+                if cycle_id is not None:
+                    self._persist_cycle(cycle_id, result)
                 return result
 
             new_watermark = max(s["id"] for s in signals)
@@ -254,17 +255,16 @@ class ObservationCycle:
                     result.errors.extend(errors)
 
             result.ran = True
-            self._persist_cycle(cycle_id, result)
+            if cycle_id is not None:
+                self._persist_cycle(cycle_id, result)
             return result
 
         except Exception as e:
             logger.exception(f"Observation cycle run failed: {e}")
             result.errors.append(str(e))
-            if cycle_id:
-                try:
+            if cycle_id is not None:
+                with suppress(Exception):
                     self._persist_cycle(cycle_id, result)
-                except Exception:
-                    pass
             return result
 
     def _get_watermark(self) -> int:
@@ -408,13 +408,13 @@ class ObservationCycle:
         command_layer: Any | None,
         max_steps: int,
     ) -> tuple[list[dict[str, Any]], list[str]]:
-        actions_taken = []
-        errors = []
+        actions_taken: list[dict[str, Any]] = []
+        errors: list[str] = []
         messages = [
             {"role": "system", "content": self._build_system_prompt()},
             {"role": "user", "content": observation_dump},
         ]
-        llm = get_model(specialty="text", effort=effort, config=self.profile)
+        llm = get_model(specialty="text", effort=effort, config=self.profile)  # type: ignore
 
         for _ in range(max_steps):
             prompt = "\n".join([f"{m['role']}: {m['content']}" for m in messages])
@@ -426,12 +426,12 @@ class ObservationCycle:
                 tool_name = parsed.get("tool")
                 tool_input = parsed.get("tool_input", {})
 
-                if tool_name == "finish":
+                if not tool_name or tool_name == "finish":
                     break
 
                 # Execute tool
                 output = dispatch(
-                    tool_name, tool_input, self.skill_registry, executor=executor, command_layer=command_layer
+                    str(tool_name), tool_input, self.skill_registry, executor=executor, command_layer=command_layer
                 )
 
                 allowed = True
@@ -461,8 +461,8 @@ class ObservationCycle:
         """
         Reflex-only degraded mode — pure Python, no inference.
         """
-        actions_taken = []
-        errors = []
+        actions_taken: list[dict[str, Any]] = []
+        errors: list[str] = []
         urgent_keywords = ["urgent", "asap", "deadline", "failed", "overdue", "critical"]
         nudges_count = 0
 
@@ -478,8 +478,11 @@ class ObservationCycle:
 
             if is_urgent:
                 tool_name = "nudge"
+                preview = s.get("content_preview") or ""
+                topic_hint = s.get("topic_hint") or ""
+                msg_topic = topic_hint or preview[:50]
                 tool_input = {
-                    "message": f"Reflex detection of urgent signal: {s.get('topic_hint') or s.get('content_preview')[:50]}",
+                    "message": f"Reflex detection of urgent signal: {msg_topic}",
                     "thread_id": f"signal:{s['id']}",
                     "refs": [f"{s['ref_source']}:{s['ref_id']}"],
                     "category": "urgent_reflex",
