@@ -532,3 +532,55 @@ def test_infer_helpers():
     assert _infer_model("fast", config) == "m1"
     assert _infer_provider("missing", config) == "unknown"
     assert _infer_model("missing", config) == "unknown"
+
+
+def test_poller_audit_runs_at_interval():
+    radiant = MagicMock()
+    hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), MagicMock(), [123], radiant=radiant)
+    with (
+        patch("xibi.db.open_db", _make_mock_db_ctx()),
+        patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
+        patch.object(HeartbeatPoller, "_check_email", return_value=[]),
+    ):
+        for _ in range(20):
+            hp.tick()
+        assert radiant.run_audit.call_count == 1
+
+
+def test_poller_audit_respects_custom_interval():
+    radiant = MagicMock()
+    profile = {"audit_interval_ticks": 5}
+    hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), MagicMock(), [123], radiant=radiant, profile=profile)
+    with (
+        patch("xibi.db.open_db", _make_mock_db_ctx()),
+        patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
+        patch.object(HeartbeatPoller, "_check_email", return_value=[]),
+    ):
+        for _ in range(5):
+            hp.tick()
+        assert radiant.run_audit.call_count == 1
+
+
+def test_poller_audit_counter_resets():
+    radiant = MagicMock()
+    hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), MagicMock(), [123], radiant=radiant)
+    with (
+        patch("xibi.db.open_db", _make_mock_db_ctx()),
+        patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
+        patch.object(HeartbeatPoller, "_check_email", return_value=[]),
+    ):
+        for _ in range(40):
+            hp.tick()
+        assert radiant.run_audit.call_count == 2
+
+
+def test_poller_audit_no_radiant():
+    # Construct without radiant, ticking shouldn't crash
+    hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), MagicMock(), [123])
+    with (
+        patch("xibi.db.open_db", _make_mock_db_ctx()),
+        patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
+        patch.object(HeartbeatPoller, "_check_email", return_value=[]),
+    ):
+        for _ in range(25):
+            hp.tick()

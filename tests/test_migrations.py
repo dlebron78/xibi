@@ -212,6 +212,35 @@ def test_inference_events_indexes(tmp_path: Path):
         assert "idx_inference_events_role" in indexes
 
 
+def test_schema_version_14_table(tmp_path: Path):
+    db_path = tmp_path / "xibi.db"
+    migrate(db_path)
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.execute("PRAGMA table_info(audit_results)")
+        columns = {row[1] for row in cursor.fetchall()}
+        expected = {
+            "id",
+            "audited_at",
+            "cycles_reviewed",
+            "quality_score",
+            "nudges_flagged",
+            "missed_signals",
+            "false_positives",
+            "findings_json",
+            "model_used",
+        }
+        assert expected.issubset(columns)
+
+
+def test_audit_results_index(tmp_path: Path):
+    db_path = tmp_path / "xibi.db"
+    migrate(db_path)
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='audit_results'")
+        indexes = {row[0] for row in cursor.fetchall()}
+        assert "idx_audit_results_audited" in indexes
+
+
 # --- CLI tests ---
 
 
