@@ -70,8 +70,81 @@ _Competitive research additions (2026-03-27 — from LangChain, LiteLLM, Semanti
 
 ---
 
+## MCP Roadmap
+_Captured 2026-03-29. Step-35 is the foundation. Everything below builds on it._
+
+### The full picture — what broad MCP support requires
+
+**Foundation (step-35 — queued)**
+MCPClient (stdio), tool discovery, SkillRegistry injection, MCPExecutor, DEFAULT_TIER=RED.
+User hand-picks servers to test. No server-specific logic yet.
+
+**Schema field fix (step-35 includes this)**
+`react.py` looks for `"input_schema"`, MCP sends `"inputSchema"`, manifests use `"parameters"`.
+Aligned in step-35 via normalized `MCPToolManifest.input_schema`.
+
+**HTTP transport (post step-35)**
+Streamable HTTP for remote/cloud MCP servers (OAuth-backed services like Gmail workspace MCP).
+Adds session headers, SSE streaming, OAuth 2.1 token handling. Defer until a specific
+server requires it.
+
+**[P2] [feature] Belief protection — session source tagging**
+`compress_to_beliefs()` treats all session turns equally. An MCP tool response claiming
+"user confirmed X" can become a persistent belief. Fix: `source` field on session_turns
+(`"user"`, `"local:{skill}"`, `"mcp:{server}"`). `compress_to_beliefs()` only compresses
+`user` and `local` turns by default. MCP-sourced content informs the session but cannot
+write to long-term memory without explicit user action.
+_Depends on: step-35. Prerequisite for: any MCP server that returns free-text responses._
+
+**[P2] [feature] Multi-dimensional trust — server and sender trust**
+`TrustGradient` currently tracks model-level trust (`specialty`, `effort`). Extend to two
+new dimensions:
+- **Server trust**: how reliable is this MCP server's responses over time? Starts low,
+  builds through successful calls. Resets on version drift or tool manifest changes.
+- **Sender trust**: for channel sources (email, Slack). Is this sender known? What tier
+  can they invoke? User controls the trust table — Xibi doesn't auto-promote.
+_Depends on: belief protection. User is the decider for now — defer until step-35 is tested._
+
+**[P2] [feature] Gateway layer — channels as pluggable adapters**
+Telegram and email are currently hardcoded polling loops. For channels to be swappable
+(WhatsApp, iMessage, Slack as inbound channels), Xibi needs a gateway that:
+- Manages persistent listeners (long-polling or webhook) per registered channel
+- Routes arriving messages into the ReAct loop with a `channel_id` tag
+- Allows channels to be registered via config, not code
+MCP servers for messaging platforms (Slack, WhatsApp) satisfy the channel contract when
+they have both inbound (poll/listen) and outbound (send) tools.
+_Depends on: step-35. Does not block tool MCP — only needed for channel MCP._
+
+**[P3] [feature] Capability provider model — built-in skills as swappable backends**
+Built-in action skills (email send/reply, calendar write, filesystem) can declare a
+`capability` slot. A matching MCP server can be configured as an alternative backend.
+The skill interface stays the same — only the transport changes. Memory is non-replaceable.
+Channels are handled by the gateway layer, not this model.
+_Depends on: gateway layer. Low priority — local skills work fine for most users._
+
+**[P3] [feature] Per-server circuit breakers**
+Current circuit breakers key on `"tool:{tool_name}"`. An MCP server crash should trip
+at the server level, not per-tool. Add a parent circuit breaker per server; individual
+tool breakers inherit state from the parent.
+_Depends on: step-35._
+
+**[P3] [feature] Lazy subprocess init + idle shutdown**
+All configured MCP servers initialize at startup. On NucBox: ~540MB RAM for 5 servers.
+Fix: spawn subprocess on first use only; shut down after 30 minutes idle.
+_Depends on: step-35. Optimization — not a correctness issue._
+
+### Hand-picked server sequence (suggested)
+1. **Web search** (Brave/Tavily) — read-only, no auth, low risk. First real test.
+2. **Filesystem** (scoped to a sandbox dir) — validates stdio lifecycle, tests truncation.
+3. **GitHub (read)** — validates env var secrets, tests tool name collision if needed.
+4. **Calendar (read)** — first OAuth-backed server, validates HTTP transport work.
+5. **Slack / Gmail** — channel + action hybrid, validates confirmation gates.
+6. **Playwright** — last, highest risk, requires sandboxed browser profile.
+
+---
+
 ## Xibi Build Queue
-_Last groomed: 2026-03-25. Ordered by implementation dependency._
+_Last groomed: 2026-03-29. Ordered by implementation dependency._
 
 ### Step 01b — Fix CI on PR #1 [P0 — IN PROGRESS]
 PR #1 ("get_model() Router") has 4 failing CI checks. Fix spec queued at `tasks/pending/step-01b.md`.
