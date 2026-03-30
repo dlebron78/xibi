@@ -254,7 +254,9 @@ class ObservationCycle:
                     result.errors.extend(errors)
                 except Exception as e2:
                     logger.info(f"Think role failed, falling back to reflex: {e2}")
-                    actions, errors = self._run_reflex_fallback(signals, executor, command_layer)
+                    actions, errors = self._run_reflex_fallback(
+                        signals, executor, command_layer, trust_gradient=self.trust_gradient
+                    )
                     result.role_used = "reflex"
                     result.degraded = True
                     result.actions_taken = actions
@@ -519,6 +521,8 @@ class ObservationCycle:
         signals: list[dict[str, Any]],
         executor: Any | None,
         command_layer: Any | None,
+        *,
+        trust_gradient: TrustGradient | None = None,
     ) -> tuple[list[dict[str, Any]], list[str]]:
         """
         Reflex-only degraded mode — pure Python, no inference.
@@ -559,6 +563,15 @@ class ObservationCycle:
                     nudges_count += 1
 
                 actions_taken.append({"tool": tool_name, "input": tool_input, "output": output, "allowed": allowed})
+
+        if trust_gradient is not None:
+            try:
+                from xibi.trust.gradient import FailureType
+
+                trust_gradient.record_failure("text", "review", FailureType.PERSISTENT)
+                trust_gradient.record_failure("text", "think", FailureType.PERSISTENT)
+            except Exception:
+                pass
 
         return actions_taken, errors
 

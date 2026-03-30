@@ -29,6 +29,7 @@ class Turn:
     tools_called: list[str]
     exit_reason: str
     created_at: str
+    source: str = "user"
     summary: str = ""
 
 
@@ -158,7 +159,7 @@ Exchanges:
             logger.debug(f"Compression failed for session {self.session_id}: {e}")
             return 0
 
-    def add_turn(self, query: str, result: ReActResult) -> Turn:
+    def add_turn(self, query: str, result: ReActResult, source: str = "user") -> Turn:
         turn_id = str(uuid.uuid4())
         tools_called = [step.tool for step in result.steps if step.tool not in ("finish", "ask_user", "error", "")]
         created_at = datetime.utcnow().isoformat()
@@ -171,13 +172,14 @@ Exchanges:
             tools_called=tools_called,
             exit_reason=result.exit_reason,
             created_at=created_at,
+            source=source,
         )
 
         with open_db(self.db_path) as conn, conn:
             conn.execute(
                 """
-                    INSERT INTO session_turns (turn_id, session_id, query, answer, tools_called, exit_reason, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO session_turns (turn_id, session_id, query, answer, tools_called, exit_reason, created_at, source)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                 (
                     turn.turn_id,
@@ -187,6 +189,7 @@ Exchanges:
                     json.dumps(turn.tools_called),
                     turn.exit_reason,
                     turn.created_at,
+                    turn.source,
                 ),
             )
 
@@ -259,6 +262,7 @@ Exchanges:
                 tools_called=json.loads(r["tools_called"]),
                 exit_reason=r["exit_reason"],
                 created_at=r["created_at"],
+                source=r["source"],
                 summary=r["summary"],
             )
             for r in rows

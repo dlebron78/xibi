@@ -12,7 +12,7 @@
                 "note that sarah prefers morning meetings",
                 "add a task to buy groceries"
             ],
-            "parameters": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "category": {
@@ -55,7 +55,7 @@
                 "what's my active task list",
                 "do i have any ideas saved for the new app"
             ],
-            "parameters": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "category": {
@@ -79,7 +79,7 @@
                 "that's not true anymore",
                 "archive the memory about sarah's dog"
             ],
-            "parameters": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "query": {
@@ -99,7 +99,7 @@
                 "what emails did you show me",
                 "what was that link you sent me yesterday"
             ],
-            "parameters": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "query": {
@@ -124,7 +124,7 @@
                 "what are my goals",
                 "stop watching for tennis emails"
             ],
-            "parameters": {
+            "inputSchema": {
                 "type": "object",
                 "properties": {
                     "action_type": {

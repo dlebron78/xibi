@@ -20,9 +20,23 @@ def _find_himalaya():
 # ---------------------------------------------------------------------------
 # Keyword scoring — prefer specific terms, deprioritise broad ones
 # ---------------------------------------------------------------------------
-_BROAD_TERMS = {"email", "emails", "mail", "message", "messages", "update",
-                "updates", "notification", "notifications", "alert", "alerts",
-                "info", "information", "news", "newsletter"}
+_BROAD_TERMS = {
+    "email",
+    "emails",
+    "mail",
+    "message",
+    "messages",
+    "update",
+    "updates",
+    "notification",
+    "notifications",
+    "alert",
+    "alerts",
+    "info",
+    "information",
+    "news",
+    "newsletter",
+}
 
 
 def _score_keyword(kw: str) -> float:
@@ -65,9 +79,9 @@ def _build_probes(params: Dict) -> List[str]:
       - Max 3 probes to bound latency
     """
     subject_kws = _rank_keywords(params.get("subject_keywords") or [])
-    from_kws    = _rank_keywords(params.get("from_keywords") or [])
-    body_kws    = _rank_keywords(params.get("body_keywords") or [])
-    after_date  = params.get("after_date")
+    from_kws = _rank_keywords(params.get("from_keywords") or [])
+    body_kws = _rank_keywords(params.get("body_keywords") or [])
+    after_date = params.get("after_date")
 
     probes = []
 
@@ -77,7 +91,7 @@ def _build_probes(params: Dict) -> List[str]:
             for f_kw in from_kws:
                 parts = [f'subject "{s_kw}"', f'from "{f_kw}"']
                 if after_date:
-                    parts.append(f'after {after_date}')
+                    parts.append(f"after {after_date}")
                 probes.append(" and ".join(parts))
                 if len(probes) >= MAX_PROBES:
                     return probes
@@ -87,7 +101,7 @@ def _build_probes(params: Dict) -> List[str]:
         for s_kw in subject_kws:
             parts = [f'subject "{s_kw}"']
             if after_date:
-                parts.append(f'after {after_date}')
+                parts.append(f"after {after_date}")
             probes.append(" and ".join(parts))
             if len(probes) >= MAX_PROBES:
                 return probes
@@ -97,7 +111,7 @@ def _build_probes(params: Dict) -> List[str]:
         for f_kw in from_kws:
             parts = [f'from "{f_kw}"']
             if after_date:
-                parts.append(f'after {after_date}')
+                parts.append(f"after {after_date}")
             probes.append(" and ".join(parts))
             if len(probes) >= MAX_PROBES:
                 return probes
@@ -107,14 +121,14 @@ def _build_probes(params: Dict) -> List[str]:
         for b_kw in body_kws:
             parts = [f'body "{b_kw}"']
             if after_date:
-                parts.append(f'after {after_date}')
+                parts.append(f"after {after_date}")
             probes.append(" and ".join(parts))
             if len(probes) >= MAX_PROBES:
                 return probes
 
     # --- Fallback: date-only ---
     if not probes and after_date:
-        probes.append(f'after {after_date}')
+        probes.append(f"after {after_date}")
 
     return probes
 
@@ -122,6 +136,7 @@ def _build_probes(params: Dict) -> List[str]:
 # ---------------------------------------------------------------------------
 # Probe execution — run each query, merge + dedup by ID
 # ---------------------------------------------------------------------------
+
 
 def _run_himalaya_query(himalaya_bin: str, query_str: str) -> List[Dict]:
     """Execute a single himalaya envelope query, return parsed results."""
@@ -156,12 +171,9 @@ def _run_himalaya_query(himalaya_bin: str, query_str: str) -> List[Dict]:
             else:
                 from_display = "Unknown"
 
-            results.append({
-                "id": env.get("id"),
-                "from": from_display,
-                "subject": env.get("subject"),
-                "date": env.get("date")
-            })
+            results.append(
+                {"id": env.get("id"), "from": from_display, "subject": env.get("subject"), "date": env.get("date")}
+            )
         return results
 
     except (json.JSONDecodeError, subprocess.TimeoutExpired, Exception):
@@ -195,6 +207,7 @@ def _execute_probes(himalaya_bin: str, probes: List[str], limit: int) -> tuple:
 # Main entry point — backward-compatible with old string params
 # ---------------------------------------------------------------------------
 
+
 def run(params: Dict) -> Dict[str, Any]:
     """Search emails using intent slots.
 
@@ -216,9 +229,11 @@ def run(params: Dict) -> Dict[str, Any]:
 
     # --- Backward compatibility: convert old string params to arrays ---
     # Guard with isinstance to avoid crashing if the model passes a list for subject_query etc.
-    for old_key, new_key in [("subject_query", "subject_keywords"),
-                              ("from_query", "from_keywords"),
-                              ("body_query", "body_keywords")]:
+    for old_key, new_key in [
+        ("subject_query", "subject_keywords"),
+        ("from_query", "from_keywords"),
+        ("body_query", "body_keywords"),
+    ]:
         val = params.get(old_key)
         if val is not None:
             if isinstance(val, list):
@@ -257,12 +272,7 @@ def run(params: Dict) -> Dict[str, Any]:
             "count": 0,
             "probes": probes_run,
             "emails": [],
-            "message": "No emails matched your search."
+            "message": "No emails matched your search.",
         }
 
-    return {
-        "status": "success",
-        "count": len(results),
-        "probes": probes_run,
-        "emails": results[:limit]
-    }
+    return {"status": "success", "count": len(results), "probes": probes_run, "emails": results[:limit]}

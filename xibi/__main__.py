@@ -10,6 +10,7 @@ from xibi.channels.telegram import TelegramAdapter
 from xibi.db import SchemaManager, init_workdir
 from xibi.db.migrations import SCHEMA_VERSION
 from xibi.executor import LocalHandlerExecutor
+from xibi.mcp.registry import MCPServerRegistry
 from xibi.routing.control_plane import ControlPlaneRouter
 from xibi.routing.shadow import ShadowMatcher
 from xibi.skills.registry import SkillRegistry
@@ -111,7 +112,10 @@ def cmd_telegram(args: argparse.Namespace) -> None:
         skills_dir = Path("xibi/skills/sample")  # Fallback
 
     registry = SkillRegistry(str(skills_dir))
-    executor = LocalHandlerExecutor(registry)
+    mcp_registry = MCPServerRegistry(config, registry)
+    mcp_registry.initialize_all()
+
+    executor = LocalHandlerExecutor(registry, config=config, mcp_registry=mcp_registry)
     control_plane = ControlPlaneRouter()
     shadow = ShadowMatcher()
     shadow.load_manifests(str(skills_dir))

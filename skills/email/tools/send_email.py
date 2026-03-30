@@ -18,10 +18,10 @@ def run(params):
     Does NOT send. Returns a preview and raw payload for the confirmation gate.
     When the user confirms, bregger_core.py calls send_smtp() directly.
     """
-    to      = params.get("to")
+    to = params.get("to")
     subject = params.get("subject")
-    body    = params.get("body")
-    cc      = params.get("cc", "").strip()
+    body = params.get("body")
+    cc = params.get("cc", "").strip()
     attachment_path = params.get("attachment_path")
 
     # ── LLM-actionable validation (send time) ───────────────────────────────
@@ -53,7 +53,7 @@ def run(params):
     if not SMTP_USER or not SMTP_PASS:
         return {
             "status": "error",
-            "message": "SMTP credentials not configured. Set BREGGER_EMAIL_FROM and BREGGER_SMTP_PASS in secrets.env."
+            "message": "SMTP credentials not configured. Set BREGGER_EMAIL_FROM and BREGGER_SMTP_PASS in secrets.env.",
         }
 
     # Validate attachment exists (before showing the user a preview)
@@ -87,15 +87,15 @@ def send_smtp(payload: dict) -> dict:
     """Phase 2: Actually send the email via SMTP.
     Called by bregger_core.py after the user confirms. Never called by the LLM.
     """
-    to              = payload["to"]
-    cc              = payload.get("cc", "").strip()
-    subject         = payload["subject"]
-    body            = payload["body"]
+    to = payload["to"]
+    cc = payload.get("cc", "").strip()
+    subject = payload["subject"]
+    body = payload["body"]
     attachment_path = payload.get("attachment_path")
 
     msg = MIMEMultipart()
-    msg["From"]    = SMTP_USER
-    msg["To"]      = to
+    msg["From"] = SMTP_USER
+    msg["To"] = to
     if cc:
         msg["Cc"] = cc
     msg["Subject"] = subject
@@ -104,7 +104,7 @@ def send_smtp(payload: dict) -> dict:
     in_reply_to = payload.get("in_reply_to", "").strip()
     if in_reply_to:
         msg["In-Reply-To"] = in_reply_to
-        msg["References"]  = in_reply_to
+        msg["References"] = in_reply_to
 
     msg.attach(MIMEText(body, "plain"))
 
@@ -131,7 +131,10 @@ def send_smtp(payload: dict) -> dict:
 
         cc_note = f" (CC: {cc})" if cc else ""
         if attached_filename:
-            return {"status": "success", "message": f"Email sent to {to}{cc_note} with attachment '{attached_filename}'."}
+            return {
+                "status": "success",
+                "message": f"Email sent to {to}{cc_note} with attachment '{attached_filename}'.",
+            }
         return {"status": "success", "message": f"Email sent to {to}{cc_note}."}
 
     except smtplib.SMTPAuthenticationError:

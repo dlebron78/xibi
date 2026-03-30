@@ -44,8 +44,8 @@ def format_event_time(iso_str: str) -> str:
     """Convert an ISO datetime string to 3:00 PM, or return 'All day' if it's just a date."""
     if len(iso_str) <= 10:
         return "All day"
-    
-    # Python 3.10+ handles 'Z' natively, but 3.8/3.9 strptime doesn't. 
+
+    # Python 3.10+ handles 'Z' natively, but 3.8/3.9 strptime doesn't.
     # The ISO from Calendar usually has +00:00 or -04:00, not Z.
     try:
         fromiso = datetime.fromisoformat(iso_str)
@@ -71,12 +71,14 @@ def get_access_token() -> str:
             "or GOOGLE_CALENDAR_REFRESH_TOKEN in environment."
         )
 
-    data = urllib.parse.urlencode({
-        "client_id": client_id,
-        "client_secret": client_secret,
-        "refresh_token": refresh_token,
-        "grant_type": "refresh_token",
-    }).encode()
+    data = urllib.parse.urlencode(
+        {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "refresh_token": refresh_token,
+            "grant_type": "refresh_token",
+        }
+    ).encode()
 
     req = urllib.request.Request(TOKEN_URL, data=data, method="POST")
     try:

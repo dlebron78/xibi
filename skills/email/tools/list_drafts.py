@@ -31,9 +31,9 @@ def run(params):
             draft_id, content_json, created_at = row
             try:
                 data = json.loads(content_json)
-                to      = data.get("to") or "(no recipient)"
+                to = data.get("to") or "(no recipient)"
                 subject = data.get("subject") or "(no subject)"
-                body    = data.get("body", "")
+                body = data.get("body", "")
                 preview = f"Draft ID: {draft_id[:8]}\nTo: {to}\nSubject: {subject}\n\n{body}"
                 drafts.append(preview)
             except Exception:

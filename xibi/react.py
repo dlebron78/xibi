@@ -77,8 +77,17 @@ def dispatch(
     """Invoke a tool from the registry."""
     if command_layer is not None:
         # Resolve the tool's manifest_schema from skill_registry
-        tool_manifest = next((t for t in skill_registry if t.get("name") == tool_name), None)
-        manifest_schema = tool_manifest.get("input_schema") if tool_manifest else None
+        # skill_registry is a list of skill manifests, each having a 'tools' list
+        tool_manifest = None
+        for skill in skill_registry:
+            for tool in skill.get("tools", []):
+                if tool.get("name") == tool_name:
+                    tool_manifest = tool
+                    break
+            if tool_manifest:
+                break
+
+        manifest_schema = tool_manifest.get("inputSchema") if tool_manifest else None
 
         result = command_layer.check(tool_name, tool_input, manifest_schema)
         if not result.allowed:

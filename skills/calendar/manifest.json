@@ -12,16 +12,17 @@
         "schedule for tomorrow",
         "what's my day look like"
       ],
-      "parameters": {
-        "days": {
-          "type": "integer",
-          "description": "Number of days ahead to look (default: 7, max: 30)",
-          "required": false
-        },
-        "max_results": {
-          "type": "integer",
-          "description": "Max number of events to return (default: 10)",
-          "required": false
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "days": {
+            "type": "integer",
+            "description": "Number of days ahead to look (default: 7, max: 30)"
+          },
+          "max_results": {
+            "type": "integer",
+            "description": "Max number of events to return (default: 10)"
+          }
         }
       },
       "min_tier": 2,
@@ -36,17 +37,21 @@
         "do i have a doctor's appointment",
         "find the sync with the engineering team"
       ],
-      "parameters": {
-        "query": {
-          "type": "string",
-          "description": "Search query to match against event titles and descriptions",
-          "required": true
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query to match against event titles and descriptions"
+          },
+          "days": {
+            "type": "integer",
+            "description": "Number of days ahead to search (default: 30)"
+          }
         },
-        "days": {
-          "type": "integer",
-          "description": "Number of days ahead to search (default: 30)",
-          "required": false
-        }
+        "required": [
+          "query"
+        ]
       },
       "min_tier": 2,
       "output_type": "synthesis",
@@ -60,32 +65,34 @@
         "schedule lunch on friday",
         "create an event for the project kickoff"
       ],
-      "parameters": {
-        "title": {
-          "type": "string",
-          "description": "Event title / summary",
-          "required": true
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Event title / summary"
+          },
+          "start_datetime": {
+            "type": "string",
+            "description": "Semantic time token (e.g. 'tomorrow_1400', 'wednesday_0930', 'today_1800') OR absolute ISO 8601 string."
+          },
+          "duration_mins": {
+            "type": "integer",
+            "description": "Duration in minutes. Defaults to 60. Example: 30, 90."
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional event description / notes"
+          },
+          "timezone": {
+            "type": "string",
+            "description": "IANA timezone, e.g. 'America/New_York'. Defaults to America/New_York."
+          }
         },
-        "start_datetime": {
-          "type": "string",
-          "description": "Semantic time token (e.g. 'tomorrow_1400', 'wednesday_0930', 'today_1800') OR absolute ISO 8601 string.",
-          "required": true
-        },
-        "duration_mins": {
-          "type": "integer",
-          "description": "Duration in minutes. Defaults to 60. Example: 30, 90.",
-          "required": false
-        },
-        "description": {
-          "type": "string",
-          "description": "Optional event description / notes",
-          "required": false
-        },
-        "timezone": {
-          "type": "string",
-          "description": "IANA timezone, e.g. 'America/New_York'. Defaults to America/New_York.",
-          "required": false
-        }
+        "required": [
+          "title",
+          "start_datetime"
+        ]
       },
       "min_tier": 2,
       "output_type": "synthesis",

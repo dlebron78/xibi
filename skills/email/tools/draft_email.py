@@ -12,7 +12,7 @@ def _slugify(text: str) -> str:
 
 def _ledger_upsert(workdir: str, draft_id: str, to: str, subject: str, body: str) -> None:
     """Insert or update a draft in the Ledger. Silently skips on failure.
-    
+
     If a new draft_id is being inserted and a recipient ('to') is provided,
     any older pending drafts for that same recipient are auto-discarded to
     prevent stale draft accumulation.
@@ -54,8 +54,8 @@ def run(params):
     Only 'body' is required to save a draft — to/subject can be filled in later.
     Validation of to/subject happens at send time via send_email.
     """
-    body    = params.get("body", "").strip()
-    to      = params.get("to", "").strip()
+    body = params.get("body", "").strip()
+    to = params.get("to", "").strip()
     subject = params.get("subject", "").strip()
     attachment_path = params.get("attachment_path", "")
 

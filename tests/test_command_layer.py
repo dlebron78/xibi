@@ -55,7 +55,7 @@ def test_red_tool_allowed_interactive():
 
 def test_schema_failure_returns_retry_hint():
     layer = CommandLayer()
-    manifest_schema = {"recipient": {"type": "string"}}
+    manifest_schema = {"properties": {"recipient": {"type": "string"}}, "required": ["recipient"]}
     result = layer.check("send_email", {}, manifest_schema=manifest_schema)
     assert result.allowed is False
     assert len(result.validation_errors) > 0
@@ -131,7 +131,18 @@ def test_audit_writes_to_access_log(temp_db):
 
 def test_dispatch_with_command_layer_blocks_red_non_interactive():
     mock_executor = MagicMock()
-    skill_registry = [{"name": "send_email", "input_schema": {"recipient": {"type": "string"}}}]
+    # Now dispatch expects skill manifest list
+    skill_registry = [
+        {
+            "name": "skill1",
+            "tools": [
+                {
+                    "name": "send_email",
+                    "inputSchema": {"properties": {"recipient": {"type": "string"}}, "required": ["recipient"]},
+                }
+            ],
+        }
+    ]
     layer = CommandLayer(interactive=False)
 
     # Red tool, non-interactive
@@ -145,10 +156,18 @@ def test_dispatch_with_command_layer_blocks_red_non_interactive():
 def test_dispatch_without_command_layer_unchanged():
     mock_executor = MagicMock()
     mock_executor.execute.return_value = {"status": "ok", "message": "called"}
-    skill_registry = [{"name": "list_emails"}]
+    skill_registry = [{"name": "skill1", "tools": [{"name": "list_emails"}]}]
 
     response = dispatch("list_emails", {}, skill_registry, executor=mock_executor, command_layer=None)
 
     assert response["status"] == "ok"
     assert response["message"] == "called"
     mock_executor.execute.assert_called_once_with("list_emails", {})
+
+
+def test_command_layer_blocks_mcp_tool_non_interactive():
+    layer = CommandLayer(interactive=False)
+    # MCP tool not in TOOL_TIERS should default to RED and be blocked
+    result = layer.check("filesystem__read_file", {})
+    assert result.allowed is False
+    assert result.tier == "red"
