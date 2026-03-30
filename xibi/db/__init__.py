@@ -26,25 +26,38 @@ def open_db(db_path: Path) -> Generator[sqlite3.Connection, None, None]:
         conn.close()
 
 
-def init_workdir(workdir: Path) -> None:
+def init_workdir(
+    workdir: Path,
+    user_name: str | None = None,
+    assistant_name: str = "Xibi",
+) -> None:
     """Bootstrap a new Xibi workdir with directory structure, config, and database."""
     # 1. Create directory structure
     workdir.mkdir(parents=True, exist_ok=True)
     (workdir / "skills").mkdir(exist_ok=True)
     (workdir / "data").mkdir(exist_ok=True)
 
-    # 2. Create config.json if it doesn't exist
+    # 2. Create or update config.json
     config_path = workdir / "config.json"
     if not config_path.exists():
         example_config = Path("config.example.json")
         if example_config.exists():
-            config_path.write_text(example_config.read_text())
+            config: dict = json.loads(example_config.read_text())
         else:
-            default_config: dict[str, dict] = {
+            config = {
                 "models": {},
                 "providers": {},
             }
-            config_path.write_text(json.dumps(default_config, indent=2))
+    else:
+        config = json.loads(config_path.read_text())
+
+    # Write profile section — only set keys that were provided; don't overwrite existing values
+    profile = config.setdefault("profile", {})
+    profile.setdefault("assistant_name", assistant_name)
+    if user_name:
+        profile.setdefault("user_name", user_name)
+
+    config_path.write_text(json.dumps(config, indent=2))
 
     # 3. Run migrations
     db_path = workdir / "data" / "xibi.db"

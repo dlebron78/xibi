@@ -29,9 +29,26 @@ def cmd_init(args: argparse.Namespace) -> None:
     """Initialize a new Xibi workdir."""
     workdir = Path(args.workdir).expanduser()
     print(f"Initializing Xibi workdir at {workdir}...")
+
+    # Collect profile — from flags, or interactively if running in a terminal
+    user_name = getattr(args, "name", None)
+    assistant_name = getattr(args, "assistant_name", None) or "Xibi"
+
+    if not user_name:
+        if sys.stdin.isatty():
+            try:
+                user_name = input("Your name (used in the assistant's system prompt): ").strip() or None
+            except (EOFError, KeyboardInterrupt):
+                user_name = None
+        # Non-interactive (piped/CI): silently skip — profile can be added to config.json later
+
     try:
-        init_workdir(workdir)
+        init_workdir(workdir, user_name=user_name, assistant_name=assistant_name)
         print("✅ Workdir initialized.")
+        if user_name:
+            print(f"   Profile: {assistant_name} will address you as {user_name}.")
+        else:
+            print("   Tip: add a 'profile' section to config.json to tell Xibi your name.")
     except Exception as e:
         print(f"❌ Failed to initialize workdir: {e}")
         sys.exit(1)
@@ -251,7 +268,10 @@ def main() -> None:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # init
-    subparsers.add_parser("init", help="Bootstrap a new Xibi workdir")
+    init_parser = subparsers.add_parser("init", help="Bootstrap a new Xibi workdir")
+    init_parser.add_argument("--name", help="Your name (written into config.json profile)")
+    init_parser.add_argument("--assistant-name", dest="assistant_name", default="Xibi",
+                             help="Name for the assistant (default: Xibi)")
 
     # doctor
     subparsers.add_parser("doctor", help="Check workdir health")
