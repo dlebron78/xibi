@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
 from xibi.db import open_db
+
+logger = logging.getLogger(__name__)
 
 
 class CircuitState(str, Enum):
@@ -43,8 +46,14 @@ class CircuitBreaker:
         self.config = config or CircuitBreakerConfig()
         db_key = str(db_path)
         if db_key not in CircuitBreaker._tables_ensured:
-            self._ensure_table()
-            CircuitBreaker._tables_ensured.add(db_key)
+            try:
+                self._ensure_table()
+            except Exception as _e:
+                # If the table already exists (other process created it), this is fine.
+                # Mark as ensured so we don't retry on every get_model() call.
+                logger.warning("CircuitBreaker._ensure_table failed (may already exist): %s", _e)
+            finally:
+                CircuitBreaker._tables_ensured.add(db_key)
 
     def _ensure_table(self) -> None:
         """Create table and upsert initial row for this breaker if not present."""
@@ -78,6 +87,17 @@ class CircuitBreaker:
                 "SELECT state, failure_count, success_count, opened_at FROM circuit_breakers WHERE name = ?",
                 (self.name,),
             ).fetchone()
+            if row is None:
+                # Row missing — _ensure_table() likely failed during startup (DB contention).
+                # Insert lazily and return safe defaults.
+                try:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO circuit_breakers (name, updated_at) VALUES (?, ?)",
+                        (self.name, time.time()),
+                    )
+                except Exception:
+                    pass
+                return {"state": "closed", "failure_count": 0, "success_count": 0, "opened_at": None}
         return {"state": row[0], "failure_count": row[1], "success_count": row[2], "opened_at": row[3]}
 
     def _set_state(self, state: CircuitState, *, opened_at: float | None = None) -> None:
