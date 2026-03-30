@@ -95,9 +95,9 @@ def cmd_doctor(args: argparse.Namespace) -> None:
 def cmd_telegram(args: argparse.Namespace) -> None:
     """Run the Telegram bot."""
     workdir = Path(args.workdir).expanduser()
-    config_path = workdir / "config.json"
+    config_path = Path(args.config) if args.config else workdir / "config.json"
     if not config_path.exists():
-        print(f"❌ config.json missing at {workdir}. Run 'xibi init' first.")
+        print(f"❌ config.json missing at {config_path}. Run 'xibi init' first.")
         sys.exit(1)
 
     try:
@@ -140,12 +140,93 @@ def cmd_telegram(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
+def cmd_heartbeat(args: argparse.Namespace) -> None:
+    """Run the heartbeat poller."""
+    import os
+
+    from xibi.alerting.rules import RuleEngine
+    from xibi.heartbeat.poller import HeartbeatPoller
+    from xibi.observation import ObservationCycle
+    from xibi.radiant import Radiant
+
+    workdir = Path(args.workdir).expanduser()
+    config_path = Path(args.config) if args.config else workdir / "config.json"
+    if not config_path.exists():
+        print(f"❌ config.json missing at {config_path}. Run 'xibi init' first.")
+        sys.exit(1)
+
+    try:
+        with config_path.open() as f:
+            config = json.load(f)
+    except Exception as e:
+        print(f"❌ Failed to load config: {e}")
+        sys.exit(1)
+
+    skills_dir = workdir / "skills"
+    if not skills_dir.exists():
+        skills_dir = Path("xibi/skills/sample")
+
+    db_path = workdir / "data" / "xibi.db"
+
+    registry = SkillRegistry(str(skills_dir))
+    mcp_registry = MCPServerRegistry(config, registry)
+    mcp_registry.initialize_all()
+
+    executor = LocalHandlerExecutor(registry, config=config, mcp_registry=mcp_registry)
+    control_plane = ControlPlaneRouter()
+    shadow = ShadowMatcher()
+    shadow.load_manifests(str(skills_dir))
+
+    adapter = TelegramAdapter(
+        config=config,
+        skill_registry=registry,
+        executor=executor,
+        control_plane=control_plane,
+        shadow=shadow,
+        db_path=db_path,
+    )
+
+    rules = RuleEngine(db_path)
+    obs = ObservationCycle(db_path)
+    radiant = Radiant(db_path, profile=config)
+
+    # Get allowed chat IDs from environment (comma-separated list of integers)
+    allowed_chats_env = os.environ.get("XIBI_TELEGRAM_ALLOWED_CHAT_IDS", "")
+    allowed_chat_ids = [
+        int(c.strip()) for c in allowed_chats_env.split(",") if c.strip() and c.strip().lstrip("-").isdigit()
+    ]
+
+    poller = HeartbeatPoller(
+        skills_dir=skills_dir,
+        db_path=db_path,
+        adapter=adapter,
+        rules=rules,
+        allowed_chat_ids=allowed_chat_ids,
+        observation_cycle=obs,
+        radiant=radiant,
+        profile=config.get("profile"),
+    )
+
+    print(f"Starting Heartbeat poller with workdir {workdir}...")
+    try:
+        poller.run()
+    except KeyboardInterrupt:
+        print("\nStopping Heartbeat poller...")
+    except Exception as e:
+        print(f"❌ Fatal error: {e}")
+        sys.exit(1)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="xibi", description="Xibi AI Assistant CLI")
     parser.add_argument(
         "--workdir",
         default="~/.xibi",
         help="Path to Xibi workdir (default: ~/.xibi)",
+    )
+    parser.add_argument(
+        "--config",
+        help="Path to config.json (default: <workdir>/config.json)",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -158,6 +239,9 @@ def main() -> None:
     # telegram
     subparsers.add_parser("telegram", help="Run the Telegram bot")
 
+    # heartbeat
+    subparsers.add_parser("heartbeat", help="Run the heartbeat poller")
+
     args = parser.parse_args()
 
     if args.command == "init":
@@ -166,6 +250,8 @@ def main() -> None:
         cmd_doctor(args)
     elif args.command == "telegram":
         cmd_telegram(args)
+    elif args.command == "heartbeat":
+        cmd_heartbeat(args)
 
 
 if __name__ == "__main__":

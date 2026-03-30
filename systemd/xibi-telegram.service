@@ -1,0 +1,21 @@
+[Unit]
+Description=Xibi Telegram Adapter
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=%U
+WorkingDirectory=%h/xibi
+EnvironmentFile=%h/.xibi/secrets.env
+ExecStart=%h/.local/bin/python -m xibi telegram \
+    --config %h/.xibi/config.json \
+    --workdir %h/.xibi
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=xibi-telegram
+
+[Install]
+WantedBy=default.target

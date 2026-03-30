@@ -31,9 +31,8 @@ pip install -e . --quiet --break-system-packages >> "${LOG}" 2>&1 \
   && log "Install OK — now at $(git rev-parse --short HEAD)" \
   || log "ERROR: pip install failed"
 
-# ── Service restarts (uncomment as each step lands) ───────────────────────────
-# Step 07 — heartbeat daemon
-# systemctl --user restart xibi-heartbeat && log "Restarted xibi-heartbeat"
-
-# Step 06 — telegram adapter
-# systemctl --user restart xibi-telegram && log "Restarted xibi-telegram"
+# ── Service restarts (step 36+) ───────────────────────────────────────────────
+if systemctl --user is-enabled xibi-telegram &>/dev/null; then
+    systemctl --user restart xibi-telegram  && log "Restarted xibi-telegram"
+    systemctl --user restart xibi-heartbeat && log "Restarted xibi-heartbeat"
+fi
