@@ -281,7 +281,7 @@ class RuleEngine:
                 with conn:
                     conn.execute(
                         """
-                        INSERT INTO signals (source, topic, entity_text, entity_type, content_preview, ref_id, ref_source)
+                        INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source)
                         VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                         (source, topic_hint, entity_text, entity_type, preview, str(ref_id), ref_source),
@@ -345,7 +345,7 @@ class RuleEngine:
                     return
             conn.execute(
                 """
-                INSERT INTO signals (source, topic, entity_text, entity_type, content_preview, ref_id, ref_source)
+                INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (source, topic_hint, entity_text, entity_type, preview, str(ref_id), ref_source),

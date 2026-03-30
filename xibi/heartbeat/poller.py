@@ -37,6 +37,7 @@ class HeartbeatPoller:
         profile: dict[str, Any] | None = None,
         signal_intelligence_enabled: bool = True,
         radiant: Radiant | None = None,
+        config_path: str | None = None,
         *,
         trust_gradient: TrustGradient | None = None,
     ) -> None:
@@ -50,6 +51,7 @@ class HeartbeatPoller:
         self.quiet_end = quiet_end
         self.observation_cycle = observation_cycle
         self.profile = profile or {}
+        self.config_path = config_path or str(Path.home() / ".xibi" / "config.json")
         self.signal_intelligence_enabled = signal_intelligence_enabled
         self.radiant = radiant
 
@@ -136,7 +138,7 @@ class HeartbeatPoller:
         )
 
         try:
-            model = get_model(effort="fast")
+            model = get_model(effort="fast", config_path=self.config_path)
             response = model.generate(prompt, max_tokens=5).strip().upper()
             first_word = response.split()[0] if response else ""
             if first_word in ["URGENT", "DIGEST", "NOISE"]:
@@ -376,7 +378,7 @@ class HeartbeatPoller:
                 "Provide a brief, helpful reflection on what the user has been receiving."
             )
 
-            model = get_model(effort="fast")
+            model = get_model(effort="fast", config_path=self.config_path)
             reflection = model.generate(prompt)
             self._broadcast(f"💭 **Reflection**\n\n{reflection}")
             self.rules.log_background_event(reflection, "reflection")

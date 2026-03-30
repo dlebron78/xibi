@@ -210,6 +210,7 @@ def cmd_heartbeat(args: argparse.Namespace) -> None:
         observation_cycle=obs,
         radiant=radiant,
         profile=config.get("profile"),
+        config_path=str(config_path),
     )
 
     print(f"Starting Heartbeat poller with workdir {workdir}...")
