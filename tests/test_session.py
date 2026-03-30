@@ -23,7 +23,8 @@ def db_path(tmp_path):
                 tools_called TEXT NOT NULL DEFAULT '[]',
                 exit_reason TEXT NOT NULL DEFAULT 'finish',
                 summary     TEXT NOT NULL DEFAULT '',
-                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                source      TEXT NOT NULL DEFAULT 'user'
             );
             CREATE TABLE session_entities (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,

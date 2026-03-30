@@ -158,7 +158,8 @@ def test_cli_prints_error_on_empty_answer(tmp_path):
                 tools_called TEXT NOT NULL DEFAULT '[]',
                 exit_reason TEXT NOT NULL DEFAULT 'finish',
                 summary     TEXT NOT NULL DEFAULT '',
-                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                source      TEXT NOT NULL DEFAULT 'user'
             );
             CREATE TABLE IF NOT EXISTS session_entities (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -224,7 +225,8 @@ def test_telegram_sends_failure_message(tmp_path):
                 tools_called TEXT NOT NULL DEFAULT '[]',
                 exit_reason TEXT NOT NULL DEFAULT 'finish',
                 summary     TEXT NOT NULL DEFAULT '',
-                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                source      TEXT NOT NULL DEFAULT 'user'
             );
             CREATE TABLE IF NOT EXISTS session_entities (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
