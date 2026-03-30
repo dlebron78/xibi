@@ -68,7 +68,9 @@ class Executor:
             # Collision check: local wins
             local_skill = self.registry.find_skill_for_tool(tool_name)
             if local_skill and not local_skill.startswith("mcp_"):
-                logger.warning(f"Tool name collision: '{tool_name}' exists in local skill '{local_skill}' and MCP. Local wins.")
+                logger.warning(
+                    f"Tool name collision: '{tool_name}' exists in local skill '{local_skill}' and MCP. Local wins."
+                )
             else:
                 return self.mcp_executor.execute(tool_name, tool_input)
 

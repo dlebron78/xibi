@@ -55,7 +55,7 @@ class MCPServerRegistry:
                     "description": f"MCP tools from {name} server",
                     "source": "mcp",
                     "server": name,
-                    "tools": []
+                    "tools": [],
                 }
 
                 for tool in tools:
@@ -65,17 +65,21 @@ class MCPServerRegistry:
                     existing_skill = self.skill_registry.find_skill_for_tool(tool_name)
                     if existing_skill:
                         tool_name = f"{name}__{tool.name}"
-                        logger.warning(f"MCP tool collision: tool '{tool.name}' already exists in '{existing_skill}'. Namespacing as '{tool_name}'")
+                        logger.warning(
+                            f"MCP tool collision: tool '{tool.name}' already exists in '{existing_skill}'. Namespacing as '{tool_name}'"
+                        )
 
-                    skill_manifest["tools"].append({
-                        "name": tool_name,
-                        "description": tool.description,
-                        "inputSchema": tool.input_schema,
-                        "tier": "red",
-                        "server": name,
-                        "original_name": tool.name,
-                        "source": "mcp"
-                    })
+                    skill_manifest["tools"].append(
+                        {
+                            "name": tool_name,
+                            "description": tool.description,
+                            "inputSchema": tool.input_schema,
+                            "tier": "red",
+                            "server": name,
+                            "original_name": tool.name,
+                            "source": "mcp",
+                        }
+                    )
 
                 self.skill_registry.register(skill_manifest)
                 logger.info(f"Initialized MCP server '{name}' with {len(tools)} tools")

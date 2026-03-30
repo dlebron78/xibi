@@ -24,13 +24,7 @@ def test_observation_config_defaults(db_path):
 
 
 def test_observation_config_from_profile(db_path):
-    profile = {
-        "observation": {
-            "min_interval": "30m",
-            "trigger_threshold": 3,
-            "idle_skip": False
-        }
-    }
+    profile = {"observation": {"min_interval": "30m", "trigger_threshold": 3, "idle_skip": False}}
     cycle = ObservationCycle(db_path=db_path, profile=profile)
     config = cycle.config
     assert config.min_interval_minutes == 30
@@ -146,11 +140,11 @@ def test_build_observation_dump_with_threads(db_path):
     with open_db(db_path) as conn, conn:
         conn.execute(
             "INSERT INTO threads (id, name, status, signal_count) VALUES (?, ?, 'active', 1)",
-            ("thread-123", "Project Alpha")
+            ("thread-123", "Project Alpha"),
         )
         conn.execute(
             "INSERT INTO signals (source, content_preview, thread_id, intel_tier, urgency, action_type) VALUES (?, ?, ?, ?, ?, ?)",
-            ("email", "Hello", "thread-123", 1, "high", "request")
+            ("email", "Hello", "thread-123", 1, "high", "request"),
         )
     cycle = ObservationCycle(db_path=db_path)
     signals = cycle._collect_signals(0)
@@ -181,7 +175,9 @@ def test_run_records_cycle_row(db_path):
         assert res.signals_processed == 6
 
     with open_db(db_path) as conn:
-        row = conn.execute("SELECT signals_processed, completed_at FROM observation_cycles WHERE completed_at IS NOT NULL").fetchone()
+        row = conn.execute(
+            "SELECT signals_processed, completed_at FROM observation_cycles WHERE completed_at IS NOT NULL"
+        ).fetchone()
         assert row[0] == 6
         assert row[1] is not None
 
@@ -202,8 +198,10 @@ def test_run_degraded_falls_through_to_think(db_path):
         conn.execute("INSERT INTO signals (source, content_preview) VALUES ('test', 'p')")
 
     cycle = ObservationCycle(db_path=db_path, profile={"observation": {"trigger_threshold": 1}})
-    with patch.object(ObservationCycle, "_run_review_role", side_effect=RuntimeError("model unavailable")), \
-         patch.object(ObservationCycle, "_run_think_role", return_value=([], [])):
+    with (
+        patch.object(ObservationCycle, "_run_review_role", side_effect=RuntimeError("model unavailable")),
+        patch.object(ObservationCycle, "_run_think_role", return_value=([], [])),
+    ):
         res = cycle.run()
         assert res.ran is True
         assert res.role_used == "think"
@@ -215,9 +213,11 @@ def test_run_degraded_falls_through_to_reflex(db_path):
         conn.execute("INSERT INTO signals (source, content_preview) VALUES ('test', 'p')")
 
     cycle = ObservationCycle(db_path=db_path, profile={"observation": {"trigger_threshold": 1}})
-    with patch.object(ObservationCycle, "_run_review_role", side_effect=RuntimeError("model unavailable")), \
-         patch.object(ObservationCycle, "_run_think_role", side_effect=RuntimeError("model unavailable")), \
-         patch.object(ObservationCycle, "_run_reflex_fallback", return_value=([], [])):
+    with (
+        patch.object(ObservationCycle, "_run_review_role", side_effect=RuntimeError("model unavailable")),
+        patch.object(ObservationCycle, "_run_think_role", side_effect=RuntimeError("model unavailable")),
+        patch.object(ObservationCycle, "_run_reflex_fallback", return_value=([], [])),
+    ):
         res = cycle.run()
         assert res.ran is True
         assert res.role_used == "reflex"
@@ -234,7 +234,13 @@ def test_run_never_raises(db_path):
 
 def test_reflex_fallback_nudges_urgent_signals(db_path):
     signals = [
-        {"id": 1, "topic_hint": "urgent invoice overdue", "content_preview": "pay now", "ref_source": "email", "ref_id": "e1"},
+        {
+            "id": 1,
+            "topic_hint": "urgent invoice overdue",
+            "content_preview": "pay now",
+            "ref_source": "email",
+            "ref_id": "e1",
+        },
         {"id": 2, "topic_hint": "newsletter", "content_preview": "read this", "ref_source": "email", "ref_id": "e2"},
     ]
     mock_executor = MagicMock()
@@ -259,9 +265,7 @@ def test_reflex_fallback_max_3_nudges(db_path):
 
 
 def test_command_layer_blocks_red_in_observation(db_path):
-    signals = [
-        {"id": 1, "topic_hint": "urgent", "content_preview": "p", "ref_source": "e", "ref_id": "1"}
-    ]
+    signals = [{"id": 1, "topic_hint": "urgent", "content_preview": "p", "ref_source": "e", "ref_id": "1"}]
     mock_executor = MagicMock()
     # Mocking dispatch instead because _run_reflex_fallback calls dispatch
     from xibi.command_layer import CommandLayer
@@ -271,7 +275,9 @@ def test_command_layer_blocks_red_in_observation(db_path):
 
     with patch("xibi.observation.dispatch") as mock_dispatch:
         mock_dispatch.return_value = {"status": "blocked", "message": "Red tools blocked"}
-        actions, errors = cycle._run_reflex_fallback(signals, executor=mock_executor, command_layer=CommandLayer(interactive=False))
+        actions, errors = cycle._run_reflex_fallback(
+            signals, executor=mock_executor, command_layer=CommandLayer(interactive=False)
+        )
         assert actions[0]["allowed"] is False
         assert actions[0]["output"]["status"] == "blocked"
 
@@ -284,6 +290,7 @@ def test_migration_11_creates_table(db_path):
 
 def test_poller_with_observation_cycle(db_path):
     from xibi.heartbeat.poller import HeartbeatPoller
+
     mock_cycle = MagicMock()
     mock_cycle.run.return_value = ObservationResult(ran=True, signals_processed=1)
 
@@ -293,12 +300,12 @@ def test_poller_with_observation_cycle(db_path):
         adapter=MagicMock(),
         rules=MagicMock(),
         allowed_chat_ids=[123],
-        observation_cycle=mock_cycle
+        observation_cycle=mock_cycle,
     )
 
     with patch.object(poller, "_check_email", return_value=[]):
         with patch.object(poller.rules, "get_seen_ids_with_conn", return_value=set()):
-             with patch.object(poller.rules, "load_triage_rules_with_conn", return_value={}):
+            with patch.object(poller.rules, "load_triage_rules_with_conn", return_value={}):
                 poller._tick_with_conn(MagicMock())
 
     mock_cycle.run.assert_called_once()

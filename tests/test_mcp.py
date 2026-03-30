@@ -20,9 +20,16 @@ def test_mcp_client_initialize_success():
         # Responses for initialize, notifications/initialized (none), tools/list
         mock_process.stdout.readline.side_effect = [
             json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2025-11-05"}}) + "\n",
-            json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"tools": [
-                {"name": "test_tool", "description": "desc", "inputSchema": {"type": "object"}}
-            ]}}) + "\n"
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "result": {
+                        "tools": [{"name": "test_tool", "description": "desc", "inputSchema": {"type": "object"}}]
+                    },
+                }
+            )
+            + "\n",
         ]
         mock_process.poll.return_value = None
 
@@ -41,11 +48,12 @@ def test_mcp_client_call_tool_success():
     client.process.poll.return_value = None
 
     # Mock response for tools/call
-    client.process.stdout.readline.return_value = json.dumps({
-        "jsonrpc": "2.0",
-        "id": 3,
-        "result": {"content": [{"type": "text", "text": "hello"}], "isError": False}
-    }) + "\n"
+    client.process.stdout.readline.return_value = (
+        json.dumps(
+            {"jsonrpc": "2.0", "id": 3, "result": {"content": [{"type": "text", "text": "hello"}], "isError": False}}
+        )
+        + "\n"
+    )
 
     res = client.call_tool("test_tool", {})
     assert res == {"status": "ok", "result": "hello"}
@@ -58,11 +66,16 @@ def test_mcp_client_tool_error_normalized():
     client.process.poll.return_value = None
 
     # Mock response for tools/call with isError: true
-    client.process.stdout.readline.return_value = json.dumps({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "result": {"content": [{"type": "text", "text": "file not found"}], "isError": True}
-    }) + "\n"
+    client.process.stdout.readline.return_value = (
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"content": [{"type": "text", "text": "file not found"}], "isError": True},
+            }
+        )
+        + "\n"
+    )
 
     res = client.call_tool("test_tool", {})
     assert res == {"status": "error", "error": "file not found"}
@@ -78,9 +91,10 @@ def test_mcp_client_timeout():
     with patch("queue.Queue.get", side_effect=pytest.importorskip("queue").Empty):
         # We need to monkeypatch TOOL_TIMEOUT_SECS to be small for test
         from xibi.mcp import client as mcp_client_mod
+
         with patch.object(mcp_client_mod, "TOOL_TIMEOUT_SECS", 0.1):
-             res = client.call_tool("test_tool", {})
-             assert res == {"status": "error", "error": "timeout"}
+            res = client.call_tool("test_tool", {})
+            assert res == {"status": "error", "error": "timeout"}
 
 
 def test_mcp_client_response_truncated():
@@ -90,11 +104,16 @@ def test_mcp_client_response_truncated():
     client.process.poll.return_value = None
 
     # Large response
-    client.process.stdout.readline.return_value = json.dumps({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "result": {"content": [{"type": "text", "text": "this is a very long response"}], "isError": False}
-    }) + "\n"
+    client.process.stdout.readline.return_value = (
+        json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"content": [{"type": "text", "text": "this is a very long response"}], "isError": False},
+            }
+        )
+        + "\n"
+    )
 
     res = client.call_tool("test_tool", {})
     assert res["status"] == "ok"
@@ -103,12 +122,8 @@ def test_mcp_client_response_truncated():
 
 
 def test_mcp_registry_injects_tools():
-    skill_registry = SkillRegistry("skills/sample") # Should be empty or have some tools
-    mcp_config = {
-        "mcp_servers": [
-            {"name": "test_server", "command": ["mock"]}
-        ]
-    }
+    skill_registry = SkillRegistry("skills/sample")  # Should be empty or have some tools
+    mcp_config = {"mcp_servers": [{"name": "test_server", "command": ["mock"]}]}
     registry = MCPServerRegistry(mcp_config, skill_registry)
 
     mock_client = MagicMock()
@@ -131,10 +146,7 @@ def test_mcp_registry_injects_tools():
 def test_mcp_registry_server_failure_does_not_abort():
     skill_registry = SkillRegistry("skills/sample")
     mcp_config = {
-        "mcp_servers": [
-            {"name": "fail_server", "command": ["fail"]},
-            {"name": "ok_server", "command": ["ok"]}
-        ]
+        "mcp_servers": [{"name": "fail_server", "command": ["fail"]}, {"name": "ok_server", "command": ["ok"]}]
     }
     registry = MCPServerRegistry(mcp_config, skill_registry)
 
@@ -159,17 +171,11 @@ def test_mcp_registry_server_failure_does_not_abort():
 def test_mcp_tool_name_collision_namespaced():
     skill_registry = SkillRegistry("skills/sample")
     # Add a local tool to cause collision
-    skill_registry.register({
-        "name": "read_file",
-        "skill": "local_fs",
-        "tools": [{"name": "read_file", "description": "local"}]
-    })
+    skill_registry.register(
+        {"name": "read_file", "skill": "local_fs", "tools": [{"name": "read_file", "description": "local"}]}
+    )
 
-    mcp_config = {
-        "mcp_servers": [
-            {"name": "mcp_fs", "command": ["mock"]}
-        ]
-    }
+    mcp_config = {"mcp_servers": [{"name": "mcp_fs", "command": ["mock"]}]}
     registry = MCPServerRegistry(mcp_config, skill_registry)
 
     mock_client = MagicMock()
@@ -181,7 +187,9 @@ def test_mcp_tool_name_collision_namespaced():
         registry.initialize_all()
 
         # Local tool still exists
-        assert skill_registry.find_skill_for_tool("read_file") == "read_file" # because we registered it as a skill name too
+        assert (
+            skill_registry.find_skill_for_tool("read_file") == "read_file"
+        )  # because we registered it as a skill name too
 
         # Namespaced tool registered
         namespaced = "mcp_fs__read_file"

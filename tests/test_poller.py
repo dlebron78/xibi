@@ -483,7 +483,9 @@ def test_poller_skips_observation_when_throttled():
     radiant = MagicMock()
     radiant.ceiling_status.return_value = {"throttle": True}
     obs = MagicMock()
-    hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), MagicMock(), [123], observation_cycle=obs, radiant=radiant)
+    hp = HeartbeatPoller(
+        Path("/tmp"), Path("/tmp/db"), MagicMock(), MagicMock(), [123], observation_cycle=obs, radiant=radiant
+    )
 
     with (
         patch("xibi.db.open_db", _make_mock_db_ctx()),
@@ -503,7 +505,16 @@ def test_poller_records_after_observation():
     obs_result.role_used = "review"
     obs.run.return_value = obs_result
     profile = {"models": {"text": {"review": {"provider": "p1", "model": "m1"}}}}
-    hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), MagicMock(), [123], observation_cycle=obs, radiant=radiant, profile=profile)
+    hp = HeartbeatPoller(
+        Path("/tmp"),
+        Path("/tmp/db"),
+        MagicMock(),
+        MagicMock(),
+        [123],
+        observation_cycle=obs,
+        radiant=radiant,
+        profile=profile,
+    )
 
     with (
         patch("xibi.db.open_db", _make_mock_db_ctx()),
@@ -550,7 +561,9 @@ def test_poller_audit_runs_at_interval():
 def test_poller_audit_respects_custom_interval():
     radiant = MagicMock()
     profile = {"audit_interval_ticks": 5}
-    hp = HeartbeatPoller(Path("/tmp"), Path("/tmp/db"), MagicMock(), MagicMock(), [123], radiant=radiant, profile=profile)
+    hp = HeartbeatPoller(
+        Path("/tmp"), Path("/tmp/db"), MagicMock(), MagicMock(), [123], radiant=radiant, profile=profile
+    )
     with (
         patch("xibi.db.open_db", _make_mock_db_ctx()),
         patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),

@@ -294,19 +294,11 @@ def test_health_check_healthy_after_init(tmp_path, monkeypatch):
 
     # Initialize DB
     from xibi.db.migrations import migrate
+
     migrate(db_path)
 
     # Create a minimal valid config
-    config = {
-        "models": {
-            "text": {
-                "fast": {"provider": "mock", "model": "m1"}
-            }
-        },
-        "providers": {
-            "mock": {}
-        }
-    }
+    config = {"models": {"text": {"fast": {"provider": "mock", "model": "m1"}}}, "providers": {"mock": {}}}
     config_path.write_text(json.dumps(config))
 
     # Mock get_model to return something for our mock provider
