@@ -5,12 +5,12 @@ Wants=network.target
 
 [Service]
 Type=simple
-User=dlebron
-WorkingDirectory=/home/dlebron/xibi
-EnvironmentFile=/home/dlebron/.xibi/secrets.env
-ExecStart=/home/dlebron/.local/bin/python -m xibi telegram \
-    --config /home/dlebron/.xibi/config.json \
-    --workdir /home/dlebron/.xibi
+User=%U
+WorkingDirectory=%h/xibi
+EnvironmentFile=%h/.xibi/secrets.env
+ExecStart=%h/.local/bin/python -m xibi telegram \
+    --config %h/.xibi/config.json \
+    --workdir %h/.xibi
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal

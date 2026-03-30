@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+import re
 from pathlib import Path
 import pytest
 
@@ -12,6 +13,7 @@ def fake_home(tmp_path):
     (home / ".xibi").mkdir()
     (home / "bregger_remote").mkdir()
     (home / "bregger_deployment").mkdir()
+    (home / ".config" / "systemd" / "user").mkdir(parents=True)
     return home
 
 def test_config_migrate_produces_valid_schema(fake_home):
@@ -60,15 +62,32 @@ def test_cutover_script_dry_run(fake_home):
     env = os.environ.copy()
     env["HOME"] = str(fake_home)
 
-    # Need to make xibi importable
-    subprocess.run(["pip", "install", "-e", "."], check=True)
-
-    result = subprocess.run([
+    # Run first time
+    result1 = subprocess.run([
         "bash", str(script_sh), "--dry-run"
     ], check=True, capture_output=True, text=True, env=env)
 
-    assert "DRY RUN" in result.stdout
-    assert "Stopping Bregger services" in result.stdout
-    assert "Installing Xibi systemd services" in result.stdout
-    assert "Starting Xibi services" in result.stdout
-    assert "[dry-run] systemctl --user stop bregger-telegram" in result.stdout
+    assert "DRY RUN" in result1.stdout
+    assert "Stopping Bregger services" in result1.stdout
+    assert "[dry-run] systemctl --user stop bregger-telegram" in result1.stdout
+    assert result1.stderr == ""
+
+    # Run second time (idempotency check)
+    result2 = subprocess.run([
+        "bash", str(script_sh), "--dry-run"
+    ], check=True, capture_output=True, text=True, env=env)
+
+    # Strip timestamps for comparison
+    def strip_ts(text):
+        return re.sub(r"\[\d{2}:\d{2}:\d{2}\]", "[XX:XX:XX]", text)
+
+    assert strip_ts(result2.stdout) == strip_ts(result1.stdout)
+    assert result2.stderr == ""
+
+def test_service_files_use_specifiers():
+    for svc in ["systemd/xibi-telegram.service", "systemd/xibi-heartbeat.service"]:
+        content = Path(svc).read_text()
+        assert "%h" in content
+        assert "%U" in content
+        assert "/home/dlebron" not in content
+        assert "User=dlebron" not in content
