@@ -252,15 +252,15 @@ def run(
     # LLM classifier fallback — only when BM25 found nothing
     if llm_routing_classifier is not None and not _shadow_matched:
         try:
-            decision = llm_routing_classifier.classify(query, skill_registry)
-            if decision is not None:
-                context = f"[Routing hint: consider using {decision.skill}/{decision.tool} (confidence={decision.confidence:.2f})]\n{context}"
+            llm_decision = llm_routing_classifier.classify(query, skill_registry)
+            if llm_decision is not None:
+                context = f"[Routing hint: consider using {llm_decision.skill}/{llm_decision.tool} (confidence={llm_decision.confidence:.2f})]\n{context}"
                 logger.debug(
                     "LLM classifier hint: %s/%s (%.2f) — %s",
-                    decision.skill,
-                    decision.tool,
-                    decision.confidence,
-                    decision.reasoning,
+                    llm_decision.skill,
+                    llm_decision.tool,
+                    llm_decision.confidence,
+                    llm_decision.reasoning,
                 )
         except Exception as exc:
             logger.debug("LLM classifier error (non-fatal): %s", exc)
