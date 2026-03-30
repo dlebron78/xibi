@@ -504,3 +504,11 @@ react.run  (root — set by react.py)
 - `_emit_tool_span` imports from `xibi.router` inside the method body (not module level) to avoid circular import: `executor → router → executor`
 - For the MCP `_resolve_mcp_server()` helper: it's a scan of the skill manifests — acceptable since it's only called when a trace context is active (not on every tool call in production with no tracer)
 - The `source` attribute (`"mcp"` vs `"native"`) is the key attribute for dashboard breakdowns: how often does the react loop call MCP vs native tools? Which MCP server is slowest?
+
+**Known implementation hazards (executor.py integration):**
+
+- **Pseudocode mismatch**: The `execute()` sample uses `_dispatch_native()` which doesn't exist. The real executor has a circuit breaker check + `_execute_with_timeout()` + breaker success/failure recording. `t_start` and `_emit_tool_span()` must be placed around the *entire existing* flow, not a rewritten version of it.
+- **Clock mismatch**: Capture `t_start_wall = int(time.time() * 1000)` and `t_start_mono = time.monotonic()` at the same moment. Use `start_ms=t_start_wall` (not `time.time() - duration_ms` — that subtracts a monotonic duration from a wall clock value, which is technically incorrect and drifts).
+- **Thread pool context var propagation**: `_execute_with_timeout()` submits to a `ThreadPoolExecutor`. Python 3.7+ copies the context to workers via `copy_context()`, so `_active_trace` IS readable inside the thread. Do NOT attempt to set context vars inside the thread — writes don't propagate back to the caller's context.
+- **Pseudo-tool filter**: `"finish"`, `"ask_user"`, and `"error"` pseudo-tools currently go through `executor.execute()`. They must NOT emit `tool.dispatch` spans — they are control signals, not real tool calls. Add the same filter that react.py currently has.
+- **Circuit-breaker-open path**: When the CB is open, the executor returns early before the tool runs. The span will have `duration_ms ~0`. Set `error="circuit_open"` in the attributes so the dashboard can distinguish CB rejections from actual tool failures.
