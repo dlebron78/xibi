@@ -1,0 +1,21 @@
+[Unit]
+Description=Xibi Heartbeat Poller
+After=network.target xibi-telegram.service
+Wants=network.target
+
+[Service]
+Type=simple
+User=dlebron
+WorkingDirectory=/home/dlebron/xibi
+EnvironmentFile=/home/dlebron/.xibi/secrets.env
+ExecStart=/home/dlebron/.local/bin/python -m xibi heartbeat \
+    --config /home/dlebron/.xibi/config.json \
+    --workdir /home/dlebron/.xibi
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=xibi-heartbeat
+
+[Install]
+WantedBy=default.target
