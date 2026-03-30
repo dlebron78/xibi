@@ -120,6 +120,10 @@ def cmd_telegram(args: argparse.Namespace) -> None:
     shadow = ShadowMatcher()
     shadow.load_manifests(str(skills_dir))
 
+    from xibi.routing.llm_classifier import LLMRoutingClassifier
+
+    llm_routing_classifier = LLMRoutingClassifier(config)
+
     db_path = workdir / "data" / "xibi.db"
 
     print(f"Starting Telegram bot with workdir {workdir}...")
@@ -131,6 +135,7 @@ def cmd_telegram(args: argparse.Namespace) -> None:
             control_plane=control_plane,
             shadow=shadow,
             db_path=db_path,
+            llm_routing_classifier=llm_routing_classifier,
         )
         adapter.poll()
     except KeyboardInterrupt:
