@@ -6,6 +6,7 @@ import pytest
 
 from xibi.db import migrate, open_db
 from xibi.observation import ObservationCycle, ObservationResult
+from xibi.trust.gradient import FailureType, TrustGradient
 
 
 @pytest.fixture
@@ -309,3 +310,17 @@ def test_poller_with_observation_cycle(db_path):
                 poller._tick_with_conn(MagicMock())
 
     mock_cycle.run.assert_called_once()
+
+
+def test_reflex_fallback_records_trust_failures(db_path):
+    mock_trust = MagicMock(spec=TrustGradient)
+    cycle = ObservationCycle(db_path=db_path)
+
+    # Trigger reflex fallback
+    cycle._run_reflex_fallback([], executor=None, command_layer=None, trust_gradient=mock_trust)
+
+    # Check calls
+    mock_trust.record_success.assert_called_with("reflex", "fast")
+    # record_failure called for both review and think
+    mock_trust.record_failure.assert_any_call("text", "review", FailureType.PERSISTENT)
+    mock_trust.record_failure.assert_any_call("text", "think", FailureType.PERSISTENT)

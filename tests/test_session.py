@@ -23,7 +23,8 @@ def db_path(tmp_path):
                 tools_called TEXT NOT NULL DEFAULT '[]',
                 exit_reason TEXT NOT NULL DEFAULT 'finish',
                 summary     TEXT NOT NULL DEFAULT '',
-                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                source      TEXT NOT NULL DEFAULT 'user'
             );
             CREATE TABLE session_entities (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -296,3 +297,17 @@ def test_get_context_block_injects_memories(mock_get_model, db_path):
     block = session.get_context_block()
     assert "What I remember from before:" in block
     assert "I remember you like coffee" in block
+
+
+def test_session_turns_has_source_column(db_path):
+    session = SessionContext("test_session", db_path)
+    result = ReActResult(answer="Response", steps=[], exit_reason="finish", duration_ms=10)
+
+    # add_turn should populate source='user' by default
+    turn = session.add_turn("User query", result)
+    assert turn.source == "user"
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT source FROM session_turns WHERE turn_id = ?", (turn.turn_id,)).fetchone()
+        assert row["source"] == "user"

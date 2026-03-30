@@ -1,5 +1,10 @@
 import os
 import sys
+from unittest.mock import MagicMock
+
+# Mock google.generativeai to avoid environment issues in sandbox
+sys.modules["google"] = MagicMock()
+sys.modules["google.generativeai"] = MagicMock()
 
 # Ensure the root directory is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))

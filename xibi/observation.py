@@ -254,7 +254,9 @@ class ObservationCycle:
                     result.errors.extend(errors)
                 except Exception as e2:
                     logger.info(f"Think role failed, falling back to reflex: {e2}")
-                    actions, errors = self._run_reflex_fallback(signals, executor, command_layer)
+                    actions, errors = self._run_reflex_fallback(
+                        signals, executor, command_layer, trust_gradient=self.trust_gradient
+                    )
                     result.role_used = "reflex"
                     result.degraded = True
                     result.actions_taken = actions
@@ -519,6 +521,7 @@ class ObservationCycle:
         signals: list[dict[str, Any]],
         executor: Any | None,
         command_layer: Any | None,
+        trust_gradient: TrustGradient | None = None,
     ) -> tuple[list[dict[str, Any]], list[str]]:
         """
         Reflex-only degraded mode — pure Python, no inference.
@@ -560,12 +563,15 @@ class ObservationCycle:
 
                 actions_taken.append({"tool": tool_name, "input": tool_input, "output": output, "allowed": allowed})
 
-        # Record reflex success/failure if trust_gradient is wired
-        if self.trust_gradient:
+        # Record reflex success for the "reflex" role, AND record persistent failures for text.review and text.think
+        # since we fell back all the way to reflex.
+        if trust_gradient:
             try:
-                # Reflex is ALWAYS considered a success for the "reflex" role if it runs without crashing,
-                # as it doesn't use the text specialty models.
-                self.trust_gradient.record_success("reflex", "fast")
+                trust_gradient.record_success("reflex", "fast")
+                with suppress(Exception):
+                    trust_gradient.record_failure("text", "review", FailureType.PERSISTENT)
+                with suppress(Exception):
+                    trust_gradient.record_failure("text", "think", FailureType.PERSISTENT)
             except Exception as e:
                 logger.warning(f"ObservationCycle: failed to record reflex trust: {e}")
 

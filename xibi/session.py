@@ -261,7 +261,7 @@ Exchanges:
                 tools_called=json.loads(r["tools_called"]),
                 exit_reason=r["exit_reason"],
                 created_at=r["created_at"],
-                source=r.get("source", "user"),
+                source=r["source"] if "source" in r.keys() else "user",
                 summary=r["summary"],
             )
             for r in rows
