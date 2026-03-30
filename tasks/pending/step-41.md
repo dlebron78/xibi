@@ -89,7 +89,8 @@ are still written with `operation="unknown"` — nothing is lost, just less labe
 | File | Change |
 |------|--------|
 | `xibi/router.py` | Core change — add token extraction, context var, auto-emit span + inference_event in `generate()` and `generate_structured()` |
-| `xibi/react.py` | Call `set_trace_context()` at loop start, `clear_trace_context()` on all exit paths. Remove manual span emission (router handles it now) |
+| `xibi/executor.py` | Move `tool.dispatch` span emission here (from react.py). Add MCP-aware attributes. Both native and MCP tool calls emit same span shape. |
+| `xibi/react.py` | Call `set_trace_context()` at loop start, `clear_trace_context()` on all exit paths. **Remove** the `tool.dispatch` span block (executor handles it now, with better timing and MCP context). |
 | `xibi/heartbeat/poller.py` | Call `set_trace_context("heartbeat_tick")` before LLM calls — 2 lines added |
 | `tests/test_tracing_step41.py` | New test file |
 
@@ -294,7 +295,99 @@ def set_last_parse_status(status: str) -> None:
     ...
 ```
 
-### 7. `xibi/heartbeat/poller.py` — Label heartbeat LLM calls
+### 7. `xibi/executor.py` — tool.dispatch spans (MCP-aware)
+
+**Current problem:** `tool.dispatch` spans are emitted in `react.py` after the tool returns, using `time.time()` approximation for start time. React.py doesn't know if the call was MCP or native, which server handled it, or what arguments were passed.
+
+**Fix:** Move span emission into `Executor.execute()`. The executor is the single choke point for both native and MCP tool calls, knows the exact timing, and has full call context.
+
+```python
+# In Executor.execute() — wrap the entire routing + dispatch:
+def execute(self, tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+    t_start = time.monotonic()
+    is_mcp = False
+    server_name = ""
+
+    skill_name = self.registry.find_skill_for_tool(tool_name)
+    mcp_match = self.mcp_executor.can_handle(tool_name) if self.mcp_executor else False
+
+    if not skill_name and mcp_match:
+        is_mcp = True
+        # Resolve server name for span attributes
+        server_name = self._resolve_mcp_server(tool_name)
+        result = self.mcp_executor.execute(tool_name, tool_input)
+    elif skill_name:
+        result = self._dispatch_native(tool_name, tool_input, skill_name)
+    else:
+        result = {"status": "error", "error": f"Unknown tool: {tool_name}"}
+
+    duration_ms = int((time.monotonic() - t_start) * 1000)
+    self._emit_tool_span(tool_name, tool_input, result, duration_ms, is_mcp, server_name)
+    return result
+
+def _emit_tool_span(
+    self,
+    tool_name: str,
+    tool_input: dict,
+    result: dict,
+    duration_ms: int,
+    is_mcp: bool,
+    server_name: str,
+) -> None:
+    """Emit tool.dispatch span. Never raises."""
+    try:
+        from xibi.router import _active_trace, _active_tracer
+        ctx = _active_trace.get()
+        if not (ctx and ctx.get("trace_id")):
+            return
+        tracer = _active_tracer.get()
+        if not tracer:
+            return
+
+        import json
+        try:
+            input_preview = json.dumps(tool_input)[:400]
+        except Exception:
+            input_preview = str(tool_input)[:400]
+
+        output_text = result.get("result") or result.get("error") or ""
+
+        tracer.emit(Span(
+            trace_id=ctx["trace_id"],
+            span_id=tracer.new_span_id(),
+            parent_span_id=ctx.get("parent_span_id"),
+            operation="tool.dispatch",
+            component="mcp" if is_mcp else "executor",
+            start_ms=int(time.time() * 1000) - duration_ms,
+            duration_ms=duration_ms,
+            status="error" if result.get("status") == "error" else "ok",
+            attributes={
+                "tool": tool_name,
+                "source": "mcp" if is_mcp else "native",
+                "server": server_name,       # empty string for native tools
+                "input_preview": input_preview,
+                "output_preview": str(output_text)[:400],
+                "error": str(result.get("error", "")),
+            },
+        ))
+    except Exception:
+        pass
+
+def _resolve_mcp_server(self, tool_name: str) -> str:
+    """Return the MCP server name for a tool. Empty string if not found."""
+    if not self.mcp_executor:
+        return ""
+    for skill in self.mcp_executor.registry.skill_registry.get_skill_manifests():
+        if skill.get("name", "").startswith("mcp_"):
+            for tool in skill.get("tools", []):
+                if tool.get("name") == tool_name:
+                    return tool.get("server", "")
+    return ""
+```
+
+**Also:** Remove the `tool.dispatch` span block from `react.py` (lines ~432–447). It has approximate timing and no MCP context. The executor version is exact and unified.
+
+### 8. `xibi/heartbeat/poller.py` — Label heartbeat LLM calls
 
 Add 2 lines before each LLM call site:
 
@@ -329,21 +422,32 @@ Without this, you can't answer "how many tokens did this conversation turn cost?
 ## Span Hierarchy After This Step
 
 ```
-react.run  (root — set by react.py, emitted by existing code)
-├── llm.generate  (auto — emitted by router for every LLM call in react loop)
-│     provider, model, role, operation, prompt_tokens, response_tokens,
-│     system_prompt_preview (400 chars), raw_response_preview (600 chars),
+react.run  (root — set by react.py)
+├── llm.generate  (router.py — fires for every LLM call)
+│     provider, model, role, operation
+│     prompt_tokens, response_tokens, duration_ms
+│     system_prompt_preview (400 chars), raw_response_preview (600 chars)
 │     parse_status, recovery_attempt
-├── tool.dispatch  (enhanced with input/output sizes — existing)
-├── llm.generate  (next step)
-└── ...
+│
+├── tool.dispatch  (executor.py — fires for EVERY tool call, native OR MCP)
+│     tool, source={"native"|"mcp"}, server (MCP only)
+│     input_preview (400 chars of JSON args)
+│     output_preview (400 chars of result/error)
+│     duration_ms (exact — measured in executor, not react.py)
+│
+├── llm.generate  (next step with tool result)
+│
+└── tool.dispatch  (another tool if multi-step)
+    ...
 
-[no react.run context]
+[no react.run context — background processes]
 ├── inference_event: heartbeat_email_classify (tokens, model, duration)
 ├── inference_event: heartbeat_reflection (tokens, model, duration)
 ├── inference_event: session_maintenance (tokens, model, duration)
 └── inference_event: observation_cycle (tokens, model, duration)
 ```
+
+**Key difference from v1:** `tool.dispatch` now comes from `executor.py` — the single choke point for all tool dispatch. It covers native tools AND MCP tools with the same span shape. `react.py` no longer emits tool spans. Any future tool source (new executor, new MCP server) is automatically traced.
 
 ---
 
@@ -373,6 +477,15 @@ react.run  (root — set by react.py, emitted by existing code)
 14. `test_parse_recovery_updates_parse_status` — mock LLM returns bad JSON then good JSON → span has `parse_status="recovered"`
 15. `test_duration_uses_monotonic_not_wall_clock` — duration_ms is positive and reasonable (not affected by system clock skew)
 
+### MCP-specific tests
+
+16. `test_mcp_tool_dispatch_span_source_is_mcp` — MCP tool call → `tool.dispatch` span has `source="mcp"`, `server="<server_name>"`
+17. `test_native_tool_dispatch_span_source_is_native` — native tool call → `tool.dispatch` span has `source="native"`, `server=""`
+18. `test_tool_dispatch_span_has_input_preview` — `tool.dispatch` span `input_preview` contains serialized args
+19. `test_tool_dispatch_span_duration_is_exact` — duration_ms in `tool.dispatch` span matches actual executor time (within 10ms tolerance)
+20. `test_react_py_no_longer_emits_tool_dispatch` — after step-41, `react.py` emits zero `tool.dispatch` spans directly (executor owns this)
+21. `test_full_waterfall_llm_then_tool_then_llm` — single react turn with one tool call → spans in order: `llm.generate`, `tool.dispatch`, `llm.generate`, all with same `trace_id`
+
 ---
 
 ## Notes for Jules
@@ -387,3 +500,7 @@ react.run  (root — set by react.py, emitted by existing code)
 - Migration number: check current highest migration in `xibi/db/migrations.py` and use next + 1
 - `init_telemetry()` is idempotent — calling it twice (if somehow both cmd_telegram and a test call it) should not break anything
 - heartbeat changes: only 2 call sites need `set_trace_context` (lines 143 and 383 in poller.py) — session.py, observation.py etc. require zero changes and still get inference_events written
+- Moving `tool.dispatch` from react.py to executor.py: delete the span block in react.py around lines 432–447. The new executor version is exact timing (monotonic, measured at dispatch), not approximate (time.time() backwards from react.py). Don't leave both in place — you'll get duplicate spans.
+- `_emit_tool_span` imports from `xibi.router` inside the method body (not module level) to avoid circular import: `executor → router → executor`
+- For the MCP `_resolve_mcp_server()` helper: it's a scan of the skill manifests — acceptable since it's only called when a trace context is active (not on every tool call in production with no tracer)
+- The `source` attribute (`"mcp"` vs `"native"`) is the key attribute for dashboard breakdowns: how often does the react loop call MCP vs native tools? Which MCP server is slowest?
