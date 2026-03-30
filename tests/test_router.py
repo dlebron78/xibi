@@ -151,8 +151,8 @@ def test_ollama_client_generate_structured():
     assert res == {"key": "value"}
 
 
-@patch("google.generativeai.GenerativeModel")
-@patch("google.generativeai.configure")
+@patch("xibi.router.genai.GenerativeModel")
+@patch("xibi.router.genai.configure")
 def test_gemini_client_generate(mock_configure, mock_gen_model):
     mock_model_instance = MagicMock()
     mock_gen_model.return_value = mock_model_instance
@@ -176,7 +176,7 @@ def test_client_timeout_handling():
 # Integration tests
 @responses.activate
 @patch.dict(os.environ, {"GEMINI_API_KEY": "fake-key"})
-@patch("google.generativeai.GenerativeModel")
+@patch("xibi.router.genai.GenerativeModel")
 def test_full_path_fast_role(mock_gen_model):
     # Mock Ollama health check
     responses.add(
@@ -194,7 +194,7 @@ def test_full_path_fast_role(mock_gen_model):
 
 @responses.activate
 @patch.dict(os.environ, {"GEMINI_API_KEY": "fake-key"})
-@patch("google.generativeai.GenerativeModel")
+@patch("xibi.router.genai.GenerativeModel")
 def test_full_path_with_fallback(mock_gen_model):
     # Mock Ollama health check - UNHEALTHY
     responses.add(responses.GET, "http://localhost:11434/api/tags", status=500)
@@ -264,8 +264,8 @@ def test_ollama_generate_structured_invalid_json():
     assert "invalid JSON" in str(excinfo.value)
 
 
-@patch("google.generativeai.GenerativeModel")
-@patch("google.generativeai.configure")
+@patch("xibi.router.genai.GenerativeModel")
+@patch("xibi.router.genai.configure")
 def test_gemini_client_generate_structured(mock_configure, mock_gen_model):
     """Covers GeminiClient.generate_structured (lines 137-147)."""
     mock_model_instance = MagicMock()
@@ -277,8 +277,8 @@ def test_gemini_client_generate_structured(mock_configure, mock_gen_model):
     assert res == {"result": "ok"}
 
 
-@patch("google.generativeai.GenerativeModel")
-@patch("google.generativeai.configure")
+@patch("xibi.router.genai.GenerativeModel")
+@patch("xibi.router.genai.configure")
 def test_gemini_client_generate_exception(mock_configure, mock_gen_model):
     """Covers the Exception branch in GeminiClient._call_provider (lines 130-131)."""
     mock_model_instance = MagicMock()
@@ -291,8 +291,8 @@ def test_gemini_client_generate_exception(mock_configure, mock_gen_model):
     assert "Gemini call failed" in str(excinfo.value)
 
 
-@patch("google.generativeai.GenerativeModel")
-@patch("google.generativeai.configure")
+@patch("xibi.router.genai.GenerativeModel")
+@patch("xibi.router.genai.configure")
 def test_gemini_client_generate_structured_invalid_json(mock_configure, mock_gen_model):
     """Covers JSONDecodeError branch in GeminiClient.generate_structured."""
     mock_model_instance = MagicMock()
@@ -305,8 +305,8 @@ def test_gemini_client_generate_structured_invalid_json(mock_configure, mock_gen
     assert "invalid JSON" in str(excinfo.value)
 
 
-@patch("google.generativeai.GenerativeModel")
-@patch("google.generativeai.configure")
+@patch("xibi.router.genai.GenerativeModel")
+@patch("xibi.router.genai.configure")
 def test_gemini_client_generate_with_timeout(mock_configure, mock_gen_model):
     """Covers the timeout kwarg branch in GeminiClient._call_provider (line 120)."""
     mock_model_instance = MagicMock()
