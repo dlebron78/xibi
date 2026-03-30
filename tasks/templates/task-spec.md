@@ -26,3 +26,8 @@
 - [ ] All tests pass locally
 - [ ] No hardcoded model names anywhere in new code
 - [ ] PR opened with summary + test results + any deviations noted
+
+---
+> **Spec gating:** Do not push this file until the preceding step is merged.
+> Specs may be drafted locally up to 2 steps ahead but stay local until their gate clears.
+> See `WORKFLOW.md`.
