@@ -280,12 +280,19 @@ def run(
     _profile = config.get("profile", {}) if config else {}
     _assistant_name = _profile.get("assistant_name", "Xibi")
     _user_name = _profile.get("user_name", "")
-    _identity = f"You are {_assistant_name}, a local-first AI assistant."
+
+    _identity_lines = [
+        f"You are {_assistant_name}, a local-first personal AI assistant.",
+        f"Your name is {_assistant_name}. Always refer to yourself as {_assistant_name}.",
+    ]
     if _user_name:
-        _identity += f" The user's name is {_user_name}."
+        _identity_lines += [
+            f"The person you are talking to is named {_user_name}.",
+            f"Always address them as {_user_name}. Never ask for their name — you already know it.",
+        ]
 
     system_prompt = (f"{context_block}\n\n" if context_block else "") + (
-        f"{_identity}\n"
+        "\n".join(_identity_lines) + "\n\n"
         f"Available tools: {json.dumps(skill_registry)}\n\n"
         "Instructions:\n"
         '1. Respond in JSON format only: {"thought": "...", "tool": "...", "tool_input": {...}}\n'
