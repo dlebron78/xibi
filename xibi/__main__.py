@@ -188,7 +188,7 @@ def cmd_heartbeat(args: argparse.Namespace) -> None:
 
     rules = RuleEngine(db_path)
     obs = ObservationCycle(db_path)
-    radiant = Radiant(db_path, config=config)
+    radiant = Radiant(db_path, profile=config)
 
     # Get allowed chat IDs from environment (comma-separated list of integers)
     allowed_chats_env = os.environ.get("XIBI_TELEGRAM_ALLOWED_CHAT_IDS", "")
