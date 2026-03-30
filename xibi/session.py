@@ -68,11 +68,14 @@ class SessionContext:
                 if exists:
                     return 0
 
-                # Fetch turns
+                # Fetch user-initiated turns only — MCP turns (source='mcp:...') are excluded.
+                # MCP tool output can inform the current session but must not write to
+                # long-term beliefs without explicit user action (injection protection).
                 rows = conn.execute(
                     """
                     SELECT query, answer FROM session_turns
                     WHERE session_id = ?
+                    AND source = 'user'
                     ORDER BY created_at ASC
                     LIMIT ?
                     """,

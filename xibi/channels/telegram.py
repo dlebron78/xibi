@@ -22,6 +22,7 @@ from xibi.routing.control_plane import ControlPlaneRouter
 from xibi.routing.shadow import ShadowMatcher
 from xibi.session import SessionContext
 from xibi.skills.registry import SkillRegistry
+from xibi.types import ReActResult
 
 logger = logging.getLogger(__name__)
 
@@ -263,6 +264,31 @@ class TelegramAdapter:
             self._sessions[chat_id] = SessionContext(session_id, self.db_path, config=self.config)
         return self._sessions[chat_id]
 
+    def _detect_mcp_source(self, result: ReActResult) -> str:
+        """
+        Returns 'user' if no MCP tools were called in this ReAct run.
+        Returns 'mcp:{server_names}' (comma-separated, sorted) if any MCP tools were invoked.
+
+        MCP tools are identified by belonging to a skill whose name starts with 'mcp_'
+        (the prefix injected by MCPServerRegistry). Never raises — defaults to 'user' on error.
+        """
+        try:
+            mcp_servers: list[str] = []
+            for step in result.steps:
+                tool_name = step.tool
+                if not tool_name or tool_name in ("finish", "ask_user", "error"):
+                    continue
+                skill_name = self.skill_registry.find_skill_for_tool(tool_name)
+                if skill_name and skill_name.startswith("mcp_"):
+                    server = skill_name[len("mcp_"):]
+                    if server not in mcp_servers:
+                        mcp_servers.append(server)
+            if mcp_servers:
+                return f"mcp:{','.join(sorted(mcp_servers))}"
+            return "user"
+        except Exception:
+            return "user"
+
     def _handle_text(self, chat_id: int, user_text: str) -> None:
         """Handle core engine interaction and response sending."""
         self._api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
@@ -294,13 +320,16 @@ class TelegramAdapter:
                 response = "I didn't get an answer. Try rephrasing?"
 
             # Always add turn (even if empty answer)
+            # Tag source so compress_to_beliefs() can exclude MCP-influenced turns
+            source = self._detect_mcp_source(result)
+
             # Run in background to avoid blocking
             if os.environ.get("XIBI_SYNC_SESSION") == "1":
-                session.add_turn(user_text, result)
+                session.add_turn(user_text, result, source=source)
             else:
-                def _add_turn_safe(_text: str = user_text, _result: object = result) -> None:
+                def _add_turn_safe(_text: str = user_text, _result: object = result, _source: str = source) -> None:
                     try:
-                        session.add_turn(_text, _result)
+                        session.add_turn(_text, _result, source=_source)
                     except Exception as _e:
                         logger.error("Background add_turn failed: %s", _e, exc_info=True)
                 threading.Thread(target=_add_turn_safe, daemon=True).start()
