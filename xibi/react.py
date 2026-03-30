@@ -177,7 +177,7 @@ def run(
     session_context: SessionContext | None = None,
     trust_gradient: TrustGradient | None = None,
     tracer: Tracer | None = None,
-    llm_routing_classifier: Any | None = None,
+    llm_routing_classifier: LLMRoutingClassifier | None = None,
 ) -> ReActResult:
     start_time = time.time()
 
