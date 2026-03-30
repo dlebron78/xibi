@@ -277,8 +277,15 @@ def run(
     # Inject context into system prompt before loop
     context_block = session_context.get_context_block() if session_context else ""
 
+    _profile = config.get("profile", {}) if config else {}
+    _assistant_name = _profile.get("assistant_name", "Xibi")
+    _user_name = _profile.get("user_name", "")
+    _identity = f"You are {_assistant_name}, a local-first AI assistant."
+    if _user_name:
+        _identity += f" The user's name is {_user_name}."
+
     system_prompt = (f"{context_block}\n\n" if context_block else "") + (
-        "You are a helpful assistant with access to tools.\n"
+        f"{_identity}\n"
         f"Available tools: {json.dumps(skill_registry)}\n\n"
         "Instructions:\n"
         '1. Respond in JSON format only: {"thought": "...", "tool": "...", "tool_input": {...}}\n'
