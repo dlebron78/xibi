@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -15,9 +16,12 @@ if TYPE_CHECKING:
     from xibi.command_layer import CommandLayer
     from xibi.executor import Executor
     from xibi.routing.control_plane import ControlPlaneRouter, RoutingDecision
+    from xibi.routing.llm_classifier import LLMRoutingClassifier
     from xibi.routing.shadow import ShadowMatcher
     from xibi.session import SessionContext
 from xibi.types import ReActResult, Step
+
+logger = logging.getLogger(__name__)
 
 
 def compress_scratchpad(scratchpad: list[Step]) -> str:
@@ -173,6 +177,7 @@ def run(
     session_context: SessionContext | None = None,
     trust_gradient: TrustGradient | None = None,
     tracer: Tracer | None = None,
+    llm_routing_classifier: Any | None = None,
 ) -> ReActResult:
     start_time = time.time()
 
@@ -215,9 +220,11 @@ def run(
             _emit_run_span(res)
             return res
 
+    _shadow_matched = False
     if shadow:
         match = shadow.match(query)
         if match:
+            _shadow_matched = True
             if match.tier == "direct":
                 # Execute tool directly
                 tool_output = dispatch(
@@ -241,6 +248,22 @@ def run(
                 return res
             elif match.tier == "hint":
                 context = f"[Shadow hint: consider using {match.tool}]\n{context}"
+
+    # LLM classifier fallback — only when BM25 found nothing
+    if llm_routing_classifier is not None and not _shadow_matched:
+        try:
+            decision = llm_routing_classifier.classify(query, skill_registry)
+            if decision is not None:
+                context = f"[Routing hint: consider using {decision.skill}/{decision.tool} (confidence={decision.confidence:.2f})]\n{context}"
+                logger.debug(
+                    "LLM classifier hint: %s/%s (%.2f) — %s",
+                    decision.skill,
+                    decision.tool,
+                    decision.confidence,
+                    decision.reasoning,
+                )
+        except Exception as exc:
+            logger.debug("LLM classifier error (non-fatal): %s", exc)
 
     scratchpad: list[Step] = []
     consecutive_errors = 0

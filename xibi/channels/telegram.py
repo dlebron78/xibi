@@ -87,6 +87,7 @@ class TelegramAdapter:
         allowed_chats: list[str] | None = None,
         offset_file: Path | str | None = None,
         db_path: Path | str | None = None,
+        llm_routing_classifier: Any | None = None,
     ) -> None:
         self.config = config
         self.skill_registry = skill_registry
@@ -112,6 +113,7 @@ class TelegramAdapter:
             self.offset_file = Path(offset_file)
 
         self.offset = self._load_offset()
+        self.llm_routing_classifier = llm_routing_classifier
         self._pending_attachments: dict[int, str] = {}
         self._sessions: dict[int, SessionContext] = {}
         # Per-chat nudge state: {chat_id: {"nudge_sent": bool, "nudge_timer": Timer | None}}
@@ -282,6 +284,7 @@ class TelegramAdapter:
                 control_plane=self.control_plane,
                 shadow=self.shadow,
                 session_context=session,
+                llm_routing_classifier=self.llm_routing_classifier,
             )
             if result.answer:
                 response = result.answer
