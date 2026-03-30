@@ -12,6 +12,11 @@ def test_known_green_tools_unchanged():
     assert resolve_tier("recall") == PermissionTier.GREEN
 
 
+def test_known_red_tools_unchanged():
+    assert resolve_tier("send_email") == PermissionTier.RED
+    assert resolve_tier("delete_email") == PermissionTier.RED
+
+
 def test_declared_red_tier():
     assert resolve_tier("send_email") == PermissionTier.RED
 
