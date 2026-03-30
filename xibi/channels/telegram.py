@@ -125,7 +125,7 @@ class TelegramAdapter:
             try:
                 return int(self.offset_file.read_text().strip())
             except Exception as e:
-                logger.warning(f"Could not read offset file: {e}")
+                logger.warning(f"Could not read offset file: {e}", exc_info=True)
         return 0
 
     def _is_already_processed(self, conn: sqlite3.Connection, message_id: int) -> bool:
@@ -149,14 +149,14 @@ class TelegramAdapter:
             with open_db(self.db_path) as conn, conn:
                 conn.execute("DELETE FROM processed_messages WHERE processed_at < datetime('now', '-7 days')")
         except Exception as e:
-            logger.warning(f"Failed to purge old processed_messages: {e}")
+            logger.warning(f"Failed to purge old processed_messages: {e}", exc_info=True)
 
     def _save_offset(self, offset: int) -> None:
         try:
             self.offset_file.parent.mkdir(parents=True, exist_ok=True)
             self.offset_file.write_text(str(offset))
         except Exception as e:
-            logger.warning(f"Could not write offset file: {e}")
+            logger.warning(f"Could not write offset file: {e}", exc_info=True)
 
     def _api_call(self, method: str, params: dict | None = None) -> dict[str, Any]:
         if os.environ.get("XIBI_MOCK_TELEGRAM") == "1":
@@ -178,7 +178,7 @@ class TelegramAdapter:
                     return result
                 return {"ok": False}
         except (urllib.error.URLError, Exception) as e:
-            logger.warning(f"Telegram API error ({method}): {e}")
+            logger.warning(f"Telegram API error ({method}): {e}", exc_info=True)
             return {"ok": False}
 
     def _mock_api_call(self, method: str, params: dict | None = None) -> dict[str, Any]:
@@ -233,7 +233,7 @@ class TelegramAdapter:
             urllib.request.urlretrieve(dl_url, local_path)
             return str(local_path)
         except Exception as e:
-            logger.error(f"File download error: {e}")
+            logger.error(f"File download error: {e}", exc_info=True)
             return None
 
     def _is_authorized(self, chat_id: str) -> bool:
@@ -251,7 +251,7 @@ class TelegramAdapter:
                     (str(chat_id), 1 if authorized else 0, user_name),
                 )
         except Exception as e:
-            logger.error(f"Failed to log access attempt: {e}")
+            logger.error(f"Failed to log access attempt: {e}", exc_info=True)
 
     def is_authorized(self, chat_id: int) -> bool:
         """Legacy method for backward compatibility."""
@@ -298,7 +298,12 @@ class TelegramAdapter:
             if os.environ.get("XIBI_SYNC_SESSION") == "1":
                 session.add_turn(user_text, result)
             else:
-                threading.Thread(target=session.add_turn, args=(user_text, result), daemon=True).start()
+                def _add_turn_safe(_text: str = user_text, _result: object = result) -> None:
+                    try:
+                        session.add_turn(_text, _result)
+                    except Exception as _e:
+                        logger.error("Background add_turn failed: %s", _e, exc_info=True)
+                threading.Thread(target=_add_turn_safe, daemon=True).start()
 
             if response:
                 self.send_message(chat_id, response)
@@ -309,7 +314,7 @@ class TelegramAdapter:
         except Exception as e:
             import traceback
 
-            logger.error(f"Error processing query: {e}")
+            logger.error(f"Error processing query: {e}", exc_info=True)
             logger.error(traceback.format_exc())
             self.send_message(chat_id, "Sorry, I had a brain fart. Please try again.")
         finally:
@@ -358,7 +363,7 @@ class TelegramAdapter:
                             with open_db(self.db_path) as _conn, _conn:
                                 self._mark_processed(_conn, message_id)
                         except Exception as _e:
-                            logger.warning(f"Failed to mark unauthorized message as processed: {_e}")
+                            logger.warning(f"Failed to mark unauthorized message as processed: {_e}", exc_info=True)
                         self._save_offset(self.offset)
                         continue
 
@@ -393,7 +398,7 @@ class TelegramAdapter:
                             with open_db(self.db_path) as _conn, _conn:
                                 self._mark_processed(_conn, message_id)
                         except Exception as _e:
-                            logger.warning(f"Failed to mark file message as processed: {_e}")
+                            logger.warning(f"Failed to mark file message as processed: {_e}", exc_info=True)
                         self._save_offset(self.offset)
                         continue
 
@@ -414,7 +419,7 @@ class TelegramAdapter:
                         with open_db(self.db_path) as _conn, _conn:
                             self._mark_processed(_conn, message_id)
                     except Exception as _e:
-                        logger.warning(f"Failed to mark text message as processed: {_e}")
+                        logger.warning(f"Failed to mark text message as processed: {_e}", exc_info=True)
                     self._save_offset(self.offset)
 
             time.sleep(1)

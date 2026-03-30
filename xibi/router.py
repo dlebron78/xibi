@@ -9,6 +9,9 @@ import requests
 from xibi.circuit_breaker import CircuitBreaker, CircuitBreakerConfig, FailureType
 from xibi.errors import ErrorCategory, XibiError
 
+# Process-scoped cache — one CircuitBreaker per provider, reset on restart
+_circuit_breaker_cache: dict[str, CircuitBreaker] = {}
+
 
 class TimeoutsConfig(TypedDict, total=False):
     tool_default_secs: int  # default: 15
@@ -416,7 +419,10 @@ def get_model(
     while role_to_check:
         provider_name = role_to_check["provider"]
         cb_config = CircuitBreakerConfig(recovery_timeout_secs=get_timeout(config, "circuit_recovery_secs"))
-        breaker = CircuitBreaker(provider_name, db_path=db_path, config=cb_config)
+        cache_key = f"{provider_name}:{db_path}"
+        if cache_key not in _circuit_breaker_cache:
+            _circuit_breaker_cache[cache_key] = CircuitBreaker(provider_name, db_path=db_path, config=cb_config)
+        breaker = _circuit_breaker_cache[cache_key]
 
         if breaker.is_open():
             tried_roles.append(f"{provider_name}/{role_to_check['model']} (circuit open)")

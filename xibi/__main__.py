@@ -2,8 +2,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import signal
 import sys
 from pathlib import Path
+
+# Process-wide graceful shutdown flag — set by SIGTERM handler
+_shutdown_requested = False
+
+
+def _handle_sigterm(signum: int, frame: object) -> None:
+    global _shutdown_requested
+    _shutdown_requested = True
 
 import xibi.db
 from xibi.channels.telegram import TelegramAdapter
@@ -126,6 +135,8 @@ def cmd_telegram(args: argparse.Namespace) -> None:
 
     db_path = workdir / "data" / "xibi.db"
 
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+
     print(f"Starting Telegram bot with workdir {workdir}...")
     try:
         adapter = TelegramAdapter(
@@ -201,6 +212,8 @@ def cmd_heartbeat(args: argparse.Namespace) -> None:
         int(c.strip()) for c in allowed_chats_env.split(",") if c.strip() and c.strip().lstrip("-").isdigit()
     ]
 
+    signal.signal(signal.SIGTERM, _handle_sigterm)
+
     poller = HeartbeatPoller(
         skills_dir=skills_dir,
         db_path=db_path,
@@ -211,6 +224,7 @@ def cmd_heartbeat(args: argparse.Namespace) -> None:
         radiant=radiant,
         profile=config.get("profile"),
         config_path=str(config_path),
+        executor=executor,
     )
 
     print(f"Starting Heartbeat poller with workdir {workdir}...")

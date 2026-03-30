@@ -18,6 +18,10 @@ def open_db(db_path: Path) -> Generator[sqlite3.Connection, None, None]:
     conn.execute("PRAGMA busy_timeout=5000")
     try:
         yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 

@@ -118,7 +118,7 @@ class ObservationCycle:
 
             return config
         except Exception as e:
-            logger.warning(f"Error loading observation config: {e}")
+            logger.warning(f"Error loading observation config: {e}", exc_info=True)
             return ObservationConfig()
 
     def should_run(self) -> tuple[bool, str]:
@@ -184,7 +184,7 @@ class ObservationCycle:
             return False, f"below_threshold: {new_count} signals, waiting for more"
 
         except Exception as e:
-            logger.error(f"Error in should_run: {e}")
+            logger.error(f"Error in should_run: {e}", exc_info=True)
             return True, f"error: {e}"
 
     def run(
@@ -289,7 +289,7 @@ class ObservationCycle:
                 row = cursor.fetchone()
                 return row[0] if row else 0
         except Exception as e:
-            logger.warning(f"Error getting watermark: {e}")
+            logger.warning(f"Error getting watermark: {e}", exc_info=True)
             return 0
 
     def _collect_signals(self, watermark: int) -> list[dict[str, Any]]:
@@ -313,7 +313,7 @@ class ObservationCycle:
                 )
                 return [dict(row) for row in cursor.fetchall()]
         except Exception as e:
-            logger.warning(f"Error collecting signals: {e}")
+            logger.warning(f"Error collecting signals: {e}", exc_info=True)
             return []
 
     def _get_thread_context(self, signals: list[dict[str, Any]]) -> str:
@@ -340,7 +340,7 @@ class ObservationCycle:
         except sqlite3.OperationalError:
             return ""  # threads table might not exist yet
         except Exception as e:
-            logger.warning(f"Error getting thread context: {e}")
+            logger.warning(f"Error getting thread context: {e}", exc_info=True)
             return ""
 
     def _build_observation_dump(self, signals: list[dict[str, Any]]) -> str:
@@ -408,7 +408,7 @@ class ObservationCycle:
 
             return "\n".join(lines)
         except Exception as e:
-            logger.warning(f"Error building observation dump: {e}")
+            logger.warning(f"Error building observation dump: {e}", exc_info=True)
             return "Error building observation dump"
 
     def _build_system_prompt(self) -> str:
@@ -512,7 +512,7 @@ class ObservationCycle:
                 else:
                     self.trust_gradient.record_success("text", effort)
             except Exception as e:
-                logger.warning(f"ObservationCycle: failed to record trust: {e}")
+                logger.warning(f"ObservationCycle: failed to record trust: {e}", exc_info=True)
 
         return actions_taken, errors
 
@@ -608,4 +608,4 @@ class ObservationCycle:
                     ),
                 )
         except Exception as e:
-            logger.error(f"Error persisting cycle {cycle_id}: {e}")
+            logger.error(f"Error persisting cycle {cycle_id}: {e}", exc_info=True)

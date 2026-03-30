@@ -32,11 +32,19 @@ class CircuitBreaker:
     One breaker per component: "ollama", "gemini", "tool:send_email", etc.
     """
 
+    # Class-level set — tracks which DB paths have had their table initialized
+    # this process lifetime. Resets on restart. Prevents _ensure_table() from
+    # running on every get_model() call.
+    _tables_ensured: set[str] = set()
+
     def __init__(self, name: str, db_path: Path, config: CircuitBreakerConfig | None = None) -> None:
         self.name = name
         self.db_path = db_path
         self.config = config or CircuitBreakerConfig()
-        self._ensure_table()
+        db_key = str(db_path)
+        if db_key not in CircuitBreaker._tables_ensured:
+            self._ensure_table()
+            CircuitBreaker._tables_ensured.add(db_key)
 
     def _ensure_table(self) -> None:
         """Create table and upsert initial row for this breaker if not present."""

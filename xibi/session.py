@@ -362,7 +362,7 @@ Exchanges:
                             "UPDATE session_turns SET summary = ? WHERE turn_id = ?", (summary, row["turn_id"])
                         )
                 except Exception as e:
-                    logger.warning(f"Failed to summarise turn {row['turn_id']}: {e}")
+                    logger.warning(f"Failed to summarise turn {row['turn_id']}: {e}", exc_info=True)
 
     def extract_entities(self, turn: Turn, tool_outputs: list[dict]) -> list[SessionEntity]:
         # Concatenate content

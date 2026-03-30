@@ -75,7 +75,7 @@ class RuleEngine:
                     )
                 """)
         except Exception as e:
-            logger.warning(f"RuleEngine ensure_tables error: {e}")
+            logger.warning(f"RuleEngine ensure_tables error: {e}", exc_info=True)
 
     def _prewarm(self) -> None:
         try:
@@ -86,14 +86,14 @@ class RuleEngine:
                     try:
                         self._rule_cache.append({"type": r_type, "condition": json.loads(cond_json), "message": msg})
                     except Exception as e:
-                        logger.warning(f"Failed to parse rule JSON: {e}")
+                        logger.warning(f"Failed to parse rule JSON: {e}", exc_info=True)
 
                 cursor = conn.execute("SELECT value FROM heartbeat_state WHERE key='last_digest_at'")
                 row = cursor.fetchone()
                 if row and isinstance(row[0], str):
                     self._watermark_cache = row[0]
         except Exception as e:
-            logger.warning(f"RuleEngine prewarm error: {e}")
+            logger.warning(f"RuleEngine prewarm error: {e}", exc_info=True)
 
     def load_rules(self, rule_type: str) -> list[dict[str, Any]]:
         return [r for r in self._rule_cache if r["type"] == rule_type]
@@ -131,7 +131,7 @@ class RuleEngine:
                     (email_id, sender, subject, verdict),
                 )
         except Exception as e:
-            logger.warning(f"Failed to log triage: {e}")
+            logger.warning(f"Failed to log triage: {e}", exc_info=True)
 
     def load_triage_rules(self) -> dict[str, str]:
         rules = {}
@@ -144,7 +144,7 @@ class RuleEngine:
                     if entity and status:
                         rules[entity.lower()] = status.upper()
         except Exception as e:
-            logger.warning(f"Failed to load triage rules: {e}")
+            logger.warning(f"Failed to load triage rules: {e}", exc_info=True)
         return rules
 
     def get_digest_items(self) -> list[dict[str, Any]]:
@@ -161,7 +161,7 @@ class RuleEngine:
                 rows = cursor.fetchall()
                 return [{"sender": r[0], "subject": r[1], "verdict": r[2], "timestamp": r[3]} for r in rows]
         except Exception as e:
-            logger.warning(f"Error fetching digest items: {e}")
+            logger.warning(f"Error fetching digest items: {e}", exc_info=True)
             return []
 
     def pop_digest_items(self) -> list[dict[str, Any]]:
@@ -213,7 +213,7 @@ class RuleEngine:
                         conn.execute("ROLLBACK")
                     raise
         except Exception as e:
-            logger.warning(f"Error in pop_digest_items: {e}")
+            logger.warning(f"Error in pop_digest_items: {e}", exc_info=True)
             return []
 
     def update_watermark(self) -> None:
@@ -228,7 +228,7 @@ class RuleEngine:
                 if row and isinstance(row[0], str):
                     self._watermark_cache = row[0]
         except Exception as e:
-            logger.warning(f"Error updating watermark: {e}")
+            logger.warning(f"Error updating watermark: {e}", exc_info=True)
 
     def was_digest_sent_since(self, since_dt: datetime) -> bool:
         try:
@@ -238,7 +238,7 @@ class RuleEngine:
             last_sent = datetime.fromisoformat(self._watermark_cache)
             return last_sent > since_dt
         except Exception as e:
-            logger.warning(f"Failed to parse watermark '{self._watermark_cache}': {e}")
+            logger.warning(f"Failed to parse watermark '{self._watermark_cache}': {e}", exc_info=True)
             return False
 
     def mark_seen(self, email_id: str) -> None:
@@ -246,7 +246,7 @@ class RuleEngine:
             with open_db(self.db_path) as conn, conn:
                 conn.execute("INSERT OR IGNORE INTO seen_emails (email_id) VALUES (?)", (email_id,))
         except Exception as e:
-            logger.warning(f"Failed to mark email {email_id} as seen: {e}")
+            logger.warning(f"Failed to mark email {email_id} as seen: {e}", exc_info=True)
 
     def get_seen_ids(self) -> set[str]:
         try:
@@ -254,7 +254,7 @@ class RuleEngine:
                 cursor = conn.execute("SELECT email_id FROM seen_emails")
                 return {row[0] for row in cursor.fetchall()}
         except Exception as e:
-            logger.warning(f"Failed to get seen email IDs: {e}")
+            logger.warning(f"Failed to get seen email IDs: {e}", exc_info=True)
             return set()
 
     def log_signal(
@@ -287,7 +287,7 @@ class RuleEngine:
                         (source, topic_hint, entity_text, entity_type, preview, str(ref_id), ref_source),
                     )
         except Exception as e:
-            logger.warning(f"Failed to log signal: {e}")
+            logger.warning(f"Failed to log signal: {e}", exc_info=True)
 
     def log_background_event(self, content: str, topic: str) -> None:
         try:
@@ -300,7 +300,7 @@ class RuleEngine:
                     (str(uuid.uuid4()), "background_event", content, topic, "sent"),
                 )
         except Exception as e:
-            logger.warning(f"Error logging background event: {e}")
+            logger.warning(f"Error logging background event: {e}", exc_info=True)
 
     # --- Shared-connection variants used by the heartbeat poller for atomic transactions ---
 
@@ -309,7 +309,7 @@ class RuleEngine:
             cursor = conn.execute("SELECT email_id FROM seen_emails")
             return {row[0] for row in cursor.fetchall()}
         except Exception as e:
-            logger.warning(f"Failed to get seen email IDs: {e}")
+            logger.warning(f"Failed to get seen email IDs: {e}", exc_info=True)
             return set()
 
     def load_triage_rules_with_conn(self, conn: sqlite3.Connection) -> dict[str, str]:
@@ -320,7 +320,7 @@ class RuleEngine:
                 if entity and status:
                     rules[entity.lower()] = status.upper()
         except Exception as e:
-            logger.warning(f"Failed to load triage rules: {e}")
+            logger.warning(f"Failed to load triage rules: {e}", exc_info=True)
         return rules
 
     def log_signal_with_conn(
@@ -351,7 +351,7 @@ class RuleEngine:
                 (source, topic_hint, entity_text, entity_type, preview, str(ref_id), ref_source),
             )
         except Exception as e:
-            logger.warning(f"Failed to log signal: {e}")
+            logger.warning(f"Failed to log signal: {e}", exc_info=True)
 
     def log_triage_with_conn(
         self, conn: sqlite3.Connection, email_id: str, sender: str, subject: str, verdict: str
@@ -362,13 +362,13 @@ class RuleEngine:
                 (email_id, sender, subject, verdict),
             )
         except Exception as e:
-            logger.warning(f"Failed to log triage: {e}")
+            logger.warning(f"Failed to log triage: {e}", exc_info=True)
 
     def mark_seen_with_conn(self, conn: sqlite3.Connection, email_id: str) -> None:
         try:
             conn.execute("INSERT OR IGNORE INTO seen_emails (email_id) VALUES (?)", (email_id,))
         except Exception as e:
-            logger.warning(f"Failed to mark email {email_id} as seen: {e}")
+            logger.warning(f"Failed to mark email {email_id} as seen: {e}", exc_info=True)
 
     def get_digest_items_with_conn(self, conn: sqlite3.Connection) -> list[dict[str, Any]]:
         try:
@@ -383,7 +383,7 @@ class RuleEngine:
             rows = cursor.fetchall()
             return [{"sender": r[0], "subject": r[1], "verdict": r[2], "timestamp": r[3]} for r in rows]
         except Exception as e:
-            logger.warning(f"Error fetching digest items: {e}")
+            logger.warning(f"Error fetching digest items: {e}", exc_info=True)
             return []
 
     def update_watermark_with_conn(self, conn: sqlite3.Connection) -> None:
@@ -396,4 +396,4 @@ class RuleEngine:
             if row and isinstance(row[0], str):
                 self._watermark_cache = row[0]
         except Exception as e:
-            logger.warning(f"Error updating watermark: {e}")
+            logger.warning(f"Error updating watermark: {e}", exc_info=True)

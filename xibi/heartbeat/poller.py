@@ -71,7 +71,7 @@ class HeartbeatPoller:
                 self.adapter.send_message(chat_id, text)
                 logger.info(f"Broadcast to {chat_id}: {text}")
             except Exception as e:
-                logger.warning(f"Failed to broadcast to {chat_id}: {e}")
+                logger.warning(f"Failed to broadcast to {chat_id}: {e}", exc_info=True)
 
     def _is_quiet_hours(self) -> bool:
         hour = datetime.now().hour
@@ -100,7 +100,7 @@ class HeartbeatPoller:
                         return dict(res)
             return {"error": f"Tool {tool_name} not found in {self.skills_dir}"}
         except Exception as e:
-            logger.error(f"Error running tool {tool_name}: {e}")
+            logger.error(f"Error running tool {tool_name}: {e}", exc_info=True)
             return {"error": str(e)}
 
     def _check_email(self) -> list[dict[str, Any]]:
@@ -145,7 +145,7 @@ class HeartbeatPoller:
                 return first_word
             return "DIGEST"
         except Exception as e:
-            logger.warning(f"LLM classification error: {e}")
+            logger.warning(f"LLM classification error: {e}", exc_info=True)
             return "DEFER"
 
     def _should_escalate(self, verdict: str, topic: str, subject: str, priority_topics: list[str]) -> tuple[str, str]:
@@ -182,7 +182,7 @@ class HeartbeatPoller:
                 for task in tasks:
                     self._broadcast(f"⏰ Task reminder: {task['goal']} (ID: {task['id']})")
         except Exception as e:
-            logger.warning(f"Task check error: {e}")
+            logger.warning(f"Task check error: {e}", exc_info=True)
 
         # 2. Fetch emails
         emails = self._check_email()
@@ -266,7 +266,7 @@ class HeartbeatPoller:
                 if enriched > 0:
                     logger.debug(f"Signal intelligence: enriched {enriched} signals")
             except Exception as e:
-                logger.warning(f"Signal intelligence enrichment failed: {e}")
+                logger.warning(f"Signal intelligence enrichment failed: {e}", exc_info=True)
 
         if self.observation_cycle is not None:
             try:
@@ -305,7 +305,7 @@ class HeartbeatPoller:
                 elif obs_result:
                     logger.debug(f"Observation cycle skipped: {obs_result.skip_reason}")
             except Exception as e:
-                logger.warning(f"Observation cycle trigger failed: {e}")
+                logger.warning(f"Observation cycle trigger failed: {e}", exc_info=True)
 
         if self.radiant:
             self._audit_tick_counter += 1
@@ -352,7 +352,7 @@ class HeartbeatPoller:
                     (today,),
                 )
         except Exception as e:
-            logger.warning(f"Telegram cache cleanup error: {e}")
+            logger.warning(f"Telegram cache cleanup error: {e}", exc_info=True)
 
     def reflection_tick(self) -> None:
         if self._is_quiet_hours():
@@ -384,7 +384,7 @@ class HeartbeatPoller:
             self.rules.log_background_event(reflection, "reflection")
             self._last_reflection_date = today
         except Exception as e:
-            logger.warning(f"Reflection tick error: {e}")
+            logger.warning(f"Reflection tick error: {e}", exc_info=True)
 
     def run(self) -> None:
         tick_count = 0
@@ -412,7 +412,7 @@ class HeartbeatPoller:
                     self._cleanup_telegram_cache()
 
             except Exception as e:
-                logger.error(f"Error in heartbeat loop: {e}")
+                logger.error(f"Error in heartbeat loop: {e}", exc_info=True)
 
             time.sleep(interval_secs)
 
