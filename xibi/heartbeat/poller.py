@@ -175,7 +175,7 @@ class HeartbeatPoller:
             cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'")
             if cursor.fetchone():
                 tasks = conn.execute(
-                    "SELECT id, goal FROM tasks WHERE status IN ('pending', 'due') AND due_at <= ?", (now,)
+                    "SELECT id, goal FROM tasks WHERE status IN ('pending', 'due') AND due <= ?", (now,)
                 ).fetchall()
                 for task in tasks:
                     self._broadcast(f"⏰ Task reminder: {task['goal']} (ID: {task['id']})")
