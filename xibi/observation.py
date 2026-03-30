@@ -560,6 +560,15 @@ class ObservationCycle:
 
                 actions_taken.append({"tool": tool_name, "input": tool_input, "output": output, "allowed": allowed})
 
+        # Record reflex success/failure if trust_gradient is wired
+        if self.trust_gradient:
+            try:
+                # Reflex is ALWAYS considered a success for the "reflex" role if it runs without crashing,
+                # as it doesn't use the text specialty models.
+                self.trust_gradient.record_success("reflex", "fast")
+            except Exception as e:
+                logger.warning(f"ObservationCycle: failed to record reflex trust: {e}")
+
         return actions_taken, errors
 
     def _persist_cycle(

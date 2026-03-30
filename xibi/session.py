@@ -29,6 +29,7 @@ class Turn:
     tools_called: list[str]
     exit_reason: str
     created_at: str
+    source: str = "user"
     summary: str = ""
 
 
@@ -176,8 +177,8 @@ Exchanges:
         with open_db(self.db_path) as conn, conn:
             conn.execute(
                 """
-                    INSERT INTO session_turns (turn_id, session_id, query, answer, tools_called, exit_reason, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO session_turns (turn_id, session_id, query, answer, tools_called, exit_reason, created_at, source)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                 (
                     turn.turn_id,
@@ -187,6 +188,7 @@ Exchanges:
                     json.dumps(turn.tools_called),
                     turn.exit_reason,
                     turn.created_at,
+                    turn.source,
                 ),
             )
 
@@ -259,6 +261,7 @@ Exchanges:
                 tools_called=json.loads(r["tools_called"]),
                 exit_reason=r["exit_reason"],
                 created_at=r["created_at"],
+                source=r.get("source", "user"),
                 summary=r["summary"],
             )
             for r in rows
