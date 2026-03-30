@@ -205,7 +205,7 @@ def test_compress_to_beliefs_writes_beliefs(mock_get_model, db_path):
         assert row["value"] == "User prefers email over Slack."
 
         sentinel = conn.execute(
-            "SELECT * FROM beliefs WHERE key = ?", (f"session:test_session:compressed",)
+            "SELECT * FROM beliefs WHERE key = ?", ("session:test_session:compressed",)
         ).fetchone()
         assert sentinel is not None
         assert sentinel["type"] == "session_compression_marker"
@@ -214,7 +214,7 @@ def test_compress_to_beliefs_writes_beliefs(mock_get_model, db_path):
 @patch("xibi.session.get_model")
 def test_compress_to_beliefs_skips_if_already_compressed(mock_get_model, db_path):
     session = SessionContext("test_session", db_path)
-    sentinel_key = f"session:test_session:compressed"
+    sentinel_key = "session:test_session:compressed"
 
     with sqlite3.connect(db_path) as conn:
         conn.execute(

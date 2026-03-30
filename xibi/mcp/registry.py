@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from xibi.mcp.client import MCPClient, MCPServerConfig
 
@@ -70,7 +70,7 @@ class MCPServerRegistry:
                     skill_manifest["tools"].append({
                         "name": tool_name,
                         "description": tool.description,
-                        "inputSchema": tool.inputSchema,
+                        "inputSchema": tool.input_schema,
                         "tier": "red",
                         "server": name,
                         "original_name": tool.name,

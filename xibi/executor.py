@@ -3,7 +3,7 @@ import importlib.util
 import logging
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from xibi.circuit_breaker import CircuitBreaker, CircuitBreakerConfig, FailureType
 from xibi.errors import ErrorCategory, XibiError
@@ -27,9 +27,7 @@ class MCPExecutor:
     def can_handle(self, tool_name: str) -> bool:
         """True if tool_name is registered from any MCP server."""
         skill_name = self.registry.skill_registry.find_skill_for_tool(tool_name)
-        if skill_name and skill_name.startswith("mcp_"):
-            return True
-        return False
+        return bool(skill_name and skill_name.startswith("mcp_"))
 
     def execute(self, tool_name: str, arguments: dict) -> dict:
         """Look up which server owns this tool, call it, return result dict."""
@@ -41,8 +39,8 @@ class MCPExecutor:
         if not tool_meta:
             return {"status": "error", "error": f"Tool {tool_name} meta not found"}
 
-        server_name = tool_meta.get("server")
-        original_name = tool_meta.get("original_name", tool_name)
+        server_name = cast(str, tool_meta.get("server", ""))
+        original_name = cast(str, tool_meta.get("original_name", tool_name))
         client = self.registry.get_client(server_name)
         if not client:
             return {"status": "error", "error": f"MCP client for {server_name} not found"}

@@ -1,7 +1,4 @@
 import json
-import os
-import subprocess
-import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -34,7 +31,7 @@ def test_mcp_client_initialize_success():
         assert len(tools) == 1
         assert tools[0].name == "test_tool"
         assert tools[0].server_name == "test"
-        assert tools[0].inputSchema == {"type": "object"}
+        assert tools[0].input_schema == {"type": "object"}
 
 
 def test_mcp_client_call_tool_success():
@@ -116,8 +113,8 @@ def test_mcp_registry_injects_tools():
 
     mock_client = MagicMock()
     mock_client.initialize.return_value = [
-        MCPToolManifest(name="tool1", description="d1", inputSchema={}, server_name="test_server"),
-        MCPToolManifest(name="tool2", description="d2", inputSchema={}, server_name="test_server")
+        MCPToolManifest(name="tool1", description="d1", input_schema={}, server_name="test_server"),
+        MCPToolManifest(name="tool2", description="d2", input_schema={}, server_name="test_server"),
     ]
 
     with patch("xibi.mcp.registry.MCPClient", return_value=mock_client):
@@ -147,7 +144,7 @@ def test_mcp_registry_server_failure_does_not_abort():
             client.initialize.side_effect = Exception("init failed")
         else:
             client.initialize.return_value = [
-                MCPToolManifest(name="ok_tool", description="d", inputSchema={}, server_name="ok_server")
+                MCPToolManifest(name="ok_tool", description="d", input_schema={}, server_name="ok_server")
             ]
         return client
 
@@ -177,7 +174,7 @@ def test_mcp_tool_name_collision_namespaced():
 
     mock_client = MagicMock()
     mock_client.initialize.return_value = [
-        MCPToolManifest(name="read_file", description="mcp", inputSchema={}, server_name="mcp_fs")
+        MCPToolManifest(name="read_file", description="mcp", input_schema={}, server_name="mcp_fs")
     ]
 
     with patch("xibi.mcp.registry.MCPClient", return_value=mock_client):

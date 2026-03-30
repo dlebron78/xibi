@@ -5,7 +5,7 @@ import logging
 import os
 import subprocess
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ class MCPServerConfig:
 class MCPToolManifest:
     name: str
     description: str
-    inputSchema: dict  # normalized — always "inputSchema" key inside Xibi
+    input_schema: dict  # internal; maps to "inputSchema" in Xibi manifests
     server_name: str  # which server this came from
 
 
@@ -100,7 +100,7 @@ class MCPClient:
                 MCPToolManifest(
                     name=t["name"],
                     description=t.get("description", ""),
-                    inputSchema=t.get("inputSchema", {}),
+                    input_schema=t.get("inputSchema", {}),
                     server_name=self.config.name,
                 )
             )
@@ -165,13 +165,14 @@ class MCPClient:
         import queue
         import threading
 
-        line_queue = queue.Queue()
+        line_queue: queue.Queue[str] = queue.Queue()
 
-        def reader():
+        def reader() -> None:
             try:
-                line = self.process.stdout.readline()
-                if line:
-                    line_queue.put(line)
+                if self.process and self.process.stdout:
+                    line = self.process.stdout.readline()
+                    if line:
+                        line_queue.put(line)
             except Exception:
                 pass
 
@@ -180,7 +181,7 @@ class MCPClient:
 
         try:
             line = line_queue.get(timeout=timeout)
-            return json.loads(line)
+            return cast(dict[Any, Any], json.loads(line))
         except queue.Empty:
             return None
         except Exception as e:
