@@ -38,6 +38,7 @@ class HeartbeatPoller:
         signal_intelligence_enabled: bool = True,
         radiant: Radiant | None = None,
         config_path: str | None = None,
+        executor: Any | None = None,
         *,
         trust_gradient: TrustGradient | None = None,
     ) -> None:
@@ -54,6 +55,7 @@ class HeartbeatPoller:
         self.config_path = config_path or str(Path.home() / ".xibi" / "config.json")
         self.signal_intelligence_enabled = signal_intelligence_enabled
         self.radiant = radiant
+        self.executor = executor
 
         if trust_gradient is None and self.db_path is not None:
             from xibi.trust.gradient import TrustGradient
