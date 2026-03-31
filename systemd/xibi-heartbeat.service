@@ -5,7 +5,6 @@ Wants=network.target
 
 [Service]
 Type=simple
-User=%U
 WorkingDirectory=%h/xibi
 EnvironmentFile=%h/.xibi/secrets.env
 ExecStart=%h/.local/bin/python -m xibi --config %h/.xibi/config.json --workdir %h/.xibi heartbeat
