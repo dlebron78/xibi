@@ -670,7 +670,7 @@ class TestReActLoop:
         core._pending_action = {"skill": "email", "tool": "send_email", "parameters": {}}
         # Any non-confirmation clears it and falls through to ReAct loop
         # MockRouter will return a finish step for unknown input
-        result = core.process_query("what time is it?")
+        core.process_query("what time is it?")
         assert core._pending_action is None
 
     # ── list_files tool ───────────────────────────────────────────────

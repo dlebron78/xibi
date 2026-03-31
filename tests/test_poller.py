@@ -269,7 +269,7 @@ def test_tick_task_reminder(tmp_path):
     db_path = tmp_path / "test.db"
     with sqlite3.connect(db_path) as conn:
         conn.executescript("""
-            CREATE TABLE tasks (id TEXT, goal TEXT, status TEXT, due_at TEXT);
+            CREATE TABLE tasks (id TEXT, goal TEXT, status TEXT, due TEXT);
             CREATE TABLE heartbeat_state (key TEXT PRIMARY KEY, value TEXT);
             CREATE TABLE seen_emails (email_id TEXT PRIMARY KEY, seen_at DATETIME);
         """)

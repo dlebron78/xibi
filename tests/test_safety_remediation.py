@@ -1,6 +1,6 @@
 import json
 import sqlite3
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from xibi.db.migrations import SchemaManager
 from xibi.observation import ObservationCycle
@@ -133,8 +133,49 @@ def test_compress_to_beliefs_source_preserved(tmp_path, mocker):
     row = conn.execute("SELECT source FROM session_turns WHERE session_id='s1'").fetchone()
     assert row[0] == "mcp"
 
+    # MCP source turns are EXCLUDED from compression in session.py:
+    # SELECT query, answer FROM session_turns WHERE session_id = ? AND source = 'user'
     belief = conn.execute("SELECT value FROM beliefs WHERE type='session_memory'").fetchone()
-    assert belief[0] == "Assistant name is Jules"
+    assert belief is None
+
+    # Now add a 'user' source turn
+    result2 = ReActResult(answer="I like turtles", steps=[], exit_reason="finish", duration_ms=100)
+    session.add_turn("Tell me a fact", result2, source="user")
+
+    # Mock LLM again for the user turn
+    mock_llm.generate.return_value = json.dumps(
+        {"beliefs": [{"key": "pref", "value": "User likes turtles", "confidence": 0.9}]}
+    )
+
+    # We need to clear the sentinel if it was written (though it shouldn't be since no user turns existed)
+    conn.execute("DELETE FROM beliefs")
+
+    # Mocking datetime properly
+    from datetime import datetime, timedelta
+
+    now = datetime.utcnow()
+
+    with patch("xibi.session.datetime") as mock_dt:
+        mock_dt.utcnow.return_value = now
+        # datetime.fromisoformat is a classmethod
+        mock_dt.fromisoformat.side_effect = lambda x: datetime.fromisoformat(x)
+
+        # We need the last turn to look older than 30 mins
+        # but session.add_turn uses datetime.utcnow().isoformat()
+        # so we need to manipulate the DB directly or mock utcnow to return an old time first
+
+    old_time = (now - timedelta(minutes=31)).isoformat()
+    conn.execute("UPDATE session_turns SET created_at = ?", (old_time,))
+    conn.commit()
+
+    with patch("xibi.session.datetime") as mock_dt:
+        mock_dt.utcnow.return_value = now
+        mock_dt.fromisoformat.side_effect = lambda x: datetime.fromisoformat(x)
+
+        session.compress_to_beliefs()
+
+    belief = conn.execute("SELECT value FROM beliefs WHERE type='session_memory'").fetchone()
+    assert belief[0] == "User likes turtles"
 
 
 def test_session_turn_source_mcp(tmp_path):

@@ -66,6 +66,7 @@ class RuleEngine:
                         id             INTEGER PRIMARY KEY AUTOINCREMENT,
                         source         TEXT,
                         topic          TEXT,
+                        topic_hint     TEXT,
                         entity_text    TEXT,
                         entity_type    TEXT,
                         content_preview TEXT,

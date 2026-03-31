@@ -140,6 +140,9 @@ class HeartbeatPoller:
         )
 
         try:
+            from xibi.router import set_trace_context
+
+            set_trace_context(trace_id=None, span_id=None, operation="heartbeat_email_classify")
             model = get_model(effort="fast", config_path=self.config_path)
             response = model.generate(prompt, max_tokens=5).strip().upper()
             first_word = response.split()[0] if response else ""
@@ -380,6 +383,9 @@ class HeartbeatPoller:
                 "Provide a brief, helpful reflection on what the user has been receiving."
             )
 
+            from xibi.router import set_trace_context
+
+            set_trace_context(trace_id=None, span_id=None, operation="heartbeat_reflection")
             model = get_model(effort="fast", config_path=self.config_path)
             reflection = model.generate(prompt)
             self._broadcast(f"💭 **Reflection**\n\n{reflection}")

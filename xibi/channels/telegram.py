@@ -288,7 +288,7 @@ class TelegramAdapter:
                     continue
                 skill_name = self.skill_registry.find_skill_for_tool(tool_name)
                 if skill_name and skill_name.startswith("mcp_"):
-                    server = skill_name[len("mcp_"):]
+                    server = skill_name[len("mcp_") :]
                     if server not in mcp_servers:
                         mcp_servers.append(server)
             if mcp_servers:
@@ -335,11 +335,15 @@ class TelegramAdapter:
             if os.environ.get("XIBI_SYNC_SESSION") == "1":
                 session.add_turn(user_text, result, source=source)
             else:
-                def _add_turn_safe(_text: str = user_text, _result: object = result, _source: str = source) -> None:
+
+                def _add_turn_safe(
+                    _text: str = user_text, _result: ReActResult = result, _source: str = source
+                ) -> None:
                     try:
                         session.add_turn(_text, _result, source=_source)
                     except Exception as _e:
                         logger.error("Background add_turn failed: %s", _e, exc_info=True)
+
                 threading.Thread(target=_add_turn_safe, daemon=True).start()
 
             if response:

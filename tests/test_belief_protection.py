@@ -1,6 +1,7 @@
 """
 Tests for step-38: Belief Protection — session source tagging and compress_to_beliefs filtering.
 """
+
 from __future__ import annotations
 
 import json
@@ -15,6 +16,7 @@ from xibi.types import ReActResult, Step
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_result(tool_names: list[str]) -> ReActResult:
     """Build a minimal ReActResult whose steps call the given tools."""
@@ -43,6 +45,7 @@ def _make_session(tmp_path: Path) -> SessionContext:
     """Create a real SessionContext backed by a migrated temp DB."""
     db_path = tmp_path / "test.db"
     from xibi.db.migrations import migrate
+
     migrate(db_path)
     return SessionContext("test-session-1", db_path)
 
@@ -51,12 +54,14 @@ def _make_session(tmp_path: Path) -> SessionContext:
 # Source tagging — _detect_mcp_source
 # ---------------------------------------------------------------------------
 
+
 class TestDetectMcpSource:
     """Tests for TelegramAdapter._detect_mcp_source()."""
 
     def _make_adapter(self, tool_to_skill: dict[str, str]) -> Any:
         """Minimal TelegramAdapter stand-in with only the parts _detect_mcp_source needs."""
         from xibi.channels.telegram import TelegramAdapter
+
         adapter = object.__new__(TelegramAdapter)
         adapter.skill_registry = _make_skill_registry(tool_to_skill)
         return adapter
@@ -72,10 +77,12 @@ class TestDetectMcpSource:
         assert adapter._detect_mcp_source(result) == "mcp:brave"
 
     def test_multiple_servers_sorted_comma_separated(self):
-        adapter = self._make_adapter({
-            "gh_list_issues": "mcp_github",
-            "brave_search": "mcp_brave",
-        })
+        adapter = self._make_adapter(
+            {
+                "gh_list_issues": "mcp_github",
+                "brave_search": "mcp_brave",
+            }
+        )
         result = _make_result(["gh_list_issues", "brave_search", "finish"])
         assert adapter._detect_mcp_source(result) == "mcp:brave,github"
 
@@ -98,10 +105,12 @@ class TestDetectMcpSource:
 
     def test_deduplicates_same_server(self):
         """Two calls to tools from the same MCP server → server appears once."""
-        adapter = self._make_adapter({
-            "brave_search": "mcp_brave",
-            "brave_news": "mcp_brave",
-        })
+        adapter = self._make_adapter(
+            {
+                "brave_search": "mcp_brave",
+                "brave_news": "mcp_brave",
+            }
+        )
         result = _make_result(["brave_search", "brave_news"])
         assert adapter._detect_mcp_source(result) == "mcp:brave"
 
@@ -109,6 +118,7 @@ class TestDetectMcpSource:
 # ---------------------------------------------------------------------------
 # Belief compression — source filter
 # ---------------------------------------------------------------------------
+
 
 class TestCompressToBeliefs:
     """Tests for compress_to_beliefs() source filtering."""
@@ -130,19 +140,31 @@ class TestCompressToBeliefs:
 
     def test_skips_mcp_turns(self, tmp_path):
         session = _make_session(tmp_path)
-        self._seed_turns(tmp_path / "test.db", [
-            {"session_id": session.session_id, "turn_id": "t1",
-             "query": "user question", "answer": "user answer", "source": "user"},
-            {"session_id": session.session_id, "turn_id": "t2",
-             "query": "mcp question", "answer": "injected mcp content", "source": "mcp:brave"},
-        ])
+        self._seed_turns(
+            tmp_path / "test.db",
+            [
+                {
+                    "session_id": session.session_id,
+                    "turn_id": "t1",
+                    "query": "user question",
+                    "answer": "user answer",
+                    "source": "user",
+                },
+                {
+                    "session_id": session.session_id,
+                    "turn_id": "t2",
+                    "query": "mcp question",
+                    "answer": "injected mcp content",
+                    "source": "mcp:brave",
+                },
+            ],
+        )
 
         captured_prompt: list[str] = []
 
         mock_llm = MagicMock()
         mock_llm.generate.side_effect = lambda p, **_: (
-            captured_prompt.append(p) or
-            json.dumps({"beliefs": [{"key": "k", "value": "v", "confidence": 0.9}]})
+            captured_prompt.append(p) or json.dumps({"beliefs": [{"key": "k", "value": "v", "confidence": 0.9}]})
         )
 
         with patch("xibi.session.get_model", return_value=mock_llm):
@@ -155,21 +177,38 @@ class TestCompressToBeliefs:
 
     def test_includes_only_user_turns(self, tmp_path):
         session = _make_session(tmp_path)
-        self._seed_turns(tmp_path / "test.db", [
-            {"session_id": session.session_id, "turn_id": "t1",
-             "query": "first user q", "answer": "first user a", "source": "user"},
-            {"session_id": session.session_id, "turn_id": "t2",
-             "query": "mcp q", "answer": "mcp a", "source": "mcp:filesystem"},
-            {"session_id": session.session_id, "turn_id": "t3",
-             "query": "second user q", "answer": "second user a", "source": "user"},
-        ])
+        self._seed_turns(
+            tmp_path / "test.db",
+            [
+                {
+                    "session_id": session.session_id,
+                    "turn_id": "t1",
+                    "query": "first user q",
+                    "answer": "first user a",
+                    "source": "user",
+                },
+                {
+                    "session_id": session.session_id,
+                    "turn_id": "t2",
+                    "query": "mcp q",
+                    "answer": "mcp a",
+                    "source": "mcp:filesystem",
+                },
+                {
+                    "session_id": session.session_id,
+                    "turn_id": "t3",
+                    "query": "second user q",
+                    "answer": "second user a",
+                    "source": "user",
+                },
+            ],
+        )
 
         captured_prompt: list[str] = []
 
         mock_llm = MagicMock()
         mock_llm.generate.side_effect = lambda p, **_: (
-            captured_prompt.append(p) or
-            json.dumps({"beliefs": [{"key": "k", "value": "v", "confidence": 0.9}]})
+            captured_prompt.append(p) or json.dumps({"beliefs": [{"key": "k", "value": "v", "confidence": 0.9}]})
         )
 
         with patch("xibi.session.get_model", return_value=mock_llm):

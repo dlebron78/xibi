@@ -2,6 +2,7 @@ import concurrent.futures
 import importlib.util
 import logging
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -69,6 +70,19 @@ class Executor:
         self.mcp_executor = MCPExecutor(mcp_registry) if mcp_registry else None
 
     def execute(self, tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+        # Filter out pseudo-tools
+        if tool_name in ("finish", "ask_user", "error"):
+            # These don't go through the full executor logic typically,
+            # but if they do, we don't trace them as tool.dispatch
+            return {"status": "error", "message": f"Pseudo-tool {tool_name} reached executor"}
+
+        t_start_wall = int(time.time() * 1000)
+        t_start_mono = time.monotonic()
+
+        is_mcp = False
+        server_name = ""
+        result: dict[str, Any] = {}
+
         # 1. Resolve skill
         skill_name = tool_name if tool_name in self.registry.skills else self.registry.find_skill_for_tool(tool_name)
 
@@ -80,68 +94,146 @@ class Executor:
 
         if not skill_name:
             if mcp_match:
+                is_mcp = True
+                server_name = self._resolve_mcp_server(tool_name)
                 # Route to MCP
-                return self.mcp_executor.execute(tool_name, tool_input)  # type: ignore
-
-            error = XibiError(
-                category=ErrorCategory.TOOL_NOT_FOUND,
-                message=f"Unknown tool: {tool_name}",
-                component="executor",
-                retryable=False,
-            )
-            return {
-                "status": "error",
-                "message": error.message,
-                "error": error.user_message(),
-                "_xibi_error": error,
-            }
-
-        skill_info = self.registry.skills[skill_name]
-        tool_manifest: dict[str, Any] = next(
-            (t for t in skill_info.manifest.get("tools", []) if t.get("name") == tool_name), {}
-        )
-
-        # 2. Circuit Breaker
-        cb_config = CircuitBreakerConfig(recovery_timeout_secs=get_timeout(self.config, "circuit_recovery_secs"))
-        breaker = CircuitBreaker(f"tool:{tool_name}", db_path=self.db_path, config=cb_config)
-        if breaker.is_open():
-            error = XibiError(
-                category=ErrorCategory.CIRCUIT_OPEN,
-                component=f"tool:{tool_name}",
-                message=f"{tool_name} is temporarily disabled",
-                retryable=False,
-            )
-            return {
-                "status": "error",
-                "message": error.message,
-                "error": error.user_message(),
-                "_xibi_error": error,
-            }
-
-        # 3. Timeout settings
-        timeout = tool_manifest.get("timeout_secs") or get_timeout(self.config, "tool_default_secs")
-
-        # 4. Execute with timeout
-        try:
-            result = self._execute_with_timeout(tool_name, tool_input, timeout, skill_info)
-            if result.get("status") == "error" and "_xibi_error" in result:
-                breaker.record_failure(FailureType.PERSISTENT)
+                result = self.mcp_executor.execute(tool_name, tool_input)  # type: ignore
             else:
-                breaker.record_success()
-            return result
-        except Exception as e:
-            breaker.record_failure(FailureType.PERSISTENT)
-            error = XibiError(
-                category=ErrorCategory.UNKNOWN,
-                message=str(e),
-                component="executor",
+                error = XibiError(
+                    category=ErrorCategory.TOOL_NOT_FOUND,
+                    message=f"Unknown tool: {tool_name}",
+                    component="executor",
+                    retryable=False,
+                )
+                result = {
+                    "status": "error",
+                    "message": error.message,
+                    "error": error.user_message(),
+                    "_xibi_error": error,
+                }
+        else:
+            skill_info = self.registry.skills[skill_name]
+            tool_manifest: dict[str, Any] = next(
+                (t for t in skill_info.manifest.get("tools", []) if t.get("name") == tool_name), {}
             )
-            return {
-                "status": "error",
-                "message": error.message,
-                "error": error.user_message(),
-                "_xibi_error": error,
-            }
+
+            # 2. Circuit Breaker
+            cb_config = CircuitBreakerConfig(recovery_timeout_secs=get_timeout(self.config, "circuit_recovery_secs"))
+            breaker = CircuitBreaker(f"tool:{tool_name}", db_path=self.db_path, config=cb_config)
+            if breaker.is_open():
+                error = XibiError(
+                    category=ErrorCategory.CIRCUIT_OPEN,
+                    component=f"tool:{tool_name}",
+                    message=f"{tool_name} is temporarily disabled",
+                    retryable=False,
+                )
+                result = {
+                    "status": "error",
+                    "message": error.message,
+                    "error": error.user_message(),
+                    "_xibi_error": error,
+                    "circuit_open": True,
+                }
+            else:
+                # 3. Timeout settings
+                timeout = tool_manifest.get("timeout_secs") or get_timeout(self.config, "tool_default_secs")
+
+                # 4. Execute with timeout
+                try:
+                    result = self._execute_with_timeout(tool_name, tool_input, timeout, skill_info)
+                    if result.get("status") == "error" and "_xibi_error" in result:
+                        breaker.record_failure(FailureType.PERSISTENT)
+                    else:
+                        breaker.record_success()
+                except Exception as e:
+                    breaker.record_failure(FailureType.PERSISTENT)
+                    error = XibiError(
+                        category=ErrorCategory.UNKNOWN,
+                        message=str(e),
+                        component="executor",
+                    )
+                    result = {
+                        "status": "error",
+                        "message": error.message,
+                        "error": error.user_message(),
+                        "_xibi_error": error,
+                    }
+
+        duration_ms = int((time.monotonic() - t_start_mono) * 1000)
+        self._emit_tool_span(tool_name, tool_input, result, duration_ms, is_mcp, server_name, t_start_wall)
+        return result
+
+    def _emit_tool_span(
+        self,
+        tool_name: str,
+        tool_input: dict,
+        result: dict,
+        duration_ms: int,
+        is_mcp: bool,
+        server_name: str,
+        start_ms: int,
+    ) -> None:
+        """Emit tool.dispatch span. Never raises."""
+        try:
+            from xibi.router import _active_trace, _active_tracer
+
+            ctx = _active_trace.get()
+            if not (ctx and ctx.get("trace_id")):
+                return
+            tracer = _active_tracer.get()
+            if not tracer:
+                return
+
+            import json
+
+            from xibi.tracing import Span
+
+            try:
+                input_preview = json.dumps(tool_input)[:400]
+            except Exception:
+                input_preview = str(tool_input)[:400]
+
+            output_text = (
+                result.get("result") or result.get("content") or result.get("error") or result.get("message") or ""
+            )
+
+            error_attr = str(result.get("error", ""))
+            if result.get("circuit_open"):
+                error_attr = "circuit_open"
+
+            tracer.emit(
+                Span(
+                    trace_id=ctx["trace_id"],
+                    span_id=tracer.new_span_id(),
+                    parent_span_id=ctx.get("parent_span_id"),
+                    operation="tool.dispatch",
+                    component="mcp" if is_mcp else "executor",
+                    start_ms=start_ms,
+                    duration_ms=duration_ms,
+                    status="error" if result.get("status") == "error" else "ok",
+                    attributes={
+                        "tool": tool_name,
+                        "source": "mcp" if is_mcp else "native",
+                        "server": server_name,  # empty string for native tools
+                        "input_preview": input_preview,
+                        "output_preview": str(output_text)[:400],
+                        "error": error_attr,
+                    },
+                )
+            )
+        except Exception:
+            pass
+
+    def _resolve_mcp_server(self, tool_name: str) -> str:
+        """Return the MCP server name for a tool. Empty string if not found."""
+        if not self.mcp_executor:
+            return ""
+        for skill in self.mcp_executor.registry.skill_registry.get_skill_manifests():
+            if skill.get("name", "").startswith("mcp_"):
+                for tool in skill.get("tools", []):
+                    if tool.get("name") == tool_name:
+                        return str(tool.get("server", ""))
+        return ""
 
     def _execute_with_timeout(self, tool_name: str, params: dict, timeout: int, skill_info: Any) -> dict:
         # Check thread saturation before submitting — leave headroom for burst

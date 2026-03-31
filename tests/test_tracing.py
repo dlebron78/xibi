@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import patch
 
 from xibi.react import run
+from xibi.router import init_telemetry
 from xibi.tracing import Span, Tracer
 
 
@@ -81,22 +82,17 @@ def test_export_json(tmp_path: Path):
 def test_react_run_emits_root_span(tmp_path: Path):
     db_path = tmp_path / "test.db"
     tracer = Tracer(db_path)
-    config = {"db_path": str(db_path)}
+    init_telemetry(db_path, tracer=tracer)
+    config = {
+        "db_path": str(db_path),
+        "models": {"text": {"fast": {"provider": "ollama", "model": "qwen"}}},
+        "providers": {"ollama": {"base_url": "http://localhost"}},
+    }
 
-    # Mock LLM to return finish immediately
-    mock_llm = MagicMock()
-    mock_llm.generate.return_value = json.dumps(
-        {"thought": "done", "tool": "finish", "tool_input": {"answer": "hello"}}
-    )
-
-    with MagicMock(return_value=mock_llm):
-        # We need to mock get_model in xibi.react
-        import xibi.react
-
-        original_get_model = xibi.react.get_model
-        xibi.react.get_model = MagicMock(return_value=mock_llm)
-
-        try:
+    # Mock Ollama call
+    with patch("xibi.router.OllamaClient._call_provider") as mock_call:
+        mock_call.return_value = json.dumps({"thought": "done", "tool": "finish", "tool_input": {"answer": "hello"}})
+        with patch("xibi.router._check_provider_health", return_value=True):
             result = run(
                 "query",
                 config,
@@ -108,52 +104,56 @@ def test_react_run_emits_root_span(tmp_path: Path):
             recent = tracer.recent_traces()
             assert len(recent) == 1
             assert recent[0]["trace_id"] == result.trace_id
-        finally:
-            xibi.react.get_model = original_get_model
 
 
 def test_react_run_emits_tool_spans(tmp_path: Path):
     db_path = tmp_path / "test.db"
     tracer = Tracer(db_path)
-    config = {"db_path": str(db_path)}
+    init_telemetry(db_path, tracer=tracer)
+    config = {
+        "db_path": str(db_path),
+        "models": {"text": {"fast": {"provider": "ollama", "model": "qwen"}}},
+        "providers": {"ollama": {"base_url": "http://localhost"}},
+    }
 
     # Mock LLM to call a tool then finish
-    mock_llm = MagicMock()
     responses = [
         json.dumps({"thought": "call tool", "tool": "my_tool", "tool_input": {"x": 1}}),
         json.dumps({"thought": "done", "tool": "finish", "tool_input": {"answer": "result"}}),
     ]
-    mock_llm.generate.side_effect = responses
 
-    mock_executor = MagicMock()
-    mock_executor.execute.return_value = {"status": "ok", "content": "tool_result"}
+    from xibi.executor import Executor
+    from xibi.skills.registry import SkillRegistry
 
-    import xibi.react
+    registry = SkillRegistry("xibi/skills/sample")
+    executor = Executor(registry, config=config)
 
-    original_get_model = xibi.react.get_model
-    xibi.react.get_model = MagicMock(return_value=mock_llm)
+    with patch("xibi.router.OllamaClient._call_provider") as mock_call:
+        mock_call.side_effect = responses
+        with patch("xibi.router._check_provider_health", return_value=True):
+            # Mock the actual tool execution to avoid needing real tools
+            with patch.object(Executor, "_execute_with_timeout") as mock_exec_inner:
+                mock_exec_inner.return_value = {"status": "ok", "content": "tool_result"}
 
-    try:
-        result = run(
-            "query",
-            config,
-            [{"name": "my_tool"}],
-            executor=mock_executor,
-            tracer=tracer,
-        )
+                result = run(
+                    "query",
+                    config,
+                    [{"name": "my_tool", "tools": [{"name": "my_tool"}]}],
+                    executor=executor,
+                    tracer=tracer,
+                )
 
-        trace = tracer.get_trace(result.trace_id)
-        # Expected: 1 react.run (root) + 1 tool.dispatch
-        assert len(trace) == 2
-        ops = [s.operation for s in trace]
-        assert "react.run" in ops
-        assert "tool.dispatch" in ops
+            trace = tracer.get_trace(result.trace_id)
+            # Expected: 1 react.run (root) + 1 tool.dispatch + 2 llm.generate
+            assert len(trace) == 4
+            ops = [s.operation for s in trace]
+            assert "react.run" in ops
+            assert "tool.dispatch" in ops
+            assert ops.count("llm.generate") == 2
 
-        tool_span = next(s for s in trace if s.operation == "tool.dispatch")
-        assert tool_span.attributes["tool"] == "my_tool"
-        assert tool_span.parent_span_id is not None
-    finally:
-        xibi.react.get_model = original_get_model
+            tool_span = next(s for s in trace if s.operation == "tool.dispatch")
+            assert tool_span.attributes["tool"] == "my_tool"
+            assert tool_span.parent_span_id is not None
 
 
 def test_tracer_never_crashes_caller(tmp_path: Path):
@@ -182,21 +182,16 @@ def test_tracer_never_crashes_caller(tmp_path: Path):
 def test_result_has_trace_id(tmp_path: Path):
     db_path = tmp_path / "test.db"
     tracer = Tracer(db_path)
-    config = {"db_path": str(db_path)}
+    init_telemetry(db_path, tracer=tracer)
+    config = {
+        "db_path": str(db_path),
+        "models": {"text": {"fast": {"provider": "ollama", "model": "qwen"}}},
+        "providers": {"ollama": {"base_url": "http://localhost"}},
+    }
 
-    mock_llm = MagicMock()
-    mock_llm.generate.return_value = json.dumps(
-        {"thought": "done", "tool": "finish", "tool_input": {"answer": "hello"}}
-    )
-
-    import xibi.react
-
-    original_get_model = xibi.react.get_model
-    xibi.react.get_model = MagicMock(return_value=mock_llm)
-
-    try:
-        result = run("query", config, [], tracer=tracer)
-        assert result.trace_id is not None
-        assert len(result.trace_id) == 16
-    finally:
-        xibi.react.get_model = original_get_model
+    with patch("xibi.router.OllamaClient._call_provider") as mock_call:
+        mock_call.return_value = json.dumps({"thought": "done", "tool": "finish", "tool_input": {"answer": "hello"}})
+        with patch("xibi.router._check_provider_health", return_value=True):
+            result = run("query", config, [], tracer=tracer)
+            assert result.trace_id is not None
+            assert len(result.trace_id) == 16

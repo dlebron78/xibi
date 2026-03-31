@@ -1,5 +1,9 @@
+import contextvars
 import json
 import os
+import time
+import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol, TypedDict
 
@@ -11,6 +15,60 @@ from xibi.errors import ErrorCategory, XibiError
 
 # Process-scoped cache — one CircuitBreaker per provider, reset on restart
 _circuit_breaker_cache: dict[str, CircuitBreaker] = {}
+
+# Any code that wants LLM calls attributed to a trace sets this before calling generate().
+# router.py reads it automatically. Falls back gracefully if not set.
+_active_trace: contextvars.ContextVar[dict | None] = contextvars.ContextVar("_active_trace", default=None)
+
+_active_db_path: contextvars.ContextVar[Path | None] = contextvars.ContextVar("_active_db_path", default=None)
+_active_tracer: contextvars.ContextVar[Any | None] = contextvars.ContextVar("_active_tracer", default=None)
+
+
+def set_trace_context(trace_id: str | None, span_id: str | None, operation: str) -> None:
+    """Called by react.py, heartbeat, etc. to label subsequent LLM calls."""
+    _active_trace.set(
+        {
+            "trace_id": trace_id,
+            "parent_span_id": span_id,
+            "operation": operation,
+        }
+    )
+
+
+def clear_trace_context() -> None:
+    _active_trace.set(None)
+
+
+def init_telemetry(db_path: Path, tracer: Any | None = None) -> None:
+    """Call once at startup (cmd_telegram, cmd_heartbeat) to wire telemetry globally."""
+    _active_db_path.set(db_path)
+    _active_tracer.set(tracer)
+
+
+def set_last_parse_status(status: str) -> None:
+    """Called by react.py after parsing the LLM response. Updates the span in-place."""
+    try:
+        from xibi.db import open_db
+
+        db_path = _active_db_path.get()
+        ctx = _active_trace.get()
+        if not db_path or not ctx or not ctx.get("trace_id"):
+            return
+
+        with open_db(db_path) as conn:
+            # Update last span where operation="llm.generate" for current trace
+            conn.execute(
+                """
+                UPDATE spans
+                SET attributes = json_set(attributes, '$.parse_status', ?)
+                WHERE trace_id = ? AND operation = 'llm.generate'
+                AND id = (SELECT MAX(id) FROM spans WHERE trace_id = ? AND operation = 'llm.generate')
+                """,
+                (status, ctx["trace_id"], ctx["trace_id"]),
+            )
+            conn.commit()
+    except Exception:
+        pass
 
 
 class TimeoutsConfig(TypedDict, total=False):
@@ -28,6 +86,7 @@ class ModelClient(Protocol):
     provider: str  # "ollama", "gemini", "openai", "anthropic", "groq"
     model: str  # "qwen3.5:9b", "gemini-2.5-flash", etc.
     options: dict  # Provider-specific options (e.g., {"think": false})
+    _role: str | None  # Internal label for effort level
 
     def generate(self, prompt: str, system: str | None = None, **kwargs: Any) -> str:
         """Generate a text completion. Returns the response text."""
@@ -55,6 +114,7 @@ class Config(TypedDict, total=False):
     providers: dict[str, ProviderConfig]
     db_path: Path
     timeouts: TimeoutsConfig
+    profile: dict[str, Any]
 
 
 class ConfigValidationError(Exception):
@@ -77,6 +137,96 @@ class OllamaClient:
         self.model = model
         self.options = options
         self.base_url = base_url
+        self._role: str | None = None
+
+    @staticmethod
+    def _extract_tokens(rjson: dict) -> tuple[int, int]:
+        """Returns (prompt_tokens, response_tokens). Safe — returns (0,0) if fields missing."""
+        return (
+            int(rjson.get("prompt_eval_count", 0) or 0),
+            int(rjson.get("eval_count", 0) or 0),
+        )
+
+    def _emit_telemetry(
+        self,
+        prompt: str,
+        system: str | None,
+        response_text: str,
+        duration_ms: int,
+        parse_status: str = "ok",
+        recovery_attempt: bool = False,
+    ) -> None:
+        """Write span + inference_event. Never raises."""
+        prompt_tokens, response_tokens, _ = getattr(self, "_last_tokens", (0, 0, 0))
+        ctx = _active_trace.get()
+
+        # 1. Inference event — always written regardless of trace context
+        try:
+            from xibi.db import open_db
+
+            db_path = _active_db_path.get()
+            if db_path:
+                with open_db(db_path) as conn:
+                    conn.execute(
+                        """
+                        INSERT INTO inference_events
+                            (recorded_at, role, provider, model, operation,
+                             prompt_tokens, response_tokens, duration_ms, cost_usd, degraded, trace_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            datetime.utcnow().isoformat(),
+                            getattr(self, "_role", "unknown") or "unknown",
+                            self.provider,
+                            self.model,
+                            ctx["operation"] if ctx else "unknown",
+                            prompt_tokens,
+                            response_tokens,
+                            duration_ms,
+                            0.0,
+                            0,
+                            ctx["trace_id"] if ctx else None,
+                        ),
+                    )
+                    conn.commit()
+        except Exception:
+            pass
+
+        # 2. Span — only if a trace context is active
+        if ctx and ctx.get("trace_id"):
+            try:
+                tracer = _active_tracer.get()
+                if tracer:
+                    from xibi.tracing import Span
+
+                    tracer.emit(
+                        Span(
+                            trace_id=ctx["trace_id"],
+                            span_id=str(uuid.uuid4()),
+                            parent_span_id=ctx.get("parent_span_id"),
+                            operation="llm.generate",
+                            component="router",
+                            start_ms=int(time.time() * 1000) - duration_ms,
+                            duration_ms=duration_ms,
+                            status="ok" if parse_status != "failed" else "error",
+                            attributes={
+                                "provider": self.provider,
+                                "model": self.model,
+                                "role": getattr(self, "_role", "unknown") or "unknown",
+                                "operation": ctx.get("operation", "unknown"),
+                                "prompt_tokens": prompt_tokens,
+                                "response_tokens": response_tokens,
+                                "system_prompt_len": len(system) if system else 0,
+                                "system_prompt_preview": (system or "")[:400],
+                                "prompt_len": len(prompt),
+                                "raw_response_preview": response_text[:600],
+                                "parse_status": parse_status,
+                                "recovery_attempt": recovery_attempt,
+                            },
+                        )
+                    )
+            except Exception:
+                pass
 
     def _call_provider(self, prompt: str, system: str | None = None, **kwargs: Any) -> str:
         url = f"{self.base_url}/api/generate"
@@ -89,10 +239,15 @@ class OllamaClient:
         if system:
             payload["system"] = system
 
+        t_start = time.monotonic()
         try:
             response = requests.post(url, json=payload, timeout=kwargs.get("timeout", 60))
             response.raise_for_status()
-            result: str = response.json().get("response", "")
+            rjson = response.json()
+            result: str = rjson.get("response", "")
+            prompt_tokens, response_tokens = self._extract_tokens(rjson)
+            duration_ms = int((time.monotonic() - t_start) * 1000)
+            self._last_tokens = (prompt_tokens, response_tokens, duration_ms)
             return result
         except requests.exceptions.Timeout as e:
             raise XibiError(
@@ -110,7 +265,19 @@ class OllamaClient:
             ) from e
 
     def generate(self, prompt: str, system: str | None = None, **kwargs: Any) -> str:
-        return self._call_provider(prompt, system, **kwargs)
+        recovery_attempt = kwargs.get("recovery_attempt", False)
+        t_start = time.monotonic()
+        text = self._call_provider(prompt, system, **kwargs)
+        duration_ms = int((time.monotonic() - t_start) * 1000)
+        self._emit_telemetry(
+            prompt=prompt,
+            system=system,
+            response_text=text,
+            duration_ms=duration_ms,
+            parse_status="ok",
+            recovery_attempt=recovery_attempt,
+        )
+        return text
 
     def generate_structured(self, prompt: str, schema: dict, system: str | None = None, **kwargs: Any) -> dict:
         prompt_with_schema = (
@@ -118,11 +285,32 @@ class OllamaClient:
         )
         # Ollama can use format="json" for JSON mode
         kwargs.setdefault("format", "json")
+
+        t_start = time.monotonic()
         response_text = self._call_provider(prompt_with_schema, system, **kwargs)
+        duration_ms = int((time.monotonic() - t_start) * 1000)
+
+        recovery_attempt = kwargs.get("recovery_attempt", False)
         try:
             result: dict = json.loads(response_text)
+            self._emit_telemetry(
+                prompt=prompt_with_schema,
+                system=system,
+                response_text=response_text,
+                duration_ms=duration_ms,
+                parse_status="ok",
+                recovery_attempt=recovery_attempt,
+            )
             return result
         except json.JSONDecodeError as e:
+            self._emit_telemetry(
+                prompt=prompt_with_schema,
+                system=system,
+                response_text=response_text,
+                duration_ms=duration_ms,
+                parse_status="failed",
+                recovery_attempt=recovery_attempt,
+            )
             raise RuntimeError(f"Ollama returned invalid JSON: {e}\nResponse: {response_text}") from e
 
 
@@ -133,8 +321,104 @@ class GeminiClient:
         self.provider = provider
         self.model = model
         self.options = options
+        self._role: str | None = None
         genai.configure(api_key=api_key)
         self.client = genai.GenerativeModel(model_name=model)
+
+    @staticmethod
+    def _extract_tokens(response: Any) -> tuple[int, int]:
+        """Returns (prompt_tokens, response_tokens). Safe — returns (0,0) if fields missing."""
+        try:
+            usage = getattr(response, "usage_metadata", None)
+            if usage:
+                return (
+                    int(getattr(usage, "prompt_token_count", 0)),
+                    int(getattr(usage, "candidates_token_count", 0)),
+                )
+        except Exception:
+            pass
+        return (0, 0)
+
+    def _emit_telemetry(
+        self,
+        prompt: str,
+        system: str | None,
+        response_text: str,
+        duration_ms: int,
+        parse_status: str = "ok",
+        recovery_attempt: bool = False,
+    ) -> None:
+        """Write span + inference_event. Never raises."""
+        prompt_tokens, response_tokens, _ = getattr(self, "_last_tokens", (0, 0, 0))
+        ctx = _active_trace.get()
+
+        # 1. Inference event — always written regardless of trace context
+        try:
+            from xibi.db import open_db
+
+            db_path = _active_db_path.get()
+            if db_path:
+                with open_db(db_path) as conn:
+                    conn.execute(
+                        """
+                        INSERT INTO inference_events
+                            (recorded_at, role, provider, model, operation,
+                             prompt_tokens, response_tokens, duration_ms, cost_usd, degraded, trace_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            datetime.utcnow().isoformat(),
+                            getattr(self, "_role", "unknown") or "unknown",
+                            self.provider,
+                            self.model,
+                            ctx["operation"] if ctx else "unknown",
+                            prompt_tokens,
+                            response_tokens,
+                            duration_ms,
+                            0.0,
+                            0,
+                            ctx["trace_id"] if ctx else None,
+                        ),
+                    )
+                    conn.commit()
+        except Exception:
+            pass
+
+        # 2. Span — only if a trace context is active
+        if ctx and ctx.get("trace_id"):
+            try:
+                tracer = _active_tracer.get()
+                if tracer:
+                    from xibi.tracing import Span
+
+                    tracer.emit(
+                        Span(
+                            trace_id=ctx["trace_id"],
+                            span_id=str(uuid.uuid4()),
+                            parent_span_id=ctx.get("parent_span_id"),
+                            operation="llm.generate",
+                            component="router",
+                            start_ms=int(time.time() * 1000) - duration_ms,
+                            duration_ms=duration_ms,
+                            status="ok" if parse_status != "failed" else "error",
+                            attributes={
+                                "provider": self.provider,
+                                "model": self.model,
+                                "role": getattr(self, "_role", "unknown") or "unknown",
+                                "operation": ctx.get("operation", "unknown"),
+                                "prompt_tokens": prompt_tokens,
+                                "response_tokens": response_tokens,
+                                "system_prompt_len": len(system) if system else 0,
+                                "system_prompt_preview": (system or "")[:400],
+                                "prompt_len": len(prompt),
+                                "raw_response_preview": response_text[:600],
+                                "parse_status": parse_status,
+                                "recovery_attempt": recovery_attempt,
+                            },
+                        )
+                    )
+            except Exception:
+                pass
 
     def _call_provider(self, prompt: str, system: str | None = None, **kwargs: Any) -> str:
         # Note: Gemini SDK handles system instructions differently, but for simplicity here:
@@ -151,11 +435,15 @@ class GeminiClient:
 
         generation_config.update(kwargs)
 
+        t_start = time.monotonic()
         try:
             response = client.generate_content(
                 prompt, generation_config=generation_config, request_options=request_options
             )
             result: str = response.text
+            prompt_tokens, response_tokens = self._extract_tokens(response)
+            duration_ms = int((time.monotonic() - t_start) * 1000)
+            self._last_tokens = (prompt_tokens, response_tokens, duration_ms)
             return result
         except Exception as e:
             if "deadline exceeded" in str(e).lower():
@@ -173,7 +461,19 @@ class GeminiClient:
             ) from e
 
     def generate(self, prompt: str, system: str | None = None, **kwargs: Any) -> str:
-        return self._call_provider(prompt, system, **kwargs)
+        recovery_attempt = kwargs.get("recovery_attempt", False)
+        t_start = time.monotonic()
+        text = self._call_provider(prompt, system, **kwargs)
+        duration_ms = int((time.monotonic() - t_start) * 1000)
+        self._emit_telemetry(
+            prompt=prompt,
+            system=system,
+            response_text=text,
+            duration_ms=duration_ms,
+            parse_status="ok",
+            recovery_attempt=recovery_attempt,
+        )
+        return text
 
     def generate_structured(self, prompt: str, schema: dict, system: str | None = None, **kwargs: Any) -> dict:
         prompt_with_schema = (
@@ -181,11 +481,32 @@ class GeminiClient:
         )
         # For Gemini, we could use response_mime_type="application/json"
         kwargs.setdefault("response_mime_type", "application/json")
+
+        t_start = time.monotonic()
         response_text = self._call_provider(prompt_with_schema, system, **kwargs)
+        duration_ms = int((time.monotonic() - t_start) * 1000)
+
+        recovery_attempt = kwargs.get("recovery_attempt", False)
         try:
             result: dict = json.loads(response_text)
+            self._emit_telemetry(
+                prompt=prompt_with_schema,
+                system=system,
+                response_text=response_text,
+                duration_ms=duration_ms,
+                parse_status="ok",
+                recovery_attempt=recovery_attempt,
+            )
             return result
         except json.JSONDecodeError as e:
+            self._emit_telemetry(
+                prompt=prompt_with_schema,
+                system=system,
+                response_text=response_text,
+                duration_ms=duration_ms,
+                parse_status="failed",
+                recovery_attempt=recovery_attempt,
+            )
             raise RuntimeError(f"Gemini returned invalid JSON: {e}\nResponse: {response_text}") from e
 
 
@@ -193,6 +514,7 @@ class OpenAIClient:
     provider: str
     model: str
     options: dict
+    _role: str | None
 
     def __init__(self, provider: str, model: str, options: dict, api_key: str | None):
         raise NotImplementedError("Provider OpenAI not yet implemented. Add implementation and tests.")
@@ -208,6 +530,7 @@ class AnthropicClient:
     provider: str
     model: str
     options: dict
+    _role: str | None
 
     def __init__(self, provider: str, model: str, options: dict, api_key: str | None):
         raise NotImplementedError("Provider Anthropic not yet implemented. Add implementation and tests.")
@@ -223,6 +546,7 @@ class GroqClient:
     provider: str
     model: str
     options: dict
+    _role: str | None
 
     def __init__(self, provider: str, model: str, options: dict, api_key: str | None):
         raise NotImplementedError("Provider Groq not yet implemented. Add implementation and tests.")
@@ -447,12 +771,15 @@ def get_model(
             if client:
 
                 class BreakerWrappedClient:
-                    def __init__(self, inner: ModelClient, breaker: CircuitBreaker):
+                    def __init__(self, inner: ModelClient, breaker: CircuitBreaker, effort: str):
                         self.inner = inner
                         self.breaker = breaker
                         self.provider = inner.provider
                         self.model = inner.model
                         self.options = inner.options
+                        # Label effort/role
+                        self.inner._role = effort
+                        self._role = effort
 
                     def generate(self, prompt: str, system: str | None = None, **kwargs: Any) -> str:
                         try:
@@ -486,16 +813,22 @@ def get_model(
                             self.breaker.record_failure(FailureType.PERSISTENT)
                             raise
 
-                return BreakerWrappedClient(client, breaker)  # type: ignore
+                return BreakerWrappedClient(client, breaker, effort)  # type: ignore
             elif provider_name == "openai":
                 api_key_env = provider_cfg.get("api_key_env") or ""
-                return OpenAIClient(provider_name, model_name, options, os.environ.get(api_key_env))
+                client = OpenAIClient(provider_name, model_name, options, os.environ.get(api_key_env))
+                client._role = effort
+                return client
             elif provider_name == "anthropic":
                 api_key_env = provider_cfg.get("api_key_env") or ""
-                return AnthropicClient(provider_name, model_name, options, os.environ.get(api_key_env))
+                client = AnthropicClient(provider_name, model_name, options, os.environ.get(api_key_env))
+                client._role = effort
+                return client
             elif provider_name == "groq":
                 api_key_env = provider_cfg.get("api_key_env") or ""
-                return GroqClient(provider_name, model_name, options, os.environ.get(api_key_env))
+                client = GroqClient(provider_name, model_name, options, os.environ.get(api_key_env))
+                client._role = effort
+                return client
 
         tried_roles.append(f"{role_to_check['provider']}/{role_to_check['model']}")
         fallback_effort = role_to_check.get("fallback")

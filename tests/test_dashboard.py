@@ -109,18 +109,26 @@ def test_trends_empty(client):
 
 
 def test_trends_data(client, db_path: Path):
+    # Use fixed dates relative to "now" for test reliability
+    # The query uses UTC now - 30 days
+    from datetime import datetime, timedelta
+
+    now = datetime.utcnow()
+    d1 = (now - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S")
+    d2 = (now - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
+
     with sqlite3.connect(db_path) as conn:
         conn.execute(
             "INSERT INTO conversation_history (user_message, bot_response, created_at) VALUES (?, ?, ?)",
-            ("hi", "hello", "2026-03-01 10:00:00"),
+            ("hi", "hello", d1),
         )
         conn.execute(
             "INSERT INTO conversation_history (user_message, bot_response, created_at) VALUES (?, ?, ?)",
-            ("hi2", "hello2", "2026-03-01 11:00:00"),
+            ("hi2", "hello2", d1),
         )
         conn.execute(
             "INSERT INTO conversation_history (user_message, bot_response, created_at) VALUES (?, ?, ?)",
-            ("bye", "goodbye", "2026-03-02 10:00:00"),
+            ("bye", "goodbye", d2),
         )
         conn.commit()
 

@@ -130,9 +130,7 @@ class CircuitBreaker:
                     "UPDATE circuit_breakers SET failure_count = failure_count + 1, updated_at = ? WHERE name = ?",
                     (time.time(), self.name),
                 )
-                row = conn.execute(
-                    "SELECT failure_count FROM circuit_breakers WHERE name = ?", (self.name,)
-                ).fetchone()
+                row = conn.execute("SELECT failure_count FROM circuit_breakers WHERE name = ?", (self.name,)).fetchone()
                 return int(row[0]) if row else 0
         except Exception as _e:
             logger.warning("CircuitBreaker._increment_failure failed: %s", _e)

@@ -26,9 +26,9 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-import tests.reasoning_benchmark_v2 as benchmark
-from bregger_core import BreggerCore
-from tests.fixtures.reasoning_seeds import ReasoningSeeder
+import tests.reasoning_benchmark_v2 as benchmark  # noqa: E402
+from bregger_core import BreggerCore  # noqa: E402
+from tests.fixtures.reasoning_seeds import ReasoningSeeder  # noqa: E402
 
 # ─── Core init ───────────────────────────────────────────────
 core = None

@@ -278,7 +278,10 @@ def test_init_idempotent(tmp_path: Path):
     config_path.write_text('{"custom": true}')
 
     init_workdir(workdir)
-    assert config_path.read_text() == '{"custom": true}'
+    # init_workdir injects default profile if missing, so it's not strictly identical
+    # but the existing keys should be preserved.
+    data = json.loads(config_path.read_text())
+    assert data["custom"] is True
 
 
 def test_doctor_passes_after_init(tmp_path: Path):
