@@ -159,41 +159,45 @@ class HeartbeatPoller:
         return verdict, subject
 
     def tick(self) -> None:
-        """Tick with atomic watermark locking to prevent duplicate processing."""
+        """Tick: read → classify (no DB held) → write, to avoid holding write locks during LLM calls."""
         if self._is_quiet_hours():
             logger.info("Quiet hours, skipping tick.")
             return
 
-        with xibi.db.open_db(self.db_path) as conn, conn:  # BEGIN / COMMIT or ROLLBACK
-            # Lock: use a sentinel row in heartbeat_state
-            conn.execute(
-                "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('tick_lock', ?)",
-                (str(time.time()),),
-            )
+        # --- Phase 1: short reads (no LLM, minimal lock time) ---
+        due_tasks: list = []
+        seen_ids: set[str] = set()
+        triage_rules: dict[str, str] = {}
+        email_rules: list = []
 
-            self._tick_with_conn(conn)
-
-    def _tick_with_conn(self, conn: sqlite3.Connection) -> None:
-        # 1. Check tasks
         try:
-            conn.row_factory = sqlite3.Row
-            now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            # Handle cases where the table might not exist
-            cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'")
-            if cursor.fetchone():
-                tasks = conn.execute(
-                    "SELECT id, goal FROM tasks WHERE status IN ('pending', 'due') AND due <= ?", (now,)
-                ).fetchall()
-                for task in tasks:
-                    self._broadcast(f"⏰ Task reminder: {task['goal']} (ID: {task['id']})")
+            with xibi.db.open_db(self.db_path) as conn, conn:
+                conn.execute(
+                    "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('tick_lock', ?)",
+                    (str(time.time()),),
+                )
+                conn.row_factory = sqlite3.Row
+                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='tasks'")
+                if cursor.fetchone():
+                    due_tasks = conn.execute(
+                        "SELECT id, goal FROM tasks WHERE status IN ('pending', 'due') AND due <= ?", (now,)
+                    ).fetchall()
+                seen_ids = self.rules.get_seen_ids_with_conn(conn)
+                triage_rules = self.rules.load_triage_rules_with_conn(conn)
         except Exception as e:
-            logger.warning(f"Task check error: {e}", exc_info=True)
+            logger.warning(f"Tick read phase error: {e}", exc_info=True)
 
-        # 2. Fetch emails
+        # Broadcast task reminders (no DB needed)
+        for task in due_tasks:
+            self._broadcast(f"⏰ Task reminder: {task['goal']} (ID: {task['id']})")
+
         emails = self._check_email()
         email_rules = self.rules.load_rules("email_alert")
-        seen_ids = self.rules.get_seen_ids_with_conn(conn)
-        triage_rules = self.rules.load_triage_rules_with_conn(conn)
+
+        # --- Phase 2: classify emails — no DB connection held during LLM calls ---
+        ProcessedEmail = dict  # type alias for clarity
+        processed: list[ProcessedEmail] = []
 
         for email in emails:
             email_id = str(email.get("id", ""))
@@ -201,25 +205,10 @@ class HeartbeatPoller:
             if isinstance(sender, dict):
                 sender = sender.get("name") or sender.get("addr", "unknown")
             subject = email.get("subject", "No Subject")
-
-            # Log signal
-            self.rules.log_signal_with_conn(
-                conn,
-                source="email",
-                topic_hint=None,
-                entity_text=str(sender),
-                entity_type="person",
-                content_preview=f"{sender}: {subject}",
-                ref_id=email_id,
-                ref_source="email",
-            )
-
-            if email_id in seen_ids:
-                continue
+            sender_str = str(sender).lower()
 
             # Auto-noise pre-filter
             verdict = ""
-            sender_str = str(sender).lower()
             auto_noise = ["noreply@", "no-reply@", "notifications@", "newsletter@", "automated@", "mailer-daemon@"]
             if any(p in sender_str for p in auto_noise):
                 verdict = "NOISE"
@@ -231,32 +220,55 @@ class HeartbeatPoller:
                         verdict = status.upper()
                         break
 
-            # LLM classification
-            if not verdict:
+            # LLM classification — happens here, outside any open DB transaction
+            if not verdict and email_id not in seen_ids:
                 verdict = self._classify_email(email)
 
-            if verdict == "DEFER":
-                continue
-
-            # Escalation
             if verdict == "DIGEST":
-                # Inferred topic (very simple)
-                topic = subject
-                # We could pull priority topics from DB if needed, but spec says check _should_escalate
-                # For now use empty list or mock if not provided
-                verdict, subject = self._should_escalate(verdict, topic, subject, [])
+                verdict, subject = self._should_escalate(verdict, subject, subject, [])
 
-            # Log triage
-            self.rules.log_triage_with_conn(conn, email_id, str(sender), subject, verdict)
+            processed.append({
+                "email": email,
+                "email_id": email_id,
+                "sender": sender,
+                "subject": subject,
+                "verdict": verdict,
+                "is_new": email_id not in seen_ids,
+            })
 
-            # Alert
-            if verdict == "URGENT":
-                alert_msg = self.rules.evaluate_email(email, email_rules)
-                if alert_msg:
-                    self._broadcast(alert_msg)
+        # --- Phase 3: short write transaction ---
+        try:
+            with xibi.db.open_db(self.db_path) as conn, conn:
+                conn.row_factory = sqlite3.Row
+                for item in processed:
+                    email_id = item["email_id"]
+                    sender = item["sender"]
+                    subject = item["subject"]
+                    verdict = item["verdict"]
 
-            # Mark seen
-            self.rules.mark_seen_with_conn(conn, email_id)
+                    self.rules.log_signal_with_conn(
+                        conn,
+                        source="email",
+                        topic_hint=None,
+                        entity_text=str(sender),
+                        entity_type="person",
+                        content_preview=f"{sender}: {subject}",
+                        ref_id=email_id,
+                        ref_source="email",
+                    )
+
+                    if not item["is_new"] or verdict == "DEFER":
+                        continue
+
+                    self.rules.log_triage_with_conn(conn, email_id, str(sender), subject, verdict)
+                    self.rules.mark_seen_with_conn(conn, email_id)
+
+                    if verdict == "URGENT":
+                        alert_msg = self.rules.evaluate_email(item["email"], email_rules)
+                        if alert_msg:
+                            self._broadcast(alert_msg)
+        except Exception as e:
+            logger.warning(f"Tick write phase error: {e}", exc_info=True)
 
         if self.signal_intelligence_enabled:
             try:

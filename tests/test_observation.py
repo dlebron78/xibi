@@ -305,9 +305,11 @@ def test_poller_with_observation_cycle(db_path):
 
     with (
         patch.object(poller, "_check_email", return_value=[]),
+        patch.object(poller, "_is_quiet_hours", return_value=False),
         patch.object(poller.rules, "get_seen_ids_with_conn", return_value=set()),
         patch.object(poller.rules, "load_triage_rules_with_conn", return_value={}),
+        patch.object(poller.rules, "load_rules", return_value=[]),
     ):
-        poller._tick_with_conn(MagicMock())
+        poller.tick()
 
     mock_cycle.run.assert_called_once()
