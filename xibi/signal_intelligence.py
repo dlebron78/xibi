@@ -68,7 +68,7 @@ def extract_tier0(signal_row: dict) -> SignalIntel:
     return intel
 
 
-def extract_tier1_batch(signals: list[dict], config: Config | None) -> list[SignalIntel]:
+def extract_tier1_batch(signals: list[dict], config: Config | None, config_path: str = "config.json") -> list[SignalIntel]:
     """Batch fast role call. One LLM call for up to 20 signals."""
     if not signals:
         return []
@@ -98,7 +98,7 @@ SIGNALS:
 """
 
     try:
-        model = get_model(specialty="text", effort="fast", config=config)
+        model = get_model(specialty="text", effort="fast", config=config, config_path=config_path)
         response = model.generate(prompt)
 
         # Simple JSON extraction in case there's markdown
@@ -308,7 +308,7 @@ def merge_intels(tier0: list[SignalIntel], tier1: list[SignalIntel]) -> list[Sig
 
 
 def enrich_signals(
-    db_path: Path, config: Config | None, batch_size: int = 20, *, trust_gradient: TrustGradient | None = None
+    db_path: Path, config: Config | None, batch_size: int = 20, *, config_path: str = "config.json", trust_gradient: TrustGradient | None = None
 ) -> int:
     """Main entry point. Returns count of signals enriched. Never raises."""
     try:
@@ -337,7 +337,7 @@ def enrich_signals(
             run_tier1 = trust_gradient.should_audit("text", "fast")
 
         if run_tier1:
-            tier1_intels = extract_tier1_batch(signals, config)
+            tier1_intels = extract_tier1_batch(signals, config, config_path=config_path)
             # Record trust based on extraction quality
             if trust_gradient is not None:
                 try:

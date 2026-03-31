@@ -264,8 +264,9 @@ class HeartbeatPoller:
 
                 enriched = enrich_signals(
                     db_path=self.db_path,
-                    config=self.profile if self.profile else None,  # type: ignore
+                    config=None,
                     batch_size=20,
+                    config_path=self.config_path,
                     trust_gradient=self.trust_gradient,
                 )
                 if enriched > 0:
