@@ -11,6 +11,14 @@
 - `xibi/[file].py` — [what it does]
 - `tests/test_[file].py` — [what it tests]
 
+## Database Migration
+<!-- Required if this step adds or modifies any DB tables or columns. Delete this section if no schema changes. -->
+- Migration number: N (must be `SCHEMA_VERSION` + 1 in `xibi/db/migrations.py`)
+- Changes: [e.g. `ALTER TABLE foo ADD COLUMN bar TEXT`, `CREATE TABLE baz ...`]
+- `SCHEMA_VERSION` bumped to N in `xibi/db/migrations.py`
+- Migration method `_migration_N` added to `SchemaManager`
+- Entry added to the migrations list in `SchemaManager.migrate()`
+
 ## Contract
 [Exact function signatures, class interfaces, config schema — the "what" not the "how"]
 
@@ -25,6 +33,7 @@
 - [ ] All files created/modified as listed
 - [ ] All tests pass locally
 - [ ] No hardcoded model names anywhere in new code
+- [ ] If schema changes: migration added, `SCHEMA_VERSION` bumped, migration tested against a fresh DB
 - [ ] PR opened with summary + test results + any deviations noted
 
 ---
