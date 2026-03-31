@@ -466,8 +466,8 @@ def run(
             else:
                 consecutive_errors = 0
 
-        except Exception as e:
-            # Unexpected error — treat as transient unless it's an XibiError parse failure
+        except (XibiError, OSError, ValueError, RuntimeError) as e:
+            # Catch specific recoverable errors only — KeyboardInterrupt and SystemExit propagate
             failure_type = FailureType.PERSISTENT if isinstance(e, XibiError) else FailureType.TRANSIENT
             trust.record_failure(_trust_specialty, _trust_effort, failure_type)
             # Handle unexpected LLM errors

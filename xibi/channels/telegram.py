@@ -106,6 +106,14 @@ class TelegramAdapter:
             self.allowed_chats = allowed_chats
 
         self.db_path = Path(db_path) if db_path else Path.home() / ".xibi" / "data" / "xibi.db"
+
+        # Fail fast at startup — don't discover a bad DB path mid-request
+        try:
+            with open_db(self.db_path) as _conn:
+                pass
+        except Exception as e:
+            raise RuntimeError(f"Cannot open DB at {self.db_path}: {e}") from e
+
         self.base_url = f"https://api.telegram.org/bot{self.token}"
 
         if offset_file is None:
@@ -352,9 +360,18 @@ class TelegramAdapter:
                 state["nudge_timer"].cancel()
 
     def poll(self) -> None:
-        logger.info("Xibi is listening on Telegram...")
+        from xibi.shutdown import is_shutdown_requested
 
-        while True:
+        logger.info("Xibi is listening on Telegram...")
+        _last_purge_date: date | None = None
+
+        while not is_shutdown_requested():
+            # Purge stale processed-message IDs once per calendar day
+            today = date.today()
+            if _last_purge_date != today:
+                self._purge_old_processed_messages()
+                _last_purge_date = today
+
             params = {"offset": self.offset, "timeout": 20}
             updates = self._api_call("getUpdates", params)
 
@@ -452,3 +469,5 @@ class TelegramAdapter:
                     self._save_offset(self.offset)
 
             time.sleep(1)
+
+        logger.info("TelegramAdapter poll loop exiting (shutdown requested)")

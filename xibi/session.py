@@ -159,7 +159,7 @@ Exchanges:
                 return written
 
         except Exception as e:
-            logger.debug(f"Compression failed for session {self.session_id}: {e}")
+            logger.debug("Compression failed for session %s: %s", self.session_id, e, exc_info=True)
             return 0
 
     def add_turn(self, query: str, result: ReActResult, source: str = "user") -> Turn:
@@ -231,7 +231,7 @@ Exchanges:
                     lines.append(f"- {r['value']}")
                 return "\n".join(lines)
         except Exception as e:
-            logger.debug(f"Failed to fetch session memories: {e}")
+            logger.debug("Failed to fetch session memories: %s", e, exc_info=True)
             return ""
 
     def get_context_block(self) -> str:
@@ -414,7 +414,7 @@ Skip generic words. Confidence > 0.7 only."""
                                 )
                             )
         except Exception as err:
-            logger.warning(f"Entity extraction failed for turn {turn.turn_id}: {err}")
+            logger.warning("Entity extraction failed for turn %s: %s", turn.turn_id, err, exc_info=True)
             return []
 
         if not extracted:

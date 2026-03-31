@@ -389,11 +389,13 @@ class HeartbeatPoller:
             logger.warning(f"Reflection tick error: {e}", exc_info=True)
 
     def run(self) -> None:
+        from xibi.shutdown import is_shutdown_requested
+
         tick_count = 0
         interval_secs = self.interval_minutes * 60
         logger.info(f"Starting heartbeat loop (interval: {self.interval_minutes}m)")
 
-        while True:
+        while not is_shutdown_requested():
             try:
                 self.tick()
                 tick_count += 1
@@ -417,6 +419,8 @@ class HeartbeatPoller:
                 logger.error(f"Error in heartbeat loop: {e}", exc_info=True)
 
             time.sleep(interval_secs)
+
+        logger.info("HeartbeatPoller run loop exiting (shutdown requested)")
 
 
 def _infer_provider(role: str, config: dict[str, Any]) -> str:

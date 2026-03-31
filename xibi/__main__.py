@@ -6,13 +6,11 @@ import signal
 import sys
 from pathlib import Path
 
-# Process-wide graceful shutdown flag — set by SIGTERM handler
-_shutdown_requested = False
+from xibi.shutdown import request_shutdown
 
 
 def _handle_sigterm(signum: int, frame: object) -> None:
-    global _shutdown_requested
-    _shutdown_requested = True
+    request_shutdown()
 
 import xibi.db
 from xibi.channels.telegram import TelegramAdapter
@@ -34,8 +32,7 @@ def cmd_init(args: argparse.Namespace) -> None:
     user_name = getattr(args, "name", None)
     assistant_name = getattr(args, "assistant_name", None) or "Xibi"
 
-    if not user_name:
-        if sys.stdin.isatty():
+    if not user_name and sys.stdin.isatty():
             try:
                 user_name = input("Your name (used in the assistant's system prompt): ").strip() or None
             except (EOFError, KeyboardInterrupt):
@@ -200,6 +197,14 @@ def cmd_heartbeat(args: argparse.Namespace) -> None:
         skills_dir = Path("xibi/skills/sample")
 
     db_path = workdir / "data" / "xibi.db"
+
+    # Fail fast — don't discover a bad DB path mid-tick
+    try:
+        with xibi.db.open_db(db_path) as _conn:
+            pass
+    except Exception as e:
+        print(f"❌ Cannot open DB at {db_path}: {e}")
+        sys.exit(1)
 
     registry = SkillRegistry(str(skills_dir))
     mcp_registry = MCPServerRegistry(config, registry)
