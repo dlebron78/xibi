@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any
 from xibi.errors import ErrorCategory, XibiError
 from xibi.router import (
     Config,
-    _active_trace,
     clear_trace_context,
     get_model,
     set_last_parse_status,
@@ -138,9 +137,9 @@ def handle_intent(decision: RoutingDecision) -> str:
         case "capability_check":
             return "I can help with various tasks using my tools. Type 'list skills' to see what I can do."
         case "update_assistant_name":
-            return f"Understood. You can call me {decision.params.get('name')}."
+            return f"Understood. You can call me {decision.params['name']}."
         case "update_user_name":
-            return f"Nice to meet you, {decision.params.get('name')}!"
+            return f"Nice to meet you, {decision.params['name']}!"
         case _:
             return ""
 
@@ -287,10 +286,14 @@ def run(
     _trust_effort = "fast"
 
     # Inject context into system prompt before loop
-    context_block = session_context.get_context_block() if session_context else ""
+    context_block = ""
+    if session_context:
+        from xibi.session import SessionContext
+        if isinstance(session_context, SessionContext):
+            context_block = session_context.get_context_block()
 
-    _profile = config.get("profile", {}) if config else {}
-    _assistant_name = _profile.get("assistant_name", "Xibi")
+    _profile: dict[str, Any] = config.get("profile") or {}
+    _assistant_name = str(_profile.get("assistant_name", "Xibi"))
     _user_name = _profile.get("user_name", "")
 
     _identity_lines = [

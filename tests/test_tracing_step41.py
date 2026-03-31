@@ -1,28 +1,23 @@
-import os
 import sqlite3
 import time
-import uuid
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from xibi.db import open_db
 from xibi.db.migrations import SchemaManager
+from xibi.executor import Executor
 from xibi.react import run as react_run
 from xibi.router import (
     OllamaClient,
-    clear_trace_context,
-    get_model,
-    init_telemetry,
-    set_last_parse_status,
-    set_trace_context,
     _active_trace,
+    clear_trace_context,
+    init_telemetry,
+    set_trace_context,
 )
-from xibi.tracing import Tracer, Span
-from xibi.executor import Executor
 from xibi.skills.registry import SkillRegistry
-from xibi.types import Step
+from xibi.tracing import Tracer
+
 
 @pytest.fixture
 def db_path(tmp_path):
@@ -62,7 +57,7 @@ def test_inference_event_written_on_generate(db_path, config):
     clear_trace_context()
     init_telemetry(db_path)
     client = OllamaClient("ollama", "qwen", {}, "http://localhost:11434")
-    setattr(client, "_role", "fast")
+    client._role = "fast"
 
     with patch("requests.post") as mock_post:
         mock_post.return_value.json.return_value = {
@@ -85,7 +80,7 @@ def test_inference_event_written_on_generate(db_path, config):
 def test_inference_event_operation_from_context(db_path, config):
     init_telemetry(db_path)
     client = OllamaClient("ollama", "qwen", {}, "http://localhost:11434")
-    setattr(client, "_role", "fast")
+    client._role = "fast"
 
     set_trace_context(trace_id="t1", span_id="s1", operation="heartbeat_tick")
     try:
@@ -348,17 +343,19 @@ def test_mcp_tool_dispatch_span_source_is_mcp(db_path, config):
     executor = Executor(registry, config=config, mcp_registry=mcp_reg)
 
     # We need to satisfy can_handle and execute
-    with patch("xibi.executor.MCPExecutor.can_handle", return_value=True):
-        with patch("xibi.executor.MCPExecutor.execute", return_value={"status": "ok", "result": "mcp_ok"}):
-            with patch.object(Executor, "_resolve_mcp_server", return_value="test_server"):
-                tracer = Tracer(db_path)
-                init_telemetry(db_path, tracer=tracer)
+    with (
+        patch("xibi.executor.MCPExecutor.can_handle", return_value=True),
+        patch("xibi.executor.MCPExecutor.execute", return_value={"status": "ok", "result": "mcp_ok"}),
+        patch.object(Executor, "_resolve_mcp_server", return_value="test_server"),
+    ):
+        tracer = Tracer(db_path)
+        init_telemetry(db_path, tracer=tracer)
 
-                set_trace_context(trace_id="t1", span_id="s1", operation="test")
-                try:
-                    executor.execute("mcp_tool", {"arg": 1})
-                finally:
-                    clear_trace_context()
+        set_trace_context(trace_id="t1", span_id="s1", operation="test")
+        try:
+            executor.execute("mcp_tool", {"arg": 1})
+        finally:
+            clear_trace_context()
 
     with open_db(db_path) as conn:
         conn.row_factory = sqlite3.Row
@@ -431,11 +428,13 @@ def test_react_py_no_longer_emits_tool_dispatch(db_path, config):
         ]
         # Executor must be provided to react_run to trigger dispatch
         executor = Executor(registry, config=config)
-        with patch.object(Executor, "execute", wraps=executor.execute) as mock_exec:
-            with patch.object(Executor, "_execute_with_timeout") as mock_exec_inner:
-                mock_exec_inner.return_value = {"status": "ok", "result": "done"}
-                with patch("xibi.router._check_provider_health", return_value=True):
-                    react_run("hi", config, registry.get_skill_manifests(), tracer=tracer, executor=executor)
+        with (
+            patch.object(Executor, "execute", wraps=executor.execute),
+            patch.object(Executor, "_execute_with_timeout") as mock_exec_inner,
+            patch("xibi.router._check_provider_health", return_value=True),
+        ):
+            mock_exec_inner.return_value = {"status": "ok", "result": "done"}
+            react_run("hi", config, registry.get_skill_manifests(), tracer=tracer, executor=executor)
 
     with open_db(db_path) as conn:
         # Should have exactly 1 tool.dispatch span (from executor)
@@ -455,12 +454,14 @@ def test_full_waterfall_llm_then_tool_then_llm(db_path, config):
     executor = Executor(registry, config=config)
     with patch("xibi.router.OllamaClient._call_provider") as mock_call:
         mock_call.side_effect = responses
-        with patch.object(Executor, "execute", wraps=executor.execute) as mock_exec:
-            with patch.object(Executor, "_execute_with_timeout") as mock_exec_inner:
-                mock_exec_inner.return_value = {"status": "ok", "result": "tool worked"}
+        with (
+            patch.object(Executor, "execute", wraps=executor.execute),
+            patch.object(Executor, "_execute_with_timeout") as mock_exec_inner,
+            patch("xibi.router._check_provider_health", return_value=True),
+        ):
+            mock_exec_inner.return_value = {"status": "ok", "result": "tool worked"}
 
-                with patch("xibi.router._check_provider_health", return_value=True):
-                    react_run("hi", config, registry.get_skill_manifests(), tracer=tracer, executor=executor)
+            react_run("hi", config, registry.get_skill_manifests(), tracer=tracer, executor=executor)
 
     with open_db(db_path) as conn:
         # Spans should be: llm.generate, tool.dispatch, llm.generate

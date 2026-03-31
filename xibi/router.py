@@ -92,6 +92,7 @@ class ModelClient(Protocol):
     provider: str  # "ollama", "gemini", "openai", "anthropic", "groq"
     model: str  # "qwen3.5:9b", "gemini-2.5-flash", etc.
     options: dict  # Provider-specific options (e.g., {"think": false})
+    _role: str | None  # Internal label for effort level
 
     def generate(self, prompt: str, system: str | None = None, **kwargs: Any) -> str:
         """Generate a text completion. Returns the response text."""
@@ -119,6 +120,7 @@ class Config(TypedDict, total=False):
     providers: dict[str, ProviderConfig]
     db_path: Path
     timeouts: TimeoutsConfig
+    profile: dict[str, Any]
 
 
 class ConfigValidationError(Exception):
@@ -141,6 +143,7 @@ class OllamaClient:
         self.model = model
         self.options = options
         self.base_url = base_url
+        self._role: str | None = None
 
     @staticmethod
     def _extract_tokens(rjson: dict) -> tuple[int, int]:
@@ -324,6 +327,7 @@ class GeminiClient:
         self.provider = provider
         self.model = model
         self.options = options
+        self._role: str | None = None
         genai.configure(api_key=api_key)
         self.client = genai.GenerativeModel(model_name=model)
 
@@ -516,6 +520,7 @@ class OpenAIClient:
     provider: str
     model: str
     options: dict
+    _role: str | None
 
     def __init__(self, provider: str, model: str, options: dict, api_key: str | None):
         raise NotImplementedError("Provider OpenAI not yet implemented. Add implementation and tests.")
@@ -531,6 +536,7 @@ class AnthropicClient:
     provider: str
     model: str
     options: dict
+    _role: str | None
 
     def __init__(self, provider: str, model: str, options: dict, api_key: str | None):
         raise NotImplementedError("Provider Anthropic not yet implemented. Add implementation and tests.")
@@ -546,6 +552,7 @@ class GroqClient:
     provider: str
     model: str
     options: dict
+    _role: str | None
 
     def __init__(self, provider: str, model: str, options: dict, api_key: str | None):
         raise NotImplementedError("Provider Groq not yet implemented. Add implementation and tests.")
@@ -777,7 +784,7 @@ def get_model(
                         self.model = inner.model
                         self.options = inner.options
                         # Label effort/role
-                        setattr(self.inner, "_role", effort)
+                        self.inner._role = effort
                         self._role = effort
 
                     def generate(self, prompt: str, system: str | None = None, **kwargs: Any) -> str:
@@ -815,13 +822,19 @@ def get_model(
                 return BreakerWrappedClient(client, breaker, effort)  # type: ignore
             elif provider_name == "openai":
                 api_key_env = provider_cfg.get("api_key_env") or ""
-                return OpenAIClient(provider_name, model_name, options, os.environ.get(api_key_env))
+                client = OpenAIClient(provider_name, model_name, options, os.environ.get(api_key_env))
+                client._role = effort
+                return client
             elif provider_name == "anthropic":
                 api_key_env = provider_cfg.get("api_key_env") or ""
-                return AnthropicClient(provider_name, model_name, options, os.environ.get(api_key_env))
+                client = AnthropicClient(provider_name, model_name, options, os.environ.get(api_key_env))
+                client._role = effort
+                return client
             elif provider_name == "groq":
                 api_key_env = provider_cfg.get("api_key_env") or ""
-                return GroqClient(provider_name, model_name, options, os.environ.get(api_key_env))
+                client = GroqClient(provider_name, model_name, options, os.environ.get(api_key_env))
+                client._role = effort
+                return client
 
         tried_roles.append(f"{role_to_check['provider']}/{role_to_check['model']}")
         fallback_effort = role_to_check.get("fallback")

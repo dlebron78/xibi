@@ -186,9 +186,9 @@ class Executor:
             if not tracer:
                 return
 
-            from xibi.tracing import Span
-
             import json
+
+            from xibi.tracing import Span
 
             try:
                 input_preview = json.dumps(tool_input)[:400]
@@ -238,7 +238,7 @@ class Executor:
             if skill.get("name", "").startswith("mcp_"):
                 for tool in skill.get("tools", []):
                     if tool.get("name") == tool_name:
-                        return tool.get("server", "")
+                        return str(tool.get("server", ""))
         return ""
 
     def _execute_with_timeout(self, tool_name: str, params: dict, timeout: int, skill_info: Any) -> dict:
