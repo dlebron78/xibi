@@ -279,7 +279,7 @@ def test_enrich_signals_end_to_end(mock_tier1, db_path):
             VALUES ('email', 'Test Topic', 'alice@example.com', 'Hello world')
         """)
 
-    mock_tier1.side_effect = lambda signals, config: [
+    mock_tier1.side_effect = lambda signals, config, config_path="config.json": [
         SignalIntel(signal_id=s["id"], action_type="request", intel_tier=1) for s in signals
     ]
 

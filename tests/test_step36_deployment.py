@@ -84,6 +84,8 @@ def test_service_files_use_specifiers():
     for svc in ["systemd/xibi-telegram.service", "systemd/xibi-heartbeat.service"]:
         content = Path(svc).read_text()
         assert "%h" in content
-        assert "%U" in content
+        # %U / User= is intentionally absent: user-mode systemd units must not set User=
+        # (invalid in --user context, causes 216/GROUP crash)
+        assert "User=%U" not in content
         assert "/home/dlebron" not in content
         assert "User=dlebron" not in content

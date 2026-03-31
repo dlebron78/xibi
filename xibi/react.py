@@ -30,6 +30,20 @@ from xibi.types import ReActResult, Step
 logger = logging.getLogger(__name__)
 
 
+def _flatten_tools(skill_registry: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Flatten skill manifests into a single list of tool entries for the system prompt.
+
+    The raw skill_registry has structure: [{name: "email", tools: [{name: "list_unread", ...}]}]
+    The LLM must call tool names (list_unread), not skill names (email).
+    Flattening prevents the LLM from mistaking skill names for callable tool names.
+    """
+    flat: list[dict[str, Any]] = []
+    for skill in skill_registry:
+        for tool in skill.get("tools", []):
+            flat.append(tool)
+    return flat
+
+
 def compress_scratchpad(scratchpad: list[Step]) -> str:
     """Last 2 steps full detail, older steps one-liners."""
     lines = []
@@ -309,7 +323,7 @@ def run(
 
     system_prompt = (f"{context_block}\n\n" if context_block else "") + (
         "\n".join(_identity_lines) + "\n\n"
-        f"Available tools: {json.dumps(skill_registry)}\n\n"
+        f"Available tools: {json.dumps(_flatten_tools(skill_registry))}\n\n"
         "Instructions:\n"
         '1. Respond in JSON format only: {"thought": "...", "tool": "...", "tool_input": {...}}\n'
         "2. Special tools:\n"

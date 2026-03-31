@@ -37,7 +37,7 @@ def _make_mock_db_ctx() -> MagicMock:
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS tasks (
-                id TEXT PRIMARY KEY, goal TEXT, status TEXT, due_at TEXT,
+                id TEXT PRIMARY KEY, goal TEXT, status TEXT, due DATETIME,
                 trace_id TEXT DEFAULT ''
             );
         """)

@@ -316,7 +316,7 @@ def test_open_db_sets_busy_timeout(tmp_path: Path):
     db_path = tmp_path / "test.db"
     with open_db(db_path) as conn:
         timeout = conn.execute("PRAGMA busy_timeout").fetchone()[0]
-        assert timeout == 5000
+        assert timeout == 30000
 
 
 def test_open_db_allows_check_same_thread_false(tmp_path: Path):
