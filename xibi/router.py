@@ -230,11 +230,16 @@ class OllamaClient:
 
     def _call_provider(self, prompt: str, system: str | None = None, **kwargs: Any) -> str:
         url = f"{self.base_url}/api/generate"
+        # Separate top-level Ollama API flags (e.g. "think") from model options
+        top_level_keys = {"think", "keep_alive", "format"}
+        merged = {**self.options, **kwargs}
+        top_level = {k: merged.pop(k) for k in top_level_keys if k in merged}
         payload: dict[str, Any] = {
             "model": self.model,
             "prompt": prompt,
             "stream": False,
-            "options": {**self.options, **kwargs},
+            "options": merged,
+            **top_level,
         }
         if system:
             payload["system"] = system
