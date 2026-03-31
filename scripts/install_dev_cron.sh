@@ -17,7 +17,7 @@ set -euo pipefail
 XIBI_DIR="${HOME}/xibi"
 LOG_DIR="${XIBI_DIR}/logs"
 CRON_MARKER="dev_pressure_test"
-CRON_JOB="55 1 * * * cd ${XIBI_DIR} && git pull origin main -q && /usr/bin/python3 scripts/dev_pressure_test.py >> ${LOG_DIR}/pressure-test.log 2>&1 && git add reviews/test-runs/ && git diff --cached --quiet || git commit -m \"chore: nightly dev pressure test \$(date +\\%Y-\\%m-\\%d)\" && git push origin main -q  # ${CRON_MARKER}"
+CRON_JOB="55 1 * * * cd ${XIBI_DIR} && git pull origin main -q && systemctl --user restart xibi-telegram xibi-heartbeat && sleep 5 && /usr/bin/python3 scripts/dev_pressure_test.py >> ${LOG_DIR}/pressure-test.log 2>&1 && git add reviews/test-runs/ && git diff --cached --quiet || git commit -m \"chore: nightly dev pressure test \$(date +\\%Y-\\%m-\\%d)\" && git push origin main -q  # ${CRON_MARKER}"
 
 echo "=== Xibi Dev Pressure Test Cron Installer ==="
 echo ""
