@@ -14,6 +14,7 @@ Run on NucBox (Bregger shut down, Ollama running):
 Results printed to terminal + saved to benchmarks/signal_extraction_<timestamp>.json
 """
 
+import contextlib
 import json
 import time
 import urllib.error
@@ -307,9 +308,7 @@ def topics_match(got, expected):
         if exp_clean in group and got_clean in group:
             return True
     # Substring match (got contains expected or vice versa)
-    if exp_clean in got_clean or got_clean in exp_clean:
-        return True
-    return False
+    return bool(exp_clean in got_clean or got_clean in exp_clean)
 
 
 def score_extraction(extracted_list, cases, fields):
@@ -323,10 +322,8 @@ def score_extraction(extracted_list, cases, fields):
     # Build lookup by num
     by_num = {}
     for item in extracted_list if isinstance(extracted_list, list) else []:
-        try:
+        with contextlib.suppress(ValueError, TypeError):
             by_num[int(item.get("num", 0))] = item
-        except (ValueError, TypeError):
-            pass
 
     for i, case in enumerate(cases):
         num = i + 1

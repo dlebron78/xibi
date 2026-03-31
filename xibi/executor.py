@@ -160,9 +160,7 @@ class Executor:
                     }
 
         duration_ms = int((time.monotonic() - t_start_mono) * 1000)
-        self._emit_tool_span(
-            tool_name, tool_input, result, duration_ms, is_mcp, server_name, t_start_wall
-        )
+        self._emit_tool_span(tool_name, tool_input, result, duration_ms, is_mcp, server_name, t_start_wall)
         return result
 
     def _emit_tool_span(
@@ -196,11 +194,7 @@ class Executor:
                 input_preview = str(tool_input)[:400]
 
             output_text = (
-                result.get("result")
-                or result.get("content")
-                or result.get("error")
-                or result.get("message")
-                or ""
+                result.get("result") or result.get("content") or result.get("error") or result.get("message") or ""
             )
 
             error_attr = str(result.get("error", ""))

@@ -12,6 +12,7 @@ from xibi.shutdown import request_shutdown
 def _handle_sigterm(signum: int, frame: object) -> None:
     request_shutdown()
 
+
 import xibi.db
 from xibi.channels.telegram import TelegramAdapter
 from xibi.db import SchemaManager, init_workdir
@@ -33,11 +34,11 @@ def cmd_init(args: argparse.Namespace) -> None:
     assistant_name = getattr(args, "assistant_name", None) or "Xibi"
 
     if not user_name and sys.stdin.isatty():
-            try:
-                user_name = input("Your name (used in the assistant's system prompt): ").strip() or None
-            except (EOFError, KeyboardInterrupt):
-                user_name = None
-        # Non-interactive (piped/CI): silently skip — profile can be added to config.json later
+        try:
+            user_name = input("Your name (used in the assistant's system prompt): ").strip() or None
+        except (EOFError, KeyboardInterrupt):
+            user_name = None
+    # Non-interactive (piped/CI): silently skip — profile can be added to config.json later
 
     try:
         init_workdir(workdir, user_name=user_name, assistant_name=assistant_name)
@@ -151,6 +152,7 @@ def cmd_telegram(args: argparse.Namespace) -> None:
 
     from xibi.router import init_telemetry
     from xibi.tracing import Tracer
+
     init_telemetry(db_path, tracer=Tracer(db_path))
 
     signal.signal(signal.SIGTERM, _handle_sigterm)
@@ -204,6 +206,7 @@ def cmd_heartbeat(args: argparse.Namespace) -> None:
 
     from xibi.router import init_telemetry
     from xibi.tracing import Tracer
+
     init_telemetry(db_path, tracer=Tracer(db_path))
 
     # Fail fast — don't discover a bad DB path mid-tick
@@ -283,8 +286,9 @@ def main() -> None:
     # init
     init_parser = subparsers.add_parser("init", help="Bootstrap a new Xibi workdir")
     init_parser.add_argument("--name", help="Your name (written into config.json profile)")
-    init_parser.add_argument("--assistant-name", dest="assistant_name", default="Xibi",
-                             help="Name for the assistant (default: Xibi)")
+    init_parser.add_argument(
+        "--assistant-name", dest="assistant_name", default="Xibi", help="Name for the assistant (default: Xibi)"
+    )
 
     # doctor
     subparsers.add_parser("doctor", help="Check workdir health")

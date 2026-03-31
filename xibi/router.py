@@ -18,16 +18,10 @@ _circuit_breaker_cache: dict[str, CircuitBreaker] = {}
 
 # Any code that wants LLM calls attributed to a trace sets this before calling generate().
 # router.py reads it automatically. Falls back gracefully if not set.
-_active_trace: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
-    "_active_trace", default=None
-)
+_active_trace: contextvars.ContextVar[dict | None] = contextvars.ContextVar("_active_trace", default=None)
 
-_active_db_path: contextvars.ContextVar[Path | None] = contextvars.ContextVar(
-    "_active_db_path", default=None
-)
-_active_tracer: contextvars.ContextVar[Any | None] = contextvars.ContextVar(
-    "_active_tracer", default=None
-)
+_active_db_path: contextvars.ContextVar[Path | None] = contextvars.ContextVar("_active_db_path", default=None)
+_active_tracer: contextvars.ContextVar[Any | None] = contextvars.ContextVar("_active_tracer", default=None)
 
 
 def set_trace_context(trace_id: str | None, span_id: str | None, operation: str) -> None:

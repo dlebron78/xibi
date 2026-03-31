@@ -2,6 +2,7 @@
 Tests for step-39: remaining operational hardening fixes.
 Covers SIGTERM loop check, DB startup validation, daily purge, narrow except, exc_info.
 """
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -23,6 +24,7 @@ def reset_shutdown_flag():
 # Fix 1 — SIGTERM loop check
 # ---------------------------------------------------------------------------
 
+
 def test_sigterm_exits_poll_loop():
     """Poll loop exits when shutdown flag is set."""
     from xibi.shutdown import is_shutdown_requested, request_shutdown
@@ -40,6 +42,7 @@ def test_sigterm_exits_poll_loop():
 
 def test_request_shutdown_sets_flag():
     from xibi.shutdown import is_shutdown_requested, request_shutdown
+
     assert not is_shutdown_requested()
     request_shutdown()
     assert is_shutdown_requested()
@@ -48,6 +51,7 @@ def test_request_shutdown_sets_flag():
 # ---------------------------------------------------------------------------
 # Fix 2 — DB path startup validation
 # ---------------------------------------------------------------------------
+
 
 def test_db_path_validation_at_startup_raises_on_bad_path(tmp_path):
     """TelegramAdapter raises RuntimeError if DB path is not accessible."""
@@ -96,6 +100,7 @@ def test_db_path_validation_passes_with_valid_path(tmp_path):
 # ---------------------------------------------------------------------------
 # Fix 3 — Daily purge schedule
 # ---------------------------------------------------------------------------
+
 
 def test_purge_called_once_per_day(tmp_path):
     """_purge_old_processed_messages is called exactly once per calendar day."""
@@ -148,6 +153,7 @@ def test_purge_called_once_per_day(tmp_path):
 # Fix 4A — Narrow except in react
 # ---------------------------------------------------------------------------
 
+
 def test_react_loop_propagates_keyboard_interrupt(tmp_path):
     """KeyboardInterrupt raised inside LLM call propagates out of react.run()."""
     from xibi.db.migrations import migrate
@@ -166,9 +172,11 @@ def test_react_loop_propagates_keyboard_interrupt(tmp_path):
     mock_llm = MagicMock()
     mock_llm.generate.side_effect = KeyboardInterrupt("stop now")
 
-    with patch("xibi.react.get_model", return_value=mock_llm), \
-         patch("xibi.react.Tracer", MagicMock()), \
-         pytest.raises(KeyboardInterrupt):
+    with (
+        patch("xibi.react.get_model", return_value=mock_llm),
+        patch("xibi.react.Tracer", MagicMock()),
+        pytest.raises(KeyboardInterrupt),
+    ):
         react_run(
             query="hello",
             config={"db_path": str(db_path)},
@@ -180,6 +188,7 @@ def test_react_loop_propagates_keyboard_interrupt(tmp_path):
 # ---------------------------------------------------------------------------
 # Fix 4B — exc_info in session.py
 # ---------------------------------------------------------------------------
+
 
 def test_session_exc_info_on_entity_extraction_failure(tmp_path, caplog):
     """logger.warning includes exc_info when entity extraction fails."""
@@ -199,9 +208,12 @@ def test_session_exc_info_on_entity_extraction_failure(tmp_path, caplog):
     turn.turn_id = "t1"
     turn.tools_called = []
 
-    with patch("xibi.session.get_model", return_value=mock_llm), \
-         caplog.at_level(logging.WARNING, logger="xibi.session"):
+    with (
+        patch("xibi.session.get_model", return_value=mock_llm),
+        caplog.at_level(logging.WARNING, logger="xibi.session"),
+    ):
         session.extract_entities(turn, [{"content": "some text that is long enough to trigger extraction"}])
 
-    assert any(r.exc_info is not None for r in caplog.records), \
+    assert any(r.exc_info is not None for r in caplog.records), (
         "Expected exc_info=True on the entity extraction warning"
+    )

@@ -86,14 +86,12 @@ def test_react_run_emits_root_span(tmp_path: Path):
     config = {
         "db_path": str(db_path),
         "models": {"text": {"fast": {"provider": "ollama", "model": "qwen"}}},
-        "providers": {"ollama": {"base_url": "http://localhost"}}
+        "providers": {"ollama": {"base_url": "http://localhost"}},
     }
 
     # Mock Ollama call
     with patch("xibi.router.OllamaClient._call_provider") as mock_call:
-        mock_call.return_value = json.dumps(
-            {"thought": "done", "tool": "finish", "tool_input": {"answer": "hello"}}
-        )
+        mock_call.return_value = json.dumps({"thought": "done", "tool": "finish", "tool_input": {"answer": "hello"}})
         with patch("xibi.router._check_provider_health", return_value=True):
             result = run(
                 "query",
@@ -115,7 +113,7 @@ def test_react_run_emits_tool_spans(tmp_path: Path):
     config = {
         "db_path": str(db_path),
         "models": {"text": {"fast": {"provider": "ollama", "model": "qwen"}}},
-        "providers": {"ollama": {"base_url": "http://localhost"}}
+        "providers": {"ollama": {"base_url": "http://localhost"}},
     }
 
     # Mock LLM to call a tool then finish
@@ -188,13 +186,11 @@ def test_result_has_trace_id(tmp_path: Path):
     config = {
         "db_path": str(db_path),
         "models": {"text": {"fast": {"provider": "ollama", "model": "qwen"}}},
-        "providers": {"ollama": {"base_url": "http://localhost"}}
+        "providers": {"ollama": {"base_url": "http://localhost"}},
     }
 
     with patch("xibi.router.OllamaClient._call_provider") as mock_call:
-        mock_call.return_value = json.dumps(
-            {"thought": "done", "tool": "finish", "tool_input": {"answer": "hello"}}
-        )
+        mock_call.return_value = json.dumps({"thought": "done", "tool": "finish", "tool_input": {"answer": "hello"}})
         with patch("xibi.router._check_provider_health", return_value=True):
             result = run("query", config, [], tracer=tracer)
             assert result.trace_id is not None

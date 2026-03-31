@@ -47,7 +47,7 @@ def test_should_run_idle_no_signals(db_path):
 
 def test_should_run_below_threshold(db_path):
     with open_db(db_path) as conn, conn:
-        for i in range(3):
+        for _i in range(3):
             conn.execute("INSERT INTO signals (source, content_preview) VALUES ('test', 'p')")
     cycle = ObservationCycle(db_path=db_path, profile={"observation": {"trigger_threshold": 5}})
     should, reason = cycle.should_run()
@@ -57,7 +57,7 @@ def test_should_run_below_threshold(db_path):
 
 def test_should_run_activity_trigger(db_path):
     with open_db(db_path) as conn, conn:
-        for i in range(6):
+        for _i in range(6):
             conn.execute("INSERT INTO signals (source, content_preview) VALUES ('test', 'p')")
     cycle = ObservationCycle(db_path=db_path, profile={"observation": {"trigger_threshold": 5}})
     should, reason = cycle.should_run()
@@ -80,7 +80,7 @@ def test_should_run_max_interval(db_path):
 
 def test_should_run_respects_min_interval(db_path):
     with open_db(db_path) as conn, conn:
-        for i in range(10):
+        for _i in range(10):
             conn.execute("INSERT INTO signals (source, content_preview) VALUES ('test', 'p')")
         conn.execute(
             "INSERT INTO observation_cycles (started_at, completed_at, last_signal_id) VALUES (datetime('now', '-10 minutes'), datetime('now', '-5 minutes'), 0)"
@@ -118,7 +118,7 @@ def test_collect_signals_filters_by_watermark(db_path):
 
 def test_collect_signals_hard_cap(db_path):
     with open_db(db_path) as conn, conn:
-        for i in range(150):
+        for _i in range(150):
             conn.execute("INSERT INTO signals (source, content_preview) VALUES ('test', 'p')")
     cycle = ObservationCycle(db_path=db_path)
     signals = cycle._collect_signals(0)
@@ -165,7 +165,7 @@ def test_run_skips_when_idle(db_path):
 
 def test_run_records_cycle_row(db_path):
     with open_db(db_path) as conn, conn:
-        for i in range(6):
+        for _i in range(6):
             conn.execute("INSERT INTO signals (source, content_preview) VALUES ('test', 'p')")
 
     cycle = ObservationCycle(db_path=db_path, profile={"observation": {"trigger_threshold": 5}})
@@ -303,9 +303,11 @@ def test_poller_with_observation_cycle(db_path):
         observation_cycle=mock_cycle,
     )
 
-    with patch.object(poller, "_check_email", return_value=[]):
-        with patch.object(poller.rules, "get_seen_ids_with_conn", return_value=set()):
-            with patch.object(poller.rules, "load_triage_rules_with_conn", return_value={}):
-                poller._tick_with_conn(MagicMock())
+    with (
+        patch.object(poller, "_check_email", return_value=[]),
+        patch.object(poller.rules, "get_seen_ids_with_conn", return_value=set()),
+        patch.object(poller.rules, "load_triage_rules_with_conn", return_value={}),
+    ):
+        poller._tick_with_conn(MagicMock())
 
     mock_cycle.run.assert_called_once()

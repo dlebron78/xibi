@@ -152,6 +152,7 @@ def test_compress_to_beliefs_source_preserved(tmp_path, mocker):
 
     # Mocking datetime properly
     from datetime import datetime, timedelta
+
     now = datetime.utcnow()
 
     with patch("xibi.session.datetime") as mock_dt:

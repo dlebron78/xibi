@@ -289,6 +289,7 @@ def run(
     context_block = ""
     if session_context:
         from xibi.session import SessionContext
+
         if isinstance(session_context, SessionContext):
             context_block = session_context.get_context_block()
 

@@ -77,7 +77,7 @@ def test_should_propose_below_threshold():
 def seed_signals(db_path: Path, entity: str, topic: str, count: int, proposal_status: str = "active"):
     """Helper to insert dummy signals."""
     with sqlite3.connect(db_path) as conn:
-        for i in range(count):
+        for _i in range(count):
             conn.execute(
                 "INSERT INTO signals (source, entity_text, topic_hint, content_preview, proposal_status, env) "
                 "VALUES ('email', ?, ?, 'test...', ?, 'test')",

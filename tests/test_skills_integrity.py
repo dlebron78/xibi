@@ -34,7 +34,7 @@ def test_tool_compilation_and_contract():
 
         for tool in manifest.get("tools", []):
             tool_name = tool.get("name")
-            module_path = tool.get("python_module")
+            tool.get("python_module")
 
             assert tool_name, f"Tool missing 'name' in skill '{skill_name}'"
 
@@ -57,7 +57,7 @@ def test_tool_compilation_and_contract():
                 module = importlib.util.module_from_spec(spec)
                 spec.loader.exec_module(module)
             except Exception as e:
-                raise ImportError(f"Failed to load tool module '{tool_file}' for skill '{skill_name}': {e}")
+                raise ImportError(f"Failed to load tool module '{tool_file}' for skill '{skill_name}': {e}") from e
             finally:
                 if path_injected:
                     sys.path.remove(tools_dir)

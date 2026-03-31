@@ -146,9 +146,8 @@ def evaluate_test_2(trace):
     first_email = next(
         (i for i, t in enumerate(tools_used) if t in ["send_email", "reply_email", "draft_long_form"]), None
     )
-    if first_recall is not None:
-        if first_email is None or first_recall < first_email:
-            recall_before_email = True
+    if first_recall is not None and (first_email is None or first_recall < first_email):
+        recall_before_email = True
     results["metrics"]["recall_before_email"] = recall_before_email
 
     # Metric 4: Did it avoid reply_email (wrong tool for this task)?
@@ -209,6 +208,7 @@ def run_single_test(prompt, evaluate_fn, iteration):
     print(f"  Iteration {iteration + 1}/{NUM_ITERATIONS}...", end=" ", flush=True)
 
     start = time.time()
+    trace = {}
     try:
         # =====================================================
         # INTEGRATION POINT: Replace this with your actual
@@ -258,10 +258,14 @@ def run_single_test(prompt, evaluate_fn, iteration):
         }
 
     duration = int((time.time() - start) * 1000)
-    if "duration_ms" not in trace:
+    if trace is not None and "duration_ms" not in trace:
         trace["duration_ms"] = duration
 
-    result = evaluate_fn(trace)
+    result = (
+        evaluate_fn(trace)
+        if trace is not None
+        else {"pass": False, "steps": 0, "duration_ms": duration, "tools_sequence": []}
+    )
 
     status = "PASS" if result["pass"] else "FAIL"
     tools = " → ".join(result["tools_sequence"][:6])

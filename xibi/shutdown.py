@@ -4,6 +4,7 @@ Process-wide graceful shutdown flag.
 Imported by __main__.py (to set it) and by poll/run loops (to check it).
 Kept in a separate module to avoid circular imports between __main__ and channels.
 """
+
 from __future__ import annotations
 
 _shutdown_requested: bool = False
