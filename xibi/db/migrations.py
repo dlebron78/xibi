@@ -17,7 +17,8 @@ class SchemaManager:
     def get_version(self) -> int:
         """Return the highest applied version from schema_version, or 0 if the table doesn't exist."""
         try:
-            with sqlite3.connect(self.db_path) as conn:
+            with sqlite3.connect(self.db_path, timeout=30) as conn:
+                conn.execute("PRAGMA busy_timeout=30000")
                 cursor = conn.execute("SELECT MAX(version) FROM schema_version")
                 row = cursor.fetchone()
                 return row[0] if row and row[0] is not None else 0
@@ -52,7 +53,8 @@ class SchemaManager:
             if version > current_version:
                 logger.info(f"Applying migration {version}: {description}")
                 try:
-                    with sqlite3.connect(self.db_path) as conn:
+                    with sqlite3.connect(self.db_path, timeout=30) as conn:
+                        conn.execute("PRAGMA busy_timeout=30000")
                         func(conn)
                         conn.execute(
                             "INSERT INTO schema_version (version, description) VALUES (?, ?)",

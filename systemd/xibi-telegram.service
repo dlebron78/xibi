@@ -13,6 +13,7 @@ ExecStart=%h/.local/bin/python -m xibi telegram \
     --workdir %h/.xibi
 Restart=on-failure
 RestartSec=10
+TimeoutStopSec=120
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=xibi-telegram
