@@ -8,7 +8,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from xibi.errors import ErrorCategory, XibiError
-from xibi.router import Config, get_model
+from xibi.router import (
+    Config,
+    _active_trace,
+    clear_trace_context,
+    get_model,
+    set_last_parse_status,
+    set_trace_context,
+)
 from xibi.tracing import Span, Tracer
 from xibi.trust.gradient import FailureType, TrustGradient
 
@@ -186,6 +193,9 @@ def run(
     _run_span_id = _tracer.new_span_id() if _tracer else None
     _run_start_ms = int(time.time() * 1000)
 
+    # Set trace context for subsequent LLM calls
+    set_trace_context(trace_id=_run_trace_id, span_id=_run_span_id, operation="react_step")
+
     def _emit_run_span(result: ReActResult) -> None:
         if _tracer is None or _run_trace_id is None or _run_span_id is None:
             return
@@ -218,6 +228,7 @@ def run(
             )
             res.trace_id = _run_trace_id
             _emit_run_span(res)
+            clear_trace_context()
             return res
 
     _shadow_matched = False
@@ -245,6 +256,7 @@ def run(
                 )
                 res.trace_id = _run_trace_id
                 _emit_run_span(res)
+                clear_trace_context()
                 return res
             elif match.tier == "hint":
                 context = f"[Shadow hint: consider using {match.tool}]\n{context}"
@@ -310,6 +322,7 @@ def run(
             res.error_summary = [s.error for s in scratchpad if s.error is not None]
             res.trace_id = _run_trace_id
             _emit_run_span(res)
+            clear_trace_context()
             return res
 
         # Construct prompt
@@ -321,6 +334,7 @@ def run(
             response_text = llm.generate(prompt, system=system_prompt)
             try:
                 parsed = _parse_llm_response(response_text)
+                set_last_parse_status("ok")
                 # Parse succeeded — record success
                 trust.record_success(_trust_specialty, _trust_effort)
                 parse_warning = None
@@ -329,13 +343,15 @@ def run(
                 # Recovery attempt
                 try:
                     recovery_prompt = f"{prompt}\n\nInvalid JSON received. Please respond with ONLY the JSON object."
-                    response_text = llm.generate(recovery_prompt, system=system_prompt)
+                    response_text = llm.generate(recovery_prompt, system=system_prompt, recovery_attempt=True)
                     parsed = _parse_llm_response(response_text)
+                    set_last_parse_status("recovered")
                     # Recovered parse — still a success (LLM produced valid JSON on retry)
                     trust.record_success(_trust_specialty, _trust_effort)
                     parse_warning = "Recovered from invalid JSON"
                     error = None
                 except Exception as inner_e:
+                    set_last_parse_status("failed")
                     # Persistent failure — LLM could not produce parseable JSON
                     trust.record_failure(_trust_specialty, _trust_effort, FailureType.PERSISTENT)
                     parsed = {"thought": f"Failed to parse LLM response: {str(inner_e)}", "tool": "error"}
@@ -368,6 +384,7 @@ def run(
                 res.error_summary = [s.error for s in scratchpad if s.error is not None]
                 res.trace_id = _run_trace_id
                 _emit_run_span(res)
+                clear_trace_context()
                 return res
 
             if step.tool == "ask_user":
@@ -381,6 +398,7 @@ def run(
                 res.error_summary = [s.error for s in scratchpad if s.error is not None]
                 res.trace_id = _run_trace_id
                 _emit_run_span(res)
+                clear_trace_context()
                 return res
 
             if is_repeat(step, scratchpad):
@@ -397,6 +415,7 @@ def run(
                     res.error_summary = [s.error for s in scratchpad if s.error is not None]
                     res.trace_id = _run_trace_id
                     _emit_run_span(res)
+                    clear_trace_context()
                     return res
                 continue
 
@@ -428,25 +447,6 @@ def run(
 
             scratchpad.append(step)
 
-            if _tracer and _run_trace_id and step.tool not in ("finish", "ask_user", "error"):
-                _tracer.emit(
-                    Span(
-                        trace_id=_run_trace_id,
-                        span_id=_tracer.new_span_id(),
-                        parent_span_id=_run_span_id,
-                        operation="tool.dispatch",
-                        component="executor",
-                        start_ms=int(time.time() * 1000) - step.duration_ms,  # approximate
-                        duration_ms=step.duration_ms,
-                        status="error" if step.error else "ok",
-                        attributes={
-                            "tool": step.tool,
-                            "step_num": str(step.step_num),
-                            "error": str(step.error.message) if step.error else "",
-                        },
-                    )
-                )
-
             if step_callback:
                 step_callback(step)
 
@@ -462,6 +462,7 @@ def run(
                     res.error_summary = [s.error for s in scratchpad if s.error is not None]
                     res.trace_id = _run_trace_id
                     _emit_run_span(res)
+                    clear_trace_context()
                     return res
             else:
                 consecutive_errors = 0
@@ -480,6 +481,7 @@ def run(
                 res.error_summary = [s.error for s in scratchpad if s.error is not None]
             res.trace_id = _run_trace_id
             _emit_run_span(res)
+            clear_trace_context()
             return res
 
     res = ReActResult(
@@ -488,4 +490,5 @@ def run(
     res.error_summary = [s.error for s in scratchpad if s.error is not None]
     res.trace_id = _run_trace_id
     _emit_run_span(res)
+    clear_trace_context()
     return res

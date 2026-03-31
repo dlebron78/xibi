@@ -149,6 +149,10 @@ def cmd_telegram(args: argparse.Namespace) -> None:
 
     db_path = workdir / "data" / "xibi.db"
 
+    from xibi.router import init_telemetry
+    from xibi.tracing import Tracer
+    init_telemetry(db_path, tracer=Tracer(db_path))
+
     signal.signal(signal.SIGTERM, _handle_sigterm)
 
     print(f"Starting Telegram bot with workdir {workdir}...")
@@ -197,6 +201,10 @@ def cmd_heartbeat(args: argparse.Namespace) -> None:
         skills_dir = Path("xibi/skills/sample")
 
     db_path = workdir / "data" / "xibi.db"
+
+    from xibi.router import init_telemetry
+    from xibi.tracing import Tracer
+    init_telemetry(db_path, tracer=Tracer(db_path))
 
     # Fail fast — don't discover a bad DB path mid-tick
     try:
