@@ -92,6 +92,7 @@ are still written with `operation="unknown"` — nothing is lost, just less labe
 | `xibi/executor.py` | Move `tool.dispatch` span emission here (from react.py). Add MCP-aware attributes. Both native and MCP tool calls emit same span shape. |
 | `xibi/react.py` | Call `set_trace_context()` at loop start, `clear_trace_context()` on all exit paths. **Remove** the `tool.dispatch` span block (executor handles it now, with better timing and MCP context). |
 | `xibi/heartbeat/poller.py` | Call `set_trace_context("heartbeat_tick")` before LLM calls — 2 lines added |
+| `xibi/__main__.py` | Call `init_telemetry(db_path, tracer=Tracer(db_path))` in both `cmd_telegram()` and `cmd_heartbeat()` after db_path is set |
 | `tests/test_tracing_step41.py` | New test file |
 
 Session.py, observation.py, quality.py, llm_classifier.py, radiant.py: **zero changes**.
@@ -493,11 +494,11 @@ react.run  (root — set by react.py)
 - Use `time.monotonic()` for duration measurement (not `time.time()` — monotonic is for elapsed time, time() is for wall clock)
 - `contextvars.ContextVar` is thread-safe per OS thread — each thread gets its own context. This is correct for our threading model (each request handler runs in its own thread)
 - `_last_tokens` on the instance: use `getattr(self, "_last_tokens", (0, 0, 0))` defensively — `_call_provider` may not have been called if provider raised before setting it
-- The `_role` attribute on client instances needs to be set in `get_model()` after client construction, not in `__init__` (since clients are cached in `_circuit_breaker_cache`)
+- **`_role` on `BreakerWrappedClient`**: `get_model()` returns a `BreakerWrappedClient`, not the raw `OllamaClient`. Set `_role` on BOTH: `client._role = effort` (on the wrapper) AND `client.inner._role = effort` (on the inner client where `_emit_telemetry` reads `self._role`). Otherwise the label will always be missing.
 - Circular import: `from xibi.db import open_db` inside `_emit_telemetry` body (not module level) avoids the router → db → router circular dependency
 - The `Span` import in router.py: import from `xibi.tracing` — check if already imported
-- `generate_structured()` calls `_call_provider()` via `generate()` internally — confirm call chain so telemetry fires exactly once, not twice
-- Migration number: check current highest migration in `xibi/db/migrations.py` and use next + 1
+- **`generate_structured()` does NOT call `generate()` — it calls `_call_provider()` directly** (confirmed by reading the code). This means `_emit_telemetry()` must be called explicitly in BOTH `generate()` AND `generate_structured()`. Do not assume the call chain routes through `generate()`.
+- **Migration number is 16** — current highest is 15 (`session_turns source column`). New migration adds `trace_id TEXT` column to `inference_events` and the index. Update `SCHEMA_VERSION = 15` to `SCHEMA_VERSION = 16`.
 - `init_telemetry()` is idempotent — calling it twice (if somehow both cmd_telegram and a test call it) should not break anything
 - heartbeat changes: only 2 call sites need `set_trace_context` (lines 143 and 383 in poller.py) — session.py, observation.py etc. require zero changes and still get inference_events written
 - Moving `tool.dispatch` from react.py to executor.py: delete the span block in react.py around lines 432–447. The new executor version is exact timing (monotonic, measured at dispatch), not approximate (time.time() backwards from react.py). Don't leave both in place — you'll get duplicate spans.
