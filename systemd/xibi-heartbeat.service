@@ -8,9 +8,7 @@ Type=simple
 User=%U
 WorkingDirectory=%h/xibi
 EnvironmentFile=%h/.xibi/secrets.env
-ExecStart=%h/.local/bin/python -m xibi heartbeat \
-    --config %h/.xibi/config.json \
-    --workdir %h/.xibi
+ExecStart=%h/.local/bin/python -m xibi --config %h/.xibi/config.json --workdir %h/.xibi heartbeat
 Restart=on-failure
 RestartSec=30
 TimeoutStopSec=120
