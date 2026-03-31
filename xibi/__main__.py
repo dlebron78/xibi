@@ -151,6 +151,7 @@ def cmd_telegram(args: argparse.Namespace) -> None:
     db_path = workdir / "data" / "xibi.db"
 
     from xibi.db import migrate
+
     migrate(db_path)
 
     from xibi.router import init_telemetry
@@ -208,6 +209,7 @@ def cmd_heartbeat(args: argparse.Namespace) -> None:
     db_path = workdir / "data" / "xibi.db"
 
     from xibi.db import migrate
+
     migrate(db_path)
 
     from xibi.router import init_telemetry

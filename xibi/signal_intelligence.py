@@ -68,7 +68,9 @@ def extract_tier0(signal_row: dict) -> SignalIntel:
     return intel
 
 
-def extract_tier1_batch(signals: list[dict], config: Config | None, config_path: str = "config.json") -> list[SignalIntel]:
+def extract_tier1_batch(
+    signals: list[dict], config: Config | None, config_path: str = "config.json"
+) -> list[SignalIntel]:
     """Batch fast role call. One LLM call for up to 20 signals."""
     if not signals:
         return []
@@ -308,7 +310,12 @@ def merge_intels(tier0: list[SignalIntel], tier1: list[SignalIntel]) -> list[Sig
 
 
 def enrich_signals(
-    db_path: Path, config: Config | None, batch_size: int = 20, *, config_path: str = "config.json", trust_gradient: TrustGradient | None = None
+    db_path: Path,
+    config: Config | None,
+    batch_size: int = 20,
+    *,
+    config_path: str = "config.json",
+    trust_gradient: TrustGradient | None = None,
 ) -> int:
     """Main entry point. Returns count of signals enriched. Never raises."""
     try:

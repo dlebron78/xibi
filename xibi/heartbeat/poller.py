@@ -196,8 +196,7 @@ class HeartbeatPoller:
         email_rules = self.rules.load_rules("email_alert")
 
         # --- Phase 2: classify emails — no DB connection held during LLM calls ---
-        ProcessedEmail = dict  # type alias for clarity
-        processed: list[ProcessedEmail] = []
+        processed: list[dict] = []
 
         for email in emails:
             email_id = str(email.get("id", ""))
@@ -227,14 +226,16 @@ class HeartbeatPoller:
             if verdict == "DIGEST":
                 verdict, subject = self._should_escalate(verdict, subject, subject, [])
 
-            processed.append({
-                "email": email,
-                "email_id": email_id,
-                "sender": sender,
-                "subject": subject,
-                "verdict": verdict,
-                "is_new": email_id not in seen_ids,
-            })
+            processed.append(
+                {
+                    "email": email,
+                    "email_id": email_id,
+                    "sender": sender,
+                    "subject": subject,
+                    "verdict": verdict,
+                    "is_new": email_id not in seen_ids,
+                }
+            )
 
         # --- Phase 3: short write transaction ---
         try:
