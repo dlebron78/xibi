@@ -202,14 +202,27 @@ def _parse_xml_response(response_text: str) -> dict[str, Any]:
         return m.group(1).strip() if m else None
 
     thought = _extract_tag("thought", response_text) or ""
-    tool = _extract_tag("tool", response_text)
+    tool_raw = _extract_tag("tool", response_text)
 
-    if not tool:
+    if not tool_raw:
         raise ValueError(f"No <tool> tag found in response: {response_text[:200]}")
 
-    tool = tool.strip()
+    tool_raw = tool_raw.strip()
 
-    # Handle finish — answer can be in <answer> tag or <tool_input>
+    # Some models write <tool>{"name": "tool_name", "arguments": {...}}</tool>
+    # Handle that variant — extract name + fold arguments into tool_input
+    _embedded_input: dict[str, Any] = {}
+    try:
+        _tool_obj = json.loads(tool_raw)
+        if isinstance(_tool_obj, dict) and "name" in _tool_obj:
+            tool = str(_tool_obj["name"])
+            _embedded_input = _tool_obj.get("arguments", _tool_obj.get("input", {})) or {}
+        else:
+            tool = tool_raw
+    except (json.JSONDecodeError, ValueError):
+        tool = tool_raw
+
+    # Handle finish — answer in <answer> tag
     if tool == "finish":
         answer = _extract_tag("answer", response_text)
         if answer is not None:
@@ -221,8 +234,8 @@ def _parse_xml_response(response_text: str) -> dict[str, Any]:
         if question is not None:
             return {"thought": thought, "tool": "ask_user", "tool_input": {"question": question}}
 
-    # Parse tool_input — try JSON first, then key-value tags
-    tool_input: dict[str, Any] = {}
+    # Parse tool_input — explicit tag takes precedence, then embedded args from <tool> blob
+    tool_input: dict[str, Any] = _embedded_input
     raw_input = _extract_tag("tool_input", response_text)
     if raw_input:
         try:
@@ -230,7 +243,6 @@ def _parse_xml_response(response_text: str) -> dict[str, Any]:
             if isinstance(parsed_input, dict):
                 tool_input = parsed_input
         except (json.JSONDecodeError, ValueError):
-            # Try to extract key=value pairs from the raw text
             for kv_match in re.finditer(r"(\w+)\s*[:=]\s*[\"']?([^\"'\n<]+)[\"']?", raw_input):
                 tool_input[kv_match.group(1)] = kv_match.group(2).strip()
 

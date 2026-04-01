@@ -333,6 +333,103 @@ SUITES: dict[int, dict[str, Any]] = {
             },
         ],
     },
+
+    # ── Suite 9: Signal Intelligence ────────────────────────────────────────
+    # Tests proactive reasoning — the model as briefing layer, not Q&A system.
+    # Five distinct capabilities:
+    #   1. Proactive signal surfacing (no scaffolding — model decides what matters)
+    #   2. Cross-source topic ranking (what topic has the most mass?)
+    #   3. Contradiction detection (P1 email vs CS team chat confirmation)
+    #   4. Hallucination guard (ask about something in zero sources)
+    #   5. Structured action extraction (every item, owner, deadline)
+    9: {
+        "name": "Signal Intelligence",
+        "goal": "Proactive signal detection, topic ranking, contradiction handling, and hallucination resistance",
+        "realistic_inbox": True,
+        "turns": [
+            # ── Turn 1: Proactive briefing — no question framing ─────────────
+            # The user gives no hint about what to look for. The model must
+            # decide which sources to check and what's worth surfacing.
+            # A signal is something that appears in 2+ sources or from a
+            # high-authority sender. Noise is a one-off from a low-priority source.
+            {
+                "input": "morning. just pull everything together and tell me what's actually going on today.",
+                "expect_any_keywords": [
+                    ["P1", "production", "payments", "incident", "war room"],
+                    ["board", "deck", "slide", "wednesday", "cto"],
+                    ["budget", "approval", "eod", "today", "sign"],
+                ],
+                "note": "Should surface the top signals unprompted — incident, board deck, budget. Not just list all emails.",
+            },
+            # ── Turn 2: Signal ranking by cross-source frequency ─────────────
+            # The P1 incident appears in: email (Jira alert), calendar (war room),
+            # chat #incidents (full thread), chat #engineering (postmortem).
+            # AWS costs appear in: email (billing alert), chat #general (Priya),
+            # chat #engineering (Priya + CTO).
+            # Board deck appears in: email (CTO fwd), chat #general (CTO), calendar (4pm session).
+            # Model should rank by source count, not just recency or sender.
+            {
+                "input": "which of those topics is showing up the most across all my sources — email, calendar, and chat combined?",
+                "expect_tool": "chat",
+                "expect_any_keywords": [
+                    ["incident", "P1", "payments", "production"],
+                    ["aws", "cost", "billing"],
+                    ["board", "deck"],
+                ],
+                "note": "Should rank by cross-source mass — incident touches email+calendar+2 chat channels",
+            },
+            # ── Turn 3: Contradiction detection ──────────────────────────────
+            # The P1 Jira email says '3 customers affected'.
+            # The #engineering chat (Rachel, 10:15) says CS confirmed no
+            # customer-facing impact — all 3 accounts were batch jobs.
+            # Model should surface the conflict, not just pick one version.
+            {
+                "input": "the P1 alert said customers were affected — is that actually true based on everything you've seen?",
+                "expect_tool": "chat",
+                "expect_any_keywords": [
+                    ["rachel", "cs team", "no customer", "batch", "no impact", "auto-populated",
+                     "conflict", "contradicts", "however", "but", "actually", "clarified"],
+                ],
+                "note": "Should find Rachel's 10:15 engineering message and flag the conflict with the Jira email",
+            },
+            # ── Turn 4: Hallucination guard ───────────────────────────────────
+            # Nothing in email, calendar, or chat mentions legal, exemptions,
+            # waivers, or any special process around compliance training.
+            # A hallucinating model will invent a plausible-sounding answer.
+            # A calibrated model will say it doesn't have that information.
+            {
+                "input": "what did legal say about the compliance training — is there an exemption process for engineers?",
+                "expect_no_keywords": [
+                    "legal said", "exemption process", "waiver", "engineers are exempt",
+                    "legal team confirmed", "according to legal",
+                ],
+                "expect_any_keywords": [
+                    ["don't have", "no information", "nothing", "can't find",
+                     "not mentioned", "no details", "not in", "unable to find",
+                     "didn't find", "no mention"],
+                ],
+                "note": "Should admit it has no data on this — not fabricate a legal exemption process",
+            },
+            # ── Turn 5: Structured action extraction ─────────────────────────
+            # Tests whether the model can synthesize across all sources into
+            # a clean, structured action list with owners and deadlines.
+            # Every real action item has evidence in the data:
+            #   - DocuSign budget approval (Sarah's email, EOD today)
+            #   - Board deck infra slide (CTO email + chat, Wed morning)
+            #   - Compliance training (HR email + chat reminder, Fri Apr 4)
+            #   - AWS EC2 cleanup (Priya's engineering message, no hard deadline)
+            #   - Postmortem write-up (daniel.l in engineering chat, no deadline)
+            {
+                "input": "ok extract every action item I personally need to do — with the deadline and who's waiting on me.",
+                "expect_any_keywords": [
+                    ["docusign", "sign", "approval", "budget", "sarah", "eod", "today"],
+                    ["board", "deck", "slide", "wednesday", "cto", "wed"],
+                    ["compliance", "training", "april 4", "friday"],
+                ],
+                "note": "Should extract: budget sign-off (EOD), board slide (Wed), compliance (Fri) at minimum",
+            },
+        ],
+    },
 }
 
 

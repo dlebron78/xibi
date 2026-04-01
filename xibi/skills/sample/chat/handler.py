@@ -40,6 +40,8 @@ _REALISTIC_CHANNELS: dict[str, list[dict]] = {
         {"from": "daniel.l", "text": "Good idea. Adding to the postmortem action items.", "ts": "09:52"},
         {"from": "priya.sharma", "text": "RE: AWS costs — I checked Cost Explorer. The spike is from that load test someone ran on Friday without tearing down the extra EC2 instances. We're paying for 12 c5.2xlarge we don't need.", "ts": "10:00"},
         {"from": "cto", "text": "^^ @daniel.l add this to your board deck slide. Board will want to know we caught it and have a plan.", "ts": "10:05"},
+        # ── Contradiction: P1 email said "3 customers affected" — CS team says otherwise ──
+        {"from": "rachel.kim", "text": "FYI — I checked with the CS team re: the 3 accounts flagged in the P1 alert. All three were on batch processing jobs, not real-time flows. No customer-facing impact was reported. The Jira alert auto-populated that field from the account count, not from actual complaints.", "ts": "10:15"},
     ],
 }
 
