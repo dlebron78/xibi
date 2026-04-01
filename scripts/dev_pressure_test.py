@@ -431,6 +431,7 @@ def run_suite(
     db_path: Path,
     skills_dir: Path,
     verbose: bool = False,
+    react_format: str = "json",
 ) -> dict[str, Any]:
     suite = SUITES[suite_id]
 
@@ -468,6 +469,7 @@ def run_suite(
                 session_context=session,
                 max_steps=8,
                 max_secs=90,
+                react_format=react_format,
             )
             # Update session context with this turn's result
             try:
@@ -563,6 +565,12 @@ def main() -> int:
         help="Override model (e.g. gemini-2.5-flash, gemini-3.1-pro-preview). "
              "Prefix with 'gemini-' to auto-select Gemini provider.",
     )
+    parser.add_argument(
+        "--format",
+        choices=["json", "xml"],
+        default="json",
+        help="ReAct response format: json (default) or xml",
+    )
     args = parser.parse_args()
 
     skills_dir = Path(args.skills_dir).expanduser()
@@ -588,6 +596,7 @@ def main() -> int:
         print(f"   Skills:  {skills_dir}")
         print(f"   DB:      {db_path} (temp, isolated)")
         print(f"   Suites:  {suites_to_run}")
+        print(f"   Format:  {args.format}")
 
         config = json.loads(json.dumps(DEV_CONFIG))  # deep copy
         config["db_path"] = str(db_path)
@@ -619,6 +628,7 @@ def main() -> int:
                 db_path=db_path,
                 skills_dir=skills_dir,
                 verbose=args.verbose,
+                react_format=args.format,
             )
             all_results.append(result)
 

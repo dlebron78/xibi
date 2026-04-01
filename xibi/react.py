@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -158,7 +159,7 @@ def handle_intent(decision: RoutingDecision) -> str:
             return ""
 
 
-def _parse_llm_response(response_text: str) -> dict[str, Any]:
+def _parse_json_response(response_text: str) -> dict[str, Any]:
     """Extract JSON from LLM response."""
     # Try direct parse
     try:
@@ -167,9 +168,6 @@ def _parse_llm_response(response_text: str) -> dict[str, Any]:
             return parsed
         raise ValueError("Response is not a JSON object")
     except (json.JSONDecodeError, ValueError):
-        # Try to find JSON block
-        import re
-
         match = re.search(r"\{.*\}", response_text, re.DOTALL)
         if match:
             try:
@@ -179,6 +177,71 @@ def _parse_llm_response(response_text: str) -> dict[str, Any]:
             except json.JSONDecodeError:
                 pass
         raise
+
+
+def _parse_xml_response(response_text: str) -> dict[str, Any]:
+    """Extract XML-tagged fields from LLM response.
+
+    Expected format:
+        <thought>...</thought>
+        <tool>tool_name</tool>
+        <tool_input>{"key": "value"}</tool_input>
+    Or for finish:
+        <thought>...</thought>
+        <tool>finish</tool>
+        <answer>The final answer text...</answer>
+    Or for ask_user:
+        <thought>...</thought>
+        <tool>ask_user</tool>
+        <question>What do you need?</question>
+    """
+
+    def _extract_tag(tag: str, text: str) -> str | None:
+        # Match both <tag>content</tag> and <tag>\ncontent\n</tag>
+        m = re.search(rf"<{tag}>(.*?)</{tag}>", text, re.DOTALL)
+        return m.group(1).strip() if m else None
+
+    thought = _extract_tag("thought", response_text) or ""
+    tool = _extract_tag("tool", response_text)
+
+    if not tool:
+        raise ValueError(f"No <tool> tag found in response: {response_text[:200]}")
+
+    tool = tool.strip()
+
+    # Handle finish — answer can be in <answer> tag or <tool_input>
+    if tool == "finish":
+        answer = _extract_tag("answer", response_text)
+        if answer is not None:
+            return {"thought": thought, "tool": "finish", "tool_input": {"answer": answer}}
+
+    # Handle ask_user — question in <question> tag
+    if tool == "ask_user":
+        question = _extract_tag("question", response_text)
+        if question is not None:
+            return {"thought": thought, "tool": "ask_user", "tool_input": {"question": question}}
+
+    # Parse tool_input — try JSON first, then key-value tags
+    tool_input: dict[str, Any] = {}
+    raw_input = _extract_tag("tool_input", response_text)
+    if raw_input:
+        try:
+            parsed_input = json.loads(raw_input)
+            if isinstance(parsed_input, dict):
+                tool_input = parsed_input
+        except (json.JSONDecodeError, ValueError):
+            # Try to extract key=value pairs from the raw text
+            for kv_match in re.finditer(r"(\w+)\s*[:=]\s*[\"']?([^\"'\n<]+)[\"']?", raw_input):
+                tool_input[kv_match.group(1)] = kv_match.group(2).strip()
+
+    return {"thought": thought, "tool": tool, "tool_input": tool_input}
+
+
+def _parse_llm_response(response_text: str, react_format: str = "json") -> dict[str, Any]:
+    """Route to the appropriate parser based on format."""
+    if react_format == "xml":
+        return _parse_xml_response(response_text)
+    return _parse_json_response(response_text)
 
 
 def run(
@@ -198,6 +261,7 @@ def run(
     trust_gradient: TrustGradient | None = None,
     tracer: Tracer | None = None,
     llm_routing_classifier: LLMRoutingClassifier | None = None,
+    react_format: str = "json",
 ) -> ReActResult:
     start_time = time.time()
 
@@ -321,14 +385,39 @@ def run(
             f"Always address them as {_user_name}. Never ask for their name — you already know it.",
         ]
 
+    _tools_block = f"Available tools: {json.dumps(_flatten_tools(skill_registry))}"
+
+    if react_format == "xml":
+        _format_instructions = (
+            "Instructions:\n"
+            "1. Respond using XML tags ONLY — no other text outside the tags.\n"
+            "2. Every response must contain <thought> and <tool> tags.\n"
+            "3. For tool calls:\n"
+            "   <thought>your reasoning</thought>\n"
+            "   <tool>tool_name</tool>\n"
+            '   <tool_input>{"param": "value"}</tool_input>\n'
+            "4. When you have the final answer:\n"
+            "   <thought>your reasoning</thought>\n"
+            "   <tool>finish</tool>\n"
+            "   <answer>your complete answer to the user</answer>\n"
+            "5. When you need more information:\n"
+            "   <thought>your reasoning</thought>\n"
+            "   <tool>ask_user</tool>\n"
+            "   <question>what you need to know</question>\n"
+        )
+    else:
+        _format_instructions = (
+            "Instructions:\n"
+            '1. Respond in JSON format only: {"thought": "...", "tool": "...", "tool_input": {...}}\n'
+            "2. Special tools:\n"
+            '   - "finish": Use when you have the final answer. Input: {"answer": "..."}\n'
+            '   - "ask_user": Use when you need more information. Input: {"question": "..."}\n'
+        )
+
     system_prompt = (f"{context_block}\n\n" if context_block else "") + (
         "\n".join(_identity_lines) + "\n\n"
-        f"Available tools: {json.dumps(_flatten_tools(skill_registry))}\n\n"
-        "Instructions:\n"
-        '1. Respond in JSON format only: {"thought": "...", "tool": "...", "tool_input": {...}}\n'
-        "2. Special tools:\n"
-        '   - "finish": Use when you have the final answer. Input: {"answer": "..."}\n'
-        '   - "ask_user": Use when you need more information. Input: {"question": "..."}\n'
+        f"{_tools_block}\n\n"
+        f"{_format_instructions}"
     )
 
     for step_num in range(1, max_steps + 1):
@@ -345,13 +434,14 @@ def run(
 
         # Construct prompt
         compressed_pad = compress_scratchpad(scratchpad)
-        prompt = f"Original Query: {query}\nContext: {context}\nScratchpad:\n{compressed_pad}\n\nNext Step (JSON):"
+        _step_label = "Next Step (XML):" if react_format == "xml" else "Next Step (JSON):"
+        prompt = f"Original Query: {query}\nContext: {context}\nScratchpad:\n{compressed_pad}\n\n{_step_label}"
 
         step_start_time = time.time()
         try:
             response_text = llm.generate(prompt, system=system_prompt)
             try:
-                parsed = _parse_llm_response(response_text)
+                parsed = _parse_llm_response(response_text, react_format)
                 set_last_parse_status("ok")
                 # Parse succeeded — record success
                 trust.record_success(_trust_specialty, _trust_effort)
@@ -360,9 +450,13 @@ def run(
             except Exception:
                 # Recovery attempt
                 try:
-                    recovery_prompt = f"{prompt}\n\nInvalid JSON received. Please respond with ONLY the JSON object."
+                    if react_format == "xml":
+                        recovery_hint = "Invalid response. Please respond with ONLY the XML tags: <thought>, <tool>, and <tool_input> or <answer>."
+                    else:
+                        recovery_hint = "Invalid JSON received. Please respond with ONLY the JSON object."
+                    recovery_prompt = f"{prompt}\n\n{recovery_hint}"
                     response_text = llm.generate(recovery_prompt, system=system_prompt, recovery_attempt=True)
-                    parsed = _parse_llm_response(response_text)
+                    parsed = _parse_llm_response(response_text, react_format)
                     set_last_parse_status("recovered")
                     # Recovered parse — still a success (LLM produced valid JSON on retry)
                     trust.record_success(_trust_specialty, _trust_effort)
