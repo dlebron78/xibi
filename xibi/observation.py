@@ -10,9 +10,18 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from xibi.db import open_db
+from xibi.errors import XibiError
 from xibi.react import _parse_llm_response, dispatch
 from xibi.router import get_model
 from xibi.trust.gradient import FailureType, TrustGradient
+
+
+def _json_default(obj: Any) -> Any:
+    """JSON serialiser fallback — converts XibiError to dict, everything else to str."""
+    if isinstance(obj, XibiError):
+        return obj.to_dict()
+    return str(obj)
+
 
 if TYPE_CHECKING:
     pass
@@ -601,11 +610,11 @@ class ObservationCycle:
                 """,
                     (
                         result.signals_processed,
-                        json.dumps(result.actions_taken),
+                        json.dumps(result.actions_taken, default=_json_default),
                         result.role_used,
                         1 if result.degraded else 0,
                         result.new_watermark,
-                        json.dumps(result.errors) if result.errors else None,
+                        json.dumps(result.errors, default=_json_default) if result.errors else None,
                         cycle_id,
                     ),
                 )
