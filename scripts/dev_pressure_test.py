@@ -49,17 +49,17 @@ DEV_CONFIG: dict[str, Any] = {
         "text": {
             "fast": {
                 "provider": "ollama",
-                "model": "qwen3.5:9b",
-                "options": {"temperature": 0.1},
+                "model": "qwen3.5:4b",
+                "options": {"temperature": 0.1, "think": False},
                 "keep_alive": "30m",
                 "think": False,
             },
             "think": {
                 "provider": "ollama",
-                "model": "qwen3.5:9b",
-                "options": {"temperature": 0.1},
+                "model": "qwen3.5:4b",
+                "options": {"temperature": 0.1, "think": False},
                 "keep_alive": "30m",
-                "think": True,
+                "think": False,
             },
         }
     },
