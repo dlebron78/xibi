@@ -208,6 +208,57 @@ SUITES: dict[int, dict[str, Any]] = {
             },
         ],
     },
+    # ── Suite 7: Deep triage — realistic mixed-priority inbox ─────────────
+    # This suite uses _REALISTIC_INBOX (10 emails) which has no pre-sorted
+    # categories. The model must reason about urgency from content, deadlines,
+    # sender importance, and social context.
+    7: {
+        "name": "Priority Triage (Deep)",
+        "goal": "Correctly rank, flag, and reason about a realistic 10-email inbox",
+        "realistic_inbox": True,  # triggers handler switch
+        "turns": [
+            {
+                "input": "check my emails and tell me what needs my attention right now",
+                "expect_tool": "email",
+                "expect_keywords": ["P1", "latency", "budget", "approval"],
+                "expect_no_keywords": ["doordash", "linkedin"],
+                "note": "Should surface the P1 production alert and EOD budget deadline, not noise",
+            },
+            {
+                "input": "which of these can i safely ignore?",
+                "expect_keywords": [],
+                "expect_any_keywords": [
+                    ["linkedin", "doordash", "dashpass", "profile"],
+                ],
+                "note": "Should identify LinkedIn + DoorDash as ignorable promotional noise",
+            },
+            {
+                "input": "is there anything with a hard deadline this week?",
+                "expect_keywords": [],
+                "expect_any_keywords": [
+                    ["compliance", "april 4", "training"],
+                    ["board", "wednesday", "slide"],
+                    ["budget", "eod", "today"],
+                ],
+                "note": "Should surface: budget (today), board slide (Wed), compliance (Fri Apr 4)",
+            },
+            {
+                "input": "what about the AWS bill — should I be worried?",
+                "expect_keywords": ["847", "500"],
+                "note": "Should note the $847 charge exceeds $500 threshold — factual, not dismissive",
+            },
+            {
+                "input": "draft a priority list from most to least urgent",
+                "expect_keywords": [],
+                "expect_ordered_keywords": [
+                    "P1",       # production incident — first
+                    "budget",   # EOD today deadline
+                    "board",    # Wed deadline from CTO
+                ],
+                "note": "P1 incident > EOD budget sign-off > board deck due Wed. This is the core test.",
+            },
+        ],
+    },
 }
 
 
@@ -249,6 +300,29 @@ def evaluate_turn(
         if kw.lower() not in answer_lower:
             issues.append(f"missing keyword: '{kw}'")
 
+    # Check "any of these groups" keywords — passes if at least one keyword
+    # from ANY group is found.  [[kw1a, kw1b], [kw2a]] → need ≥1 from any group.
+    for group in turn.get("expect_any_keywords", []):
+        if not any(kw.lower() in answer_lower for kw in group):
+            issues.append(f"missing any of: {group}")
+
+    # Check ordered keywords — verifies keywords appear in the expected order
+    # (first mention of each keyword should be in ascending position).
+    if ordered := turn.get("expect_ordered_keywords"):
+        positions = []
+        for kw in ordered:
+            pos = answer_lower.find(kw.lower())
+            if pos == -1:
+                issues.append(f"ordered keyword missing: '{kw}'")
+            else:
+                positions.append((pos, kw))
+        if len(positions) == len(ordered):
+            for i in range(1, len(positions)):
+                if positions[i][0] < positions[i - 1][0]:
+                    issues.append(
+                        f"wrong order: '{positions[i][1]}' appeared before '{positions[i-1][1]}'"
+                    )
+
     # Check hallucination guard
     for kw in turn.get("expect_no_keywords", []):
         if kw.lower() in answer_lower:
@@ -285,6 +359,12 @@ def run_suite(
     verbose: bool = False,
 ) -> dict[str, Any]:
     suite = SUITES[suite_id]
+
+    # Toggle realistic inbox for suites that request it
+    from xibi.skills.sample.email import handler as _email_handler
+
+    _email_handler.use_realistic_inbox = suite.get("realistic_inbox", False)
+
     print(f"\n{'─'*60}")
     print(f"Suite {suite_id}: {suite['name']}")
     print(f"Goal: {suite['goal']}")
