@@ -24,6 +24,7 @@ import logging
 import sys
 import tempfile
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -291,7 +292,7 @@ def run_suite(
     skill_manifests = registry.get_skill_manifests()
 
     # Fresh session context for this suite
-    session = SessionContext(db_path=db_path, config=config)
+    session = SessionContext(session_id=str(uuid.uuid4()), db_path=db_path, config=config)
 
     turn_results = []
     for i, turn in enumerate(suite["turns"]):
