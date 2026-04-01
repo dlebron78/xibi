@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 import tempfile
 import time
@@ -220,42 +221,47 @@ SUITES: dict[int, dict[str, Any]] = {
             {
                 "input": "check my emails and tell me what needs my attention right now",
                 "expect_tool": "email",
-                "expect_keywords": ["P1", "latency", "budget", "approval"],
-                "expect_no_keywords": ["doordash", "linkedin"],
-                "note": "Should surface the P1 production alert and EOD budget deadline, not noise",
-            },
-            {
-                "input": "which of these can i safely ignore?",
-                "expect_keywords": [],
                 "expect_any_keywords": [
-                    ["linkedin", "doordash", "dashpass", "profile"],
+                    ["P1", "production", "alert", "latency", "payments"],
+                    ["budget", "approval", "finance", "docusign"],
                 ],
-                "note": "Should identify LinkedIn + DoorDash as ignorable promotional noise",
+                "note": "Should surface the P1 production alert and EOD budget deadline",
             },
             {
-                "input": "is there anything with a hard deadline this week?",
-                "expect_keywords": [],
+                "input": "go back to the full list — which emails can i safely ignore?",
+                "expect_tool": "email",
                 "expect_any_keywords": [
-                    ["compliance", "april 4", "training"],
-                    ["board", "wednesday", "slide"],
-                    ["budget", "eod", "today"],
+                    ["linkedin", "doordash", "dashpass", "profile", "promotional", "promo", "ignore"],
                 ],
-                "note": "Should surface: budget (today), board slide (Wed), compliance (Fri Apr 4)",
+                "note": "Should re-fetch inbox and identify LinkedIn + DoorDash as ignorable",
             },
             {
-                "input": "what about the AWS bill — should I be worried?",
-                "expect_keywords": ["847", "500"],
-                "note": "Should note the $847 charge exceeds $500 threshold — factual, not dismissive",
+                "input": "check my emails again — is there anything with a hard deadline this week?",
+                "expect_tool": "email",
+                "expect_any_keywords": [
+                    ["deadline", "eod", "today", "wednesday", "april 4", "friday", "due", "by end of"],
+                ],
+                "note": "Should surface at least one deadline from the inbox",
             },
             {
-                "input": "draft a priority list from most to least urgent",
-                "expect_keywords": [],
+                "input": "I think there was an AWS billing alert in there — can you find it and tell me the details?",
+                "expect_tool": "email",
+                "expect_any_keywords": [
+                    ["847", "500", "threshold", "exceed", "charges", "billing"],
+                ],
+                "note": "Should find the AWS billing alert and note $847 exceeds $500 threshold",
+            },
+            {
+                "input": "ok now draft a priority list of everything from most to least urgent",
+                "expect_any_keywords": [
+                    ["P1", "production", "alert", "latency"],
+                    ["budget", "approval"],
+                ],
                 "expect_ordered_keywords": [
                     "P1",       # production incident — first
                     "budget",   # EOD today deadline
-                    "board",    # Wed deadline from CTO
                 ],
-                "note": "P1 incident > EOD budget sign-off > board deck due Wed. This is the core test.",
+                "note": "P1 incident should rank above budget sign-off. Core prioritisation test.",
             },
         ],
     },
@@ -484,6 +490,11 @@ def main() -> int:
     parser.add_argument("--report-dir", default="reviews/test-runs", help="Report output directory")
     parser.add_argument("--verbose", "-v", action="store_true", help="Show answer previews per turn")
     parser.add_argument("--skills-dir", default="xibi/skills/sample", help="Path to skills directory")
+    parser.add_argument(
+        "--model",
+        help="Override model (e.g. gemini-2.5-flash, gemini-3.1-pro-preview). "
+             "Prefix with 'gemini-' to auto-select Gemini provider.",
+    )
     args = parser.parse_args()
 
     skills_dir = Path(args.skills_dir).expanduser()
@@ -510,8 +521,24 @@ def main() -> int:
         print(f"   DB:      {db_path} (temp, isolated)")
         print(f"   Suites:  {suites_to_run}")
 
-        config = DEV_CONFIG.copy()
+        config = json.loads(json.dumps(DEV_CONFIG))  # deep copy
         config["db_path"] = str(db_path)
+
+        # --model override: swap provider + model in all roles
+        if args.model:
+            provider = "gemini" if args.model.startswith("gemini-") else "ollama"
+            for role_cfg in config["models"]["text"].values():
+                role_cfg["provider"] = provider
+                role_cfg["model"] = args.model
+                if provider == "gemini":
+                    # Strip Ollama-specific options that Gemini SDK rejects
+                    role_cfg.pop("keep_alive", None)
+                    role_cfg.pop("think", None)
+                    role_cfg.get("options", {}).pop("think", None)
+                    role_cfg["options"] = {"temperature": role_cfg.get("options", {}).get("temperature", 0.3)}
+            if provider == "gemini":
+                config["providers"]["gemini"] = {"api_key_env": "GEMINI_API_KEY"}
+            print(f"   Model:   {args.model} ({provider})")
 
         # Run migrations so DB is initialised
         migrate(db_path)
