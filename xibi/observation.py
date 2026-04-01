@@ -494,7 +494,9 @@ class ObservationCycle:
                     allowed = False
 
                 actions_taken.append({"tool": tool_name, "input": tool_input, "output": output, "allowed": allowed})
-                messages.append({"role": "user", "content": f"Tool output: {json.dumps(output)}"})
+                # Strip internal tracking key before serializing
+                serializable_output = {k: v for k, v in output.items() if k != "_xibi_error"}
+                messages.append({"role": "user", "content": f"Tool output: {json.dumps(serializable_output)}"})
 
                 if output.get("status") == "error":
                     errors.append(f"Tool {tool_name} failed: {output.get('message')}")

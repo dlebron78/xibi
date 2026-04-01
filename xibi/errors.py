@@ -43,3 +43,14 @@ class XibiError(RuntimeError):
                 return "I had trouble understanding the response. Retrying."
             case _:
                 return "Something went wrong. Please try again."
+
+    def to_dict(self) -> dict:
+        """JSON-serializable representation for logging and storage."""
+        return {
+            "category": self.category.value,
+            "message": self.message,
+            "component": self.component,
+            "detail": self.detail,
+            "retryable": self.retryable,
+            "timestamp": self.timestamp,
+        }

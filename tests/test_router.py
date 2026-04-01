@@ -151,17 +151,16 @@ def test_ollama_client_generate_structured():
     assert res == {"key": "value"}
 
 
-@patch("google.generativeai.GenerativeModel")
-@patch("google.generativeai.configure")
-def test_gemini_client_generate(mock_configure, mock_gen_model):
-    mock_model_instance = MagicMock()
-    mock_gen_model.return_value = mock_model_instance
-    mock_model_instance.generate_content.return_value = MagicMock(text="Gemini response")
+@patch("xibi.router._google_genai")
+def test_gemini_client_generate(mock_genai):
+    mock_client = MagicMock()
+    mock_genai.Client.return_value = mock_client
+    mock_client.models.generate_content.return_value = MagicMock(text="Gemini response")
 
     client = GeminiClient("gemini", "gemini-2.5-flash", {}, "fake-key")
     res = client.generate("Hi")
     assert res == "Gemini response"
-    mock_configure.assert_called_with(api_key="fake-key")
+    mock_genai.Client.assert_called_with(api_key="fake-key")
 
 
 @responses.activate
@@ -176,8 +175,7 @@ def test_client_timeout_handling():
 # Integration tests
 @responses.activate
 @patch.dict(os.environ, {"GEMINI_API_KEY": "fake-key"})
-@patch("google.generativeai.GenerativeModel")
-def test_full_path_fast_role(mock_gen_model):
+def test_full_path_fast_role():
     # Mock Ollama health check
     responses.add(
         responses.GET, "http://localhost:11434/api/tags", json={"models": [{"name": "qwen3.5:4b"}]}, status=200
@@ -194,8 +192,8 @@ def test_full_path_fast_role(mock_gen_model):
 
 @responses.activate
 @patch.dict(os.environ, {"GEMINI_API_KEY": "fake-key"})
-@patch("google.generativeai.GenerativeModel")
-def test_full_path_with_fallback(mock_gen_model):
+@patch("xibi.router._google_genai")
+def test_full_path_with_fallback(mock_genai):
     # Mock Ollama health check - UNHEALTHY
     responses.add(responses.GET, "http://localhost:11434/api/tags", status=500)
 
@@ -207,9 +205,9 @@ def test_full_path_with_fallback(mock_gen_model):
     # responses.add(responses.GET, "http://localhost:11434/api/tags", status=500) # already added for any GET to tags
 
     # Fallback from think -> review (gemini)
-    mock_model_instance = MagicMock()
-    mock_gen_model.return_value = mock_model_instance
-    mock_model_instance.generate_content.return_value = MagicMock(text="Gemini fallback response")
+    mock_client = MagicMock()
+    mock_genai.Client.return_value = mock_client
+    mock_client.models.generate_content.return_value = MagicMock(text="Gemini fallback response")
 
     client = get_model("text", "fast", config_path="tests/fixtures/configs/valid.json")
     assert client.provider == "gemini"
@@ -264,26 +262,24 @@ def test_ollama_generate_structured_invalid_json():
     assert "invalid JSON" in str(excinfo.value)
 
 
-@patch("google.generativeai.GenerativeModel")
-@patch("google.generativeai.configure")
-def test_gemini_client_generate_structured(mock_configure, mock_gen_model):
+@patch("xibi.router._google_genai")
+def test_gemini_client_generate_structured(mock_genai):
     """Covers GeminiClient.generate_structured (lines 137-147)."""
-    mock_model_instance = MagicMock()
-    mock_gen_model.return_value = mock_model_instance
-    mock_model_instance.generate_content.return_value = MagicMock(text='{"result": "ok"}')
+    mock_client = MagicMock()
+    mock_genai.Client.return_value = mock_client
+    mock_client.models.generate_content.return_value = MagicMock(text='{"result": "ok"}')
 
     client = GeminiClient("gemini", "gemini-2.5-flash", {}, "fake-key")
     res = client.generate_structured("Summarize", {"type": "object"})
     assert res == {"result": "ok"}
 
 
-@patch("google.generativeai.GenerativeModel")
-@patch("google.generativeai.configure")
-def test_gemini_client_generate_exception(mock_configure, mock_gen_model):
+@patch("xibi.router._google_genai")
+def test_gemini_client_generate_exception(mock_genai):
     """Covers the Exception branch in GeminiClient._call_provider (lines 130-131)."""
-    mock_model_instance = MagicMock()
-    mock_gen_model.return_value = mock_model_instance
-    mock_model_instance.generate_content.side_effect = RuntimeError("API error")
+    mock_client = MagicMock()
+    mock_genai.Client.return_value = mock_client
+    mock_client.models.generate_content.side_effect = RuntimeError("API error")
 
     client = GeminiClient("gemini", "gemini-2.5-flash", {}, "fake-key")
     with pytest.raises(RuntimeError) as excinfo:
@@ -291,13 +287,12 @@ def test_gemini_client_generate_exception(mock_configure, mock_gen_model):
     assert "Gemini call failed" in str(excinfo.value)
 
 
-@patch("google.generativeai.GenerativeModel")
-@patch("google.generativeai.configure")
-def test_gemini_client_generate_structured_invalid_json(mock_configure, mock_gen_model):
+@patch("xibi.router._google_genai")
+def test_gemini_client_generate_structured_invalid_json(mock_genai):
     """Covers JSONDecodeError branch in GeminiClient.generate_structured."""
-    mock_model_instance = MagicMock()
-    mock_gen_model.return_value = mock_model_instance
-    mock_model_instance.generate_content.return_value = MagicMock(text="not-json")
+    mock_client = MagicMock()
+    mock_genai.Client.return_value = mock_client
+    mock_client.models.generate_content.return_value = MagicMock(text="not-json")
 
     client = GeminiClient("gemini", "gemini-2.5-flash", {}, "fake-key")
     with pytest.raises(RuntimeError) as excinfo:
@@ -305,13 +300,12 @@ def test_gemini_client_generate_structured_invalid_json(mock_configure, mock_gen
     assert "invalid JSON" in str(excinfo.value)
 
 
-@patch("google.generativeai.GenerativeModel")
-@patch("google.generativeai.configure")
-def test_gemini_client_generate_with_timeout(mock_configure, mock_gen_model):
+@patch("xibi.router._google_genai")
+def test_gemini_client_generate_with_timeout(mock_genai):
     """Covers the timeout kwarg branch in GeminiClient._call_provider (line 120)."""
-    mock_model_instance = MagicMock()
-    mock_gen_model.return_value = mock_model_instance
-    mock_model_instance.generate_content.return_value = MagicMock(text="response")
+    mock_client = MagicMock()
+    mock_genai.Client.return_value = mock_client
+    mock_client.models.generate_content.return_value = MagicMock(text="response")
 
     client = GeminiClient("gemini", "gemini-2.5-flash", {}, "fake-key")
     res = client.generate("Hi", timeout=30)

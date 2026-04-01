@@ -60,10 +60,11 @@ class SessionContext:
         Never raises.
         """
         try:
+            sentinel_key = f"session:{self.session_id}:compressed"
+
+            # Phase 1: Read — fetch data then release DB connection before LLM call.
             with open_db(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
-                # Dedup check
-                sentinel_key = f"session:{self.session_id}:compressed"
                 exists = conn.execute("SELECT 1 FROM beliefs WHERE key = ?", (sentinel_key,)).fetchone()
                 if exists:
                     return 0
@@ -81,17 +82,14 @@ class SessionContext:
                     """,
                     (self.session_id, self.COMPRESS_WINDOW),
                 ).fetchall()
+                row_count = len(rows)
+                exchanges = [f"User: {r['query']}\nXibi: {r['answer'][:300]}\n---" for r in rows]
 
-                if not rows:
-                    return 0
+            if not exchanges:
+                return 0
 
-                exchanges = []
-                for r in rows:
-                    exchanges.append(f"User: {r['query']}\nXibi: {r['answer'][:300]}\n---")
-
-                exchanges_text = "\n".join(exchanges)[:2000]
-
-                prompt = f"""You are extracting durable facts from a conversation to remember for future sessions.
+            exchanges_text = "\n".join(exchanges)[:2000]
+            prompt = f"""You are extracting durable facts from a conversation to remember for future sessions.
 Read the exchanges below and extract up to 5 facts that would be useful to recall later.
 
 Focus on:
@@ -112,20 +110,23 @@ Return JSON only:
 Exchanges:
 {exchanges_text}"""
 
-                llm = get_model(specialty="text", effort="fast", config=self.config)
-                response = llm.generate(prompt)
+            # Phase 2: LLM call — outside any DB connection.
+            llm = get_model(specialty="text", effort="fast", config=self.config)
+            response = llm.generate(prompt)
 
-                # Parse JSON
-                match = re.search(r"\{.*\}", response, re.DOTALL)
-                if not match:
-                    return 0
+            # Parse JSON
+            match = re.search(r"\{.*\}", response, re.DOTALL)
+            if not match:
+                return 0
 
-                data = json.loads(match.group())
-                beliefs = data.get("beliefs", [])
-                written = 0
-                now = datetime.utcnow()
-                valid_until = (now + timedelta(days=30)).isoformat()
+            data = json.loads(match.group())
+            beliefs = data.get("beliefs", [])
+            now = datetime.utcnow()
+            valid_until = (now + timedelta(days=30)).isoformat()
 
+            # Phase 3: Write — new connection, no LLM calls inside.
+            written = 0
+            with open_db(self.db_path) as conn:
                 for b in beliefs[: self.MAX_BELIEFS]:
                     confidence = b.get("confidence", 0.0)
                     if confidence < 0.75:
@@ -134,7 +135,7 @@ Exchanges:
                     key = f"mem:{b.get('key', '')[:40]}"
                     value = b.get("value", "")[:200]
                     metadata = json.dumps(
-                        {"session_id": self.session_id, "turn_count": len(rows), "compressed_at": now.isoformat()}
+                        {"session_id": self.session_id, "turn_count": row_count, "compressed_at": now.isoformat()}
                     )
 
                     with conn:
@@ -156,7 +157,8 @@ Exchanges:
                         """,
                         (sentinel_key, "1", "session_compression_marker", "internal", valid_until),
                     )
-                return written
+
+            return written
 
         except Exception as e:
             logger.debug("Compression failed for session %s: %s", self.session_id, e, exc_info=True)
@@ -334,38 +336,36 @@ Exchanges:
         return (signal1 or signal2) and last_turn is not None
 
     def summarise_old_turns(self) -> None:
+        # Phase 1: Read — fetch rows needing summaries, release DB before any LLM calls.
         with open_db(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            # Find turns that need summary (beyond FULL_WINDOW, but within SUMMARY_WINDOW + some buffer)
-            # Actually, the spec says "turns beyond the FULL_WINDOW + SUMMARY_WINDOW range"
-            # But get_context_block uses SUMMARY_WINDOW turns as summaries.
-            # So turns older than FULL_WINDOW should probably have a summary.
             rows = conn.execute(
                 """
-                SELECT * FROM session_turns
+                SELECT turn_id, query, answer FROM session_turns
                 WHERE session_id = ? AND summary = ''
                 ORDER BY created_at DESC
                 LIMIT -1 OFFSET ?
                 """,
                 (self.session_id, self.FULL_WINDOW),
             ).fetchall()
+            # Convert to plain dicts so the connection can be closed cleanly.
+            row_data = [{"turn_id": r["turn_id"], "query": r["query"], "answer": r["answer"]} for r in rows]
 
-            if not rows:
-                return
+        if not row_data:
+            return
 
-            llm = get_model(specialty="text", effort="fast", config=self.config)
-            for row in rows:
-                prompt = f"Summarise this exchange in one sentence: Q: {row['query']} A: {row['answer']}"
-                try:
-                    summary = llm.generate(prompt).strip()
-                    # Clean up quotes if model adds them
-                    summary = summary.strip('"').strip("'")
-                    with conn:
-                        conn.execute(
-                            "UPDATE session_turns SET summary = ? WHERE turn_id = ?", (summary, row["turn_id"])
-                        )
-                except Exception as e:
-                    logger.warning(f"Failed to summarise turn {row['turn_id']}: {e}", exc_info=True)
+        # Phase 2+3: LLM call then write — one new connection per row to avoid long holds.
+        llm = get_model(specialty="text", effort="fast", config=self.config)
+        for row in row_data:
+            prompt = f"Summarise this exchange in one sentence: Q: {row['query']} A: {row['answer']}"
+            try:
+                summary = llm.generate(prompt).strip()
+                # Clean up quotes if model adds them
+                summary = summary.strip('"').strip("'")
+                with open_db(self.db_path) as conn, conn:
+                    conn.execute("UPDATE session_turns SET summary = ? WHERE turn_id = ?", (summary, row["turn_id"]))
+            except Exception as e:
+                logger.warning(f"Failed to summarise turn {row['turn_id']}: {e}", exc_info=True)
 
     def extract_entities(self, turn: Turn, tool_outputs: list[dict]) -> list[SessionEntity]:
         # Concatenate content

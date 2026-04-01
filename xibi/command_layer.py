@@ -8,9 +8,17 @@ from pathlib import Path
 from typing import Any
 
 from xibi.db import open_db
+from xibi.errors import XibiError
 from xibi.tools import PermissionTier, resolve_tier, validate_schema
 
 logger = logging.getLogger(__name__)
+
+
+def _json_default(obj: Any) -> Any:
+    """JSON serializer for objects not serializable by default."""
+    if isinstance(obj, XibiError):
+        return obj.to_dict()
+    return str(obj)
 
 
 @dataclass
@@ -164,7 +172,7 @@ class CommandLayer:
             with open_db(Path(self.db_path)) as conn, conn:
                 conn.execute(
                     "INSERT INTO access_log (chat_id, authorized, user_name) VALUES (?, ?, ?)",
-                    (f"tool:{tool_name}", 1, json.dumps(payload)),
+                    (f"tool:{tool_name}", 1, json.dumps(payload, default=_json_default)),
                 )
         except Exception as e:
             logger.warning(f"CommandLayer.audit failed: {e}")

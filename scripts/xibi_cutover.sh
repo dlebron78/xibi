@@ -38,8 +38,8 @@ log "Pre-flight checks..."
     || { echo "ERROR: ${XIBI_CONFIG_DIR}/config.json not found. Run migration first."; exit 1; }
 [[ -f "${XIBI_CONFIG_DIR}/secrets.env" ]] \
     || { echo "ERROR: ${XIBI_CONFIG_DIR}/secrets.env not found. Copy from bregger_deployment/secrets.env"; exit 1; }
-python3 -c "import xibi" 2>/dev/null \
-    || { echo "ERROR: xibi package not importable. Run: pip install -e ${XIBI_DIR}"; exit 1; }
+${DRY_RUN} || { python3 -c "import xibi" 2>/dev/null \
+    || { echo "ERROR: xibi package not importable. Run: pip install -e ${XIBI_DIR}"; exit 1; }; }
 log "Pre-flight OK."
 
 # ── 2. Stop Bregger ───────────────────────────────────────────────────────────

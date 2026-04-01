@@ -7,8 +7,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, Protocol, TypedDict
 
-import google.generativeai as genai
 import requests
+
+try:
+    from google import genai as _google_genai
+    from google.genai import types as _google_genai_types
+except ImportError:
+    _google_genai = None  # type: ignore[assignment]
+    _google_genai_types = None  # type: ignore[assignment]
 
 from xibi.circuit_breaker import CircuitBreaker, CircuitBreakerConfig, FailureType
 from xibi.errors import ErrorCategory, XibiError
@@ -321,15 +327,16 @@ class OllamaClient:
 
 
 class GeminiClient:
-    """Gemini implementation of ModelClient."""
+    """Gemini implementation of ModelClient using google-genai SDK."""
 
     def __init__(self, provider: str, model: str, options: dict, api_key: str):
+        if _google_genai is None:
+            raise RuntimeError("google-genai package not installed. Run: pip install google-genai")
         self.provider = provider
         self.model = model
         self.options = options
         self._role: str | None = None
-        genai.configure(api_key=api_key)
-        self.client = genai.GenerativeModel(model_name=model)
+        self.client = _google_genai.Client(api_key=api_key)
 
     @staticmethod
     def _extract_tokens(response: Any) -> tuple[int, int]:
@@ -428,24 +435,20 @@ class GeminiClient:
                 pass
 
     def _call_provider(self, prompt: str, system: str | None = None, **kwargs: Any) -> str:
-        # Note: Gemini SDK handles system instructions differently, but for simplicity here:
-        # we can pass it if we re-initialize the model or just prepend.
-        # But properly: genai.GenerativeModel(model_name=model, system_instruction=system)
-        client = genai.GenerativeModel(model_name=self.model, system_instruction=system) if system else self.client
-
-        # options are passed via generation_config
-        generation_config: Any = {**self.options}
-        # handle timeout via request_options
-        request_options: Any = {}
+        config_kwargs: dict[str, Any] = {**self.options}
+        if system:
+            config_kwargs["system_instruction"] = system
         if "timeout" in kwargs:
-            request_options["timeout"] = kwargs.pop("timeout")
+            kwargs.pop("timeout")  # handled via http_options if needed; ignore for now
 
-        generation_config.update(kwargs)
+        config = _google_genai_types.GenerateContentConfig(**config_kwargs) if config_kwargs else None
 
         t_start = time.monotonic()
         try:
-            response = client.generate_content(
-                prompt, generation_config=generation_config, request_options=request_options
+            response = self.client.models.generate_content(
+                model=self.model,
+                contents=prompt,
+                config=config,
             )
             result: str = response.text
             prompt_tokens, response_tokens = self._extract_tokens(response)
