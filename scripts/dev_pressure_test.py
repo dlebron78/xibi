@@ -79,6 +79,7 @@ DEV_CONFIG: dict[str, Any] = {
 SKILL_TO_TOOLS: dict[str, list[str]] = {
     "email": ["list_emails", "triage_email", "list_unread", "send_email"],
     "schedule": ["list_events", "add_event"],
+    "chat": ["list_messages", "search_messages"],
     "search": ["web_search", "search_searxng", "search"],
     "memory": ["store_memory", "recall_memory", "search_memory"],
     "filesystem": ["list_files", "read_file", "write_file"],
@@ -262,6 +263,73 @@ SUITES: dict[int, dict[str, Any]] = {
                     "budget",   # EOD today deadline
                 ],
                 "note": "P1 incident should rank above budget sign-off. Core prioritisation test.",
+            },
+        ],
+    },
+
+    # ── Suite 8: Cross-source intelligence ──────────────────────────────────
+    # Tests whether the model can connect signals across email, calendar, and
+    # chat to form a coherent picture and make real decisions. This is the
+    # "smart assistant" test — not just retrieval, but synthesis and judgement.
+    8: {
+        "name": "Cross-Source Intelligence",
+        "goal": "Connect dots across email, calendar, and chat to make real decisions",
+        "realistic_inbox": True,
+        "turns": [
+            # ── Turn 1: Open-ended morning briefing (multi-source) ──────
+            # A real assistant should check ALL sources unprompted.
+            {
+                "input": "what's my morning look like? anything I should know about before I start?",
+                "expect_any_keywords": [
+                    ["P1", "production", "alert", "latency", "payments", "incident"],
+                    ["standup", "war room", "meeting", "calendar", "9:00", "9 am"],
+                ],
+                "note": "Should check both calendar AND email/chat — surface the P1 + schedule conflict",
+            },
+            # ── Turn 2: Conflict detection (calendar reasoning) ──────────
+            # Standup and war room are BOTH at 9:00 AM. Model should flag this.
+            {
+                "input": "wait — do I have a conflict at 9am?",
+                "expect_any_keywords": [
+                    ["conflict", "overlap", "both", "same time", "standup", "war room"],
+                ],
+                "note": "Should detect standup vs war room conflict at 9:00 AM and recommend war room",
+            },
+            # ── Turn 3: Cross-reference (chat confirms email) ─────────
+            # The P1 email says "payments-api latency". Chat in #incidents has
+            # Rachel saying it's DB-migration related. Model should connect them.
+            {
+                "input": "check the team chat — is anyone talking about the payments issue?",
+                "expect_tool": "chat",
+                "expect_any_keywords": [
+                    ["rachel", "migration", "rollback", "index", "orders", "database", "db"],
+                ],
+                "note": "Should find #incidents chat, connect Rachel's root cause analysis to the P1 email",
+            },
+            # ── Turn 4: Proactive nudge — the AWS cost connection ────────
+            # Email has an AWS billing alert ($847 > $500). Chat has Priya saying
+            # it's from un-torn-down load test instances. CTO in chat says to
+            # add it to the board deck. Model should connect all 3.
+            {
+                "input": "someone mentioned AWS costs being high — what's the full story?",
+                "expect_any_keywords": [
+                    ["847", "500", "threshold", "billing", "charges"],
+                    ["load test", "ec2", "instances", "priya", "tear down", "torn down"],
+                ],
+                "note": "Should synthesize: email alert + Priya's chat explanation + CTO's ask to add to board deck",
+            },
+            # ── Turn 5: Decision synthesis — what to actually DO ─────────
+            # This is the real test. Given everything across all sources, can the
+            # model produce an actionable plan that accounts for dependencies
+            # and priorities? Not just "here's what's happening" but "here's
+            # what you should do and in what order."
+            {
+                "input": "ok given everything you've seen across my email, calendar, and chat — what should I actually do first today? and what can wait?",
+                "expect_any_keywords": [
+                    ["war room", "incident", "P1", "production", "first", "immediate", "now"],
+                    ["wait", "later", "after", "defer", "low priority", "can wait", "not urgent"],
+                ],
+                "note": "Should produce an actionable priority plan — incident first, promotional/personal stuff later",
             },
         ],
     },
