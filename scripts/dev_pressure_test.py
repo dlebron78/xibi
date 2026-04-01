@@ -63,6 +63,9 @@ DEV_CONFIG: dict[str, Any] = {
             },
         }
     },
+    "providers": {
+        "ollama": {"base_url": "http://localhost:11434"},
+    },
     "timeouts": {"llm_fast_secs": 120, "llm_think_secs": 120},
     "profile": {
         "user_name": "TestUser",
