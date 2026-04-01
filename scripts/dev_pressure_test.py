@@ -360,10 +360,8 @@ def run_suite(
 ) -> dict[str, Any]:
     suite = SUITES[suite_id]
 
-    # Toggle realistic inbox for suites that request it
-    from xibi.skills.sample.email import handler as _email_handler
-
-    _email_handler.use_realistic_inbox = suite.get("realistic_inbox", False)
+    # Toggle realistic inbox for suites that request it (env var survives dynamic reimport)
+    os.environ["XIBI_TEST_REALISTIC_INBOX"] = "1" if suite.get("realistic_inbox") else "0"
 
     print(f"\n{'─'*60}")
     print(f"Suite {suite_id}: {suite['name']}")

@@ -1,3 +1,4 @@
+import os
 from typing import Any
 
 # ── Simple inbox (used by suites 1-6) ────────────────────────────────────────
@@ -120,18 +121,19 @@ _REALISTIC_INBOX = [
     },
 ]
 
-# Module-level flag to switch inboxes. Set to True by Suite 7+ before calling.
-use_realistic_inbox = False
+def _use_realistic() -> bool:
+    """Check env var — survives dynamic reimport by executor."""
+    return os.environ.get("XIBI_TEST_REALISTIC_INBOX") == "1"
 
 
 def list_emails(params: dict[str, Any]) -> dict[str, Any]:
     max_results = params.get("max_results", 10)
-    source = _REALISTIC_INBOX if use_realistic_inbox else _SIMPLE_INBOX
+    source = _REALISTIC_INBOX if _use_realistic() else _SIMPLE_INBOX
     return {"status": "ok", "env": "dev", "emails": source[:max_results]}
 
 
 def triage_email(params: dict[str, Any]) -> dict[str, Any]:
-    if use_realistic_inbox:
+    if _use_realistic():
         emails = list(_REALISTIC_INBOX)
         return {
             "status": "ok",
