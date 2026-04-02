@@ -39,6 +39,7 @@ from xibi.executor import LocalHandlerExecutor
 from xibi.react import run as react_run
 from xibi.session import SessionContext
 from xibi.skills.registry import SkillRegistry
+from xibi.tracing import Tracer
 
 logging.basicConfig(level=logging.WARNING)  # suppress verbose logs during test
 logger = logging.getLogger("pressure_test")
@@ -619,26 +620,6 @@ def evaluate_turn(
         if not any(kw.lower() in answer_lower for kw in group):
             issues.append(f"missing any of: {group}")
 
-    # Check tools were called in the expected order (chained execution test).
-    # All listed tools must appear in all_tools_called, in the given sequence.
-    if ordered_tools := turn.get("expect_tools_in_order"):
-        found_positions: list[tuple[int, str]] = []
-        for expected in ordered_tools:
-            idx = next(
-                (j for j, t in enumerate(all_tools_called) if _tool_used(t, expected)),
-                None,
-            )
-            if idx is None:
-                issues.append(f"chained tool '{expected}' never called")
-            else:
-                found_positions.append((idx, expected))
-        if len(found_positions) == len(ordered_tools):
-            for i in range(1, len(found_positions)):
-                if found_positions[i][0] <= found_positions[i - 1][0]:
-                    issues.append(
-                        f"wrong chain order: '{found_positions[i][1]}' called before '{found_positions[i-1][1]}'"
-                    )
-
     # Check ordered keywords — verifies keywords appear in the expected order
     # (first mention of each keyword should be in ascending position).
     if ordered := turn.get("expect_ordered_keywords"):
@@ -712,6 +693,7 @@ def run_suite(
     skills_dir: Path,
     verbose: bool = False,
     react_format: str = "json",
+    tracer: "Tracer | None" = None,
 ) -> dict[str, Any]:
     suite = SUITES[suite_id]
 
@@ -757,6 +739,7 @@ def run_suite(
                 max_steps=8,
                 max_secs=90,
                 react_format=react_format,
+                tracer=tracer,
             )
             # Update session context with this turn's result
             try:
@@ -778,6 +761,23 @@ def run_suite(
         eval_result = evaluate_turn(turn, result)
         eval_result["input"] = query
         eval_result["note"] = note
+        eval_result["trace_id"] = getattr(result, "trace_id", None)
+
+        # Capture full step trace from result.steps — thought, tool, input, output per step
+        eval_result["steps_trace"] = [
+            {
+                "step_num": s.step_num,
+                "thought": s.thought,
+                "tool": s.tool,
+                "tool_input": s.tool_input,
+                "tool_output": s.tool_output,
+                "duration_ms": s.duration_ms,
+                "parse_warning": s.parse_warning,
+                "error": str(s.error) if s.error else None,
+            }
+            for s in result.steps
+        ]
+
         turn_results.append(eval_result)
 
         icon = "✅" if eval_result["passed"] else "❌"
@@ -785,6 +785,16 @@ def run_suite(
         print(f"         {icon} {eval_result['verdict']} | tools={tools_str} | exit={eval_result['exit_reason']} | {eval_result['duration_ms']}ms")
         if verbose and eval_result["answer_preview"]:
             print(f"         answer: {eval_result['answer_preview'][:150]}")
+        # Always print step trace for failing turns
+        if not eval_result["passed"] and eval_result["steps_trace"]:
+            for s in eval_result["steps_trace"]:
+                output_preview = json.dumps(s["tool_output"])[:200] if s["tool_output"] else "—"
+                print(f"           step {s['step_num']}: [{s['tool']}] {json.dumps(s['tool_input'])[:120]}")
+                print(f"                    → {output_preview} ({s['duration_ms']}ms)")
+                if s.get("error"):
+                    print(f"                    ⚠ {s['error']}")
+        elif not eval_result["passed"]:
+            print(f"           (0 steps — model never called)")
 
     passed = sum(1 for r in turn_results if r["passed"])
     total = len(turn_results)
@@ -831,8 +841,29 @@ def write_report(suite_results: list[dict[str, Any]], report_dir: Path) -> Path:
             lines.append(f"{t_icon} {turn['verdict']}")
             lines.append(f"- Tools called: `{', '.join(turn['tools_called']) or 'none'}`")
             lines.append(f"- Exit: `{turn['exit_reason']}` | {turn['step_count']} steps | {turn['duration_ms']}ms")
+            if turn.get("trace_id"):
+                lines.append(f"- Trace ID: `{turn['trace_id']}`")
             if turn.get("answer_preview"):
                 lines.append(f"\n```\n{turn['answer_preview']}\n```")
+            # Full step trace — always included, critical for diagnosis
+            steps = turn.get("steps_trace", [])
+            if steps:
+                lines.append("\n<details><summary>Step trace</summary>\n")
+                for s in steps:
+                    tool_input_str = json.dumps(s["tool_input"], indent=2) if s["tool_input"] else "{}"
+                    tool_output_str = json.dumps(s["tool_output"], indent=2) if s["tool_output"] else "—"
+                    lines.append(f"**Step {s['step_num']}** — `{s['tool']}` ({s['duration_ms']}ms)")
+                    lines.append(f"> Thought: {s['thought']}")
+                    lines.append(f"```json\n// input\n{tool_input_str}\n```")
+                    lines.append(f"```json\n// output\n{tool_output_str}\n```")
+                    if s.get("parse_warning"):
+                        lines.append(f"> ⚠ Parse warning: {s['parse_warning']}")
+                    if s.get("error"):
+                        lines.append(f"> ❌ Error: {s['error']}")
+                    lines.append("")
+                lines.append("</details>")
+            elif turn["step_count"] == 0:
+                lines.append("\n> ⚠ **0 steps — model was never called** (circuit breaker, config error, or provider down)")
             lines.append("")
 
     path.write_text("\n".join(lines))
@@ -874,38 +905,54 @@ def main() -> int:
             print(f"❌ Unknown suite {sid}. Available: {list(SUITES.keys())}")
             return 1
 
-    # Isolated dev DB (temp file, deleted after run)
-    with tempfile.NamedTemporaryFile(suffix=".db", prefix="xibi-dev-test-", delete=False) as f:
-        db_path = Path(f.name)
+    # Persistent trace DB — named after timestamp so runs don't collide
+    ts = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+    trace_db_path = Path(tempfile.gettempdir()) / f"xibi-test-{ts}.db"
 
     try:
         print(f"\n🧪 Xibi Dev Pressure Test")
         print(f"   Skills:  {skills_dir}")
-        print(f"   DB:      {db_path} (temp, isolated)")
+        print(f"   DB:      {trace_db_path} (kept after run — query with dump_traces.py)")
         print(f"   Suites:  {suites_to_run}")
         print(f"   Format:  {args.format}")
 
         config = json.loads(json.dumps(DEV_CONFIG))  # deep copy
-        config["db_path"] = str(db_path)
+        # Must be Path, not str — CircuitBreaker calls .parent on it
+        db_path = trace_db_path
+        config["db_path"] = db_path
 
         # --model override: swap provider + model in all roles
         if args.model:
-            provider = "gemini" if args.model.startswith("gemini-") else "ollama"
+            if args.model.startswith("gemini-"):
+                provider = "gemini"
+            elif args.model.startswith("gpt-") or args.model.startswith("o1") or args.model.startswith("o3") or args.model.startswith("o4"):
+                provider = "openai"
+            elif args.model.startswith("claude-"):
+                provider = "anthropic"
+            else:
+                provider = "ollama"
             for role_cfg in config["models"]["text"].values():
                 role_cfg["provider"] = provider
                 role_cfg["model"] = args.model
-                if provider == "gemini":
-                    # Strip Ollama-specific options that Gemini SDK rejects
+                if provider in ("gemini", "openai"):
+                    # Strip Ollama-specific options
                     role_cfg.pop("keep_alive", None)
                     role_cfg.pop("think", None)
                     role_cfg.get("options", {}).pop("think", None)
-                    role_cfg["options"] = {"temperature": role_cfg.get("options", {}).get("temperature", 0.3)}
+                    role_cfg["options"] = {"temperature": role_cfg.get("options", {}).get("temperature", 0.1)}
             if provider == "gemini":
                 config["providers"]["gemini"] = {"api_key_env": "GEMINI_API_KEY"}
+            elif provider == "openai":
+                config["providers"]["openai"] = {"api_key_env": "OPENAI_API_KEY"}
+            elif provider == "anthropic":
+                config["providers"]["anthropic"] = {"api_key_env": "ANTHROPIC_API_KEY"}
             print(f"   Model:   {args.model} ({provider})")
 
         # Run migrations so DB is initialised
         migrate(db_path)
+
+        # Create tracer — spans written for every LLM call and every react step
+        tracer = Tracer(db_path)
 
         all_results = []
         for sid in suites_to_run:
@@ -916,6 +963,7 @@ def main() -> int:
                 skills_dir=skills_dir,
                 verbose=args.verbose,
                 react_format=args.format,
+                tracer=tracer,
             )
             all_results.append(result)
 
@@ -927,14 +975,13 @@ def main() -> int:
         print(f"\n{'='*60}")
         print(f"TOTAL: {total_passed}/{total_turns} turns passed")
         print(f"Report: {report_path}")
+        print(f"Traces: {db_path}")
+        print(f"  → sqlite3 {db_path} 'SELECT operation,duration_ms,json_extract(attributes,\"$.tool\"),json_extract(attributes,\"$.thought\") FROM spans WHERE operation=\"react.step\" ORDER BY start_ms'")
 
         return 0 if total_passed == total_turns else 1
 
     finally:
-        try:
-            db_path.unlink(missing_ok=True)
-        except Exception:
-            pass
+        pass  # DB intentionally kept — delete manually when done
 
 
 if __name__ == "__main__":

@@ -416,6 +416,11 @@ def run(
             "   <thought>your reasoning</thought>\n"
             "   <tool>ask_user</tool>\n"
             "   <question>what you need to know</question>\n"
+            "IMPORTANT: If the answer is already in the conversation context, do NOT call a tool. "
+            "Go directly to finish:\n"
+            "   <thought>I already have this information from earlier.</thought>\n"
+            "   <tool>finish</tool>\n"
+            "   <answer>your answer</answer>\n"
         )
     else:
         _format_instructions = (
@@ -570,6 +575,37 @@ def run(
                     )
 
             scratchpad.append(step)
+
+            # Emit per-step span — full thought, tool, input, output, scratchpad size
+            if _tracer and _run_trace_id:
+                try:
+                    compressed = compress_scratchpad(scratchpad)
+                    _tracer.emit(
+                        Span(
+                            trace_id=_run_trace_id,
+                            span_id=_tracer.new_span_id(),
+                            parent_span_id=_run_span_id,
+                            operation="react.step",
+                            component="react",
+                            start_ms=int(step_start_time * 1000),
+                            duration_ms=step.duration_ms,
+                            status="ok" if not step.error else "error",
+                            attributes={
+                                "step_num": step_num,
+                                "thought": step.thought,
+                                "tool": step.tool,
+                                "tool_input": json.dumps(step.tool_input),
+                                "tool_output": json.dumps(step.tool_output) if step.tool_output else "",
+                                "parse_warning": step.parse_warning or "",
+                                "error": str(step.error) if step.error else "",
+                                "scratchpad_len": len(compressed),
+                                "scratchpad_steps": len(scratchpad),
+                                "elapsed_secs": round(time.time() - start_time, 2),
+                            },
+                        )
+                    )
+                except Exception:
+                    pass
 
             if step_callback:
                 step_callback(step)

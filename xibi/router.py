@@ -223,10 +223,10 @@ class OllamaClient:
                                 "prompt_tokens": prompt_tokens,
                                 "response_tokens": response_tokens,
                                 "system_prompt_len": len(system) if system else 0,
-                                "system_prompt_preview": (system or "")[:800],
+                                "system_prompt": system or "",
                                 "prompt_len": len(prompt),
-                                "prompt_preview": prompt[:800],
-                                "raw_response_preview": response_text[:800],
+                                "prompt": prompt,
+                                "raw_response": response_text,
                                 "parse_status": parse_status,
                                 "recovery_attempt": recovery_attempt,
                             },
@@ -253,7 +253,7 @@ class OllamaClient:
 
         t_start = time.monotonic()
         try:
-            response = requests.post(url, json=payload, timeout=kwargs.get("timeout", 60))
+            response = requests.post(url, json=payload, timeout=kwargs.get("timeout", 180))
             response.raise_for_status()
             rjson = response.json()
             result: str = rjson.get("response", "")
@@ -422,10 +422,10 @@ class GeminiClient:
                                 "prompt_tokens": prompt_tokens,
                                 "response_tokens": response_tokens,
                                 "system_prompt_len": len(system) if system else 0,
-                                "system_prompt_preview": (system or "")[:800],
+                                "system_prompt": system or "",
                                 "prompt_len": len(prompt),
-                                "prompt_preview": prompt[:800],
-                                "raw_response_preview": response_text[:800],
+                                "prompt": prompt,
+                                "raw_response": response_text,
                                 "parse_status": parse_status,
                                 "recovery_attempt": recovery_attempt,
                             },
@@ -521,35 +521,141 @@ class GeminiClient:
 
 
 class OpenAIClient:
-    provider: str
-    model: str
-    options: dict
-    _role: str | None
+    """OpenAI implementation of ModelClient using the openai SDK."""
 
     def __init__(self, provider: str, model: str, options: dict, api_key: str | None):
-        raise NotImplementedError("Provider OpenAI not yet implemented. Add implementation and tests.")
+        try:
+            import openai as _openai_sdk
+        except ImportError:
+            raise RuntimeError("openai package not installed. Run: pip install openai")
+        if not api_key:
+            raise RuntimeError("OpenAI api_key is required. Set OPENAI_API_KEY env var.")
+        self.provider = provider
+        self.model = model
+        self.options = options
+        self._role: str | None = None
+        self._client = _openai_sdk.OpenAI(api_key=api_key)
+        self._last_tokens: tuple[int, int, int] = (0, 0, 0)
+
+    def _call_provider(self, prompt: str, system: str | None = None, **kwargs: Any) -> str:
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
+
+        call_kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+        }
+        if "temperature" in self.options:
+            call_kwargs["temperature"] = self.options["temperature"]
+        timeout = kwargs.get("timeout", 120)
+
+        t_start = time.monotonic()
+        try:
+            response = self._client.chat.completions.create(timeout=timeout, **call_kwargs)
+            result: str = response.choices[0].message.content or ""
+            usage = response.usage
+            prompt_tokens = usage.prompt_tokens if usage else 0
+            response_tokens = usage.completion_tokens if usage else 0
+            duration_ms = int((time.monotonic() - t_start) * 1000)
+            self._last_tokens = (prompt_tokens, response_tokens, duration_ms)
+            return result
+        except Exception as e:
+            if "timeout" in str(e).lower():
+                raise XibiError(
+                    category=ErrorCategory.TIMEOUT,
+                    message=f"OpenAI request timed out: {e}",
+                    component="openai",
+                    retryable=True,
+                ) from e
+            raise XibiError(
+                category=ErrorCategory.PROVIDER_DOWN,
+                message=f"OpenAI call failed: {e}",
+                component="openai",
+                retryable=True,
+            ) from e
 
     def generate(self, prompt: str, system: str | None = None, **kwargs: Any) -> str:
-        return ""
+        return self._call_provider(prompt, system, **kwargs)
 
     def generate_structured(self, prompt: str, schema: dict, system: str | None = None, **kwargs: Any) -> dict:
-        return {}
+        prompt_with_schema = (
+            f"{prompt}\n\nReturn output in JSON format conforming to this schema:\n{json.dumps(schema)}"
+        )
+        response_text = self._call_provider(prompt_with_schema, system, **kwargs)
+        try:
+            return json.loads(response_text)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"OpenAI returned invalid JSON: {e}\nResponse: {response_text}") from e
 
 
 class AnthropicClient:
-    provider: str
-    model: str
-    options: dict
-    _role: str | None
+    """Anthropic implementation of ModelClient using the anthropic SDK."""
 
     def __init__(self, provider: str, model: str, options: dict, api_key: str | None):
-        raise NotImplementedError("Provider Anthropic not yet implemented. Add implementation and tests.")
+        try:
+            import anthropic as _anthropic_sdk
+        except ImportError:
+            raise RuntimeError("anthropic package not installed. Run: pip install anthropic")
+        if not api_key:
+            raise RuntimeError("Anthropic api_key is required. Set ANTHROPIC_API_KEY env var.")
+        self.provider = provider
+        self.model = model
+        self.options = options
+        self._role: str | None = None
+        self._client = _anthropic_sdk.Anthropic(api_key=api_key)
+        self._last_tokens: tuple[int, int, int] = (0, 0, 0)
+
+    def _call_provider(self, prompt: str, system: str | None = None, **kwargs: Any) -> str:
+        call_kwargs: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": kwargs.get("max_tokens", 4096),
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if system:
+            call_kwargs["system"] = system
+        if "temperature" in self.options:
+            call_kwargs["temperature"] = self.options["temperature"]
+        timeout = kwargs.get("timeout", 120)
+
+        t_start = time.monotonic()
+        try:
+            response = self._client.messages.create(timeout=timeout, **call_kwargs)
+            result: str = response.content[0].text if response.content else ""
+            usage = response.usage
+            prompt_tokens = usage.input_tokens if usage else 0
+            response_tokens = usage.output_tokens if usage else 0
+            duration_ms = int((time.monotonic() - t_start) * 1000)
+            self._last_tokens = (prompt_tokens, response_tokens, duration_ms)
+            return result
+        except Exception as e:
+            if "timeout" in str(e).lower():
+                raise XibiError(
+                    category=ErrorCategory.TIMEOUT,
+                    message=f"Anthropic request timed out: {e}",
+                    component="anthropic",
+                    retryable=True,
+                ) from e
+            raise XibiError(
+                category=ErrorCategory.PROVIDER_DOWN,
+                message=f"Anthropic call failed: {e}",
+                component="anthropic",
+                retryable=True,
+            ) from e
 
     def generate(self, prompt: str, system: str | None = None, **kwargs: Any) -> str:
-        return ""
+        return self._call_provider(prompt, system, **kwargs)
 
     def generate_structured(self, prompt: str, schema: dict, system: str | None = None, **kwargs: Any) -> dict:
-        return {}
+        prompt_with_schema = (
+            f"{prompt}\n\nReturn output in JSON format conforming to this schema:\n{json.dumps(schema)}"
+        )
+        response_text = self._call_provider(prompt_with_schema, system, **kwargs)
+        try:
+            return json.loads(response_text)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"Anthropic returned invalid JSON: {e}\nResponse: {response_text}") from e
 
 
 class GroqClient:
@@ -739,7 +845,7 @@ def get_model(
     if config is None:
         config = load_config(config_path)
 
-    db_path = config.get("db_path") or Path.home() / ".xibi" / "data" / "xibi.db"
+    db_path = Path(config.get("db_path") or Path.home() / ".xibi" / "data" / "xibi.db")
 
     try:
         role_cfg = _resolve_model(config, specialty, effort)
