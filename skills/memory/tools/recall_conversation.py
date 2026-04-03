@@ -1,7 +1,7 @@
-import sqlite3
 import os
 from pathlib import Path
 from datetime import datetime, timezone
+from xibi.db import open_db
 
 
 def _time_ago(dt_str):
@@ -34,14 +34,11 @@ def run(params):
     limit = int(params.get("limit", 5))
     limit = min(limit, 10)  # cap at 10 to protect context window
 
-    workdir = params.get("_workdir") or os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.bregger"))
-    db_path = Path(workdir) / "data" / "bregger.db"
-
-    if not db_path.exists():
-        return {"status": "error", "message": f"Database not found at {db_path}"}
+    workdir = Path(params.get("_workdir") or os.environ.get("XIBI_WORKDIR", "~/.xibi")).expanduser()
+    db_path = workdir / "data" / "xibi.db"
 
     try:
-        with sqlite3.connect(db_path) as conn:
+        with open_db(db_path) as conn:
             # We want to match query in user_message or bot_response
             sql = """
                 SELECT user_message, bot_response, created_at 

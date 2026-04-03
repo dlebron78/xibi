@@ -100,7 +100,8 @@ class SchemaManager:
                 status      TEXT,
                 due         TEXT,
                 notes       TEXT,
-                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                decay_days  INTEGER
             );
 
             CREATE TABLE IF NOT EXISTS traces (

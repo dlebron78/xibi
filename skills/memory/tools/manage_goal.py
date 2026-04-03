@@ -3,8 +3,8 @@ manage_goal — Pin or unpin conversational topics for proactive tracking.
 """
 
 import os
-import sqlite3
 from pathlib import Path
+from xibi.db import open_db
 
 # Add project root to sys.path to allow importing from the root
 import sys
@@ -18,13 +18,12 @@ def run(params: dict) -> dict:
     action = params.get("action_type")
     topic = params.get("topic")
 
-    # Locate the Bregger DB via BREGGER_WORKDIR or fallback
-    workdir = Path(os.environ.get("BREGGER_WORKDIR", project_root))
-    db_path = workdir / "data" / "bregger.db"
+    workdir = Path(params.get("_workdir") or os.environ.get("XIBI_WORKDIR", "~/.xibi")).expanduser()
+    db_path = workdir / "data" / "xibi.db"
 
     if action == "list":
         try:
-            with sqlite3.connect(db_path) as conn:
+            with open_db(db_path) as conn:
                 cursor = conn.execute("SELECT topic, created_at FROM pinned_topics ORDER BY created_at DESC")
                 rows = cursor.fetchall()
 
@@ -44,7 +43,7 @@ def run(params: dict) -> dict:
 
     if action == "pin":
         try:
-            with sqlite3.connect(db_path) as conn:
+            with open_db(db_path) as conn:
                 conn.execute("INSERT OR REPLACE INTO pinned_topics (topic) VALUES (?)", (topic,))
             return {
                 "status": "success",
@@ -55,7 +54,7 @@ def run(params: dict) -> dict:
 
     elif action == "unpin":
         try:
-            with sqlite3.connect(db_path) as conn:
+            with open_db(db_path) as conn:
                 cursor = conn.execute("DELETE FROM pinned_topics WHERE topic = ?", (topic,))
                 if cursor.rowcount == 0:
                     return {"status": "success", "message": f"The topic '{topic}' was not pinned."}
