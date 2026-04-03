@@ -1,35 +1,46 @@
 {
   "name": "chat",
-  "description": "Read team chat messages (Slack-style)",
+  "description": "Read and search team chat messages (Slack-style channels)",
   "tools": [
     {
       "name": "list_messages",
-      "description": "List recent messages from a team chat channel",
-      "examples": [
-        "check slack",
-        "any new messages in chat",
-        "what's happening in the team channel",
-        "show recent chat messages",
-        "what are people saying"
-      ],
-      "input_schema": {
-        "channel": {"type": "string", "default": "general", "description": "Channel name (e.g. general, incidents, engineering)"},
-        "limit": {"type": "integer", "default": 10}
+      "description": "Lists recent messages from a team chat channel, showing sender, timestamp, and content. Use when the user asks to 'check slack', 'what are people saying', 'any new chat messages', or 'what's happening in the team channel'. Returns messages from a single channel (default: general). Do NOT use for keyword-based searches across channels — use search_messages instead. Do NOT call again if messages from the same channel were already retrieved — refer to previous results for follow-up questions.",
+      "examples": ["check slack","any new messages in chat","what's happening in the team channel","show recent chat messages","what are people saying"],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "channel": {
+            "type": "string",
+            "description": "Channel name to read. Examples: general, incidents, engineering. Defaults to general."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of messages to return. Default is 10."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
       },
       "output_type": "raw"
     },
     {
       "name": "search_messages",
-      "description": "Search chat messages across channels by keyword",
-      "examples": [
-        "search slack for",
-        "find messages about",
-        "who mentioned",
-        "any chat messages about"
-      ],
-      "input_schema": {
-        "query": {"type": "string", "description": "Search query"},
-        "limit": {"type": "integer", "default": 10}
+      "description": "Searches chat messages across ALL channels by keyword, returning matching messages with sender, channel, timestamp, and content. Use when the user asks to 'find messages about X', 'who mentioned Y', 'any chat about Z', or 'is anyone talking about W'. This is the right tool when the user wants to find specific topics, people, or discussions across the team. Do NOT use for browsing recent messages without a specific topic — use list_messages instead. If search results were already returned for the same query, refer to previous results rather than searching again.",
+      "examples": ["search slack for","find messages about","who mentioned","any chat messages about","is anyone talking about"],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query — use specific keywords related to the topic you're looking for."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of results to return. Default is 10."
+          }
+        },
+        "required": ["query"],
+        "additionalProperties": false
       },
       "output_type": "raw"
     }

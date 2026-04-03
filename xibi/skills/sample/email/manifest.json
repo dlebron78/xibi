@@ -1,30 +1,34 @@
 {
   "name": "email",
-  "description": "Manage your emails",
+  "description": "Manage your emails — inbox listing, triage, and prioritization",
   "tools": [
     {
       "name": "list_emails",
-      "description": "List recent unread emails",
-      "examples": [
-        "check my email",
-        "what emails do I have",
-        "any new messages",
-        "show unread",
-        "what's in my inbox"
-      ],
-      "input_schema": {"max_results": {"type": "integer", "default": 5}},
+      "description": "Retrieves all emails from the user's inbox with sender, subject, date, and priority flag. Use when the user asks to 'check email', 'show my inbox', 'what emails do I have', or 'any new messages'. Do NOT call this tool if emails were already retrieved earlier in this conversation — instead, refer to the previous results to answer follow-up questions like 'how many', 'who sent', or 'which one'. Only call again if the user explicitly asks to refresh or re-check.",
+      "examples": ["check my email","what emails do I have","any new messages","show unread","what's in my inbox"],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "max_results": {
+            "type": "integer",
+            "description": "Maximum number of emails to return. Default is 5."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
       "output_type": "raw"
     },
     {
       "name": "triage_email",
-      "description": "Summarise and categorise emails by urgency",
-      "examples": [
-        "triage my inbox",
-        "which emails need attention",
-        "prioritise my email",
-        "what should I respond to first"
-      ],
-      "input_schema": {},
+      "description": "Analyzes and categorizes emails by urgency, returning a prioritized summary with P1/P2/P3 labels. Use when the user asks 'what needs attention', 'what's urgent', 'prioritize my inbox', or 'what should I handle first'. Returns urgency level, sender, subject, and recommended action for each email. Do NOT use for simply listing emails — use list_emails instead. Do NOT use if triage results were already returned earlier — refer to previous results for follow-up questions about priority or urgency.",
+      "examples": ["triage my inbox","which emails need attention","prioritise my email","what should I respond to first","what's most urgent"],
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
       "output_type": "raw"
     }
   ]

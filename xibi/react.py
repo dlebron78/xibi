@@ -45,6 +45,64 @@ def _flatten_tools(skill_registry: list[dict[str, Any]]) -> list[dict[str, Any]]
     return flat
 
 
+
+def _build_native_tools(skill_registry):
+    """Convert skill registry into the tool list for native function calling.
+    Adds virtual 'finish' and 'ask_user' tools so the model can signal exit."""
+    tools = []
+    for skill in skill_registry:
+        for tool in skill.get("tools", []):
+            tools.append(tool)
+    # Virtual exit tools
+    tools.append({
+        "name": "finish",
+        "description": "Use when you have the final answer to the user's query.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"answer": {"type": "string", "description": "Your complete answer"}},
+            "required": ["answer"],
+        },
+    })
+    tools.append({
+        "name": "ask_user",
+        "description": "Use when you need more information from the user before proceeding.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"question": {"type": "string", "description": "What you need to know"}},
+            "required": ["question"],
+        },
+    })
+    return tools
+
+
+def _scratchpad_to_messages(query, scratchpad, context=""):
+    """Convert ReAct scratchpad into chat messages for native tool calling."""
+    messages = [{"role": "user", "content": query}]
+    if context:
+        messages[0]["content"] = f"{context}\n\n{query}"
+
+    for step in scratchpad:
+        # Assistant message: tool call
+        messages.append({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{
+                "function": {
+                    "name": step.tool,
+                    "arguments": step.tool_input,
+                },
+            }],
+        })
+        # Tool result message
+        output_str = json.dumps(step.tool_output) if step.tool_output else "{}"
+        messages.append({
+            "role": "tool",
+            "content": output_str,
+        })
+
+    return messages
+
+
 def compress_scratchpad(scratchpad: list[Step]) -> str:
     """Last 2 steps full detail, older steps one-liners."""
     lines = []
@@ -251,7 +309,16 @@ def _parse_xml_response(response_text: str) -> dict[str, Any]:
 
 def _parse_llm_response(response_text: str, react_format: str = "json") -> dict[str, Any]:
     """Route to the appropriate parser based on format."""
-    if react_format == "xml":
+    if react_format == "native":
+        _format_instructions = (
+            "Instructions:\n"
+            "1. Use the provided tools to help answer the user's query.\n"
+            "2. Think step by step. If you need information, call the appropriate tool.\n"
+            "3. When you have enough information to answer, call the 'finish' tool with your answer.\n"
+            "4. When you need more information from the user, call the 'ask_user' tool.\n"
+            "5. If the answer is already available from previous tool results, call 'finish' immediately — do NOT re-call tools you already used.\n"
+        )
+    elif react_format == "xml":
         return _parse_xml_response(response_text)
     return _parse_json_response(response_text)
 
@@ -416,6 +483,11 @@ def run(
             "   <thought>your reasoning</thought>\n"
             "   <tool>ask_user</tool>\n"
             "   <question>what you need to know</question>\n"
+            "IMPORTANT: If the answer is already in the conversation context, do NOT call a tool. "
+            "Go directly to finish:\n"
+            "   <thought>I already have this information from earlier.</thought>\n"
+            "   <tool>finish</tool>\n"
+            "   <answer>your answer</answer>\n"
         )
     else:
         _format_instructions = (
@@ -443,6 +515,126 @@ def run(
             _emit_run_span(res)
             clear_trace_context()
             return res
+
+        # ── Native function calling path ──────────────────────────
+        if react_format == "native" and hasattr(llm, "generate_with_tools"):
+            native_tools = _build_native_tools(skill_registry)
+            chat_msgs = _scratchpad_to_messages(query, scratchpad, context)
+
+            step_start_time = time.time()
+            try:
+                native_result = llm.generate_with_tools(
+                    messages=chat_msgs,
+                    tools=native_tools,
+                    system=system_prompt,
+                )
+                set_last_parse_status("ok")
+
+                # Did model call a tool?
+                if native_result.get("tool_calls"):
+                    tc = native_result["tool_calls"][0]  # take first tool call
+                    tool_name = tc["name"]
+                    tool_input = tc.get("arguments", {})
+                    thought = native_result.get("thinking") or native_result.get("content") or ""
+                else:
+                    # Model responded with text — treat as finish
+                    text_content = native_result.get("content", "")
+                    tool_name = "finish"
+                    tool_input = {"answer": text_content}
+                    thought = native_result.get("thinking") or ""
+
+                step = Step(
+                    step_num=step_num,
+                    thought=thought,
+                    tool=tool_name,
+                    tool_input=tool_input,
+                    duration_ms=int((time.time() - step_start_time) * 1000),
+                )
+
+                if step.tool == "finish":
+                    scratchpad.append(step)
+                    res = ReActResult(
+                        answer=step.tool_input.get("answer", ""),
+                        steps=scratchpad, exit_reason="finish",
+                        duration_ms=int((time.time() - start_time) * 1000),
+                    )
+                    res.trace_id = _run_trace_id
+                    _emit_run_span(res)
+                    clear_trace_context()
+                    return res
+
+                if step.tool == "ask_user":
+                    scratchpad.append(step)
+                    res = ReActResult(
+                        answer=step.tool_input.get("question", ""),
+                        steps=scratchpad, exit_reason="ask_user",
+                        duration_ms=int((time.time() - start_time) * 1000),
+                    )
+                    res.trace_id = _run_trace_id
+                    _emit_run_span(res)
+                    clear_trace_context()
+                    return res
+
+                if is_repeat(step, scratchpad):
+                    step.tool_output = {"status": "error", "message": "Repeat detected. Try a different approach."}
+                    scratchpad.append(step)
+                    consecutive_errors += 1
+                    if consecutive_errors >= 3:
+                        res = ReActResult(answer="", steps=scratchpad, exit_reason="error",
+                                          duration_ms=int((time.time() - start_time) * 1000))
+                        res.trace_id = _run_trace_id
+                        _emit_run_span(res)
+                        clear_trace_context()
+                        return res
+                    continue
+
+                # Dispatch the tool
+                tool_output = dispatch(
+                    step.tool, step.tool_input, skill_registry,
+                    executor=executor, command_layer=command_layer,
+                )
+                step.tool_output = tool_output
+                step.duration_ms = int((time.time() - step_start_time) * 1000)
+
+                if tool_output.get("_xibi_error"):
+                    step.error = tool_output["_xibi_error"]
+                elif tool_output.get("status") == "error":
+                    step.error = XibiError(
+                        category=ErrorCategory.UNKNOWN,
+                        message=tool_output.get("message", "Tool returned error"),
+                        component=step.tool,
+                    )
+
+                scratchpad.append(step)
+                if step_callback:
+                    step_callback(step)
+
+                if step.tool == "error" or tool_output.get("status") == "error":
+                    consecutive_errors += 1
+                    if consecutive_errors >= 3:
+                        res = ReActResult(answer="", steps=scratchpad, exit_reason="error",
+                                          duration_ms=int((time.time() - start_time) * 1000))
+                        res.trace_id = _run_trace_id
+                        _emit_run_span(res)
+                        clear_trace_context()
+                        return res
+                else:
+                    consecutive_errors = 0
+
+            except (XibiError, OSError, ValueError, RuntimeError) as e:
+                failure_type = FailureType.PERSISTENT if isinstance(e, XibiError) else FailureType.TRANSIENT
+                trust.record_failure(_trust_specialty, _trust_effort, failure_type)
+                res = ReActResult(answer="", steps=scratchpad, exit_reason="error",
+                                  duration_ms=int((time.time() - start_time) * 1000))
+                if isinstance(e, XibiError):
+                    res.error_summary = [e]
+                res.trace_id = _run_trace_id
+                _emit_run_span(res)
+                clear_trace_context()
+                return res
+
+            continue  # skip the json/xml path below
+        # ── End native path ──────────────────────────────────────
 
         # Construct prompt
         compressed_pad = compress_scratchpad(scratchpad)

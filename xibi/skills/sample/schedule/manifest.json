@@ -1,30 +1,43 @@
 {
   "name": "schedule",
-  "description": "Manage your calendar",
+  "description": "Manage your calendar — view events and create new ones",
   "tools": [
     {
       "name": "list_events",
-      "description": "List upcoming calendar events",
-      "examples": [
-        "what's on my calendar",
-        "what do I have today",
-        "show my schedule",
-        "upcoming meetings",
-        "what's next on my agenda"
-      ],
-      "input_schema": {"days_ahead": {"type": "integer", "default": 1}},
+      "description": "Lists upcoming calendar events with title, time, attendees, and location. Use when the user asks 'what's on my calendar', 'what meetings do I have', 'show my schedule', or 'what's next'. Returns events for the specified time window (default: today). Do NOT call again if calendar events were already retrieved — refer to previous results for follow-up questions about times, conflicts, or attendees.",
+      "examples": ["what's on my calendar","what do I have today","show my schedule","upcoming meetings","what's next on my agenda"],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "days_ahead": {
+            "type": "integer",
+            "description": "How many days ahead to look for events. Default is 1 (today only)."
+          }
+        },
+        "required": [],
+        "additionalProperties": false
+      },
       "output_type": "raw"
     },
     {
       "name": "add_event",
-      "description": "Add an event to the calendar",
-      "examples": [
-        "schedule a meeting",
-        "add an event",
-        "put something on my calendar",
-        "book a time"
-      ],
-      "input_schema": {"title": {"type": "string"}, "time": {"type": "string"}},
+      "description": "Creates a new event on the user's calendar with a title and time. Use when the user asks to 'schedule a meeting', 'add to my calendar', 'set a reminder', 'book a time', or 'create a calendar block'. This is a WRITE action — use it to complete chained tasks like 'find X in my email and add it to my calendar'. When chaining from another tool's output, extract the relevant details (date, title, amount) and pass them directly — do NOT ask the user to confirm details you already have. Always provide both title and time.",
+      "examples": ["schedule a meeting","add an event","put something on my calendar","book a time","set a reminder for","add a calendar block"],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Title of the calendar event. When chaining from email, use the subject or relevant detail (e.g. 'Review AWS bill - $847.32')."
+          },
+          "time": {
+            "type": "string",
+            "description": "Date and time of the event. Examples: 'today at noon', '2026-04-04 09:00', 'Friday at 3pm'."
+          }
+        },
+        "required": ["title", "time"],
+        "additionalProperties": false
+      },
       "output_type": "action"
     }
   ]

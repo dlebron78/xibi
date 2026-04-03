@@ -201,9 +201,15 @@ Exchanges:
         # Phase 2: Extract entities from tool outputs
         tool_outputs = [step.tool_output for step in result.steps if step.tool_output]
         if tool_outputs:
-            self.extract_entities(turn, tool_outputs)
+            try:
+                self.extract_entities(turn, tool_outputs)
+            except Exception as _ee:
+                logger.warning("extract_entities non-fatal: %s", _ee)
 
-        self.summarise_old_turns()
+        try:
+            self.summarise_old_turns()
+        except Exception as _se:
+            logger.warning("summarise_old_turns non-fatal: %s", _se)
         return turn
 
     def _get_session_memories(self) -> str:

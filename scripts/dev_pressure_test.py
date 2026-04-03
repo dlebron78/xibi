@@ -83,6 +83,46 @@ SKILL_TO_TOOLS: dict[str, list[str]] = {
     "search": ["web_search", "search_searxng", "search"],
     "memory": ["store_memory", "recall_memory", "search_memory"],
     "filesystem": ["list_files", "read_file", "write_file"],
+    # Suite 10 noise tools — registered in registry but have no handler
+    "noise": [
+        "fetch_crm_contact", "search_documents", "get_slack_thread", "query_database",
+        "get_github_pr", "send_notification", "lookup_employee", "create_jira_ticket",
+        "get_weather", "translate_text", "summarize_document", "fetch_analytics",
+        "get_zoom_recording", "search_confluence", "get_oncall_schedule", "send_sms",
+        "lookup_invoice", "get_git_blame", "fetch_linkedin_profile", "generate_report",
+    ],
+}
+
+# ── Suite 10 noise manifest ────────────────────────────────────────────────────
+# 20 realistic-sounding red-herring tools injected alongside real tools.
+# Tests whether models select the correct tool under proliferation noise.
+# These tools have no handler — calls return an error, which is fine; the test
+# passes based on whether the model chose the RIGHT tool, not a noise tool.
+NOISE_MANIFEST: dict[str, Any] = {
+    "name": "noise",
+    "description": "Business integrations: CRM, documents, comms, engineering, analytics",
+    "tools": [
+        {"name": "fetch_crm_contact", "description": "Fetch a contact record from the CRM by name or email address", "input_schema": {"name": {"type": "string"}}, "output_type": "raw"},
+        {"name": "search_documents", "description": "Search the document repository for files or pages matching a query", "input_schema": {"query": {"type": "string"}}, "output_type": "raw"},
+        {"name": "get_slack_thread", "description": "Get all messages in a Slack thread by channel name and thread timestamp", "input_schema": {"channel": {"type": "string"}, "ts": {"type": "string"}}, "output_type": "raw"},
+        {"name": "query_database", "description": "Run a read-only SQL query against the company data warehouse", "input_schema": {"sql": {"type": "string"}}, "output_type": "raw"},
+        {"name": "get_github_pr", "description": "Get details of a GitHub pull request including diff, reviews, and status checks", "input_schema": {"repo": {"type": "string"}, "pr_number": {"type": "integer"}}, "output_type": "raw"},
+        {"name": "send_notification", "description": "Send a push notification to a registered mobile device by user ID", "input_schema": {"user_id": {"type": "string"}, "message": {"type": "string"}}, "output_type": "action"},
+        {"name": "lookup_employee", "description": "Look up an employee profile, title, team, and manager by name or employee ID", "input_schema": {"name": {"type": "string"}}, "output_type": "raw"},
+        {"name": "create_jira_ticket", "description": "Create a new Jira issue, bug ticket, or task in the specified project", "input_schema": {"project": {"type": "string"}, "title": {"type": "string"}, "description": {"type": "string"}}, "output_type": "action"},
+        {"name": "get_weather", "description": "Get current weather conditions or multi-day forecast for a city or zip code", "input_schema": {"location": {"type": "string"}}, "output_type": "raw"},
+        {"name": "translate_text", "description": "Translate text from one language to another using the preferred translation service", "input_schema": {"text": {"type": "string"}, "target_language": {"type": "string"}}, "output_type": "raw"},
+        {"name": "summarize_document", "description": "Summarize a long document, PDF, or web page given a URL or file path", "input_schema": {"url": {"type": "string"}}, "output_type": "synthesis"},
+        {"name": "fetch_analytics", "description": "Fetch KPIs, metrics, or event counts from the analytics dashboard for a time range", "input_schema": {"metric": {"type": "string"}, "start_date": {"type": "string"}, "end_date": {"type": "string"}}, "output_type": "raw"},
+        {"name": "get_zoom_recording", "description": "Get a recording URL or auto-transcript from a past Zoom meeting by meeting ID", "input_schema": {"meeting_id": {"type": "string"}}, "output_type": "raw"},
+        {"name": "search_confluence", "description": "Search Confluence wiki pages, runbooks, and technical documentation", "input_schema": {"query": {"type": "string"}}, "output_type": "raw"},
+        {"name": "get_oncall_schedule", "description": "Get the current and upcoming on-call rotation schedule for a team", "input_schema": {"team": {"type": "string", "default": "engineering"}}, "output_type": "raw"},
+        {"name": "send_sms", "description": "Send an SMS text message to a phone number", "input_schema": {"to": {"type": "string"}, "message": {"type": "string"}}, "output_type": "action"},
+        {"name": "lookup_invoice", "description": "Look up an invoice by invoice number, customer name, or date range", "input_schema": {"query": {"type": "string"}}, "output_type": "raw"},
+        {"name": "get_git_blame", "description": "Get git blame information for a file showing who last modified each line", "input_schema": {"file_path": {"type": "string"}}, "output_type": "raw"},
+        {"name": "fetch_linkedin_profile", "description": "Fetch a person's public LinkedIn profile summary by name or profile URL", "input_schema": {"name": {"type": "string"}}, "output_type": "raw"},
+        {"name": "generate_report", "description": "Generate a business intelligence or analytics report from a named data source", "input_schema": {"report_type": {"type": "string"}, "filters": {"type": "object"}}, "output_type": "synthesis"},
+    ],
 }
 
 
@@ -430,6 +470,108 @@ SUITES: dict[int, dict[str, Any]] = {
             },
         ],
     },
+
+    # ── Suite 10: Tool Proliferation + Chained Execution ─────────────────────
+    # Two orthogonal real-world stresses tested together:
+    #
+    # TOOL PROLIFERATION (Turns 1-2):
+    #   Same realistic scenario as Suites 7-9, but the model now sees 25+ tools
+    #   instead of ~8. Most are realistic-sounding but wrong for the query:
+    #   search_documents, get_slack_thread, query_database, fetch_crm_contact, etc.
+    #   These are injected via NOISE_MANIFEST and registered in the skill registry.
+    #   The test passes if the model still picks the correct domain tool under noise.
+    #   Failing signal: model calls a noise tool instead of the right one.
+    #
+    # CHAINED EXECUTION (Turns 3-5):
+    #   Multi-step tasks where Step B depends on Step A's output.
+    #   The model must call Tool A, extract a specific value from its output,
+    #   then pass that value as input to Tool B — not hallucinate it.
+    #   Failing signals: skipping Step A, hallucinating values, wrong tool order.
+    10: {
+        "name": "Tool Proliferation + Chained Execution",
+        "goal": "Correct tool selection under noise (25+ tools) and dependent multi-step execution",
+        "realistic_inbox": True,
+        "padded_tools": True,  # triggers NOISE_MANIFEST injection into registry
+        "turns": [
+            # ── Turn 1: Proliferation — inbox triage ─────────────────────────
+            # 25+ tools available. Many sound plausible for "urgent inbox":
+            # search_documents, fetch_analytics, query_database, search_confluence.
+            # Only email tools (list_emails / triage_email) have the actual data.
+            {
+                "input": "what's most urgent in my inbox right now?",
+                "expect_tool": "email",
+                "expect_any_keywords": [
+                    ["P1", "latency", "production", "payments", "alert"],
+                    ["budget", "eod", "today", "approval", "docusign"],
+                ],
+                "note": "25+ tools available — should select triage_email/list_emails, not search_documents or fetch_analytics",
+            },
+            # ── Turn 2: Proliferation — chat retrieval ────────────────────────
+            # 25+ tools available. Tempting noise tools: get_slack_thread (sounds
+            # exactly right!), search_confluence, query_database, get_github_pr.
+            # Only the chat skill (list_messages / search_messages) has the data.
+            # get_slack_thread sounds most dangerous — requires a thread_ts param
+            # the model won't have, but a confused model may still try it.
+            {
+                "input": "any team chatter about the production issue?",
+                "expect_tool": "chat",
+                "expect_any_keywords": [
+                    ["rachel", "migration", "rollback", "index", "incidents", "database"],
+                ],
+                "note": "get_slack_thread is a noise tool that sounds identical — model must pick search_messages or list_messages instead",
+            },
+            # ── Turn 3: Chain — email → schedule (deadline extraction) ────────
+            # The model must:
+            #   Step A: call list_emails / triage_email → find the HR compliance
+            #           email → extract the exact deadline: "April 4" / "Friday"
+            #   Step B: call add_event → create a reminder with that date in the title
+            # Hallucination failure: model invents a date without reading the email.
+            # Short-circuit failure: model calls add_event first without email context.
+            {
+                "input": "set a calendar reminder for the compliance training deadline — use the exact date from my inbox",
+                "expect_tools_in_order": ["email", "schedule"],
+                "expect_any_keywords": [
+                    ["april 4", "april 4th", "friday", "april", "compliance"],
+                    ["added", "created", "set", "scheduled", "reminder"],
+                ],
+                "note": "Must read email first to get 'April 4' date, then create event — not hallucinate the date",
+            },
+            # ── Turn 4: Chain — email → schedule (value extraction) ──────────
+            # The model must:
+            #   Step A: call list_emails → find AWS billing alert → extract $847.23
+            #   Step B: call add_event → create event with exact dollar amount in title
+            # This tests whether the model can extract a specific numeric value from
+            # tool output and carry it faithfully into the next tool call.
+            # Hallucination failure: model uses a round number like $800 or $900.
+            {
+                "input": "find the AWS billing alert in my email and add a calendar block today at noon to review it — put the exact charge amount in the event title",
+                "expect_tools_in_order": ["email", "schedule"],
+                "expect_any_keywords": [
+                    ["847", "$847", "aws"],
+                    ["added", "created", "set", "noon", "12"],
+                ],
+                "note": "$847.23 must come from reading the email — hallucinated round numbers ($800, $900) fail this turn",
+            },
+            # ── Turn 5: Reverse chain — schedule → email (cross-reference) ───
+            # The model must:
+            #   Step A: call list_events → find the afternoon meetings
+            #           (Client Demo Prep at 2pm, Board Deck Working Session at 4pm)
+            #   Step B: call list_emails / triage_email → find relevant prep emails
+            #           (mike.torres demo question, cto board deck request)
+            # This is the REVERSE of turns 3-4: calendar informs the email search.
+            # A model that jumps straight to email without reading calendar will miss
+            # the framing and either list all emails or pick the wrong ones.
+            {
+                "input": "look at my calendar for this afternoon and then find me any emails that are relevant to those meetings",
+                "expect_tools_in_order": ["schedule", "email"],
+                "expect_any_keywords": [
+                    ["demo", "client", "reporting", "dashboard", "mike"],
+                    ["board", "deck", "slide", "cto", "wednesday"],
+                ],
+                "note": "Calendar first (find afternoon meetings), then email (find matching prep emails) — reverse dependency chain",
+            },
+        ],
+    },
 }
 
 
@@ -494,6 +636,27 @@ def evaluate_turn(
                         f"wrong order: '{positions[i][1]}' appeared before '{positions[i-1][1]}'"
                     )
 
+    # Check chained execution — tools must all appear in order
+    # e.g. ["email", "schedule"] means email tool called before schedule tool
+    if ordered_tools := turn.get("expect_tools_in_order"):
+        found_positions: list[tuple[int, str]] = []
+        for expected in ordered_tools:
+            idx = next(
+                (j for j, t in enumerate(all_tools_called) if _tool_used(t, expected)),
+                None,
+            )
+            if idx is None:
+                issues.append(f"chain step '{expected}' never called")
+            else:
+                found_positions.append((idx, expected))
+        # Only check ordering if all steps were found
+        if len(found_positions) == len(ordered_tools):
+            for i in range(1, len(found_positions)):
+                if found_positions[i][0] <= found_positions[i - 1][0]:
+                    issues.append(
+                        f"wrong chain order: '{found_positions[i][1]}' should come after '{found_positions[i-1][1]}'"
+                    )
+
     # Check hallucination guard
     for kw in turn.get("expect_no_keywords", []):
         if kw.lower() in answer_lower:
@@ -541,6 +704,13 @@ def run_suite(
     print(f"{'─'*60}")
 
     registry = SkillRegistry(str(skills_dir))
+
+    # Inject noise tools for proliferation suites (tools with no real handler —
+    # calls will return errors, which is intentional: tests selection, not execution)
+    if suite.get("padded_tools"):
+        registry.register(NOISE_MANIFEST)
+        print(f"  [noise] +{len(NOISE_MANIFEST['tools'])} red-herring tools injected ({len(registry.skills)} total skills)")
+
     executor = LocalHandlerExecutor(registry, config=config, mcp_registry=None)
     skill_manifests = registry.get_skill_manifests()
 
@@ -664,7 +834,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--format",
-        choices=["json", "xml"],
+        choices=["json", "xml", "native"],
         default="json",
         help="ReAct response format: json (default) or xml",
     )
@@ -700,18 +870,29 @@ def main() -> int:
 
         # --model override: swap provider + model in all roles
         if args.model:
-            provider = "gemini" if args.model.startswith("gemini-") else "ollama"
+            if args.model.startswith("gemini-"):
+                provider = "gemini"
+            elif args.model.startswith("gpt-") or args.model.startswith("o1") or args.model.startswith("o3") or args.model.startswith("o4"):
+                provider = "openai"
+            elif args.model.startswith("claude-"):
+                provider = "anthropic"
+            else:
+                provider = "ollama"
             for role_cfg in config["models"]["text"].values():
                 role_cfg["provider"] = provider
                 role_cfg["model"] = args.model
-                if provider == "gemini":
-                    # Strip Ollama-specific options that Gemini SDK rejects
+                if provider in ("gemini", "openai"):
+                    # Strip Ollama-specific options
                     role_cfg.pop("keep_alive", None)
                     role_cfg.pop("think", None)
                     role_cfg.get("options", {}).pop("think", None)
-                    role_cfg["options"] = {"temperature": role_cfg.get("options", {}).get("temperature", 0.3)}
+                    role_cfg["options"] = {"temperature": role_cfg.get("options", {}).get("temperature", 0.1)}
             if provider == "gemini":
                 config["providers"]["gemini"] = {"api_key_env": "GEMINI_API_KEY"}
+            elif provider == "openai":
+                config["providers"]["openai"] = {"api_key_env": "OPENAI_API_KEY"}
+            elif provider == "anthropic":
+                config["providers"]["anthropic"] = {"api_key_env": "ANTHROPIC_API_KEY"}
             print(f"   Model:   {args.model} ({provider})")
 
         # Run migrations so DB is initialised
