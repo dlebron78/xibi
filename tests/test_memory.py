@@ -9,8 +9,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import bregger_heartbeat
-from xibi.db import init_workdir
 from skills.memory.tools import archive, recall, remember
+from xibi.db import init_workdir
 
 
 @pytest.fixture
