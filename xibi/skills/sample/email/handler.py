@@ -155,7 +155,6 @@ def triage_email(params: dict[str, Any]) -> dict[str, Any]:
 def send_email(params: dict[str, Any]) -> dict[str, Any]:
     to = params.get("to", "")
     subject = params.get("subject", "")
-    body = params.get("body", "")
     return {
         "status": "ok",
         "env": "dev",

@@ -614,8 +614,8 @@ class OpenAIClient:
     def __init__(self, provider: str, model: str, options: dict, api_key: str | None):
         try:
             import openai as _openai_sdk
-        except ImportError:
-            raise RuntimeError("openai package not installed. Run: pip install openai")
+        except ImportError as err:
+            raise RuntimeError("openai package not installed. Run: pip install openai") from err
         if not api_key:
             raise RuntimeError("OpenAI api_key is required. Set OPENAI_API_KEY env var.")
         self.provider = provider
@@ -684,8 +684,8 @@ class AnthropicClient:
     def __init__(self, provider: str, model: str, options: dict, api_key: str | None):
         try:
             import anthropic as _anthropic_sdk
-        except ImportError:
-            raise RuntimeError("anthropic package not installed. Run: pip install anthropic")
+        except ImportError as err:
+            raise RuntimeError("anthropic package not installed. Run: pip install anthropic") from err
         if not api_key:
             raise RuntimeError("Anthropic api_key is required. Set ANTHROPIC_API_KEY env var.")
         self.provider = provider

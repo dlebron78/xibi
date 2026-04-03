@@ -47,10 +47,10 @@ def _flatten_tools(skill_registry: list[dict[str, Any]]) -> list[dict[str, Any]]
 
 def compress_scratchpad(scratchpad: list[Step]) -> str:
     """Last 4 steps full detail, older steps compressed summaries."""
-    FULL_STEPS = 4
+    full_steps = 4
     lines = []
     for i, step in enumerate(scratchpad):
-        if i >= len(scratchpad) - FULL_STEPS:
+        if i >= len(scratchpad) - full_steps:
             lines.append(step.full_text())
         else:
             lines.append(step.one_line_summary())

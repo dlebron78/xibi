@@ -86,7 +86,7 @@ def load_config_with_env_fallback() -> Config:
 
 
 def main() -> None:
-    MODEL_SHORTHANDS = {
+    model_shorthands = {
         "4.1":  ("openai", "gpt-4.1"),
         "5.4":  ("openai", "gpt-5.4"),
         "4b":   ("ollama", "qwen3.5:4b"),
@@ -121,10 +121,7 @@ def main() -> None:
         atexit.register(readline.write_history_file, history_file)
 
     if args.model:
-        if args.model in MODEL_SHORTHANDS:
-            provider, model_name = MODEL_SHORTHANDS[args.model]
-        else:
-            provider, model_name = args.model, args.model
+        provider, model_name = model_shorthands.get(args.model, (args.model, args.model))
         for specialty in config["models"]:
             for effort in config["models"][specialty]:
                 config["models"][specialty][effort]["provider"] = provider
@@ -150,7 +147,8 @@ def main() -> None:
     _db_path = config.get("db_path") or Path.home() / ".xibi" / "data" / "xibi.db"
     import time as _t
     _session_id = args.session if args.session else "cli:local"
-    if _session_id == "fresh": _session_id = f"cli:fresh:{int(_t.time())}"
+    if _session_id == "fresh":
+        _session_id = f"cli:fresh:{int(_t.time())}"
     session = SessionContext(session_id=_session_id, db_path=_db_path, config=config)
     tracer = Tracer(Path(_db_path))
     trust_gradient = TrustGradient(Path(_db_path))

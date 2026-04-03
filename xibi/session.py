@@ -285,12 +285,8 @@ Exchanges:
                 if turn.tools_called:
                     lines.append(f"Tools used: {', '.join(t for t in turn.tools_called if t)}")
             else:
-                # Summary
-                if turn.summary:
-                    summary = turn.summary
-                else:
-                    # Fallback: include answer excerpt so key facts aren't lost
-                    summary = f"Q: {turn.query[:80]} → A: {turn.answer[:200]}"
+                # Summary — fallback to answer excerpt if summary not yet written
+                summary = turn.summary or f"Q: {turn.query[:80]} → A: {turn.answer[:200]}"
                 lines.append(f"[{len(turns) - 1 - i} turns ago] {summary}")
 
         # Append entities
