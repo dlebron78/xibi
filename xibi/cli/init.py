@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-import yaml
+from typing import cast
+
 import requests
+import yaml
+
 import xibi.config
 from xibi.db.migrations import SchemaManager
 from xibi.secrets import manager as secrets_manager
+
 
 def cmd_init(args: object) -> None:
     """Bootstrap a new Xibi workdir."""
@@ -24,7 +28,9 @@ def cmd_init(args: object) -> None:
                 secrets_manager.store("telegram_token", token)
 
         # 3. Default LLM provider
-        provider = input("3. Default LLM provider (ollama/openai/anthropic/groq) [ollama]: ").strip().lower() or "ollama"
+        provider = (
+            input("3. Default LLM provider (ollama/openai/anthropic/groq) [ollama]: ").strip().lower() or "ollama"
+        )
 
         # 4. Model name
         model_name = ""
@@ -55,9 +61,12 @@ def cmd_init(args: object) -> None:
         else:
             model_name = input(f"4. Model name for {provider}: ").strip()
             if not model_name:
-                if provider == "openai": model_name = "gpt-4o"
-                elif provider == "anthropic": model_name = "claude-3-5-sonnet-latest"
-                elif provider == "groq": model_name = "llama-3.1-70b-versatile"
+                if provider == "openai":
+                    model_name = "gpt-4o"
+                elif provider == "anthropic":
+                    model_name = "claude-3-5-sonnet-latest"
+                elif provider == "groq":
+                    model_name = "llama-3.1-70b-versatile"
                 print(f"Using default: {model_name}")
 
         # 5. Admin user ID
@@ -73,15 +82,15 @@ def cmd_init(args: object) -> None:
                 "text": {
                     "fast": {"provider": provider, "model": model_name},
                     "think": {"provider": provider, "model": model_name},
-                    "review": {"provider": provider, "model": model_name}
+                    "review": {"provider": provider, "model": model_name},
                 }
             },
             "providers": {
                 "ollama": {"base_url": "http://localhost:11434"},
                 "openai": {"api_key_env": "OPENAI_API_KEY"},
                 "anthropic": {"api_key_env": "ANTHROPIC_API_KEY"},
-                "groq": {"api_key_env": "GROQ_API_KEY"}
-            }
+                "groq": {"api_key_env": "GROQ_API_KEY"},
+            },
         }
 
         # Save config
@@ -90,7 +99,7 @@ def cmd_init(args: object) -> None:
             yaml.dump(config, f, default_flow_style=False)
 
         # Initialize Database
-        db_path = Path(config["db_path"]).expanduser()
+        db_path = Path(cast(str, config["db_path"])).expanduser()
         db_path.parent.mkdir(parents=True, exist_ok=True)
         sm = SchemaManager(db_path)
         sm.migrate()

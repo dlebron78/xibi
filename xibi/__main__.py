@@ -4,24 +4,24 @@ import argparse
 import json
 import signal
 import sys
-import yaml
 from pathlib import Path
 
-from xibi.shutdown import request_shutdown
+import yaml
+
 import xibi.db
 from xibi.channels.telegram import TelegramAdapter
-from xibi.db import SchemaManager
+from xibi.cli import cmd_doctor
+from xibi.cli.init import cmd_init
+from xibi.cli.skill_test import cmd_skill_test
 from xibi.executor import LocalHandlerExecutor
 from xibi.mcp.registry import MCPServerRegistry
-from xibi.routing.control_plane import ControlPlaneRouter
-from xibi.routing.shadow import ShadowMatcher
-from xibi.skills.registry import SkillRegistry
-from xibi.routing.llm_classifier import LLMRoutingClassifier
 from xibi.router import init_telemetry
+from xibi.routing.control_plane import ControlPlaneRouter
+from xibi.routing.llm_classifier import LLMRoutingClassifier
+from xibi.routing.shadow import ShadowMatcher
+from xibi.shutdown import request_shutdown
+from xibi.skills.registry import SkillRegistry
 from xibi.tracing import Tracer
-from xibi.cli.init import cmd_init
-from xibi.cli import cmd_doctor
-from xibi.cli.skill_test import cmd_skill_test
 
 
 def _handle_sigterm(signum: int, frame: object) -> None:
@@ -42,10 +42,7 @@ def cmd_telegram(args: argparse.Namespace) -> None:
 
     try:
         with config_path.open() as f:
-            if config_path.suffix == ".yaml":
-                config = yaml.safe_load(f)
-            else:
-                config = json.load(f)
+            config = yaml.safe_load(f) if config_path.suffix == ".yaml" else json.load(f)
     except Exception as e:
         print(f"❌ Failed to load config: {e}")
         sys.exit(1)
@@ -68,6 +65,7 @@ def cmd_telegram(args: argparse.Namespace) -> None:
     db_path = Path(config.get("db_path", workdir / "data" / "xibi.db")).expanduser()
 
     from xibi.db import migrate
+
     migrate(db_path)
 
     init_telemetry(db_path, tracer=Tracer(db_path))
@@ -96,6 +94,7 @@ def cmd_telegram(args: argparse.Namespace) -> None:
 def cmd_heartbeat(args: argparse.Namespace) -> None:
     """Run the heartbeat poller."""
     import os
+
     from xibi.alerting.rules import RuleEngine
     from xibi.heartbeat.poller import HeartbeatPoller
     from xibi.observation import ObservationCycle
@@ -112,10 +111,7 @@ def cmd_heartbeat(args: argparse.Namespace) -> None:
 
     try:
         with config_path.open() as f:
-            if config_path.suffix == ".yaml":
-                config = yaml.safe_load(f)
-            else:
-                config = json.load(f)
+            config = yaml.safe_load(f) if config_path.suffix == ".yaml" else json.load(f)
     except Exception as e:
         print(f"❌ Failed to load config: {e}")
         sys.exit(1)
@@ -127,6 +123,7 @@ def cmd_heartbeat(args: argparse.Namespace) -> None:
     db_path = Path(config.get("db_path", workdir / "data" / "xibi.db")).expanduser()
 
     from xibi.db import migrate
+
     migrate(db_path)
 
     init_telemetry(db_path, tracer=Tracer(db_path))
@@ -235,9 +232,8 @@ def main() -> None:
         cmd_telegram(args)
     elif args.command == "heartbeat":
         cmd_heartbeat(args)
-    elif args.command == "skill":
-        if args.skill_command == "test":
-            cmd_skill_test(args)
+    elif args.command == "skill" and args.skill_command == "test":
+        cmd_skill_test(args)
 
 
 if __name__ == "__main__":

@@ -4,11 +4,17 @@ import os
 import sys
 from pathlib import Path
 from typing import Any
-import yaml
+
 import requests
+import yaml
+
+# Re-export main from chat to support legacy test imports
+from xibi.cli.chat import main
 from xibi.config import CONFIG_PATH
-from xibi.db.migrations import SchemaManager, SCHEMA_VERSION
+from xibi.db.migrations import SCHEMA_VERSION, SchemaManager
 from xibi.secrets import manager as secrets_manager
+
+__all__ = ["cmd_doctor", "main"]
 
 # ANSI colors
 GREEN = "\033[92m"
@@ -16,10 +22,12 @@ YELLOW = "\033[93m"
 RED = "\033[91m"
 RESET = "\033[0m"
 
+
 def check_mark(success: bool, critical: bool = True) -> str:
     if success:
         return f"{GREEN}[✓]{RESET}"
     return f"{RED}[✗]{RESET}" if critical else f"{YELLOW}[!]{RESET}"
+
 
 def cmd_doctor(args: Any) -> None:
     """Diagnostic command that verifies all required dependencies and configs are in place."""
@@ -41,7 +49,6 @@ def cmd_doctor(args: Any) -> None:
         critical_failed = True
 
     # 2. DB file exists, can open, schema version matches codebase
-    db_path = None
     if config:
         db_path = Path(config.get("db_path", Path.home() / ".xibi" / "data" / "xibi.db")).expanduser()
     else:
@@ -54,7 +61,9 @@ def cmd_doctor(args: Any) -> None:
             if version == SCHEMA_VERSION:
                 print(f"{check_mark(True)} Database at {db_path} (schema version {version})")
             else:
-                print(f"{check_mark(False)} Database at {db_path} (schema version mismatch: got {version}, expected {SCHEMA_VERSION})")
+                print(
+                    f"{check_mark(False)} Database at {db_path} (schema version mismatch: got {version}, expected {SCHEMA_VERSION})"
+                )
                 critical_failed = True
         except Exception as e:
             print(f"{check_mark(False)} Database at {db_path} error: {e}")
@@ -101,11 +110,13 @@ def cmd_doctor(args: Any) -> None:
                     if resp.status_code == 200:
                         tags = resp.json().get("models", [])
                         available_models = [m["name"] for m in tags]
-                        if model_name in available_models or any(m.startswith(f"{model_name}:") for m in available_models):
-                             print(f"{check_mark(True)} Ollama endpoint responding ({model_name} available)")
+                        if model_name in available_models or any(
+                            m.startswith(f"{model_name}:") for m in available_models
+                        ):
+                            print(f"{check_mark(True)} Ollama endpoint responding ({model_name} available)")
                         else:
-                             print(f"{check_mark(False)} Ollama endpoint responding, but model {model_name} not found")
-                             critical_failed = True
+                            print(f"{check_mark(False)} Ollama endpoint responding, but model {model_name} not found")
+                            critical_failed = True
                     else:
                         print(f"{check_mark(False)} Ollama endpoint returned {resp.status_code}")
                         critical_failed = True
@@ -117,7 +128,11 @@ def cmd_doctor(args: Any) -> None:
                 if api_key:
                     try:
                         # Cheap API call to OpenAI
-                        resp = requests.get("https://api.openai.com/v1/models", headers={"Authorization": f"Bearer {api_key}"}, timeout=5)
+                        resp = requests.get(
+                            "https://api.openai.com/v1/models",
+                            headers={"Authorization": f"Bearer {api_key}"},
+                            timeout=5,
+                        )
                         if resp.status_code == 200:
                             print(f"{check_mark(True)} OpenAI endpoint responding")
                         else:
@@ -142,12 +157,16 @@ def cmd_doctor(args: Any) -> None:
                 api_key = os.environ.get(provider_cfg.get("api_key_env", "GROQ_API_KEY"))
                 if api_key:
                     try:
-                        resp = requests.get("https://api.groq.com/openai/v1/models", headers={"Authorization": f"Bearer {api_key}"}, timeout=5)
+                        resp = requests.get(
+                            "https://api.groq.com/openai/v1/models",
+                            headers={"Authorization": f"Bearer {api_key}"},
+                            timeout=5,
+                        )
                         if resp.status_code == 200:
-                             print(f"{check_mark(True)} Groq endpoint responding")
+                            print(f"{check_mark(True)} Groq endpoint responding")
                         else:
-                             print(f"{check_mark(False)} Groq endpoint returned {resp.status_code}")
-                             critical_failed = True
+                            print(f"{check_mark(False)} Groq endpoint returned {resp.status_code}")
+                            critical_failed = True
                     except Exception as e:
                         print(f"{check_mark(False)} Groq endpoint unreachable: {e}")
                         critical_failed = True
