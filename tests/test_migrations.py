@@ -285,13 +285,19 @@ def test_init_idempotent(tmp_path: Path):
 
 
 def test_doctor_passes_after_init(tmp_path: Path):
+    import json as _json
+
     workdir = tmp_path / "xibi_home"
     init_workdir(workdir)
+    # Overwrite config.json with a minimal config (no LLM providers) so that
+    # doctor does not attempt Ollama/network connectivity checks in CI.
+    minimal_config = {"models": {}, "providers": {}, "profile": {"assistant_name": "Xibi"}}
+    (workdir / "config.json").write_text(_json.dumps(minimal_config))
     # Run xibi doctor via subprocess
     result = subprocess.run(
         [sys.executable, "-m", "xibi", "--workdir", str(workdir), "doctor"], capture_output=True, text=True
     )
-    assert result.returncode == 0
+    assert result.returncode == 0, f"doctor failed:\nstdout={result.stdout}\nstderr={result.stderr}"
     assert "✅ Workdir exists." in result.stdout
     assert "✅ Database schema is up to date" in result.stdout
 

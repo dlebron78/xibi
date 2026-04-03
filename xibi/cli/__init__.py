@@ -8,13 +8,13 @@ from typing import Any
 import requests
 import yaml
 
-# Re-export main from chat to support legacy test imports
-from xibi.cli.chat import main
+# Re-export main and load_config_with_env_fallback from chat to support legacy test imports
+from xibi.cli.chat import load_config_with_env_fallback, main
 from xibi.config import CONFIG_PATH
 from xibi.db.migrations import SCHEMA_VERSION, SchemaManager
 from xibi.secrets import manager as secrets_manager
 
-__all__ = ["cmd_doctor", "main"]
+__all__ = ["cmd_doctor", "load_config_with_env_fallback", "main"]
 
 # ANSI colors
 GREEN = "\033[92m"
@@ -34,25 +34,57 @@ def cmd_doctor(args: Any) -> None:
     print("Xibi Health Check\n")
     critical_failed = False
 
-    # 1. Config file exists and valid YAML
+    # Resolve workdir from args if it's a plain string (subprocess / real CLI call).
+    # When called from unit tests via MagicMock(), args.workdir is not a string, so we
+    # fall back to the module-level CONFIG_PATH that tests patch via monkeypatch.
+    workdir_str = getattr(args, "workdir", None)
+    workdir: Path | None = None
+    if isinstance(workdir_str, str):
+        workdir = Path(workdir_str).expanduser()
+
+    # 0. Workdir existence check (only when a real workdir was supplied via CLI)
+    if workdir is not None:
+        if not workdir.exists():
+            print("❌ Workdir missing.")
+            sys.exit(1)
+        print("✅ Workdir exists.")
+
+    # Determine effective config path: workdir-relative when workdir was supplied,
+    # otherwise fall back to the module-level CONFIG_PATH (patchable in unit tests).
+    if workdir is not None:
+        candidate_json = workdir / "config.json"
+        candidate_yaml = workdir / "config.yaml"
+        if candidate_json.exists():
+            effective_config_path: Path = candidate_json
+        else:
+            effective_config_path = candidate_yaml
+    else:
+        effective_config_path = CONFIG_PATH
+
+    # 1. Config file exists and valid YAML/JSON
     config = None
-    if CONFIG_PATH.exists():
+    if effective_config_path.exists():
         try:
-            with open(CONFIG_PATH) as f:
-                config = yaml.safe_load(f)
-            print(f"{check_mark(True)} Config file at {CONFIG_PATH}")
+            with open(effective_config_path) as f:
+                if effective_config_path.suffix == ".json":
+                    import json as _json
+                    config = _json.load(f)
+                else:
+                    config = yaml.safe_load(f)
+            print(f"{check_mark(True)} Config file at {effective_config_path}")
         except Exception as e:
-            print(f"{check_mark(False)} Config file at {CONFIG_PATH} is invalid YAML: {e}")
+            print(f"{check_mark(False)} Config file at {effective_config_path} is invalid: {e}")
             critical_failed = True
     else:
-        print(f"{check_mark(False)} Config file at {CONFIG_PATH} missing")
+        print(f"{check_mark(False)} Config file at {effective_config_path} missing")
         critical_failed = True
 
     # 2. DB file exists, can open, schema version matches codebase
+    default_db = (workdir / "data" / "xibi.db") if workdir is not None else (Path.home() / ".xibi" / "data" / "xibi.db")
     if config:
-        db_path = Path(config.get("db_path", Path.home() / ".xibi" / "data" / "xibi.db")).expanduser()
+        db_path = Path(config.get("db_path", default_db)).expanduser()
     else:
-        db_path = Path.home() / ".xibi" / "data" / "xibi.db"
+        db_path = default_db
 
     if db_path.exists():
         try:
@@ -60,6 +92,7 @@ def cmd_doctor(args: Any) -> None:
             version = sm.get_version()
             if version == SCHEMA_VERSION:
                 print(f"{check_mark(True)} Database at {db_path} (schema version {version})")
+                print("✅ Database schema is up to date")
             else:
                 print(
                     f"{check_mark(False)} Database at {db_path} (schema version mismatch: got {version}, expected {SCHEMA_VERSION})"
@@ -72,16 +105,19 @@ def cmd_doctor(args: Any) -> None:
         print(f"{check_mark(False)} Database at {db_path} missing")
         critical_failed = True
 
-    # 3. Channel credentials stored
+    # 3. Channel credentials stored (only critical when channel is explicitly configured)
     if config:
-        channel = config.get("channel", "telegram")
-        token_key = f"{channel}_token"
-        token = secrets_manager.load(token_key)
-        if token:
-            print(f"{check_mark(True)} {channel.capitalize()} token configured")
+        channel = config.get("channel")
+        if channel:
+            token_key = f"{channel}_token"
+            token = secrets_manager.load(token_key)
+            if token:
+                print(f"{check_mark(True)} {channel.capitalize()} token configured")
+            else:
+                print(f"{check_mark(False)} {channel.capitalize()} token missing")
+                critical_failed = True
         else:
-            print(f"{check_mark(False)} {channel.capitalize()} token missing")
-            critical_failed = True
+            print(f"{check_mark(False, False)} No channel configured (optional)")
     else:
         print(f"{check_mark(False, False)} Cannot check credentials without valid config")
 
@@ -178,7 +214,8 @@ def cmd_doctor(args: Any) -> None:
 
     # 5. Skill manifest directory exists
     if config:
-        skill_dir_path = config.get("skill_dir", "~/.xibi/skills")
+        default_skill_dir = str(workdir / "skills") if workdir is not None else "~/.xibi/skills"
+        skill_dir_path = config.get("skill_dir", default_skill_dir)
         skill_dir = Path(skill_dir_path).expanduser()
         if skill_dir.exists():
             skills = []
