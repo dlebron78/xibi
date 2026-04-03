@@ -4,134 +4,53 @@ import argparse
 import json
 import signal
 import sys
+import yaml
 from pathlib import Path
 
 from xibi.shutdown import request_shutdown
+import xibi.db
+from xibi.channels.telegram import TelegramAdapter
+from xibi.db import SchemaManager
+from xibi.executor import LocalHandlerExecutor
+from xibi.mcp.registry import MCPServerRegistry
+from xibi.routing.control_plane import ControlPlaneRouter
+from xibi.routing.shadow import ShadowMatcher
+from xibi.skills.registry import SkillRegistry
+from xibi.routing.llm_classifier import LLMRoutingClassifier
+from xibi.router import init_telemetry
+from xibi.tracing import Tracer
+from xibi.cli.init import cmd_init
+from xibi.cli import cmd_doctor
+from xibi.cli.skill_test import cmd_skill_test
 
 
 def _handle_sigterm(signum: int, frame: object) -> None:
     request_shutdown()
 
 
-import xibi.db
-from xibi.channels.telegram import TelegramAdapter
-from xibi.db import SchemaManager, init_workdir
-from xibi.db.migrations import SCHEMA_VERSION
-from xibi.executor import LocalHandlerExecutor
-from xibi.mcp.registry import MCPServerRegistry
-from xibi.routing.control_plane import ControlPlaneRouter
-from xibi.routing.shadow import ShadowMatcher
-from xibi.skills.registry import SkillRegistry
-
-
-def cmd_init(args: argparse.Namespace) -> None:
-    """Initialize a new Xibi workdir."""
-    workdir = Path(args.workdir).expanduser()
-    print(f"Initializing Xibi workdir at {workdir}...")
-
-    # Collect profile — from flags, or interactively if running in a terminal
-    user_name = getattr(args, "name", None)
-    assistant_name = getattr(args, "assistant_name", None) or "Xibi"
-
-    if not user_name and sys.stdin.isatty():
-        try:
-            user_name = input("Your name (used in the assistant's system prompt): ").strip() or None
-        except (EOFError, KeyboardInterrupt):
-            user_name = None
-    # Non-interactive (piped/CI): silently skip — profile can be added to config.json later
-
-    try:
-        init_workdir(workdir, user_name=user_name, assistant_name=assistant_name)
-        print("✅ Workdir initialized.")
-        if user_name:
-            print(f"   Profile: {assistant_name} will address you as {user_name}.")
-        else:
-            print("   Tip: add a 'profile' section to config.json to tell Xibi your name.")
-    except Exception as e:
-        print(f"❌ Failed to initialize workdir: {e}")
-        sys.exit(1)
-
-
-def cmd_doctor(args: argparse.Namespace) -> None:
-    """Check the health of a Xibi workdir."""
-    workdir = Path(args.workdir).expanduser()
-    print(f"Checking health at {workdir}...\n")
-    failed = False
-
-    # 1. Workdir exists
-    if workdir.exists():
-        print("✅ Workdir exists.")
-    else:
-        print("❌ Workdir missing.")
-        failed = True
-
-    # 2. config.json exists and is valid JSON
-    config_path = workdir / "config.json"
-    if config_path.exists():
-        try:
-            with config_path.open() as f:
-                json.load(f)
-            print("✅ config.json is valid.")
-        except Exception as e:
-            print(f"❌ config.json is corrupted: {e}")
-            failed = True
-    else:
-        print("❌ config.json missing.")
-        failed = True
-
-    # 3. data/xibi.db exists
-    db_path = workdir / "data" / "xibi.db"
-    if db_path.exists():
-        print("✅ data/xibi.db exists.")
-
-        # 4. Database schema is up to date
-        try:
-            sm = SchemaManager(db_path)
-            current_version = sm.get_version()
-            if current_version == SCHEMA_VERSION:
-                print(f"✅ Database schema is up to date (version {current_version}).")
-            else:
-                print(f"❌ Database schema is out of date (current: {current_version}, expected: {SCHEMA_VERSION}).")
-                failed = True
-
-            # 5. Required tables exist
-            with xibi.db.open_db(db_path) as conn:
-                cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-                tables = {row[0] for row in cursor.fetchall()}
-                required = {"beliefs", "ledger", "traces", "tasks", "signals"}
-                missing = required - tables
-                if not missing:
-                    print("✅ Required tables exist.")
-                else:
-                    print(f"❌ Missing required tables: {', '.join(missing)}")
-                    failed = True
-        except Exception as e:
-            print(f"❌ Database error: {e}")
-            failed = True
-    else:
-        print("❌ data/xibi.db missing.")
-        failed = True
-
-    if failed:
-        sys.exit(1)
-
-
 def cmd_telegram(args: argparse.Namespace) -> None:
     """Run the Telegram bot."""
     workdir = Path(args.workdir).expanduser()
     config_path = Path(args.config) if args.config else workdir / "config.json"
+    # Fallback to config.yaml if config.json is missing
+    if not config_path.exists() and not args.config:
+        config_path = workdir / "config.yaml"
+
     if not config_path.exists():
-        print(f"❌ config.json missing at {config_path}. Run 'xibi init' first.")
+        print(f"❌ config missing at {config_path}. Run 'xibi init' first.")
         sys.exit(1)
 
     try:
         with config_path.open() as f:
-            config = json.load(f)
+            if config_path.suffix == ".yaml":
+                config = yaml.safe_load(f)
+            else:
+                config = json.load(f)
     except Exception as e:
         print(f"❌ Failed to load config: {e}")
         sys.exit(1)
 
-    skills_dir = workdir / "skills"
+    skills_dir = Path(config.get("skill_dir", workdir / "skills")).expanduser()
     if not skills_dir.exists():
         skills_dir = Path("xibi/skills/sample")  # Fallback
 
@@ -144,18 +63,12 @@ def cmd_telegram(args: argparse.Namespace) -> None:
     shadow = ShadowMatcher()
     shadow.load_manifests(str(skills_dir))
 
-    from xibi.routing.llm_classifier import LLMRoutingClassifier
-
     llm_routing_classifier = LLMRoutingClassifier(config)
 
-    db_path = workdir / "data" / "xibi.db"
+    db_path = Path(config.get("db_path", workdir / "data" / "xibi.db")).expanduser()
 
     from xibi.db import migrate
-
     migrate(db_path)
-
-    from xibi.router import init_telemetry
-    from xibi.tracing import Tracer
 
     init_telemetry(db_path, tracer=Tracer(db_path))
 
@@ -183,7 +96,6 @@ def cmd_telegram(args: argparse.Namespace) -> None:
 def cmd_heartbeat(args: argparse.Namespace) -> None:
     """Run the heartbeat poller."""
     import os
-
     from xibi.alerting.rules import RuleEngine
     from xibi.heartbeat.poller import HeartbeatPoller
     from xibi.observation import ObservationCycle
@@ -191,29 +103,31 @@ def cmd_heartbeat(args: argparse.Namespace) -> None:
 
     workdir = Path(args.workdir).expanduser()
     config_path = Path(args.config) if args.config else workdir / "config.json"
+    if not config_path.exists() and not args.config:
+        config_path = workdir / "config.yaml"
+
     if not config_path.exists():
-        print(f"❌ config.json missing at {config_path}. Run 'xibi init' first.")
+        print(f"❌ config missing at {config_path}. Run 'xibi init' first.")
         sys.exit(1)
 
     try:
         with config_path.open() as f:
-            config = json.load(f)
+            if config_path.suffix == ".yaml":
+                config = yaml.safe_load(f)
+            else:
+                config = json.load(f)
     except Exception as e:
         print(f"❌ Failed to load config: {e}")
         sys.exit(1)
 
-    skills_dir = workdir / "skills"
+    skills_dir = Path(config.get("skill_dir", workdir / "skills")).expanduser()
     if not skills_dir.exists():
         skills_dir = Path("xibi/skills/sample")
 
-    db_path = workdir / "data" / "xibi.db"
+    db_path = Path(config.get("db_path", workdir / "data" / "xibi.db")).expanduser()
 
     from xibi.db import migrate
-
     migrate(db_path)
-
-    from xibi.router import init_telemetry
-    from xibi.tracing import Tracer
 
     init_telemetry(db_path, tracer=Tracer(db_path))
 
@@ -287,16 +201,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--config",
-        help="Path to config.json (default: <workdir>/config.json)",
+        help="Path to config.json or config.yaml (default: <workdir>/config.json or <workdir>/config.yaml)",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # init
-    init_parser = subparsers.add_parser("init", help="Bootstrap a new Xibi workdir")
-    init_parser.add_argument("--name", help="Your name (written into config.json profile)")
-    init_parser.add_argument(
-        "--assistant-name", dest="assistant_name", default="Xibi", help="Name for the assistant (default: Xibi)"
-    )
+    subparsers.add_parser("init", help="Bootstrap a new Xibi workdir")
 
     # doctor
     subparsers.add_parser("doctor", help="Check workdir health")
@@ -306,6 +216,14 @@ def main() -> None:
 
     # heartbeat
     subparsers.add_parser("heartbeat", help="Run the heartbeat poller")
+
+    # skill
+    skill_parser = subparsers.add_parser("skill", help="Skill management")
+    skill_subparsers = skill_parser.add_subparsers(dest="skill_command", required=True)
+
+    # skill test
+    test_parser = skill_subparsers.add_parser("test", help="Test a skill manifest")
+    test_parser.add_argument("name", help="Name of the skill to test")
 
     args = parser.parse_args()
 
@@ -317,6 +235,9 @@ def main() -> None:
         cmd_telegram(args)
     elif args.command == "heartbeat":
         cmd_heartbeat(args)
+    elif args.command == "skill":
+        if args.skill_command == "test":
+            cmd_skill_test(args)
 
 
 if __name__ == "__main__":

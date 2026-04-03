@@ -14,6 +14,9 @@ dependencies = [
     "google-generativeai>=0.8",
     "flask>=3.0",
     "psutil>=5.9",
+    "PyYAML>=6.0",
+    "jsonschema>=4.20",
+    "cryptography>=42.0",
 ]
 
 [project.scripts]
@@ -28,6 +31,9 @@ dev = [
     "mypy>=1.11",
     "types-requests>=2.31",
     "responses>=0.25",        # HTTP mocking for requests library
+]
+onboarding = [
+    "keyring>=24.3",
 ]
 
 [tool.setuptools]
