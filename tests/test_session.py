@@ -79,8 +79,8 @@ def test_get_context_block_empty_on_no_turns(db_path):
 def test_get_context_block_includes_last_two_full(db_path):
     session = SessionContext("test_session", db_path)
 
-    # Add 3 turns
-    for i in range(3):
+    # Add 5 turns — FULL_WINDOW=4, so turn 0 falls into the summary range
+    for i in range(5):
         result = ReActResult(answer=f"Answer {i}", steps=[], exit_reason="finish", duration_ms=100)
         with (
             patch("xibi.session.SessionContext.extract_entities"),
@@ -88,17 +88,17 @@ def test_get_context_block_includes_last_two_full(db_path):
         ):
             session.add_turn(f"Query {i}", result)
 
-    # Mock summary for the oldest turn
+    # Set summary for the oldest turn (turn 0 = 4 turns ago in a 5-turn window)
     with sqlite3.connect(db_path) as conn:
         conn.execute("UPDATE session_turns SET summary = 'Summary 0' WHERE query = 'Query 0'")
         conn.commit()
 
     block = session.get_context_block()
-    assert "User: Query 2" in block
-    assert "Xibi: Answer 2" in block
+    assert "User: Query 4" in block
+    assert "Xibi: Answer 4" in block
     assert "User: Query 1" in block
     assert "Xibi: Answer 1" in block
-    assert "[2 turns ago] Summary 0" in block
+    assert "[4 turns ago] Summary 0" in block
 
 
 def test_get_context_block_drops_stale_session(db_path):
@@ -165,8 +165,8 @@ def test_summarise_old_turns_called_on_add(mock_get_model, db_path):
 
     session = SessionContext("test_session", db_path)
 
-    # Add 3 turns (FULL_WINDOW=2)
-    for i in range(3):
+    # Add 5 turns — FULL_WINDOW=4, so turn 0 falls outside the window and gets summarised
+    for i in range(5):
         result = ReActResult(answer=f"Answer {i}", steps=[], exit_reason="finish", duration_ms=100)
         with patch("xibi.session.SessionContext.extract_entities"):
             session.add_turn(f"Query {i}", result)

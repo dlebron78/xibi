@@ -346,6 +346,7 @@ def test_step_callback_debug_output(mock_registry, test_db, capsys):
         step_callback,
         session_context,
         tracer,
+        react_format=None,
     ):
         step = Step(
             step_num=1,

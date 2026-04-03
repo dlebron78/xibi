@@ -313,14 +313,14 @@ def test_gemini_client_generate_with_timeout(mock_genai):
 
 
 def test_openai_client_not_implemented():
-    """Covers OpenAIClient stub __init__ (line 156)."""
-    with pytest.raises(NotImplementedError):
+    """OpenAIClient requires the openai package; raises RuntimeError when absent."""
+    with pytest.raises((RuntimeError, NotImplementedError)):
         OpenAIClient("openai", "gpt-4", {}, "fake-key")
 
 
 def test_anthropic_client_not_implemented():
-    """Covers AnthropicClient stub __init__ (line 171)."""
-    with pytest.raises(NotImplementedError):
+    """AnthropicClient requires the anthropic package; raises RuntimeError when absent."""
+    with pytest.raises((RuntimeError, NotImplementedError)):
         AnthropicClient("anthropic", "claude-3", {}, "fake-key")
 
 
