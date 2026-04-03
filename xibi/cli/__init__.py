@@ -81,10 +81,7 @@ def cmd_doctor(args: Any) -> None:
 
     # 2. DB file exists, can open, schema version matches codebase
     default_db = (workdir / "data" / "xibi.db") if workdir is not None else (Path.home() / ".xibi" / "data" / "xibi.db")
-    if config:
-        db_path = Path(config.get("db_path", default_db)).expanduser()
-    else:
-        db_path = default_db
+    db_path = Path(config.get("db_path", default_db)).expanduser() if config else default_db
 
     if db_path.exists():
         try:
