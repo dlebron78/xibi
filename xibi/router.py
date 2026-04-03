@@ -325,15 +325,13 @@ class OllamaClient:
             )
             raise RuntimeError(f"Ollama returned invalid JSON: {e}\nResponse: {response_text}") from e
 
-
-
     def generate_with_tools(
         self,
-        messages,
-        tools,
-        system=None,
-        **kwargs,
-    ):
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        system: str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         # Native function calling via Ollama /api/chat with tools parameter.
         # Returns dict: tool_calls (list of {name, arguments}), content (str), thinking (str|None)
         url = f"{self.base_url}/api/chat"
@@ -345,14 +343,16 @@ class OllamaClient:
 
         ollama_tools = []
         for tool in tools:
-            ollama_tools.append({
-                "type": "function",
-                "function": {
-                    "name": tool["name"],
-                    "description": tool.get("description", ""),
-                    "parameters": tool.get("inputSchema", tool.get("parameters", {})),
-                },
-            })
+            ollama_tools.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool["name"],
+                        "description": tool.get("description", ""),
+                        "parameters": tool.get("inputSchema", tool.get("parameters", {})),
+                    },
+                }
+            )
 
         payload = {
             "model": self.model,
@@ -384,10 +384,12 @@ class OllamaClient:
 
             for tc in msg.get("tool_calls", []):
                 fn = tc.get("function", {})
-                result["tool_calls"].append({
-                    "name": fn.get("name", ""),
-                    "arguments": fn.get("arguments", {}),
-                })
+                result["tool_calls"].append(
+                    {
+                        "name": fn.get("name", ""),
+                        "arguments": fn.get("arguments", {}),
+                    }
+                )
 
             self._emit_telemetry(
                 prompt=str(chat_messages),
@@ -673,7 +675,7 @@ class OpenAIClient:
         )
         response_text = self._call_provider(prompt_with_schema, system, **kwargs)
         try:
-            return json.loads(response_text)
+            return dict(json.loads(response_text))
         except json.JSONDecodeError as e:
             raise RuntimeError(f"OpenAI returned invalid JSON: {e}\nResponse: {response_text}") from e
 
@@ -741,7 +743,7 @@ class AnthropicClient:
         )
         response_text = self._call_provider(prompt_with_schema, system, **kwargs)
         try:
-            return json.loads(response_text)
+            return dict(json.loads(response_text))
         except json.JSONDecodeError as e:
             raise RuntimeError(f"Anthropic returned invalid JSON: {e}\nResponse: {response_text}") from e
 

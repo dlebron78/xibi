@@ -250,7 +250,6 @@ def _parse_xml_response(response_text: str) -> dict[str, Any]:
     return {"thought": thought, "tool": tool, "tool_input": tool_input}
 
 
-
 def _parse_text_response(response_text: str) -> dict[str, Any]:
     """Bregger-style plain-text: Thought / Action / Action Input."""
     thought_m = re.search(r"Thought:\s*(.+?)(?=\nAction:|\Z)", response_text, re.DOTALL)
@@ -275,6 +274,7 @@ def _parse_text_response(response_text: str) -> dict[str, Any]:
         q = tool_input.get("question") or thought
         return {"thought": thought, "tool": "ask_user", "tool_input": {"question": q}}
     return {"thought": thought, "tool": action, "tool_input": tool_input}
+
 
 def _parse_llm_response(response_text: str, react_format: str = "json") -> dict[str, Any]:
     """Route to the appropriate parser based on format."""
@@ -473,9 +473,7 @@ def run(
         )
 
     system_prompt = (f"{context_block}\n\n" if context_block else "") + (
-        "\n".join(_identity_lines) + "\n\n"
-        f"{_tools_block}\n\n"
-        f"{_format_instructions}"
+        "\n".join(_identity_lines) + f"\n\n{_tools_block}\n\n{_format_instructions}"
     )
 
     for step_num in range(1, max_steps + 1):

@@ -87,11 +87,11 @@ def load_config_with_env_fallback() -> Config:
 
 def main() -> None:
     model_shorthands = {
-        "4.1":  ("openai", "gpt-4.1"),
-        "5.4":  ("openai", "gpt-5.4"),
-        "4b":   ("ollama", "qwen3.5:4b"),
-        "9b":   ("ollama", "qwen3.5:9b"),
-        "e4b":  ("ollama", "gemma4:e4b"),
+        "4.1": ("openai", "gpt-4.1"),
+        "5.4": ("openai", "gpt-5.4"),
+        "4b": ("ollama", "qwen3.5:4b"),
+        "9b": ("ollama", "qwen3.5:9b"),
+        "e4b": ("ollama", "gemma4:e4b"),
         "g12b": ("ollama", "gemma3:12b"),
         "q14b": ("ollama", "qwen2.5:14b"),
     }
@@ -100,8 +100,8 @@ def main() -> None:
     parser.add_argument("--no-spinner", action="store_true", help="Disable thinking spinner (for CI/pipe)")
     parser.add_argument("--skills-dir", type=str, default="xibi/skills/sample", help="Path to skills directory")
     parser.add_argument("--model", type=str, help="Model shorthand (e4b, 9b, 4.1, 5.4) or provider name")
-    parser.add_argument("--format", dest="react_format", choices=["json","xml","text"], default="json")
-    parser.add_argument("--think", choices=["true","false"], default=None)
+    parser.add_argument("--format", dest="react_format", choices=["json", "xml", "text"], default="json")
+    parser.add_argument("--think", choices=["true", "false"], default=None)
     parser.add_argument("--session", type=str, default=None, help="Session ID. Use fresh for a clean slate.")
     args = parser.parse_args()
 
@@ -146,6 +146,7 @@ def main() -> None:
 
     _db_path = config.get("db_path") or Path.home() / ".xibi" / "data" / "xibi.db"
     import time as _t
+
     _session_id = args.session if args.session else "cli:local"
     if _session_id == "fresh":
         _session_id = f"cli:fresh:{int(_t.time())}"
@@ -229,11 +230,20 @@ def main() -> None:
         result = None
 
         # 0. Multi-source detector — skip shortcuts, go straight to ReAct
-        def _needs_multi_source(q):
+        def _needs_multi_source(q: str) -> bool:
             ql = q.lower()
-            signals = ["full story", "everything", "what's going on", "brief me",
-                        "catch me up", "all my sources", "what should i do",
-                        "what's happening", "what do i need to know", "summary of"]
+            signals = [
+                "full story",
+                "everything",
+                "what's going on",
+                "brief me",
+                "catch me up",
+                "all my sources",
+                "what should i do",
+                "what's happening",
+                "what do i need to know",
+                "summary of",
+            ]
             tool_hints = sum(1 for w in ["email", "chat", "calendar", "schedule", "inbox"] if w in ql)
             if tool_hints >= 2:
                 return True

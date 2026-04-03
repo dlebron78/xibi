@@ -121,6 +121,7 @@ _REALISTIC_INBOX = [
     },
 ]
 
+
 def _use_realistic() -> bool:
     """Check env var — survives dynamic reimport by executor."""
     return os.environ.get("XIBI_TEST_REALISTIC_INBOX") == "1"
