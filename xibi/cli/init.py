@@ -2,18 +2,20 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import requests
 import yaml
 
-import xibi.config
 from xibi.db.migrations import SchemaManager
 from xibi.secrets import manager as secrets_manager
 
 
-def cmd_init(args: object) -> None:
+def cmd_init(args: Any) -> None:
     """Bootstrap a new Xibi workdir."""
+    workdir = Path(getattr(args, "workdir", "~/.xibi")).expanduser()
+    config_path = Path(getattr(args, "config", None) or workdir / "config.yaml")
+
     print("Welcome to Xibi!\n")
 
     try:
@@ -76,8 +78,8 @@ def cmd_init(args: object) -> None:
         config = {
             "channel": channel,
             "admin_user_id": int(admin_id) if admin_id.isdigit() else None,
-            "skill_dir": str(Path.home() / ".xibi" / "skills"),
-            "db_path": str(Path.home() / ".xibi" / "data" / "xibi.db"),
+            "skill_dir": str(workdir / "skills"),
+            "db_path": str(workdir / "data" / "xibi.db"),
             "models": {
                 "text": {
                     "fast": {"provider": provider, "model": model_name},
@@ -94,8 +96,8 @@ def cmd_init(args: object) -> None:
         }
 
         # Save config
-        xibi.config.CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with open(xibi.config.CONFIG_PATH, "w") as f:
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_path, "w") as f:
             yaml.dump(config, f, default_flow_style=False)
 
         # Initialize Database
@@ -104,7 +106,7 @@ def cmd_init(args: object) -> None:
         sm = SchemaManager(db_path)
         sm.migrate()
 
-        print(f"\nConfiguration saved to {xibi.config.CONFIG_PATH}")
+        print(f"\nConfiguration saved to {config_path}")
         print(f"Database initialized at {db_path}")
         print("Run `xibi telegram` to start the bot, or `xibi doctor` for a health check.")
 

@@ -19,7 +19,6 @@ def isolated_config(tmp_path, monkeypatch):
 
     config_path = xibi_home / "config.yaml"
     monkeypatch.setattr(xibi.config, "CONFIG_PATH", config_path)
-    monkeypatch.setattr(xibi.cli, "CONFIG_PATH", config_path)
 
     monkeypatch.setattr(xibi.secrets.manager, "SECRETS_DIR", xibi_home / "secrets")
     monkeypatch.setattr(xibi.secrets.manager, "MASTER_KEY_FILE", xibi_home / "secrets" / ".master.key")
@@ -61,13 +60,17 @@ def test_doctor_all_checks_pass(isolated_config, capsys):
     skill_dir.mkdir(parents=True, exist_ok=True)
     (skill_dir / "manifest.yaml").write_text("name: test_skill\ndescription: test\ntools: []")
 
+    args = MagicMock()
+    args.workdir = str(isolated_config)
+    args.config = None
+
     with patch("xibi.secrets.manager.load", return_value="my-token"), \
          patch("requests.get") as mock_get:
 
         mock_get.return_value.status_code = 200
         mock_get.return_value.json.return_value = {"models": [{"name": "qwen3.5:9b"}]}
 
-        cmd_doctor(MagicMock())
+        cmd_doctor(args)
 
     captured = strip_ansi(capsys.readouterr().out)
     assert "[✓] Config file" in captured
@@ -82,8 +85,12 @@ def test_doctor_missing_config_reports_error(isolated_config, capsys):
     if config_file.exists():
         config_file.unlink()
 
+    args = MagicMock()
+    args.workdir = str(isolated_config)
+    args.config = None
+
     with pytest.raises(SystemExit) as exc:
-        cmd_doctor(MagicMock())
+        cmd_doctor(args)
     assert exc.value.code == 1
 
     captured = strip_ansi(capsys.readouterr().out)
@@ -113,11 +120,15 @@ def test_doctor_ollama_unreachable(isolated_config, capsys):
 
     (isolated_config / "skills").mkdir(parents=True, exist_ok=True)
 
+    args = MagicMock()
+    args.workdir = str(isolated_config)
+    args.config = None
+
     with patch("xibi.secrets.manager.load", return_value="my-token"), \
          patch("requests.get", side_effect=Exception("Connection refused")):
 
         with pytest.raises(SystemExit) as exc:
-            cmd_doctor(MagicMock())
+            cmd_doctor(args)
         assert exc.value.code == 1
 
     captured = strip_ansi(capsys.readouterr().out)
@@ -152,13 +163,17 @@ def test_doctor_db_schema_version_mismatch(isolated_config, capsys):
 
     (isolated_config / "skills").mkdir(parents=True, exist_ok=True)
 
+    args = MagicMock()
+    args.workdir = str(isolated_config)
+    args.config = None
+
     with patch("xibi.secrets.manager.load", return_value="my-token"), \
          patch("requests.get") as mock_get:
         mock_get.return_value.status_code = 200
         mock_get.return_value.json.return_value = {"models": [{"name": "qwen3.5:9b"}]}
 
         with pytest.raises(SystemExit) as exc:
-            cmd_doctor(MagicMock())
+            cmd_doctor(args)
         assert exc.value.code == 1
 
     captured = strip_ansi(capsys.readouterr().out)

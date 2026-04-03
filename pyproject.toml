@@ -30,8 +30,8 @@ dev = [
     "ruff>=0.6",
     "mypy>=1.11",
     "types-requests>=2.31",
-    "types-PyYAML>=6.0",
     "responses>=0.25",        # HTTP mocking for requests library
+    "types-PyYAML",
 ]
 onboarding = [
     "keyring>=24.3",
