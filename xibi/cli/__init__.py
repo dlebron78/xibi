@@ -68,6 +68,7 @@ def cmd_doctor(args: Any) -> None:
             with open(effective_config_path) as f:
                 if effective_config_path.suffix == ".json":
                     import json as _json
+
                     config = _json.load(f)
                 else:
                     config = yaml.safe_load(f)
