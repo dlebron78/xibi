@@ -1,7 +1,7 @@
-import sqlite3
 import uuid
 import os
 from pathlib import Path
+from xibi.db import open_db
 
 
 def run(params):
@@ -13,16 +13,13 @@ def run(params):
     due = params.get("due")
     notes = params.get("notes")
 
-    workdir = params.get("_workdir") or os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.bregger"))
-    db_path = Path(workdir) / "data" / "bregger.db"
-
-    if not db_path.exists():
-        return {"status": "error", "message": f"Database not found at {db_path}"}
+    workdir = Path(params.get("_workdir") or os.environ.get("XIBI_WORKDIR", "~/.xibi")).expanduser()
+    db_path = workdir / "data" / "xibi.db"
 
     item_id = str(uuid.uuid4())
 
     try:
-        with sqlite3.connect(db_path) as conn:
+        with open_db(db_path) as conn:
             if category in ["preference", "fact", "contact", "interest"]:
                 key = entity if entity else content[:50]
                 # Invalidate any existing current record for this key before inserting the new one
