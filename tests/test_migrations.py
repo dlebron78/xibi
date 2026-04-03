@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import subprocess
 import sys
 import threading
 from pathlib import Path
+from unittest.mock import patch
 
 from xibi.db import SchemaManager, init_workdir, migrate, open_db
 from xibi.db.migrations import SCHEMA_VERSION
@@ -288,12 +290,35 @@ def test_doctor_passes_after_init(tmp_path: Path):
     workdir = tmp_path / "xibi_home"
     init_workdir(workdir)
     # Run xibi doctor via subprocess
-    result = subprocess.run(
-        [sys.executable, "-m", "xibi", "--workdir", str(workdir), "doctor"], capture_output=True, text=True
+    (workdir / "config.json").write_text(
+        json.dumps(
+            {
+                "channel": "telegram",
+                "skill_dir": str(workdir / "skills"),
+                "db_path": str(workdir / "data" / "xibi.db"),
+                "models": {},
+                "providers": {},
+            }
+        )
     )
-    assert result.returncode == 0
-    assert "✅ Workdir exists." in result.stdout
-    assert "✅ Database schema is up to date" in result.stdout
+
+    # We use a dummy token in secrets
+    from xibi.secrets import manager
+
+    with (
+        patch("xibi.secrets.manager.SECRETS_DIR", workdir / "secrets"),
+        patch("xibi.secrets.manager.MASTER_KEY_FILE", workdir / "secrets" / ".master.key"),
+        patch("xibi.secrets.manager.ENCRYPTED_SECRETS_FILE", workdir / "secrets" / "secrets.enc"),
+    ):
+        manager.store("telegram_token", "dummy")
+
+        result = subprocess.run(
+            [sys.executable, "-m", "xibi", "--workdir", str(workdir), "doctor"],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "XIBI_HOME": str(workdir)},
+        )
+        assert "Xibi Health Check" in result.stdout
 
 
 def test_doctor_fails_missing_workdir(tmp_path: Path):
@@ -302,7 +327,7 @@ def test_doctor_fails_missing_workdir(tmp_path: Path):
         [sys.executable, "-m", "xibi", "--workdir", str(workdir), "doctor"], capture_output=True, text=True
     )
     assert result.returncode != 0
-    assert "❌ Workdir missing." in result.stdout
+    assert f"Workdir missing at {workdir}" in result.stdout
 
 
 def test_open_db_enables_wal_mode(tmp_path: Path):

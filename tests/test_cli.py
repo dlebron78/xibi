@@ -104,16 +104,16 @@ def test_cli_control_plane_routes(mock_registry, test_db, capsys):
     with (
         patch("sys.argv", ["xibi"]),
         patch("builtins.input", side_effect=["hi", "quit"]),
-        patch("xibi.cli.SkillRegistry", return_value=mock_registry),
+        patch("xibi.skills.registry.SkillRegistry", return_value=mock_registry),
         patch(
-            "xibi.cli.load_config_with_env_fallback",
+            "xibi.cli.chat.load_config_with_env_fallback",
             return_value={
                 "models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}},
                 "providers": {"ollama": {"base_url": "http://localhost:11434"}},
                 "db_path": test_db,
             },
         ),
-        patch("xibi.cli.run") as mock_run,
+        patch("xibi.cli.chat.run") as mock_run,
         patch("xibi.session.get_model"),
     ):
         main()
@@ -127,16 +127,16 @@ def test_cli_shadow_direct_routes(mock_registry, test_db, capsys):
     with (
         patch("sys.argv", ["xibi"]),
         patch("builtins.input", side_effect=["check my email", "quit"]),
-        patch("xibi.cli.SkillRegistry", return_value=mock_registry),
+        patch("xibi.skills.registry.SkillRegistry", return_value=mock_registry),
         patch(
-            "xibi.cli.load_config_with_env_fallback",
+            "xibi.cli.chat.load_config_with_env_fallback",
             return_value={
                 "models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}},
                 "providers": {"ollama": {"base_url": "http://localhost:11434"}},
                 "db_path": test_db,
             },
         ),
-        patch("xibi.cli.run") as mock_run,
+        patch("xibi.cli.chat.run") as mock_run,
         patch("xibi.session.get_model"),
     ):
         main()
@@ -153,9 +153,9 @@ def test_cli_shadow_hint_routes(mock_registry, test_db, capsys):
     with (
         patch("sys.argv", ["xibi"]),
         patch("builtins.input", side_effect=["check email", "quit"]),
-        patch("xibi.cli.SkillRegistry", return_value=mock_registry),
+        patch("xibi.skills.registry.SkillRegistry", return_value=mock_registry),
         patch(
-            "xibi.cli.load_config_with_env_fallback",
+            "xibi.cli.chat.load_config_with_env_fallback",
             return_value={
                 "models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}},
                 "providers": {"ollama": {"base_url": "http://localhost:11434"}},
@@ -163,7 +163,7 @@ def test_cli_shadow_hint_routes(mock_registry, test_db, capsys):
             },
         ),
         patch(
-            "xibi.cli.run",
+            "xibi.cli.chat.run",
             return_value=ReActResult(answer="hinted answer", steps=[], exit_reason="finish", duration_ms=100),
         ) as mock_run,
         patch("xibi.session.get_model"),
@@ -182,9 +182,9 @@ def test_cli_llm_hint_routing(mock_registry, test_db, capsys):
     with (
         patch("sys.argv", ["xibi"]),
         patch("builtins.input", side_effect=["pull up my unread messages", "quit"]),
-        patch("xibi.cli.SkillRegistry", return_value=mock_registry),
+        patch("xibi.skills.registry.SkillRegistry", return_value=mock_registry),
         patch(
-            "xibi.cli.load_config_with_env_fallback",
+            "xibi.cli.chat.load_config_with_env_fallback",
             return_value={
                 "models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}},
                 "providers": {"ollama": {"base_url": "http://localhost:11434"}},
@@ -198,7 +198,7 @@ def test_cli_llm_hint_routing(mock_registry, test_db, capsys):
             ),
         ),
         patch(
-            "xibi.cli.run",
+            "xibi.cli.chat.run",
             return_value=ReActResult(answer="llm hinted answer", steps=[], exit_reason="finish", duration_ms=100),
         ) as mock_run,
         patch("xibi.session.get_model"),
@@ -217,9 +217,9 @@ def test_cli_react_fallthrough(mock_registry, test_db, capsys):
     with (
         patch("sys.argv", ["xibi"]),
         patch("builtins.input", side_effect=["something unknown", "quit"]),
-        patch("xibi.cli.SkillRegistry", return_value=mock_registry),
+        patch("xibi.skills.registry.SkillRegistry", return_value=mock_registry),
         patch(
-            "xibi.cli.load_config_with_env_fallback",
+            "xibi.cli.chat.load_config_with_env_fallback",
             return_value={
                 "models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}},
                 "providers": {"ollama": {"base_url": "http://localhost:11434"}},
@@ -227,7 +227,7 @@ def test_cli_react_fallthrough(mock_registry, test_db, capsys):
             },
         ),
         patch(
-            "xibi.cli.run",
+            "xibi.cli.chat.run",
             return_value=ReActResult(answer="react answer", steps=[], exit_reason="finish", duration_ms=100),
         ) as mock_run,
         patch("xibi.session.get_model"),
@@ -296,9 +296,9 @@ def test_cli_quit_exits_cleanly(mock_registry, test_db, capsys):
     with (
         patch("sys.argv", ["xibi"]),
         patch("builtins.input", side_effect=["quit"]),
-        patch("xibi.cli.SkillRegistry", return_value=mock_registry),
+        patch("xibi.skills.registry.SkillRegistry", return_value=mock_registry),
         patch(
-            "xibi.cli.load_config_with_env_fallback",
+            "xibi.cli.chat.load_config_with_env_fallback",
             return_value={
                 "models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}},
                 "providers": {"ollama": {"base_url": "http://localhost:11434"}},
@@ -316,9 +316,9 @@ def test_slash_traces_no_crash_empty(mock_registry, test_db, capsys):
     with (
         patch("sys.argv", ["xibi"]),
         patch("builtins.input", side_effect=["/traces", "quit"]),
-        patch("xibi.cli.SkillRegistry", return_value=mock_registry),
+        patch("xibi.skills.registry.SkillRegistry", return_value=mock_registry),
         patch(
-            "xibi.cli.load_config_with_env_fallback",
+            "xibi.cli.chat.load_config_with_env_fallback",
             return_value={
                 "models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}},
                 "providers": {"ollama": {"base_url": "http://localhost:11434"}},
@@ -361,16 +361,16 @@ def test_step_callback_debug_output(mock_registry, test_db, capsys):
     with (
         patch("sys.argv", ["xibi", "--debug"]),
         patch("builtins.input", side_effect=["some query", "quit"]),
-        patch("xibi.cli.SkillRegistry", return_value=mock_registry),
+        patch("xibi.skills.registry.SkillRegistry", return_value=mock_registry),
         patch(
-            "xibi.cli.load_config_with_env_fallback",
+            "xibi.cli.chat.load_config_with_env_fallback",
             return_value={
                 "models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}},
                 "providers": {"ollama": {"base_url": "http://localhost:11434"}},
                 "db_path": test_db,
             },
         ),
-        patch("xibi.cli.run", side_effect=mock_run_impl),
+        patch("xibi.cli.chat.run", side_effect=mock_run_impl),
         patch("xibi.session.get_model"),
     ):
         main()
@@ -386,9 +386,9 @@ def test_no_spinner_flag(mock_registry, test_db):
     with (
         patch("sys.argv", ["xibi", "--no-spinner"]),
         patch("builtins.input", side_effect=["some query", "quit"]),
-        patch("xibi.cli.SkillRegistry", return_value=mock_registry),
+        patch("xibi.skills.registry.SkillRegistry", return_value=mock_registry),
         patch(
-            "xibi.cli.load_config_with_env_fallback",
+            "xibi.cli.chat.load_config_with_env_fallback",
             return_value={
                 "models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}},
                 "providers": {"ollama": {"base_url": "http://localhost:11434"}},
@@ -396,7 +396,7 @@ def test_no_spinner_flag(mock_registry, test_db):
             },
         ),
         patch(
-            "xibi.cli.run",
+            "xibi.cli.chat.run",
             return_value=ReActResult(answer="hi", steps=[], exit_reason="finish", duration_ms=100),
         ),
         patch("threading.Thread") as mock_thread,

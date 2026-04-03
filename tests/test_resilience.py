@@ -145,7 +145,7 @@ def test_cli_prints_error_on_empty_answer(tmp_path):
     import sqlite3
     import sys
 
-    from xibi.cli import main
+    from xibi.cli.chat import main
 
     db_path = tmp_path / "xibi.db"
     with sqlite3.connect(db_path) as conn:
@@ -176,12 +176,12 @@ def test_cli_prints_error_on_empty_answer(tmp_path):
     # Mock inputs and dependencies to trigger an error path in CLI
     with (
         patch("builtins.input", side_effect=["test query", "quit"]),
-        patch("xibi.cli.load_config_with_env_fallback") as mock_load_config,
-        patch("xibi.cli.SkillRegistry"),
-        patch("xibi.cli.LocalHandlerExecutor"),
-        patch("xibi.cli.ControlPlaneRouter") as mock_cp_cls,
-        patch("xibi.cli.ShadowMatcher") as mock_sm_cls,
-        patch("xibi.cli.run") as mock_run,
+        patch("xibi.cli.chat.load_config_with_env_fallback") as mock_load_config,
+        patch("xibi.skills.registry.SkillRegistry"),
+        patch("xibi.executor.LocalHandlerExecutor"),
+        patch("xibi.routing.control_plane.ControlPlaneRouter") as mock_cp_cls,
+        patch("xibi.routing.shadow.ShadowMatcher") as mock_sm_cls,
+        patch("xibi.cli.chat.run") as mock_run,
         patch.object(sys, "argv", ["xibi"]),
         patch("builtins.print") as mock_print,
         patch("xibi.session.get_model"),
