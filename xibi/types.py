@@ -19,10 +19,10 @@ class Step:
     error: XibiError | None = None
 
     def full_text(self) -> str:
-        """Full detail — injected for the 2 most recent steps."""
+        """Full detail — injected for the most recent steps."""
         out = str(self.tool_output)
-        if len(out) > 800:
-            out = out[:800] + "... [truncated]"
+        if len(out) > 4000:
+            out = out[:4000] + "... [truncated]"
         return (
             f"Step {self.step_num}:\n"
             f"  Thought: {self.thought}\n"
@@ -32,14 +32,14 @@ class Step:
         )
 
     def one_line_summary(self) -> str:
-        """Compressed one-liner for older steps."""
-        input_summary = json.dumps(self.tool_input, separators=(",", ":"))[:60]
+        """Compressed summary for older steps — preserves key data."""
+        input_summary = json.dumps(self.tool_input, separators=(",", ":"))[:100]
         if self.tool_output.get("status") == "error":
-            output_hint = f"ERROR: {self.tool_output.get('message', '?')[:60]}"
+            output_hint = f"ERROR: {self.tool_output.get('message', '?')[:120]}"
         elif self.tool_output.get("content"):
-            output_hint = str(self.tool_output["content"])[:80]
+            output_hint = str(self.tool_output["content"])[:400]
         else:
-            output_hint = str(self.tool_output)[:80]
+            output_hint = str(self.tool_output)[:400]
         return f"Step {self.step_num}: {self.tool}({input_summary}) → {output_hint}"
 
 

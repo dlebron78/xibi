@@ -43,8 +43,8 @@ class SessionEntity:
 
 
 class SessionContext:
-    FULL_WINDOW = 4  # Last N turns injected in full detail
-    SUMMARY_WINDOW = 6  # Older turns injected as data-preserving summaries
+    FULL_WINDOW = 2  # Last N turns injected in full detail
+    SUMMARY_WINDOW = 4  # Turns 3-6 injected as one-liner summaries
     COMPRESS_WINDOW = 8  # max turns to read during compression
     MAX_BELIEFS = 5  # max beliefs to extract per session
 
@@ -283,14 +283,10 @@ Exchanges:
                 lines.append(f"User: {turn.query}")
                 lines.append(f"Xibi: {turn.answer}")
                 if turn.tools_called:
-                    lines.append(f"Tools used: {', '.join(t for t in turn.tools_called if t)}")
+                    lines.append(f"Tools used: {', '.join(turn.tools_called)}")
             else:
                 # Summary
-                if turn.summary:
-                    summary = turn.summary
-                else:
-                    # Fallback: include answer excerpt so key facts aren't lost
-                    summary = f"Q: {turn.query[:80]} → A: {turn.answer[:200]}"
+                summary = turn.summary or f"User asked about {turn.query[:50]}..."
                 lines.append(f"[{len(turns) - 1 - i} turns ago] {summary}")
 
         # Append entities
@@ -361,12 +357,7 @@ Exchanges:
         # Phase 2+3: LLM call then write — one new connection per row to avoid long holds.
         llm = get_model(specialty="text", effort="fast", config=self.config)
         for row in row_data:
-            prompt = (
-                "Summarise this exchange in 2-3 sentences. "
-                "IMPORTANT: preserve every specific name, number, date, and key fact — "
-                "these will be the only record available in future turns.\n\n"
-                f"Q: {row['query']}\nA: {row['answer'][:600]}"
-            )
+            prompt = f"Summarise this exchange in one sentence: Q: {row['query']} A: {row['answer']}"
             try:
                 summary = llm.generate(prompt).strip()
                 # Clean up quotes if model adds them

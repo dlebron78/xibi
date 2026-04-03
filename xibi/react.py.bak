@@ -46,11 +46,10 @@ def _flatten_tools(skill_registry: list[dict[str, Any]]) -> list[dict[str, Any]]
 
 
 def compress_scratchpad(scratchpad: list[Step]) -> str:
-    """Last 4 steps full detail, older steps compressed summaries."""
-    FULL_STEPS = 4
+    """Last 2 steps full detail, older steps one-liners."""
     lines = []
     for i, step in enumerate(scratchpad):
-        if i >= len(scratchpad) - FULL_STEPS:
+        if i >= len(scratchpad) - 2:
             lines.append(step.full_text())
         else:
             lines.append(step.one_line_summary())
@@ -250,38 +249,10 @@ def _parse_xml_response(response_text: str) -> dict[str, Any]:
     return {"thought": thought, "tool": tool, "tool_input": tool_input}
 
 
-
-def _parse_text_response(response_text: str) -> dict[str, Any]:
-    """Bregger-style plain-text: Thought / Action / Action Input."""
-    thought_m = re.search(r"Thought:\s*(.+?)(?=\nAction:|\Z)", response_text, re.DOTALL)
-    action_m = re.search(r"Action:\s*(\S+)", response_text)
-    input_m = re.search(r"Action Input:\s*(\{.+?\}|\[.+?\])", response_text, re.DOTALL)
-    thought = thought_m.group(1).strip() if thought_m else response_text[:200]
-    action = action_m.group(1).strip().lower() if action_m else "finish"
-    tool_input: dict[str, Any] = {}
-    if input_m:
-        try:
-            tool_input = json.loads(input_m.group(1))
-        except Exception:
-            raw = input_m.group(1)[:300]
-            for kv in re.finditer(r'"(\w+)"\s*:\s*"([^"]*)"', raw):
-                tool_input[kv.group(1)] = kv.group(2)
-            if not tool_input:
-                tool_input = {"raw": raw}
-    if action == "finish":
-        ans = tool_input.get("final_answer") or tool_input.get("answer") or thought
-        return {"thought": thought, "tool": "finish", "tool_input": {"answer": ans}}
-    if action in ("ask_user", "ask"):
-        q = tool_input.get("question") or thought
-        return {"thought": thought, "tool": "ask_user", "tool_input": {"question": q}}
-    return {"thought": thought, "tool": action, "tool_input": tool_input}
-
 def _parse_llm_response(response_text: str, react_format: str = "json") -> dict[str, Any]:
     """Route to the appropriate parser based on format."""
     if react_format == "xml":
         return _parse_xml_response(response_text)
-    if react_format == "text":
-        return _parse_text_response(response_text)
     return _parse_json_response(response_text)
 
 
@@ -445,23 +416,6 @@ def run(
             "   <thought>your reasoning</thought>\n"
             "   <tool>ask_user</tool>\n"
             "   <question>what you need to know</question>\n"
-            "IMPORTANT: If the answer is already in the conversation context, do NOT call a tool. "
-            "Go directly to finish:\n"
-            "   <thought>I already have this information from earlier.</thought>\n"
-            "   <tool>finish</tool>\n"
-            "   <answer>your answer</answer>\n"
-        )
-    elif react_format == "text":
-        _format_instructions = (
-            "Instructions:\n"
-            "Respond in this exact format:\n\n"
-            "Thought: <your reasoning>\n"
-            "Action: <tool_name>\n"
-            'Action Input: {"param": "value"}\n\n'
-            "Special actions:\n"
-            '- Final answer: Action: finish, Action Input: {"final_answer": "your response"}\n'
-            '- Ask user: Action: ask_user, Action Input: {"question": "..."}\n'
-            "IMPORTANT: If answer is already in context, go directly to finish.\n"
         )
     else:
         _format_instructions = (
@@ -616,37 +570,6 @@ def run(
                     )
 
             scratchpad.append(step)
-
-            # Emit per-step span — full thought, tool, input, output, scratchpad size
-            if _tracer and _run_trace_id:
-                try:
-                    compressed = compress_scratchpad(scratchpad)
-                    _tracer.emit(
-                        Span(
-                            trace_id=_run_trace_id,
-                            span_id=_tracer.new_span_id(),
-                            parent_span_id=_run_span_id,
-                            operation="react.step",
-                            component="react",
-                            start_ms=int(step_start_time * 1000),
-                            duration_ms=step.duration_ms,
-                            status="ok" if not step.error else "error",
-                            attributes={
-                                "step_num": step_num,
-                                "thought": step.thought,
-                                "tool": step.tool,
-                                "tool_input": json.dumps(step.tool_input),
-                                "tool_output": json.dumps(step.tool_output) if step.tool_output else "",
-                                "parse_warning": step.parse_warning or "",
-                                "error": str(step.error) if step.error else "",
-                                "scratchpad_len": len(compressed),
-                                "scratchpad_steps": len(scratchpad),
-                                "elapsed_secs": round(time.time() - start_time, 2),
-                            },
-                        )
-                    )
-                except Exception:
-                    pass
 
             if step_callback:
                 step_callback(step)

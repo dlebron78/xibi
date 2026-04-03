@@ -1,0 +1,37 @@
+{
+  "name": "chat",
+  "description": "Read team chat messages (Slack-style)",
+  "tools": [
+    {
+      "name": "list_messages",
+      "description": "List recent messages from a team chat channel",
+      "examples": [
+        "check slack",
+        "any new messages in chat",
+        "what's happening in the team channel",
+        "show recent chat messages",
+        "what are people saying"
+      ],
+      "input_schema": {
+        "channel": {"type": "string", "default": "general", "description": "Channel name (e.g. general, incidents, engineering)"},
+        "limit": {"type": "integer", "default": 10}
+      },
+      "output_type": "raw"
+    },
+    {
+      "name": "search_messages",
+      "description": "Search chat messages across channels by keyword",
+      "examples": [
+        "search slack for",
+        "find messages about",
+        "who mentioned",
+        "any chat messages about"
+      ],
+      "input_schema": {
+        "query": {"type": "string", "description": "Search query"},
+        "limit": {"type": "integer", "default": 10}
+      },
+      "output_type": "raw"
+    }
+  ]
+}

@@ -86,11 +86,23 @@ def load_config_with_env_fallback() -> Config:
 
 
 def main() -> None:
+    MODEL_SHORTHANDS = {
+        "4.1":  ("openai", "gpt-4.1"),
+        "5.4":  ("openai", "gpt-5.4"),
+        "4b":   ("ollama", "qwen3.5:4b"),
+        "9b":   ("ollama", "qwen3.5:9b"),
+        "e4b":  ("ollama", "gemma4:e4b"),
+        "g12b": ("ollama", "gemma3:12b"),
+        "q14b": ("ollama", "qwen2.5:14b"),
+    }
     parser = argparse.ArgumentParser(description="Xibi CLI Chat Interface")
     parser.add_argument("--debug", action="store_true", help="Print ReAct scratchpad steps")
     parser.add_argument("--no-spinner", action="store_true", help="Disable thinking spinner (for CI/pipe)")
     parser.add_argument("--skills-dir", type=str, default="xibi/skills/sample", help="Path to skills directory")
-    parser.add_argument("--model", type=str, help="Force a provider (ollama|gemini)")
+    parser.add_argument("--model", type=str, help="Model shorthand (e4b, 9b, 4.1, 5.4) or provider name")
+    parser.add_argument("--format", dest="react_format", choices=["json","xml","text"], default="json")
+    parser.add_argument("--think", choices=["true","false"], default=None)
+    parser.add_argument("--session", type=str, default=None, help="Session ID. Use fresh for a clean slate.")
     args = parser.parse_args()
 
     try:
@@ -109,10 +121,20 @@ def main() -> None:
         atexit.register(readline.write_history_file, history_file)
 
     if args.model:
-        provider = args.model
+        if args.model in MODEL_SHORTHANDS:
+            provider, model_name = MODEL_SHORTHANDS[args.model]
+        else:
+            provider, model_name = args.model, args.model
         for specialty in config["models"]:
             for effort in config["models"][specialty]:
                 config["models"][specialty][effort]["provider"] = provider
+                config["models"][specialty][effort]["model"] = model_name
+    if args.think is not None:
+        think_val = args.think == "true"
+        for specialty in config["models"]:
+            for effort in config["models"][specialty]:
+                opts = config["models"][specialty][effort].setdefault("options", {})
+                opts["think"] = think_val
 
     registry = SkillRegistry(args.skills_dir)
     mcp_registry = MCPServerRegistry(config, registry)
@@ -126,7 +148,10 @@ def main() -> None:
     llm_classifier = LLMRoutingClassifier(config)
 
     _db_path = config.get("db_path") or Path.home() / ".xibi" / "data" / "xibi.db"
-    session = SessionContext(session_id="cli:local", db_path=_db_path, config=config)
+    import time as _t
+    _session_id = args.session if args.session else "cli:local"
+    if _session_id == "fresh": _session_id = f"cli:fresh:{int(_t.time())}"
+    session = SessionContext(session_id=_session_id, db_path=_db_path, config=config)
     tracer = Tracer(Path(_db_path))
     trust_gradient = TrustGradient(Path(_db_path))
 
@@ -205,6 +230,21 @@ def main() -> None:
         answer = ""
         result = None
 
+        # 0. Multi-source detector — skip shortcuts, go straight to ReAct
+        def _needs_multi_source(q):
+            ql = q.lower()
+            signals = ["full story", "everything", "what's going on", "brief me",
+                        "catch me up", "all my sources", "what should i do",
+                        "what's happening", "what do i need to know", "summary of"]
+            tool_hints = sum(1 for w in ["email", "chat", "calendar", "schedule", "inbox"] if w in ql)
+            if tool_hints >= 2:
+                return True
+            return any(s in ql for s in signals)
+
+        _multi = _needs_multi_source(query)
+        if _multi and args.debug:
+            print("  [multi-source] bypassing shortcuts → ReAct")
+
         # 1. Control Plane
         decision = control_plane.match(query)
         if decision.matched:
@@ -212,9 +252,9 @@ def main() -> None:
             answer = handle_intent(decision)
             print(f"[control] {decision.intent}: {answer}")
         else:
-            # 2. Shadow Matcher
-            match = shadow.match(query)
-            if match and match.tier == "direct":
+            # 2. Shadow Matcher (skipped for multi-source queries)
+            match = None if _multi else shadow.match(query)
+            if not _multi and match and match.tier == "direct":
                 routed_via = "shadow-direct"
                 print(f"[shadow:direct] {match.tool}")
 
@@ -270,10 +310,11 @@ def main() -> None:
                         registry.get_skill_manifests(),
                         executor=executor,
                         control_plane=None,  # Already checked
-                        shadow=shadow,  # It will re-match but hint tier will be handled
+                        shadow=None if _multi else shadow,  # skip shadow for multi-source
                         step_callback=step_callback,
                         session_context=session,
                         tracer=tracer,
+                        react_format=args.react_format,
                     )
                 finally:
                     if spinner_active:

@@ -933,7 +933,7 @@ def get_model(
     if config is None:
         config = load_config(config_path)
 
-    db_path = config.get("db_path") or Path.home() / ".xibi" / "data" / "xibi.db"
+    db_path = Path(config.get("db_path") or Path.home() / ".xibi" / "data" / "xibi.db")
 
     try:
         role_cfg = _resolve_model(config, specialty, effort)

@@ -1,0 +1,20 @@
+{
+  "name": "search",
+  "description": "Search the web",
+  "tools": [
+    {
+      "name": "web_search",
+      "description": "Search the web for information",
+      "examples": [
+        "search for",
+        "look up",
+        "find information about",
+        "what is",
+        "who is",
+        "how does"
+      ],
+      "input_schema": {"query": {"type": "string"}},
+      "output_type": "raw"
+    }
+  ]
+}

@@ -99,34 +99,3 @@ def add_event(params: dict[str, Any]) -> dict[str, Any]:
     title = params.get("title", "Untitled Event")
     time = params.get("time", "Unknown Time")
     return {"status": "ok", "env": "dev", "message": f"Added event: {title} at {time}"}
-
-
-def update_event(params: dict[str, Any]) -> dict[str, Any]:
-    event_id = params.get("event_id", "")
-    title = params.get("title")
-    time = params.get("time")
-    updates: list[str] = []
-    if title:
-        updates.append(f"title → '{title}'")
-    if time:
-        updates.append(f"time → {time}")
-    update_str = ", ".join(updates) if updates else "no changes specified"
-    identifier = event_id or title or "event"
-    return {
-        "status": "ok",
-        "env": "dev",
-        "message": f"Updated {identifier}: {update_str}",
-        "note": "Dev mode — calendar was not actually modified.",
-    }
-
-
-def delete_event(params: dict[str, Any]) -> dict[str, Any]:
-    event_id = params.get("event_id", "")
-    title = params.get("title", "event")
-    identifier = event_id or title
-    return {
-        "status": "ok",
-        "env": "dev",
-        "message": f"Deleted event: {identifier}",
-        "note": "Dev mode — calendar was not actually modified.",
-    }

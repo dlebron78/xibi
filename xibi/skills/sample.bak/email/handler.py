@@ -150,15 +150,3 @@ def triage_email(params: dict[str, Any]) -> dict[str, Any]:
         "fyi": [emails[1], emails[3], emails[4]],
         "no-action": [emails[2]],
     }
-
-
-def send_email(params: dict[str, Any]) -> dict[str, Any]:
-    to = params.get("to", "")
-    subject = params.get("subject", "")
-    body = params.get("body", "")
-    return {
-        "status": "ok",
-        "env": "dev",
-        "message": f"Email sent to {to} — subject: '{subject}'",
-        "note": "Dev mode — email was not actually sent.",
-    }
