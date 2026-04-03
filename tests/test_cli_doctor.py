@@ -1,20 +1,21 @@
 from __future__ import annotations
 
-import os
-from pathlib import Path
-import yaml
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
+import yaml
+
 from xibi.cli import cmd_doctor
-from xibi.db.migrations import SchemaManager, SCHEMA_VERSION
+from xibi.db.migrations import SCHEMA_VERSION, SchemaManager
+
 
 @pytest.fixture(autouse=True)
 def isolated_config(tmp_path, monkeypatch):
     xibi_home = tmp_path / ".xibi"
     xibi_home.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
-    import xibi.config
     import xibi.cli
+    import xibi.config
     import xibi.secrets.manager
 
     config_path = xibi_home / "config.yaml"
@@ -26,10 +27,13 @@ def isolated_config(tmp_path, monkeypatch):
 
     return xibi_home
 
+
 def strip_ansi(text):
     import re
-    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
-    return ansi_escape.sub('', text)
+
+    ansi_escape = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+    return ansi_escape.sub("", text)
+
 
 def test_doctor_all_checks_pass(isolated_config, capsys):
     config = {
@@ -37,14 +41,8 @@ def test_doctor_all_checks_pass(isolated_config, capsys):
         "admin_user_id": 12345,
         "skill_dir": str(isolated_config / "skills"),
         "db_path": str(isolated_config / "data" / "xibi.db"),
-        "models": {
-            "text": {
-                "fast": {"provider": "ollama", "model": "qwen3.5:9b"}
-            }
-        },
-        "providers": {
-            "ollama": {"base_url": "http://localhost:11434"}
-        }
+        "models": {"text": {"fast": {"provider": "ollama", "model": "qwen3.5:9b"}}},
+        "providers": {"ollama": {"base_url": "http://localhost:11434"}},
     }
     config_file = isolated_config / "config.yaml"
     with open(config_file, "w") as f:
@@ -64,9 +62,7 @@ def test_doctor_all_checks_pass(isolated_config, capsys):
     args.workdir = str(isolated_config)
     args.config = None
 
-    with patch("xibi.secrets.manager.load", return_value="my-token"), \
-         patch("requests.get") as mock_get:
-
+    with patch("xibi.secrets.manager.load", return_value="my-token"), patch("requests.get") as mock_get:
         mock_get.return_value.status_code = 200
         mock_get.return_value.json.return_value = {"models": [{"name": "qwen3.5:9b"}]}
 
@@ -79,6 +75,7 @@ def test_doctor_all_checks_pass(isolated_config, capsys):
     assert "[✓] Ollama endpoint responding (qwen3.5:9b available)" in captured
     assert "[✓] Skill manifest directory found (1 skills loaded)" in captured
     assert "[✓] Admin telegram user ID configured" in captured
+
 
 def test_doctor_missing_config_reports_error(isolated_config, capsys):
     config_file = isolated_config / "config.yaml"
@@ -96,19 +93,14 @@ def test_doctor_missing_config_reports_error(isolated_config, capsys):
     captured = strip_ansi(capsys.readouterr().out)
     assert "[✗] Config file" in captured
 
+
 def test_doctor_ollama_unreachable(isolated_config, capsys):
     config = {
         "channel": "telegram",
-        "models": {
-            "text": {
-                "fast": {"provider": "ollama", "model": "qwen3.5:9b"}
-            }
-        },
-        "providers": {
-            "ollama": {"base_url": "http://localhost:9999"}
-        },
+        "models": {"text": {"fast": {"provider": "ollama", "model": "qwen3.5:9b"}}},
+        "providers": {"ollama": {"base_url": "http://localhost:9999"}},
         "skill_dir": str(isolated_config / "skills"),
-        "db_path": str(isolated_config / "data" / "xibi.db")
+        "db_path": str(isolated_config / "data" / "xibi.db"),
     }
     with open(isolated_config / "config.yaml", "w") as f:
         yaml.dump(config, f)
@@ -124,9 +116,10 @@ def test_doctor_ollama_unreachable(isolated_config, capsys):
     args.workdir = str(isolated_config)
     args.config = None
 
-    with patch("xibi.secrets.manager.load", return_value="my-token"), \
-         patch("requests.get", side_effect=Exception("Connection refused")):
-
+    with (
+        patch("xibi.secrets.manager.load", return_value="my-token"),
+        patch("requests.get", side_effect=Exception("Connection refused")),
+    ):
         with pytest.raises(SystemExit) as exc:
             cmd_doctor(args)
         assert exc.value.code == 1
@@ -134,20 +127,15 @@ def test_doctor_ollama_unreachable(isolated_config, capsys):
     captured = strip_ansi(capsys.readouterr().out)
     assert "[✗] Ollama endpoint unreachable" in captured
 
+
 def test_doctor_db_schema_version_mismatch(isolated_config, capsys):
     db_path = isolated_config / "data" / "xibi.db"
     config = {
         "channel": "telegram",
         "db_path": str(db_path),
         "skill_dir": str(isolated_config / "skills"),
-        "models": {
-            "text": {
-                "fast": {"provider": "ollama", "model": "qwen3.5:9b"}
-            }
-        },
-        "providers": {
-            "ollama": {"base_url": "http://localhost:11434"}
-        }
+        "models": {"text": {"fast": {"provider": "ollama", "model": "qwen3.5:9b"}}},
+        "providers": {"ollama": {"base_url": "http://localhost:11434"}},
     }
     with open(isolated_config / "config.yaml", "w") as f:
         yaml.dump(config, f)
@@ -155,8 +143,11 @@ def test_doctor_db_schema_version_mismatch(isolated_config, capsys):
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
     import sqlite3
+
     conn = sqlite3.connect(db_path)
-    conn.execute("CREATE TABLE schema_version (version INTEGER, applied_at DATETIME DEFAULT CURRENT_TIMESTAMP, description TEXT)")
+    conn.execute(
+        "CREATE TABLE schema_version (version INTEGER, applied_at DATETIME DEFAULT CURRENT_TIMESTAMP, description TEXT)"
+    )
     conn.execute("INSERT INTO schema_version (version, description) VALUES (0, 'Legacy')")
     conn.commit()
     conn.close()
@@ -167,8 +158,7 @@ def test_doctor_db_schema_version_mismatch(isolated_config, capsys):
     args.workdir = str(isolated_config)
     args.config = None
 
-    with patch("xibi.secrets.manager.load", return_value="my-token"), \
-         patch("requests.get") as mock_get:
+    with patch("xibi.secrets.manager.load", return_value="my-token"), patch("requests.get") as mock_get:
         mock_get.return_value.status_code = 200
         mock_get.return_value.json.return_value = {"models": [{"name": "qwen3.5:9b"}]}
 

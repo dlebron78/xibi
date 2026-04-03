@@ -51,9 +51,7 @@ def cmd_doctor(args: Any) -> None:
     if config_path.exists():
         try:
             with open(config_path) as f:
-                config = yaml.safe_load(f) if config_path.suffix == ".yaml" else yaml.safe_load(f)
-                # Note: safe_load handles both YAML and JSON, but let's be explicit if needed.
-                # Actually, our config might be JSON. yaml.safe_load is fine for both.
+                config = yaml.safe_load(f)
             print(f"{check_mark(True)} Config file at {config_path}")
         except Exception as e:
             print(f"{check_mark(False)} Config file at {config_path} is invalid: {e}")
@@ -93,8 +91,6 @@ def cmd_doctor(args: Any) -> None:
             print(f"{check_mark(True)} {channel.capitalize()} token configured")
         else:
             print(f"{check_mark(False)} {channel.capitalize()} token missing")
-            # In a real environment this is critical, but some tests might skip it.
-            # However, doctor should report it as a failure.
             critical_failed = True
     else:
         print(f"{check_mark(False, False)} Cannot check credentials without valid config")
