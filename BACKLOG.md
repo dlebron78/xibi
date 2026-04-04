@@ -20,10 +20,6 @@ _(Jules: drop new items here during implementation. Cowork triages into Active o
 
 ## P1 — Next Sprint
 
-- [P1] [tech-debt] **Dynamic effort escalation — `min_tier` → `min_effort` rename** — skill manifests use `min_tier` but the field means effort level (fast/think/review), not permission tier (GREEN/YELLOW/RED). Naming collision causes confusion. Rename to `min_effort` across all manifests and enforcement code. Also: `min_effort` is currently not enforced at dispatch time — wire it up so skills that need `think` or higher get it. Discussed 2026-04-03.
-
-- [P1] [tech-debt] **OpenAI / Anthropic / Groq clients raise `NotImplementedError`** — two CI tests are failing because these clients exist in `router.py` but aren't implemented. Fix: implement or remove from config schema. Currently causes failing tests that mask real regressions.
-
 ---
 
 ## P2 — Soon
@@ -94,5 +90,7 @@ _(Jules: drop new items here during implementation. Cowork triages into Active o
 - ✅ Semantic routing fallback — shadow matcher removed; LLM classifier already the fallback
 - ✅ Three-tier routing confidence fusion — shadow removed; no longer applicable
 - ✅ Nudge message UX — replaced with continuous typing indicator (2026-04-03)
+- ✅ min_tier → min_effort rename — eliminated naming collision with permission tiers (2026-04-04)
+- ✅ OpenAI/Anthropic test expectations — SDKs installed, tests updated to verify api_key validation (2026-04-04)
 - ✅ Chitchat fast-path — merged PR #48, heuristic classifier + LLM fast reply (2026-04-04)
 - ✅ JulesWatcher — heartbeat auto-answers Jules questions via API (2026-04-03)
