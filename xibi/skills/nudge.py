@@ -13,7 +13,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-async def nudge(message: str, thread_id: str = None, refs: list = None, category: str = "info", _config: dict = None, _workdir: str = None) -> dict:
+async def nudge(message: str, thread_id: str | None = None, refs: list | None = None, category: str = "info", _config: dict | None = None, _workdir: str | None = None) -> dict:
     """Send a proactive notification to the operator via Telegram."""
     if not message:
         return {"status": "error", "error": "message is required"}
@@ -86,12 +86,14 @@ async def nudge(message: str, thread_id: str = None, refs: list = None, category
 
         # Use TelegramAdapter if possible, otherwise raw urllib
         try:
+            from typing import cast
             from xibi.channels.telegram import TelegramAdapter
             from xibi.skills.registry import SkillRegistry
+            from xibi.router import Config
 
             skills_dir = config.get("skill_dir", str(workdir / "skills"))
             registry = SkillRegistry(skills_dir)
-            adapter = TelegramAdapter(config=config, skill_registry=registry, token=token)
+            adapter = TelegramAdapter(config=cast(Config, config), skill_registry=registry, token=token)
             adapter.send_message(chat_id=int(chat_id), text=text)
             result = {"ok": True}
         except Exception as e:

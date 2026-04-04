@@ -4,7 +4,7 @@ import importlib.util
 import logging
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -73,7 +73,7 @@ class HeartbeatPoller:
         self._audit_tick_counter = 0
         self._jules_watcher = self._init_jules_watcher()
         self.source_poller = SourcePoller(
-            config=self.profile,
+            config=self.profile if self.profile else {},
             executor=self.executor,
             mcp_registry=getattr(self.executor, "mcp_executor", None).registry if hasattr(self.executor, "mcp_executor") and self.executor.mcp_executor else None
         )

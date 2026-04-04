@@ -423,7 +423,7 @@ def _parse_llm_response(response_text: str, react_format: str = "json") -> dict[
     return _parse_json_response(response_text)
 
 
-def run(
+async def run(
     query: str,
     config: Config,
     skill_registry: list[dict[str, Any]],
