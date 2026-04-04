@@ -8,6 +8,7 @@ import sqlite3
 import threading
 import time
 import urllib.error
+import uuid
 import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
@@ -17,7 +18,8 @@ from typing import Any
 from xibi.db import open_db
 from xibi.executor import Executor
 from xibi.react import run as react_run
-from xibi.router import Config
+from xibi.router import Config, get_model
+from xibi.routing.chitchat import is_chitchat
 from xibi.routing.control_plane import ControlPlaneRouter
 from xibi.routing.shadow import ShadowMatcher
 from xibi.session import SessionContext
@@ -385,6 +387,49 @@ class TelegramAdapter:
             review_text = ""
             if is_new_or_stale:
                 review_text = self._get_decision_review()
+
+            # Chitchat fast-path: skip ReAct for conversational acknowledgements
+            if is_chitchat(user_text):
+                try:
+                    llm = get_model("text", "fast", config=self.config)
+                    chitchat_response = llm.generate(
+                        user_text,
+                        system=(
+                            "You are a helpful personal assistant. "
+                            "Respond warmly and naturally in 1–2 sentences. "
+                            "Do not start with 'I', 'Certainly', or 'Of course'."
+                        ),
+                    )
+
+                    # Tracing (optional, best-effort)
+                    try:
+                        from xibi.tracing import Span, Tracer
+
+                        tracer = Tracer(self.db_path)
+                        tracer.emit(
+                            Span(
+                                trace_id=f"chitchat-{uuid.uuid4().hex[:8]}",
+                                span_id=uuid.uuid4().hex[:8],
+                                parent_span_id=None,
+                                operation="chitchat_response",
+                                component="telegram",
+                                start_ms=int(time.time() * 1000),
+                                duration_ms=0,
+                                status="ok",
+                                attributes={"query": user_text[:100], "exit_reason": "chitchat"},
+                            )
+                        )
+                    except Exception:
+                        pass
+
+                    session.add_chitchat_turn(user_text, chitchat_response)
+                    if chitchat_response:
+                        if review_text:
+                            chitchat_response = f"{review_text}\n\n{chitchat_response}"
+                        self.send_message(chat_id, chitchat_response)
+                    return  # Success — skip react_run entirely
+                except Exception:
+                    logger.warning("Chitchat fast-path failed — falling through to ReAct", exc_info=True)
 
             result = react_run(
                 user_text,
