@@ -115,12 +115,11 @@ class CommandLayer:
                 )
 
             # 2.5 Sensitive content scan — force RED if outbound action contains sensitive data
-            if tier != PermissionTier.RED and tool_name in WRITE_TOOLS:
-                if has_sensitive_content(tool_input):
-                    tier = PermissionTier.RED
-                    source_bumped = True  # reuse flag — content sensitivity forced the bump
+            if tier != PermissionTier.RED and tool_name in WRITE_TOOLS and has_sensitive_content(tool_input):
+                tier = PermissionTier.RED
+                source_bumped = True  # reuse flag — content sensitivity forced the bump
 
-                    if not self.interactive:
+                if not self.interactive:
                         return CommandResult(
                             allowed=False,
                             tier=tier,

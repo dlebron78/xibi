@@ -22,7 +22,7 @@ from xibi.routing.control_plane import ControlPlaneRouter
 from xibi.routing.shadow import ShadowMatcher
 from xibi.session import SessionContext
 from xibi.skills.registry import SkillRegistry
-from xibi.types import ReActResult, Step
+from xibi.types import ReActResult
 
 logger = logging.getLogger(__name__)
 

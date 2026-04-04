@@ -19,7 +19,7 @@
 
 ### Cowork (Review Role — Architect)
 - Generates task specs from the roadmap (`public/xibi_roadmap.md`)
-- Reviews PRs against the architecture doc AND the vision alignment gates (`public/review_criteria.md`) — every review must address all 7 gates by number with file/line citations. A review that says "aligns with vision" without gate-by-gate analysis is incomplete.
+- Reviews PRs against the architecture doc — checks for: correct role boundaries, proper `get_model()` usage, schema compliance, no hardcoded model names, test coverage
 - Approves, requests changes, or comments with specific guidance
 - On merge: updates roadmap status, generates next task spec, drops it in `tasks/pending/`
 - Runs daily review: reads all activity from last 24 hours, writes summary to `reviews/daily/`
@@ -190,7 +190,6 @@ Runs once per day. Output goes to `reviews/daily/YYYY-MM-DD.md`.
 4. Task pipeline health — any specs stuck in pending > 24 hours?
 5. Roadmap progress — which step are we on, projected completion
 6. Architecture drift — any merged code that doesn't match the design doc?
-7. Vision gate audit — for each merged PR, confirm all 7 gates from `public/review_criteria.md` were addressed in the PR review. Flag any PR that was merged with an incomplete vision alignment section.
 
 **Output format:**
 ```markdown

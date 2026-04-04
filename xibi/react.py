@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from xibi.errors import ErrorCategory, XibiError
+from xibi.tools import resolve_tier
 from xibi.router import (
     Config,
     clear_trace_context,
