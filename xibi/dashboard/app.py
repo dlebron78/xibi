@@ -338,22 +338,28 @@ def create_app(config: DashboardConfig) -> Flask:
             except Exception as e:
                 available["ollama"] = {"error": str(e)}
         if secrets.get("GOOGLE_API_KEY") or secrets.get("GEMINI_API_KEY"):
+            # Suggestions only — user can type any valid model name in the UI
             available["gemini"] = [
-                {"name": "gemini-2.5-flash-preview-04-17"},
-                {"name": "gemini-2.5-pro-preview-03-25"},
+                {"name": "gemini-2.5-pro"},
+                {"name": "gemini-2.5-flash"},
                 {"name": "gemini-2.0-flash"},
+                {"name": "gemini-2.0-flash-lite"},
             ]
         if secrets.get("ANTHROPIC_API_KEY"):
             available["anthropic"] = [
-                {"name": "claude-haiku-4-5-20251001"},
-                {"name": "claude-sonnet-4-6"},
                 {"name": "claude-opus-4-6"},
+                {"name": "claude-sonnet-4-6"},
+                {"name": "claude-haiku-4-5-20251001"},
             ]
         if secrets.get("OPENAI_API_KEY"):
             available["openai"] = [
-                {"name": "gpt-4.1-mini"},
-                {"name": "gpt-4.1"},
+                {"name": "gpt-4o"},
+                {"name": "gpt-4o-mini"},
+                {"name": "o3"},
+                {"name": "o3-mini"},
                 {"name": "o4-mini"},
+                {"name": "gpt-4.1"},
+                {"name": "gpt-4.1-mini"},
             ]
         return jsonify(available)
 
