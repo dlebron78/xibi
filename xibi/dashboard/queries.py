@@ -429,8 +429,15 @@ def get_latest_spans(conn: sqlite3.Connection) -> dict:
     if not cursor.fetchone():
         return {"trace_id": None, "spans": []}
 
-    # Get most recent trace_id
-    cursor = conn.execute("SELECT trace_id FROM spans ORDER BY start_ms DESC LIMIT 1")
+    # Get most recent trace_id (exclude dev-env traces)
+    cursor = conn.execute("""
+        SELECT trace_id FROM spans 
+        WHERE trace_id NOT IN (
+            SELECT DISTINCT trace_id FROM spans s2 
+            WHERE s2.attributes LIKE '%"env": "dev"%' OR s2.attributes LIKE '%\\"env\\": \\"dev\\"%'
+        )
+        ORDER BY start_ms DESC LIMIT 1
+    """)
     row = cursor.fetchone()
     if not row:
         return {"trace_id": None, "spans": []}
@@ -536,6 +543,10 @@ def get_trace_details(conn: sqlite3.Connection, limit: int = 15, offset: int = 0
                    MIN(start_ms) as start_ms,
                    MAX(start_ms + duration_ms) - MIN(start_ms) as total_ms
             FROM spans
+            WHERE trace_id NOT IN (
+                SELECT DISTINCT trace_id FROM spans s2 
+                WHERE s2.attributes LIKE '%"env": "dev"%' OR s2.attributes LIKE '%\\"env\\": \\"dev\\"%'
+            )
             GROUP BY trace_id
             ORDER BY MIN(start_ms) DESC
             LIMIT ? OFFSET ?

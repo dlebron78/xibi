@@ -428,6 +428,10 @@ class TelegramAdapter:
                 except Exception:
                     logger.warning("Chitchat fast-path failed — falling through to ReAct", exc_info=True)
 
+            # Production tracing
+            from xibi.tracing import Tracer
+            _tracer = Tracer(self.db_path)
+
             result = react_run(
                 user_text,
                 self.config,
@@ -438,6 +442,7 @@ class TelegramAdapter:
                 session_context=session,
                 llm_routing_classifier=self.llm_routing_classifier,
                 react_format=str(self.config.get("react_format", "json")),
+                tracer=_tracer,
             )
             if result.answer:
                 response = result.answer

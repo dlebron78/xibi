@@ -324,6 +324,7 @@ def main() -> None:
                         session_context=session,
                         tracer=tracer,
                         react_format=effective_format,
+                        env="dev",
                     )
                 finally:
                     if spinner_active:
