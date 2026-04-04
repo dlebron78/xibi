@@ -12,6 +12,28 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _annotations_to_tier(annotations: dict) -> str:
+    """
+    Map MCP ToolAnnotations to Xibi permission tier.
+
+    Spec defaults (when absent): readOnlyHint=False, destructiveHint=True.
+    These defaults are deliberately conservative — an unannotated tool is
+    assumed destructive.
+
+    IMPORTANT: Annotations are untrusted hints. A malicious server can lie.
+    This mapping provides a *better default* than blanket RED, but the user
+    can still override per-server in config.
+    """
+    read_only = annotations.get("readOnlyHint", False)
+    destructive = annotations.get("destructiveHint", True)
+
+    if read_only:
+        return "GREEN"
+    if not destructive:
+        return "YELLOW"
+    return "RED"
+
+
 class MCPServerRegistry:
     def __init__(self, config: Config, skill_registry: SkillRegistry) -> None:
         self.config = config
@@ -73,6 +95,17 @@ class MCPServerRegistry:
 
                     all_tool_names.add(final_name)
 
+                    config_tier = server_conf.get("tier_override")
+                    if config_tier:
+                        tier = config_tier
+                    else:
+                        tier = _annotations_to_tier(tool.annotations)
+
+                    logger.info(
+                        f"  tool '{final_name}': tier={tier} "
+                        f"(source={'config override' if config_tier else 'annotations' if tool.annotations else 'default'})"
+                    )
+
                     synthetic_tools.append(
                         {
                             "name": final_name,
@@ -81,9 +114,10 @@ class MCPServerRegistry:
                             "inputSchema": tool.input_schema,
                             "source": "mcp",
                             "server": name,
-                            "tier": "RED",  # ALL MCP tools default to RED
+                            "tier": tier,
                             "output_type": "raw",  # Standard for MCP
                             "skill": f"mcp_{name}",
+                            "annotations": tool.annotations,
                         }
                     )
 
