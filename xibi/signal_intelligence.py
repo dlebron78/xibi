@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from xibi.db import open_db
+from xibi.entities import create_contact, upsert_contact_channel
+from xibi.entities.resolver import resolve_contact
 from xibi.router import Config, get_model
 from xibi.trust.gradient import FailureType
 
@@ -246,46 +248,78 @@ def assign_threads(signals: list[dict], intels: list[SignalIntel], db_path: Path
     return intels
 
 
-def upsert_contact(email: str, display_name: str, organization: str | None, db_path: Path) -> str:
+def upsert_contact(
+    email: str,
+    display_name: str,
+    organization: str | None,
+    db_path: Path,
+    config: Config | None = None,
+) -> str:
     """Upsert a contact. Returns the contact_id."""
-    contact_id = "contact-" + hashlib.md5(email.lower().encode()).hexdigest()[:8]
-    try:
-        with open_db(db_path) as conn, conn:
-            conn.row_factory = sqlite3.Row
-            existing = conn.execute("SELECT organization FROM contacts WHERE id = ?", (contact_id,)).fetchone()
+    db_str = str(db_path)
+    contact = resolve_contact(
+        handle=email,
+        channel_type="email",
+        display_name=display_name,
+        organization=organization,
+        db_path=db_str,
+    )
 
-            if existing:
-                if existing["organization"] is None and organization:
+    if contact:
+        contact_id = contact.id
+        try:
+            with open_db(db_path) as conn, conn:
+                if contact.organization is None and organization:
                     conn.execute(
-                        """
-                        UPDATE contacts SET
-                            last_seen = CURRENT_TIMESTAMP,
-                            signal_count = signal_count + 1,
-                            organization = ?
-                        WHERE id = ?
-                    """,
+                        "UPDATE contacts SET last_seen = CURRENT_TIMESTAMP, signal_count = signal_count + 1, organization = ? WHERE id = ?",
                         (organization, contact_id),
                     )
                 else:
                     conn.execute(
-                        """
-                        UPDATE contacts SET
-                            last_seen = CURRENT_TIMESTAMP,
-                            signal_count = signal_count + 1
-                        WHERE id = ?
-                    """,
+                        "UPDATE contacts SET last_seen = CURRENT_TIMESTAMP, signal_count = signal_count + 1 WHERE id = ?",
                         (contact_id,),
                     )
+        except Exception as e:
+            logger.error(f"upsert_contact (update) failed: {e}")
+    else:
+        # Domain-based relationship inference
+        relationship = "unknown"
+        domain = email.split("@")[-1].lower() if "@" in email else ""
+
+        if domain:
+            # Check owner's domain
+            owner_domain = ""
+            if config:
+                # Config is a TypedDict (xibi/router.py)
+                owner_domain_raw = config.get("email_from")
+                if owner_domain_raw:
+                    owner_domain = str(owner_domain_raw).split("@")[-1].lower()
+
+            if domain == owner_domain:
+                relationship = "colleague"
             else:
-                conn.execute(
-                    """
-                    INSERT INTO contacts (id, display_name, email, organization, relationship, signal_count)
-                    VALUES (?, ?, ?, ?, 'unknown', 1)
-                """,
-                    (contact_id, display_name, email, organization),
-                )
-    except Exception as e:
-        logger.error(f"upsert_contact failed: {e}")
+                try:
+                    with open_db(db_path) as conn:
+                        row = conn.execute(
+                            "SELECT COUNT(*) FROM contact_channels WHERE channel_type='email' AND handle LIKE '%@' || ?",
+                            (domain,),
+                        ).fetchone()
+                        if row and row[0] >= 3:
+                            relationship = "org_known"
+                except Exception:
+                    pass
+
+        contact_id = create_contact(
+            display_name=display_name,
+            email=email,
+            organization=organization,
+            discovered_via="email_inbound",
+            relationship=relationship,
+            db_path=db_str,
+        ) or f"contact-{hashlib.md5(email.lower().encode()).hexdigest()[:8]}"
+
+    # Ensure channel row exists
+    upsert_contact_channel(contact_id, email, "email", verified=1, db_path=db_str)
 
     return contact_id
 
@@ -369,7 +403,8 @@ def enrich_signals(
         for sig in signals:
             entity = sig.get("entity_text", "")
             if entity and "@" in entity:
-                upsert_contact(entity, entity, None, db_path)
+                # Use display_name = entity (address) if name not available in tier-0/1
+                upsert_contact(entity, entity, sig.get("entity_org"), db_path, config=config)
 
         # Write back to DB
         with open_db(db_path) as conn, conn:
