@@ -7,7 +7,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 17  # increment when adding new migrations
+SCHEMA_VERSION = 18  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -48,6 +48,7 @@ class SchemaManager:
             (15, "session turns source column", self._migration_15),
             (16, "inference events trace_id", self._migration_16),
             (17, "access_log extensions", self._migration_17),
+            (18, "contacts extensions + contact_channels table", self._migration_18),
         ]
 
         for version, description, func in migrations:
@@ -434,6 +435,49 @@ class SchemaManager:
         for col_name, col_type in new_cols:
             with contextlib.suppress(sqlite3.OperationalError):
                 conn.execute(f"ALTER TABLE access_log ADD COLUMN {col_name} {col_type}")
+
+    def _migration_18(self, conn: sqlite3.Connection) -> None:
+        # Extend contacts table
+        contact_cols = [
+            ("phone", "TEXT"),
+            ("title", "TEXT"),
+            ("outbound_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("user_endorsed", "INTEGER NOT NULL DEFAULT 0"),
+            ("discovered_via", "TEXT"),
+            ("tags", "TEXT NOT NULL DEFAULT '[]'"),
+            ("notes", "TEXT"),
+        ]
+        for col_name, col_type in contact_cols:
+            try:
+                conn.execute(f"ALTER TABLE contacts ADD COLUMN {col_name} {col_type}")
+            except sqlite3.OperationalError as e:
+                if "duplicate column name" in str(e).lower():
+                    continue
+                logger.error(f"Migration 18 failed to add column {col_name}: {e}")
+                raise
+
+        # Multi-channel identity table
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS contact_channels (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                contact_id TEXT NOT NULL REFERENCES contacts(id),
+                channel_type TEXT NOT NULL,  -- 'email' | 'slack' | 'github' | 'telegram' | 'whatsapp'
+                handle TEXT NOT NULL,        -- 'alice@acme.com', '@athompson', 'alice-t'
+                verified INTEGER NOT NULL DEFAULT 0,  -- 1 if system has seen this handle in use
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(channel_type, handle)
+            );
+            CREATE INDEX IF NOT EXISTS idx_contact_channels_lookup ON contact_channels(channel_type, handle);
+            CREATE INDEX IF NOT EXISTS idx_contact_channels_contact ON contact_channels(contact_id);
+        """)
+
+        # Extend session_entities table
+        try:
+            conn.execute("ALTER TABLE session_entities ADD COLUMN contact_id TEXT")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e).lower():
+                logger.error(f"Migration 18 failed to add contact_id to session_entities: {e}")
+                raise
 
 
 def migrate(db_path: Path) -> list[int]:

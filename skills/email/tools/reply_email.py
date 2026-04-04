@@ -148,5 +148,6 @@ def run(params):
             "body": body,
             "in_reply_to": message_id,
             "draft_id": draft_id,
+            "_workdir": workdir,  # Needed for send_smtp to find the DB for tracking
         },
     }

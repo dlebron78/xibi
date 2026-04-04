@@ -25,26 +25,6 @@
             </div>
         </div>
 
-        <!-- Model Config Panel -->
-        <div class="panel">
-            <div class="flex items-center justify-between">
-                <h2 class="text-lg font-semibold text-cyan-300">Model Configuration</h2>
-                <div id="react-format" class="text-xs font-mono text-slate-500"></div>
-            </div>
-            <div id="model-config" class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
-                <!-- Model cards populated by JS -->
-            </div>
-        </div>
-
-        <!-- System Prompt Panel -->
-        <div class="panel">
-            <div class="flex items-center justify-between cursor-pointer" onclick="togglePrompt()">
-                <h2 class="text-lg font-semibold text-slate-400">System Prompt</h2>
-                <span id="prompt-toggle" class="text-slate-600 text-xs">[show]</span>
-            </div>
-            <pre id="system-prompt" class="hidden mt-4 text-xs text-slate-400 bg-slate-900 p-4 rounded overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed"></pre>
-        </div>
-
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <!-- Inference Cost Panel -->
             <div class="panel lg:col-span-1">
@@ -175,21 +155,6 @@
             </div>
         </div>
 
-        <!-- Trace Browser Panel -->
-        <div class="panel lg:col-span-2">
-            <div class="flex items-center justify-between mb-4">
-                <h2 class="text-lg font-semibold text-slate-200">Trace Browser</h2>
-                <div class="flex gap-2">
-                    <button onclick="loadTraces('prev')" class="text-xs bg-slate-700 px-2 py-1 rounded hover:bg-slate-600">← Prev</button>
-                    <span id="trace-page" class="text-xs text-slate-500 py-1">Page 1</span>
-                    <button onclick="loadTraces('next')" class="text-xs bg-slate-700 px-2 py-1 rounded hover:bg-slate-600">Next →</button>
-                </div>
-            </div>
-            <div id="trace-list" class="space-y-2 max-h-[500px] overflow-y-auto pr-2">
-                <!-- Trace rows -->
-            </div>
-        </div>
-
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <!-- Signal Pipeline -->
             <div class="panel">
@@ -219,90 +184,8 @@
             }
         }
 
-        async function refreshConfig() {
-            const data = await fetchData('/api/config');
-            if (!data) return;
-
-            document.getElementById('react-format').innerText = `react_format: ${data.react_format || 'json'}`;
-
-            const container = document.getElementById('model-config');
-            const models = data.models?.text || {};
-            container.innerHTML = Object.entries(models).map(([effort, cfg]) => `
-                <div class="bg-slate-800/50 p-3 rounded border border-slate-700/50">
-                    <div class="text-[10px] text-slate-500 font-bold uppercase tracking-wider mb-1">${effort}</div>
-                    <div class="text-sm font-mono text-cyan-400">${cfg.model}</div>
-                    <div class="text-[10px] text-slate-600 mt-1">${cfg.provider}</div>
-                </div>
-            `).join('');
-        }
-
-        async function refreshPrompt() {
-            const data = await fetchData('/api/prompt');
-            if (data) document.getElementById('system-prompt').innerText = data.prompt;
-        }
-
-        function togglePrompt() {
-            const el = document.getElementById('system-prompt');
-            const toggle = document.getElementById('prompt-toggle');
-            el.classList.toggle('hidden');
-            toggle.innerText = el.classList.contains('hidden') ? '[show]' : '[hide]';
-        }
-
-        let traceOffset = 0;
-        const traceLimit = 10;
-
-        async function loadTraces(dir) {
-            if (dir === 'next') traceOffset += traceLimit;
-            if (dir === 'prev') traceOffset = Math.max(0, traceOffset - traceLimit);
-
-            const data = await fetchData(`/api/traces?limit=${traceLimit}&offset=${traceOffset}`);
-            if (!data) return;
-
-            document.getElementById('trace-page').innerText = `Page ${Math.floor(traceOffset/traceLimit) + 1}`;
-
-            const container = document.getElementById('trace-list');
-            container.innerHTML = data.map((t, i) => {
-                const statusColor = t.status === 'completed' ? 'text-emerald-400' : 'text-red-400';
-                const stepsHtml = (t.steps || []).map(s => `
-                    <div class="flex items-center gap-2 text-[10px] py-1 border-b border-slate-800">
-                        <span class="font-mono text-amber-400 w-24 truncate">${s.tool || s.action || '-'}</span>
-                        <span class="text-slate-500 flex-1 truncate">${s.observation || s.result || s.error || '-'}</span>
-                    </div>
-                `).join('');
-
-                return `
-                    <div class="bg-slate-800/30 rounded border border-slate-700/50">
-                        <div class="flex items-center justify-between p-3 cursor-pointer hover:bg-slate-800/50" onclick="document.getElementById('trace-detail-${i}').classList.toggle('hidden')">
-                            <div class="flex items-center gap-3">
-                                <span class="text-[10px] font-mono text-slate-600">${t.created_at}</span>
-                                <span class="${statusColor} text-xs font-bold">${t.status}</span>
-                                <span class="text-xs text-slate-400 truncate max-w-xs">${(t.query || '').substring(0, 80)}</span>
-                            </div>
-                            <div class="flex items-center gap-3 text-[10px] font-mono text-slate-600">
-                                <span>${t.model || '-'}</span>
-                                <span>${t.total_ms || 0}ms</span>
-                                <span>${t.step_count || 0} steps</span>
-                                <span>${(t.tok_per_sec || 0).toFixed(1)} t/s</span>
-                            </div>
-                        </div>
-                        <div id="trace-detail-${i}" class="hidden px-3 pb-3">
-                            <div class="grid grid-cols-4 gap-2 text-[10px] mb-2 text-slate-500">
-                                <div>Prompt: <span class="text-slate-400">${t.prompt_tokens || 0}</span></div>
-                                <div>Response: <span class="text-slate-400">${t.response_tokens || 0}</span></div>
-                                <div>RAM: <span class="text-slate-400">${t.ram_start || 0}% → ${t.ram_end || 0}%</span></div>
-                                <div>Route: <span class="text-slate-400">${t.route || '-'}</span></div>
-                            </div>
-                            ${stepsHtml ? `<div class="border-t border-slate-700 pt-2">${stepsHtml}</div>` : '<div class="text-[10px] text-slate-600 italic">No steps recorded</div>'}
-                        </div>
-                    </div>
-                `;
-            }).join('');
-        }
-
         async function init() {
             refreshHealth();
-            refreshConfig();
-            refreshPrompt();
             refreshInference();
             refreshTrust();
             refreshAudit();
@@ -311,12 +194,10 @@
             refreshCycles();
             refreshRecent();
             refreshSignals();
-            loadTraces();
 
             // Auto-refresh loops
             setInterval(refreshHealth, 15000);
             setInterval(() => {
-                refreshConfig();
                 refreshInference();
                 refreshTrust();
                 refreshAudit();
@@ -325,7 +206,6 @@
                 refreshCycles();
                 refreshRecent();
                 refreshSignals();
-                loadTraces();
             }, 60000);
         }
 

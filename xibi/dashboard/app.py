@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import psutil
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template
 
 import xibi.db
 from xibi.dashboard import queries
@@ -107,12 +107,12 @@ def create_app(config: DashboardConfig) -> Flask:
         workdir = app.config["DB_PATH"].parent.parent
         config_path = workdir / "config.json"
         try:
-            config = load_config(str(config_path)) if config_path.exists() else load_config()
+            cfg = load_config(str(config_path)) if config_path.exists() else load_config()
         except Exception:
             # If config is missing or invalid, get_system_health will report it via LLM check
-            config = {"models": {}, "providers": {}}  # type: ignore
+            cfg = {"models": {}, "providers": {}}  # type: ignore
 
-        report = get_system_health(app.config["DB_PATH"], config)
+        report = get_system_health(app.config["DB_PATH"], cfg)
         return jsonify(report)
 
     @app.route("/api/health")
@@ -215,89 +215,5 @@ def create_app(config: DashboardConfig) -> Flask:
     @app.route("/")
     def index() -> str:
         return render_template("index.html")
-
-    def _load_config() -> dict:
-        """Load config from ~/.xibi/config.json or workdir config path."""
-        import json
-
-        # Try ~/.xibi/config.json first
-        config_path = Path.home() / ".xibi" / "config.json"
-        if not config_path.exists():
-            # Try workdir
-            workdir = app.config["DB_PATH"].parent.parent
-            config_path = workdir / "config.json"
-
-        if not config_path.exists():
-            return {}
-
-        with open(config_path, 'r') as f:
-            return json.load(f)
-
-    @app.route("/api/config")
-    def config() -> Any:
-        """Return model configuration and profile."""
-        try:
-            cfg = _load_config()
-            models = cfg.get("models", {}).get("text", {})
-
-            # Extract useful parts: provider + model per effort level
-            models_response = {}
-            for effort, effort_cfg in models.items():
-                models_response[effort] = {
-                    "provider": effort_cfg.get("provider", ""),
-                    "model": effort_cfg.get("model", "")
-                }
-
-            return jsonify({
-                "models": {"text": models_response},
-                "react_format": cfg.get("react_format", "json"),
-                "profile": cfg.get("profile", {})
-            })
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
-
-    @app.route("/api/prompt")
-    def prompt() -> Any:
-        """Return the live system prompt."""
-        try:
-            cfg = _load_config()
-            profile = cfg.get("profile", {})
-            name = profile.get("assistant_name", "Xibi")
-            user = profile.get("user_name", "")
-
-            lines = [
-                f"You are {name}, a local-first personal AI assistant.",
-                f"Your name is {name}. Always refer to yourself as {name}.",
-            ]
-            if user:
-                lines.append(f"The person you are talking to is named {user}.")
-                lines.append(f"Always address them as {user}. Never ask for their name — you already know it.")
-
-            return jsonify({"prompt": "\n".join(lines)})
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
-
-    @app.route("/api/traces")
-    def traces_endpoint() -> Any:
-        """Return paginated traces with full detail."""
-        try:
-            limit = int(request.args.get("limit", 15))
-            offset = int(request.args.get("offset", 0))
-
-            with get_db_conn() as conn:
-                data = queries.get_trace_details(conn, limit=limit, offset=offset)
-            return jsonify(data)
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
-
-    @app.route("/api/traces/<trace_id>/spans")
-    def trace_spans(trace_id: str) -> Any:
-        """Return spans for a specific trace."""
-        try:
-            with get_db_conn() as conn:
-                data = queries.get_spans_for_trace(conn, trace_id)
-            return jsonify(data)
-        except Exception as e:
-            return jsonify({"error": str(e)}), 500
 
     return app
