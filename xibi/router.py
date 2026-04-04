@@ -5,7 +5,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, Protocol, TypedDict
+from typing import Any, Literal, Protocol, TypedDict, cast
 
 import requests
 
@@ -1034,7 +1034,7 @@ def get_model(
                         try:
                             res = self.inner.generate_with_tools(messages, tools, system, **kwargs)  # type: ignore
                             self.breaker.record_success()
-                            return res
+                            return cast(dict[str, Any], res)
                         except XibiError as e:
                             if e.category in (ErrorCategory.PROVIDER_DOWN, ErrorCategory.TIMEOUT):
                                 self.breaker.record_failure(FailureType.PERSISTENT)
