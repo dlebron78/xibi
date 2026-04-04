@@ -1,11 +1,13 @@
 import os
-import uuid
 from unittest.mock import MagicMock, patch
+
 import pytest
+
 from xibi.channels.telegram import TelegramAdapter
-from xibi.skills.registry import SkillRegistry
-from xibi.router import Config
 from xibi.db.migrations import SchemaManager
+from xibi.router import Config
+from xibi.skills.registry import SkillRegistry
+
 
 @pytest.fixture
 def mock_config():

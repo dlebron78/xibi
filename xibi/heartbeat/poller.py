@@ -71,7 +71,7 @@ class HeartbeatPoller:
         self._audit_tick_counter = 0
         self._jules_watcher = self._init_jules_watcher()
 
-    def _init_jules_watcher(self):
+    def _init_jules_watcher(self) -> Any | None:
         """Set up JulesWatcher if JULES_API_KEY is configured."""
         api_key = None
         xibi_env = Path.home() / ".xibi_env"

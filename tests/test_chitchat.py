@@ -1,5 +1,5 @@
-import pytest
 from xibi.routing.chitchat import is_chitchat
+
 
 def test_simple_thanks_is_chitchat():
     assert is_chitchat("thanks") is True
@@ -29,6 +29,10 @@ def test_chitchat_with_punctuation():
 
 def test_empty_string_not_chitchat():
     assert is_chitchat("") is False
+
+def test_none_not_chitchat():
+    # mypy might complain if I pass None to str, but for test coverage...
+    assert is_chitchat(None) is False # type: ignore
 
 def test_chitchat_case_insensitive():
     assert is_chitchat("OK") is True

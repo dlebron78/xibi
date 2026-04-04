@@ -11,13 +11,12 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -116,27 +115,30 @@ class JulesWatcher:
     # Jules API helpers                                                    #
     # ------------------------------------------------------------------ #
 
-    def _api_get(self, path: str) -> dict:
+    def _api_get(self, path: str) -> dict[Any, Any]:
         url = f"{JULES_API}/{path}"
         req = urllib.request.Request(url, headers={"X-Goog-Api-Key": self.api_key})
         try:
             with urllib.request.urlopen(req, timeout=15) as r:
-                return json.load(r)
+                res = json.load(r)
+                return res if isinstance(res, dict) else {}
         except urllib.error.HTTPError as e:
             raise RuntimeError(f"Jules API {path} → HTTP {e.code}") from e
 
     def _get_session_state(self, session_id: str) -> str:
         data = self._api_get(f"sessions/{session_id}")
-        return data.get("state", "")
+        state = data.get("state")
+        return str(state) if state is not None else ""
 
     def _get_session_spec(self, session_id: str) -> str:
         """Return the original task prompt (spec) from the session."""
         data = self._api_get(f"sessions/{session_id}")
-        return data.get("prompt", "")
+        prompt = data.get("prompt")
+        return str(prompt) if prompt is not None else ""
 
-    def _get_all_activities(self, session_id: str) -> list[dict]:
+    def _get_all_activities(self, session_id: str) -> list[dict[Any, Any]]:
         """Fetch all activity pages for a session."""
-        activities: list[dict] = []
+        activities: list[dict[Any, Any]] = []
         page_token: str | None = None
         while True:
             path = f"sessions/{session_id}/activities"
@@ -216,10 +218,13 @@ class JulesWatcher:
         )
 
         try:
-            response = self.llm.generate(prompt, max_tokens=300).strip()
-            if not response or response.upper() == "ESCALATE":
+            response = self.llm.generate(prompt, max_tokens=300)
+            if not response:
                 return None
-            return response
+            response = response.strip()
+            if response.upper() == "ESCALATE":
+                return None
+            return str(response)
         except Exception as e:
             logger.warning("LLM answer generation failed: %s", e)
             return None
@@ -228,19 +233,20 @@ class JulesWatcher:
     # State persistence                                                    #
     # ------------------------------------------------------------------ #
 
-    def _load_state(self) -> dict:
+    def _load_state(self) -> dict[Any, Any]:
         if not self.state_file.exists():
             return {}
         try:
-            return json.loads(self.state_file.read_text())
+            data = json.loads(self.state_file.read_text())
+            return data if isinstance(data, dict) else {}
         except Exception:
             return {}
 
-    def _save_state(self, state: dict) -> None:
+    def _save_state(self, state: dict[Any, Any]) -> None:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         self.state_file.write_text(json.dumps(state, indent=2))
 
-    def _load_recent_sessions(self) -> list[dict]:
+    def _load_recent_sessions(self) -> list[dict[Any, Any]]:
         """Read history.jsonl, return sessions from the last HISTORY_WINDOW_DAYS days."""
         if not self.history_file.exists():
             return []

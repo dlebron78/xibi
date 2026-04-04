@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -8,9 +9,9 @@ import sqlite3
 import threading
 import time
 import urllib.error
-import uuid
 import urllib.parse
 import urllib.request
+import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -220,10 +221,8 @@ class TelegramAdapter:
     def _typing_loop(self, chat_id: int, stop_event: threading.Event) -> None:
         """Send 'typing' indicator every few seconds until stopped."""
         while not stop_event.is_set():
-            try:
+            with contextlib.suppress(Exception):
                 self._api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
-            except Exception:
-                pass  # Non-critical — just a UI hint
             stop_event.wait(TYPING_INTERVAL)
 
     def _download_file(self, file_id: str, chat_id: int) -> str | None:

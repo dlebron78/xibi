@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 CHITCHAT_TOKENS: frozenset[str] = frozenset({
     "ok", "okay", "sure", "thanks", "thank you", "got it", "sounds good",
     "great", "perfect", "good", "cool", "nice", "awesome", "alright",
