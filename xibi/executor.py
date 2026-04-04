@@ -201,24 +201,41 @@ class Executor:
             if result.get("circuit_open"):
                 error_attr = "circuit_open"
 
+            operation = f"tools/call {tool_name}" if is_mcp else "tool.dispatch"
+            attributes = {
+                "tool": tool_name,
+                "source": "mcp" if is_mcp else "native",
+                "server": server_name,  # empty string for native tools
+                "input_preview": input_preview,
+                "output_preview": str(output_text)[:400],
+                "error": error_attr,
+            }
+
+            if is_mcp:
+                attributes.update(
+                    {
+                        "mcp.method.name": "tools/call",
+                        "gen_ai.tool.name": tool_name,
+                        "gen_ai.operation.name": "execute_tool",
+                        "mcp.protocol.version": "2025-11-25",
+                    }
+                )
+                if self.mcp_executor:
+                    client = self.mcp_executor.registry.get_client(server_name)
+                    if client:
+                        attributes["mcp.session.id"] = client.session_id
+
             tracer.emit(
                 Span(
                     trace_id=ctx["trace_id"],
                     span_id=tracer.new_span_id(),
                     parent_span_id=ctx.get("parent_span_id"),
-                    operation="tool.dispatch",
+                    operation=operation,
                     component="mcp" if is_mcp else "executor",
                     start_ms=start_ms,
                     duration_ms=duration_ms,
                     status="error" if result.get("status") == "error" else "ok",
-                    attributes={
-                        "tool": tool_name,
-                        "source": "mcp" if is_mcp else "native",
-                        "server": server_name,  # empty string for native tools
-                        "input_preview": input_preview,
-                        "output_preview": str(output_text)[:400],
-                        "error": error_attr,
-                    },
+                    attributes=attributes,
                 )
             )
         except Exception:

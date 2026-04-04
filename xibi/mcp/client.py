@@ -6,6 +6,7 @@ import os
 import re
 import select
 import subprocess
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -26,6 +27,8 @@ class MCPToolManifest:
     description: str
     input_schema: dict  # normalized — always "inputSchema" key inside Xibi
     server_name: str  # which server this came from
+    annotations: dict = field(default_factory=dict)
+    output_schema: dict | None = None
 
 
 class MCPClient:
@@ -33,6 +36,9 @@ class MCPClient:
         self.config = config
         self.process: subprocess.Popen | None = None
         self._id_counter = 0
+        self.session_id: str = ""
+        self.server_capabilities: dict = {}
+        self.server_info: dict = {}
 
     def _next_id(self) -> int:
         self._id_counter += 1
@@ -46,8 +52,8 @@ class MCPClient:
             env[k] = resolved_v
         return env
 
-    def initialize(self) -> list[MCPToolManifest]:
-        """Spawn subprocess, complete handshake, return discovered tools. Raises on failure."""
+    def _connect(self) -> dict:
+        """Spawn subprocess and complete handshake. Returns server capabilities."""
         env = self._resolve_env()
         try:
             self.process = subprocess.Popen(
@@ -63,6 +69,8 @@ class MCPClient:
             logger.error(f"Failed to spawn MCP server '{self.config.name}': {e}")
             raise RuntimeError(f"Failed to spawn MCP server: {e}") from e
 
+        self.session_id = str(uuid.uuid4())
+
         # 1. Initialize Handshake
         init_id = self._next_id()
         init_msg = {
@@ -70,7 +78,7 @@ class MCPClient:
             "id": init_id,
             "method": "initialize",
             "params": {
-                "protocolVersion": "2025-11-05",
+                "protocolVersion": "2025-11-25",
                 "capabilities": {},
                 "clientInfo": {"name": "xibi", "version": "1.0"},
             },
@@ -80,6 +88,17 @@ class MCPClient:
             response = self._send_and_receive(init_msg)
             if response.get("id") != init_id:
                 raise RuntimeError(f"Handshake failed: ID mismatch (expected {init_id}, got {response.get('id')})")
+
+            result = response.get("result", {})
+            server_caps = result.get("capabilities", {})
+            server_info = result.get("serverInfo", {})
+            logger.info(
+                f"MCP server '{self.config.name}' ({server_info.get('name', '?')} "
+                f"v{server_info.get('version', '?')}): capabilities={list(server_caps.keys())}"
+            )
+            self.server_capabilities = server_caps
+            self.server_info = server_info
+
         except Exception as e:
             self.close()
             raise RuntimeError(f"Handshake failed: {e}") from e
@@ -88,7 +107,10 @@ class MCPClient:
         notif_msg = {"jsonrpc": "2.0", "method": "notifications/initialized"}
         self._send_notification(notif_msg)
 
-        # 3. Discover Tools
+        return self.server_capabilities
+
+    def _discover_tools(self) -> list[MCPToolManifest]:
+        """Discover tools from the connected server."""
         list_id = self._next_id()
         list_msg = {"jsonrpc": "2.0", "id": list_id, "method": "tools/list"}
 
@@ -106,12 +128,33 @@ class MCPClient:
                         description=t.get("description", ""),
                         input_schema=t.get("inputSchema", {}),
                         server_name=self.config.name,
+                        annotations=t.get("annotations", {}),
+                        output_schema=t.get("outputSchema"),
                     )
                 )
             return manifests
         except Exception as e:
             self.close()
             raise RuntimeError(f"Tool discovery failed: {e}") from e
+
+    def initialize(self) -> list[MCPToolManifest]:
+        """Full init: connect + discover tools."""
+        self._connect()
+        return self._discover_tools()
+
+    def _ensure_alive(self) -> bool:
+        """If subprocess is dead, attempt one restart. Returns True if alive."""
+        if self.is_alive():
+            return True
+        logger.warning(f"MCP server '{self.config.name}' died — attempting restart")
+        try:
+            self.close()  # Clean up zombie
+            self._connect()  # Re-spawn + re-handshake
+            logger.info(f"MCP server '{self.config.name}' restarted successfully")
+            return True
+        except Exception as e:
+            logger.error(f"MCP restart failed for '{self.config.name}': {e}")
+            return False
 
     def _send_and_receive(self, message: dict[str, Any], timeout: int = 15) -> dict[str, Any]:
         if not self.process or not self.process.stdin or not self.process.stdout:
@@ -150,6 +193,12 @@ class MCPClient:
           {"status": "error", "error": "timeout"} on timeout
         Never raises — errors are always returned as dicts.
         """
+        if not self._ensure_alive():
+            return {
+                "status": "error",
+                "error": f"MCP server '{self.config.name}' is down and restart failed",
+            }
+
         call_id = self._next_id()
         call_msg = {
             "jsonrpc": "2.0",
@@ -159,11 +208,10 @@ class MCPClient:
         }
 
         try:
-            if not self.process or not self.process.stdin or not self.process.stdout:
-                return {"status": "error", "error": "process not running"}
-
             msg_json = json.dumps(call_msg)
             logger.debug(f"MCP client -> {self.config.name} (tool call): {msg_json}")
+            # process/stdin/stdout presence is guaranteed by _ensure_alive() -> _connect()
+            assert self.process and self.process.stdin and self.process.stdout
             self.process.stdin.write(msg_json + "\n")
             self.process.stdin.flush()
 
@@ -185,6 +233,7 @@ class MCPClient:
             result_body = response.get("result", {})
             is_error = result_body.get("isError", False)
             content_list = result_body.get("content", [])
+            structured = result_body.get("structuredContent")
 
             text_parts = []
             for item in content_list:
@@ -205,7 +254,10 @@ class MCPClient:
             if is_error:
                 return {"status": "error", "error": full_text}
 
-            return {"status": "ok", "result": full_text}
+            result = {"status": "ok", "result": full_text}
+            if structured is not None:
+                result["structured"] = structured
+            return result
 
         except Exception as e:
             return {"status": "error", "error": str(e)}

@@ -255,7 +255,7 @@ def create_app(config: DashboardConfig) -> Flask:
                 providers.add("anthropic")
             result: dict[str, Any] = {"assignments": {}, "available_providers": sorted(providers)}
             for effort in ["fast", "think", "review"]:
-                role_config = models.get(effort, {})
+                role_config: Any = models.get(effort, {})
                 result["assignments"][effort] = {
                     "provider": role_config.get("provider", ""),
                     "model": role_config.get("model", ""),
@@ -306,13 +306,13 @@ def create_app(config: DashboardConfig) -> Flask:
                 role_config["fallback"] = defaults.get(effort)
             cfg["models"]["text"][effort] = role_config
             # Ensure provider exists in providers section (required by load_config validation)
-            _PROVIDER_DEFAULTS = {
+            provider_defaults = {
                 "anthropic": {"api_key_env": "ANTHROPIC_API_KEY"},
                 "openai":    {"api_key_env": "OPENAI_API_KEY"},
                 "gemini":    {"api_key_env": "GEMINI_API_KEY"},
             }
             if provider not in cfg.get("providers", {}):
-                cfg.setdefault("providers", {})[provider] = _PROVIDER_DEFAULTS.get(provider, {})
+                cfg.setdefault("providers", {})[provider] = provider_defaults.get(provider, {})
             with open(config_path, "w") as f:
                 json_mod.dump(cfg, f, indent=2)
             restart_msg = "not attempted"

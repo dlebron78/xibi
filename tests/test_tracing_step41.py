@@ -355,8 +355,10 @@ def test_native_tool_dispatch_span_source_is_native(db_path, config):
 
 
 def test_mcp_tool_dispatch_span_source_is_mcp(db_path, config):
+    from xibi.mcp.registry import MCPServerRegistry
+
     registry = SkillRegistry("xibi/skills/sample")
-    mcp_reg = MagicMock()
+    mcp_reg = MagicMock(spec=MCPServerRegistry)
     # Mock can_handle and execute on mcp_executor
     executor = Executor(registry, config=config, mcp_registry=mcp_reg)
 
@@ -367,7 +369,13 @@ def test_mcp_tool_dispatch_span_source_is_mcp(db_path, config):
         patch.object(Executor, "_resolve_mcp_server", return_value="test_server"),
     ):
         tracer = Tracer(db_path)
-        init_telemetry(db_path, tracer=tracer)
+        from xibi.router import _active_tracer
+
+        _active_tracer.set(tracer)
+
+        client = MagicMock()
+        client.session_id = "test_session"
+        mcp_reg.get_client.return_value = client
 
         set_trace_context(trace_id="t1", span_id="s1", operation="test")
         try:
@@ -377,7 +385,7 @@ def test_mcp_tool_dispatch_span_source_is_mcp(db_path, config):
 
     with open_db(db_path) as conn:
         conn.row_factory = sqlite3.Row
-        row = conn.execute("SELECT attributes, component FROM spans WHERE operation = 'tool.dispatch'").fetchone()
+        row = conn.execute("SELECT attributes, component FROM spans WHERE operation = 'tools/call mcp_tool'").fetchone()
         assert row is not None
         assert row["component"] == "mcp"
         import json
