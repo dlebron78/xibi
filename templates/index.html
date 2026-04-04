@@ -433,26 +433,103 @@
                 ${data.error_count > 0 ? `<div class="bg-red-900/20 px-2 py-1 rounded border border-red-900/50 text-red-400 font-bold">ERRORS: ${data.error_count}</div>` : ''}
             `;
 
-            container.innerHTML = data.spans.map(s => {
+            // Store spans for click handler
+            window._lastSpans = data.spans;
+
+            container.innerHTML = data.spans.map((s, idx) => {
                 const width = Math.max(0.5, (s.duration_ms / data.total_duration_ms) * 100);
                 const left = (s.offset_ms / data.total_duration_ms) * 100;
-                let color = 'bg-blue-500';
-                if (s.component === 'tool') color = 'bg-amber-500';
-                else if (s.component === 'llm') color = 'bg-purple-500';
+
+                // Color by component
+                let color = 'bg-blue-600';
+                if (s.component === 'executor') color = 'bg-amber-500';
+                else if (s.component === 'router') color = 'bg-purple-500';
                 else if (s.component === 'db') color = 'bg-emerald-500';
+                else if (s.component === 'react' && s.operation === 'react.step') color = 'bg-orange-500';
+                else if (s.component === 'react') color = 'bg-blue-400';
 
                 const border = s.status !== 'ok' ? 'border-2 border-red-500' : '';
 
+                const attrs = s.attributes || {};
+                const tool = attrs.tool || '';
+                const hasDetail = !!(attrs.thought || attrs.tool_input || attrs.tool_output || attrs.raw_response_preview);
+
+                // Label: show tool name if present
+                let label = s.operation;
+                if (tool) label = s.operation.replace('react.step', 'step') + ' → ' + tool;
+                if (s.operation === 'tool.dispatch' && tool) label = 'tool → ' + tool;
+
+                const clickable = hasDetail ? 'cursor-pointer' : '';
+                const chevron = hasDetail ? '<span class="ml-1 text-slate-600 group-hover:text-slate-400">▸</span>' : '';
+
                 return `
-                    <div class="flex items-center text-[10px] group">
-                        <div class="w-32 truncate pr-2 text-slate-500 font-mono group-hover:text-slate-300 transition-colors" title="${s.operation}">${s.operation}</div>
-                        <div class="flex-1 bg-slate-800/50 h-3 relative rounded-full overflow-hidden">
-                            <div class="absolute h-full ${color} ${border} rounded-full" style="left: ${left}%; width: ${width}%; min-width: 2px;" title="${s.operation}: ${s.duration_ms}ms"></div>
+                    <div class="space-y-0">
+                        <div class="flex items-center text-[10px] group ${clickable}" onclick="toggleSpanDetail(${idx})">
+                            <div class="w-40 truncate pr-2 text-slate-500 font-mono group-hover:text-slate-300 transition-colors flex items-center" title="${s.operation}">
+                                ${label}${chevron}
+                            </div>
+                            <div class="flex-1 bg-slate-800/50 h-3 relative rounded-full overflow-hidden">
+                                <div class="absolute h-full ${color} ${border} rounded-full" style="left: ${left}%; width: ${width}%; min-width: 2px;" title="${label}: ${s.duration_ms}ms"></div>
+                            </div>
+                            <div class="w-14 text-right text-slate-600 font-mono ml-2">${s.duration_ms}ms</div>
                         </div>
-                        <div class="w-12 text-right text-slate-600 font-mono ml-2">${s.duration_ms}ms</div>
+                        <div id="span-detail-${idx}" class="hidden ml-40 mt-1 mb-2 bg-slate-900 border border-slate-700/50 rounded p-3 text-[10px] space-y-2"></div>
                     </div>
                 `;
             }).join('');
+        }
+
+        function toggleSpanDetail(idx) {
+            const el = document.getElementById('span-detail-' + idx);
+            if (!el) return;
+            if (!el.classList.contains('hidden')) {
+                el.classList.add('hidden');
+                return;
+            }
+            const s = (window._lastSpans || [])[idx];
+            if (!s) return;
+            const attrs = s.attributes || {};
+            let html = '';
+
+            if (attrs.thought) {
+                html += '<div>'
+                    + '<div class="text-slate-500 uppercase tracking-wider font-bold mb-1">Thought</div>'
+                    + '<div class="text-slate-300 leading-relaxed whitespace-pre-wrap">' + escHtml(attrs.thought) + '</div>'
+                    + '</div>';
+            }
+            if (attrs.tool_input) {
+                let inp = attrs.tool_input;
+                try { inp = JSON.stringify(JSON.parse(inp), null, 2); } catch(e) {}
+                html += '<div>'
+                    + '<div class="text-amber-400/80 uppercase tracking-wider font-bold mb-1">Tool Input</div>'
+                    + '<pre class="text-slate-300 font-mono whitespace-pre-wrap overflow-x-auto">' + escHtml(inp) + '</pre>'
+                    + '</div>';
+            }
+            if (attrs.tool_output) {
+                let out = attrs.tool_output;
+                try { out = JSON.stringify(JSON.parse(out), null, 2); } catch(e) {}
+                html += '<div>'
+                    + '<div class="text-emerald-400/80 uppercase tracking-wider font-bold mb-1">Tool Output</div>'
+                    + '<pre class="text-slate-300 font-mono whitespace-pre-wrap overflow-x-auto max-h-48">' + escHtml(out) + '</pre>'
+                    + '</div>';
+            }
+            if (attrs.raw_response_preview && !attrs.thought) {
+                html += '<div>'
+                    + '<div class="text-purple-400/80 uppercase tracking-wider font-bold mb-1">LLM Response</div>'
+                    + '<pre class="text-slate-300 font-mono whitespace-pre-wrap">' + escHtml(attrs.raw_response_preview) + '</pre>'
+                    + '</div>';
+            }
+            if (!html) return;
+            el.innerHTML = html;
+            el.classList.remove('hidden');
+        }
+
+        function escHtml(str) {
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
         }
 
         async function refreshCycles() {
