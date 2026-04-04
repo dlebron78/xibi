@@ -387,6 +387,7 @@ class TelegramAdapter:
                 shadow=self.shadow,
                 session_context=session,
                 llm_routing_classifier=self.llm_routing_classifier,
+                react_format=str(self.config.get("react_format", "json")),
             )
             if result.answer:
                 response = result.answer

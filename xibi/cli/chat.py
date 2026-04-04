@@ -100,7 +100,7 @@ def main() -> None:
     parser.add_argument("--no-spinner", action="store_true", help="Disable thinking spinner (for CI/pipe)")
     parser.add_argument("--skills-dir", type=str, default="xibi/skills/sample", help="Path to skills directory")
     parser.add_argument("--model", type=str, help="Model shorthand (e4b, 9b, 4.1, 5.4) or provider name")
-    parser.add_argument("--format", dest="react_format", choices=["json", "xml", "text"], default="json")
+    parser.add_argument("--format", dest="react_format", choices=["json", "xml", "text", "native"], default=None)
     parser.add_argument("--think", choices=["true", "false"], default=None)
     parser.add_argument("--session", type=str, default=None, help="Session ID. Use fresh for a clean slate.")
     args = parser.parse_args()
@@ -312,6 +312,7 @@ def main() -> None:
                     _spinner = threading.Thread(target=_spin, args=(_thinking,), daemon=True)
                     _spinner.start()
                 try:
+                    effective_format = str(args.react_format or config.get("react_format", "json"))
                     result = run(
                         query,
                         config,
@@ -322,7 +323,7 @@ def main() -> None:
                         step_callback=step_callback,
                         session_context=session,
                         tracer=tracer,
-                        react_format=args.react_format,
+                        react_format=effective_format,
                     )
                 finally:
                     if spinner_active:

@@ -31,6 +31,134 @@ from xibi.types import ReActResult, Step
 
 logger = logging.getLogger(__name__)
 
+_FINISH_TOOL = {
+    "name": "finish",
+    "description": (
+        "Call this when you have a complete answer for the user. Pass the final answer in the 'answer' field."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"answer": {"type": "string", "description": "The complete response to send to the user."}},
+        "required": ["answer"],
+    },
+}
+
+_ASK_USER_TOOL = {
+    "name": "ask_user",
+    "description": (
+        "Call this when you need more information from the user to complete the task. "
+        "Pass your question in the 'question' field."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"question": {"type": "string", "description": "What you need to know from the user."}},
+        "required": ["question"],
+    },
+}
+
+
+def _build_native_tools(skill_registry: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Build tool schema list for generate_with_tools().
+
+    Flattens skill manifests into individual tool schemas, normalising the parameters
+    key so generate_with_tools() can forward them to Ollama. Appends finish and
+    ask_user as first-class callable tools.
+    """
+    tools = []
+    for skill in skill_registry:
+        for tool in skill.get("tools", []):
+            # Normalise: Ollama expects 'parameters'; manifests may use 'inputSchema'
+            schema = (
+                tool.get("parameters")
+                or tool.get("inputSchema")
+                or {
+                    "type": "object",
+                    "properties": {},
+                }
+            )
+            tools.append(
+                {
+                    "name": tool["name"],
+                    "description": tool.get("description", ""),
+                    "parameters": schema,
+                }
+            )
+    tools.append(_FINISH_TOOL)
+    tools.append(_ASK_USER_TOOL)
+    return tools
+
+
+def _native_step(
+    llm: Any,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    system: str,
+) -> tuple[str, dict[str, Any], str]:
+    """Call the model with tool schemas, return (tool_name, tool_input, content).
+
+    Handles three response shapes:
+    - tool_calls present: use the first tool call
+    - no tool_calls, content non-empty: treat as finish
+    - no tool_calls, content empty: return ("error", {}, "No response")
+
+    Never raises from model responses — errors are returned as ("error", {...}, "").
+    """
+    try:
+        result = llm.generate_with_tools(messages, tools, system=system)
+    except Exception as e:
+        return ("error", {"message": str(e)}, "")
+
+    tool_calls = result.get("tool_calls", [])
+    content = result.get("content", "") or ""
+
+    if tool_calls:
+        tc = tool_calls[0]  # Always act on the first tool call
+        return (tc.get("name", "error"), tc.get("arguments", {}), content)
+
+    if content.strip():
+        # Model responded with text only — treat as finish
+        return ("finish", {"answer": content.strip()}, content.strip())
+
+    return ("error", {"message": "Model returned empty response"}, "")
+
+
+def _init_native_messages(query: str, context: str) -> list[dict[str, Any]]:
+    """Build the initial message list: one user turn with query + context."""
+    user_content = query
+    if context and context.strip():
+        user_content = f"{context}\n\n{query}"
+    return [{"role": "user", "content": user_content}]
+
+
+def _append_native_tool_result(
+    messages: list[dict[str, Any]],
+    tool_name: str,
+    tool_input: dict[str, Any],
+    tool_output: dict[str, Any],
+    content: str,
+) -> None:
+    """Append the assistant's tool call and the tool result to the message list.
+
+    Mutates `messages` in place.
+
+    Ollama chat format for a tool round-trip:
+      assistant message: {"role": "assistant", "tool_calls": [...], "content": ""}
+      tool result:       {"role": "tool", "content": "<json string of output>"}
+    """
+    messages.append(
+        {
+            "role": "assistant",
+            "content": content or "",
+            "tool_calls": [{"function": {"name": tool_name, "arguments": tool_input}}],
+        }
+    )
+    messages.append(
+        {
+            "role": "tool",
+            "content": json.dumps(tool_output),
+        }
+    )
+
 
 def _flatten_tools(skill_registry: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Flatten skill manifests into a single list of tool entries for the system prompt.
@@ -440,6 +568,20 @@ def run(
 
     _tools_block = f"Available tools: {json.dumps(_flatten_tools(skill_registry))}"
 
+    # Auto-detection fallback
+    if react_format == "native" and not getattr(llm, "supports_tool_calling", lambda: False)():
+        logger.warning(
+            "react_format='native' requested but model %s does not support tool calling. Falling back to json format.",
+            getattr(llm, "model", "unknown"),
+        )
+        react_format = "json"
+
+    _native_messages: list[dict[str, Any]] = []
+    _native_tools: list[dict[str, Any]] = []
+    if react_format == "native":
+        _native_messages = _init_native_messages(query, context)
+        _native_tools = _build_native_tools(skill_registry)
+
     if react_format == "xml":
         _format_instructions = (
             "Instructions:\n"
@@ -484,9 +626,12 @@ def run(
             '   - "ask_user": Use when you need more information. Input: {"question": "..."}\n'
         )
 
-    system_prompt = (f"{context_block}\n\n" if context_block else "") + (
-        "\n".join(_identity_lines) + f"\n\n{_tools_block}\n\n{_format_instructions}"
-    )
+    if react_format == "native":
+        system_prompt = (f"{context_block}\n\n" if context_block else "") + ("\n".join(_identity_lines))
+    else:
+        system_prompt = (f"{context_block}\n\n" if context_block else "") + (
+            "\n".join(_identity_lines) + f"\n\n{_tools_block}\n\n{_format_instructions}"
+        )
 
     for step_num in range(1, max_steps + 1):
         elapsed = time.time() - start_time
@@ -500,61 +645,91 @@ def run(
             clear_trace_context()
             return res
 
-        # Construct prompt
-        compressed_pad = compress_scratchpad(scratchpad)
-        _step_label = "Next Step (XML):" if react_format == "xml" else "Next Step (JSON):"
-        prompt = f"Original Query: {query}\nContext: {context}\nScratchpad:\n{compressed_pad}\n\n{_step_label}"
-
         step_start_time = time.time()
+
         try:
-            response_text = llm.generate(prompt, system=system_prompt)
-            try:
-                parsed = _parse_llm_response(response_text, react_format)
-                set_last_parse_status("ok")
-                # Parse succeeded — record success
-                trust.record_success(_trust_specialty, _trust_effort)
-                parse_warning = None
-                error = None
-            except Exception:
-                # Recovery attempt
-                try:
-                    if react_format == "xml":
-                        recovery_hint = "Invalid response. Please respond with ONLY the XML tags: <thought>, <tool>, and <tool_input> or <answer>."
-                    else:
-                        recovery_hint = "Invalid JSON received. Please respond with ONLY the JSON object."
-                    recovery_prompt = f"{prompt}\n\n{recovery_hint}"
-                    response_text = llm.generate(recovery_prompt, system=system_prompt, recovery_attempt=True)
-                    parsed = _parse_llm_response(response_text, react_format)
-                    set_last_parse_status("recovered")
-                    # Recovered parse — still a success (LLM produced valid JSON on retry)
-                    trust.record_success(_trust_specialty, _trust_effort)
-                    parse_warning = "Recovered from invalid JSON"
-                    error = None
-                except Exception as inner_e:
-                    set_last_parse_status("failed")
-                    # Persistent failure — LLM could not produce parseable JSON
-                    trust.record_failure(_trust_specialty, _trust_effort, FailureType.PERSISTENT)
-                    parsed = {"thought": f"Failed to parse LLM response: {str(inner_e)}", "tool": "error"}
-                    parse_warning = "Failed to parse JSON"
+            if react_format == "native":
+                tool_name, tool_input, content = _native_step(llm, _native_messages, _native_tools, system_prompt)
+
+                if tool_name == "error":
+                    # Handle same as json mode parse error
                     error = XibiError(
                         category=ErrorCategory.PARSE_FAILURE,
                         message="I had trouble understanding the response. Retrying.",
                         component="router",
-                        detail=str(inner_e),
+                        detail=tool_input.get("message", "Unknown native error"),
                     )
+                    step = Step(
+                        step_num=step_num,
+                        thought=content or "Encountered an error",
+                        tool="error",
+                        tool_input=tool_input,
+                        duration_ms=int((time.time() - step_start_time) * 1000),
+                        error=error,
+                    )
+                else:
+                    step = Step(
+                        step_num=step_num,
+                        thought=content or (f"Calling {tool_name}" if tool_name not in ("finish", "ask_user") else ""),
+                        tool=tool_name,
+                        tool_input=tool_input,
+                        duration_ms=int((time.time() - step_start_time) * 1000),
+                    )
+            else:
+                # Construct prompt for traditional formats
+                compressed_pad = compress_scratchpad(scratchpad)
+                _step_label = "Next Step (XML):" if react_format == "xml" else "Next Step (JSON):"
+                prompt = f"Original Query: {query}\nContext: {context}\nScratchpad:\n{compressed_pad}\n\n{_step_label}"
 
-            step = Step(
-                step_num=step_num,
-                thought=parsed.get("thought", ""),
-                tool=parsed.get("tool", ""),
-                tool_input=parsed.get("tool_input", {}),
-                duration_ms=int((time.time() - step_start_time) * 1000),
-                parse_warning=parse_warning,
-                error=error,
-            )
+                response_text = llm.generate(prompt, system=system_prompt)
+                try:
+                    parsed = _parse_llm_response(response_text, react_format)
+                    set_last_parse_status("ok")
+                    # Parse succeeded — record success
+                    trust.record_success(_trust_specialty, _trust_effort)
+                    parse_warning = None
+                    error = None
+                except Exception:
+                    # Recovery attempt
+                    try:
+                        if react_format == "xml":
+                            recovery_hint = "Invalid response. Please respond with ONLY the XML tags: <thought>, <tool>, and <tool_input> or <answer>."
+                        else:
+                            recovery_hint = "Invalid JSON received. Please respond with ONLY the JSON object."
+                        recovery_prompt = f"{prompt}\n\n{recovery_hint}"
+                        response_text = llm.generate(recovery_prompt, system=system_prompt, recovery_attempt=True)
+                        parsed = _parse_llm_response(response_text, react_format)
+                        set_last_parse_status("recovered")
+                        # Recovered parse — still a success (LLM produced valid JSON on retry)
+                        trust.record_success(_trust_specialty, _trust_effort)
+                        parse_warning = "Recovered from invalid JSON"
+                        error = None
+                    except Exception as inner_e:
+                        set_last_parse_status("failed")
+                        # Persistent failure — LLM could not produce parseable JSON
+                        trust.record_failure(_trust_specialty, _trust_effort, FailureType.PERSISTENT)
+                        parsed = {"thought": f"Failed to parse LLM response: {str(inner_e)}", "tool": "error"}
+                        parse_warning = "Failed to parse JSON"
+                        error = XibiError(
+                            category=ErrorCategory.PARSE_FAILURE,
+                            message="I had trouble understanding the response. Retrying.",
+                            component="router",
+                            detail=str(inner_e),
+                        )
 
+                step = Step(
+                    step_num=step_num,
+                    thought=parsed.get("thought", ""),
+                    tool=parsed.get("tool", ""),
+                    tool_input=parsed.get("tool_input", {}),
+                    duration_ms=int((time.time() - step_start_time) * 1000),
+                    parse_warning=parse_warning,
+                    error=error,
+                )
+
+            # Common handling for tool dispatch and loop control
             if step.tool == "finish":
-                scratchpad.append(step)
+                # PSEUDO-TOOL: NOT appended to scratchpad
                 res = ReActResult(
                     answer=step.tool_input.get("answer", ""),
                     steps=scratchpad,
@@ -568,7 +743,7 @@ def run(
                 return res
 
             if step.tool == "ask_user":
-                scratchpad.append(step)
+                # PSEUDO-TOOL: NOT appended to scratchpad
                 res = ReActResult(
                     answer=step.tool_input.get("question", ""),
                     steps=scratchpad,
@@ -662,6 +837,10 @@ def run(
                         message=tool_output["error"],
                         component=step.tool,
                     )
+
+            if react_format == "native":
+                _append_native_tool_result(_native_messages, step.tool, step.tool_input, tool_output, content)
+                trust.record_success(_trust_specialty, _trust_effort)
 
             scratchpad.append(step)
 
