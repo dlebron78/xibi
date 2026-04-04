@@ -39,6 +39,7 @@ class MCPServerRegistry:
         self.config = config
         self.skill_registry = skill_registry
         self.clients: dict[str, MCPClient] = {}
+        self.injectable_resources: dict[str, list[str]] = {}  # server_name -> list of URIs
 
     def initialize_all(self) -> None:
         """
@@ -85,6 +86,10 @@ class MCPServerRegistry:
                 client = MCPClient(client_config)
                 mcp_tools = client.initialize()
                 self.clients[name] = client
+
+                # Handle injectable resources
+                if "inject_resources" in server_conf:
+                    self.injectable_resources[name] = server_conf["inject_resources"]
 
                 synthetic_tools = []
                 for tool in mcp_tools:
@@ -135,6 +140,27 @@ class MCPServerRegistry:
 
     def get_client(self, server_name: str) -> MCPClient | None:
         return self.clients.get(server_name)
+
+    async def get_all_injectable_resources(self) -> list[dict[str, Any]]:
+        """
+        Gathers all resources marked for injection across all servers.
+        Returns a list of contents: [{"uri": uri, "content": text, "server": server_name}]
+        """
+        all_contents = []
+        for server_name, uris in self.injectable_resources.items():
+            client = self.get_client(server_name)
+            if not client:
+                continue
+            for uri in uris:
+                res = await client.read_resource(uri)
+                if res.get("status") == "ok":
+                    for content in res.get("contents", []):
+                        all_contents.append({
+                            "uri": uri,
+                            "content": content.get("text", ""),
+                            "server": server_name
+                        })
+        return all_contents
 
     def shutdown_all(self) -> None:
         """Close all subprocess clients cleanly."""

@@ -196,7 +196,26 @@ class ObservationCycle:
             logger.error(f"Error in should_run: {e}", exc_info=True)
             return True, f"error: {e}"
 
-    def run(
+    async def _build_resource_context(self, executor: Any | None) -> str:
+        """Gather injectable resources from all MCP servers."""
+        if not executor or not hasattr(executor, "mcp_executor") or not executor.mcp_executor:
+            return ""
+
+        mcp_registry = executor.mcp_executor.registry
+        try:
+            resources = await mcp_registry.get_all_injectable_resources()
+            if not resources:
+                return ""
+
+            parts = ["MCP RESOURCES:"]
+            for r in resources:
+                parts.append(f"[{r['server']}: {r['uri']}]\n{r['content']}")
+            return "\n\n".join(parts)
+        except Exception as e:
+            logger.warning(f"Failed to build resource context: {e}")
+            return ""
+
+    async def run(
         self,
         executor: Any | None = None,
         command_layer: Any | None = None,
@@ -247,6 +266,11 @@ class ObservationCycle:
             new_watermark = max(s["id"] for s in signals)
             result.new_watermark = new_watermark
             observation_dump = self._build_observation_dump(signals)
+
+            # Inject resources into dump
+            resource_context = await self._build_resource_context(executor)
+            if resource_context:
+                observation_dump = f"{resource_context}\n\n{observation_dump}"
 
             try:
                 actions, errors = self._run_review_role(observation_dump, executor, command_layer)

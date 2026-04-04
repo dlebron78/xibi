@@ -4,11 +4,13 @@ import importlib.util
 import logging
 import sqlite3
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import xibi.db
+from xibi.heartbeat.extractors import SignalExtractorRegistry
+from xibi.heartbeat.source_poller import SourcePoller
 from xibi.alerting.rules import RuleEngine
 from xibi.channels.telegram import TelegramAdapter
 from xibi.command_layer import CommandLayer
@@ -70,6 +72,11 @@ class HeartbeatPoller:
         self._last_reflection_date: Any = None  # Tracks date as string or None
         self._audit_tick_counter = 0
         self._jules_watcher = self._init_jules_watcher()
+        self.source_poller = SourcePoller(
+            config=self.profile,
+            executor=self.executor,
+            mcp_registry=getattr(self.executor, "mcp_executor", None).registry if hasattr(self.executor, "mcp_executor") and self.executor.mcp_executor else None
+        )
 
     def _init_jules_watcher(self) -> Any | None:
         """Set up JulesWatcher if JULES_API_KEY is configured."""
@@ -193,16 +200,29 @@ class HeartbeatPoller:
         return verdict, subject
 
     def tick(self) -> None:
-        """Tick: read → classify (no DB held) → write, to avoid holding write locks during LLM calls."""
+        import asyncio
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(self.async_tick())
+        finally:
+            loop.close()
+
+    async def async_tick(self) -> None:
+        """Tick: poll sources → extract signals → intel → observation → digest."""
         if self._is_quiet_hours():
             logger.info("Quiet hours, skipping tick.")
             return
 
-        # --- Phase 1: short reads (no LLM, minimal lock time) ---
+        # Phase 0: Multi-source polling
+        poll_results = await self.source_poller.poll_due_sources()
+
+        # Phase 1: Task Reminders & Rules Load
         due_tasks: list = []
         seen_ids: set[str] = set()
         triage_rules: dict[str, str] = {}
-        email_rules: list = []
+        email_rules = self.rules.load_rules("email_alert")
 
         try:
             with xibi.db.open_db(self.db_path) as conn, conn:
@@ -222,89 +242,112 @@ class HeartbeatPoller:
         except Exception as e:
             logger.warning(f"Tick read phase error: {e}", exc_info=True)
 
-        # Broadcast task reminders (no DB needed)
         for task in due_tasks:
             self._broadcast(f"⏰ Task reminder: {task['goal']} (ID: {task['id']})")
 
-        emails = self._check_email()
-        email_rules = self.rules.load_rules("email_alert")
+        # Phase 2: Signal Extraction and Classification
+        for result in poll_results:
+            if result.get("error"):
+                continue
 
-        # --- Phase 2: classify emails — no DB connection held during LLM calls ---
+            data = result["data"]
+            source_name = result["source"]
+            extractor_name = result["extractor"]
+
+            raw_signals = SignalExtractorRegistry.extract(
+                extractor_name,
+                source_name,
+                data,
+                context={"db_path": self.db_path, "config": self.profile}
+            )
+
+            # Special processing for email signals (classification/triage)
+            if extractor_name == "email":
+                await self._process_email_signals(raw_signals, seen_ids, triage_rules, email_rules)
+            else:
+                # Standard signal logging
+                try:
+                    with xibi.db.open_db(self.db_path) as conn, conn:
+                        for sig in raw_signals:
+                            self.rules.log_signal_with_conn(
+                                conn,
+                                source=sig["source"],
+                                topic_hint=sig.get("topic_hint"),
+                                entity_text=sig.get("entity_text"),
+                                entity_type=sig.get("entity_type", "unknown"),
+                                content_preview=sig.get("content_preview", ""),
+                                ref_id=sig.get("ref_id"),
+                                ref_source=sig.get("ref_source"),
+                            )
+                except Exception as e:
+                    logger.warning(f"Error logging signals for {source_name}: {e}", exc_info=True)
+
+    async def _process_email_signals(self, raw_signals: list[dict], seen_ids: set[str], triage_rules: dict, email_rules: list) -> None:
         processed: list[dict] = []
-
-        for email in emails:
-            email_id = str(email.get("id", ""))
-            sender = email.get("from", email.get("sender", "unknown"))
-            if isinstance(sender, dict):
-                sender = sender.get("name") or sender.get("addr", "unknown")
-            subject = email.get("subject", "No Subject")
+        for sig in raw_signals:
+            email = sig["metadata"]["email"]
+            email_id = sig["ref_id"]
+            sender = sig["entity_text"]
+            subject = sig["topic_hint"]
             sender_str = str(sender).lower()
 
-            # Auto-noise pre-filter
             verdict = ""
             auto_noise = ["noreply@", "no-reply@", "notifications@", "newsletter@", "automated@", "mailer-daemon@"]
             if any(p in sender_str for p in auto_noise):
                 verdict = "NOISE"
 
-            # User triage rules
             if not verdict:
                 for entity, status in triage_rules.items():
                     if entity.lower() in sender_str:
                         verdict = status.upper()
                         break
 
-            # LLM classification — happens here, outside any open DB transaction
             if not verdict and email_id not in seen_ids:
                 verdict = self._classify_email(email)
 
             if verdict == "DIGEST":
                 verdict, subject = self._should_escalate(verdict, subject, subject, [])
 
-            processed.append(
-                {
-                    "email": email,
-                    "email_id": email_id,
-                    "sender": sender,
-                    "subject": subject,
-                    "verdict": verdict,
-                    "is_new": email_id not in seen_ids,
-                }
-            )
+            processed.append({
+                "email": email,
+                "email_id": email_id,
+                "sender": sender,
+                "subject": subject,
+                "verdict": verdict,
+                "is_new": email_id not in seen_ids,
+                "sig": sig
+            })
 
-        # --- Phase 3: short write transaction ---
         try:
             with xibi.db.open_db(self.db_path) as conn, conn:
                 conn.row_factory = sqlite3.Row
                 for item in processed:
-                    email_id = item["email_id"]
-                    sender = item["sender"]
-                    subject = item["subject"]
-                    verdict = item["verdict"]
-
+                    sig = item["sig"]
                     self.rules.log_signal_with_conn(
                         conn,
-                        source="email",
-                        topic_hint=None,
-                        entity_text=str(sender),
-                        entity_type="person",
-                        content_preview=f"{sender}: {subject}",
-                        ref_id=email_id,
-                        ref_source="email",
+                        source=sig["source"],
+                        topic_hint=sig.get("topic_hint"),
+                        entity_text=sig.get("entity_text"),
+                        entity_type=sig.get("entity_type"),
+                        content_preview=sig.get("content_preview"),
+                        ref_id=sig.get("ref_id"),
+                        ref_source=sig.get("ref_source"),
                     )
 
-                    if not item["is_new"] or verdict == "DEFER":
+                    if not item["is_new"] or item["verdict"] == "DEFER":
                         continue
 
-                    self.rules.log_triage_with_conn(conn, email_id, str(sender), subject, verdict)
-                    self.rules.mark_seen_with_conn(conn, email_id)
+                    self.rules.log_triage_with_conn(conn, item["email_id"], str(item["sender"]), item["subject"], item["verdict"])
+                    self.rules.mark_seen_with_conn(conn, item["email_id"])
 
-                    if verdict == "URGENT":
+                    if item["verdict"] == "URGENT":
                         alert_msg = self.rules.evaluate_email(item["email"], email_rules)
                         if alert_msg:
                             self._broadcast(alert_msg)
         except Exception as e:
-            logger.warning(f"Tick write phase error: {e}", exc_info=True)
+            logger.warning(f"Error in process_email_signals write phase: {e}", exc_info=True)
 
+        # Phase 3: Post-processing (Intelligence, Observation, Jules, Radiant)
         if self.signal_intelligence_enabled:
             try:
                 from xibi.signal_intelligence import enrich_signals
@@ -329,7 +372,7 @@ class HeartbeatPoller:
                     # Instead of returning, we just skip this block so the rest of tick can finish
                     obs_result = None
                 else:
-                    obs_result = self.observation_cycle.run(
+                    obs_result = await self.observation_cycle.run(
                         executor=self.executor if hasattr(self, "executor") else None,
                         command_layer=CommandLayer(
                             db_path=str(self.db_path),

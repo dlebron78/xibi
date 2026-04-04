@@ -155,7 +155,7 @@ def cmd_heartbeat(args: argparse.Namespace) -> None:
     )
 
     rules = RuleEngine(db_path)
-    obs = ObservationCycle(db_path)
+    obs = ObservationCycle(db_path, skill_registry=registry.get_skill_manifests())
     radiant = Radiant(db_path, profile=config)
 
     # Get allowed chat IDs from environment (comma-separated list of integers)
