@@ -107,6 +107,16 @@ else
   [[ ! -f "${SPEC_FILE}" ]] && die "Spec file not found: ${SPEC_FILE}"
 fi
 
+# ── Pipeline gate: don't fire if previous task hasn't merged ──────────────────
+if [[ "${1:-}" == "--check-pending" ]]; then
+  TRIGGERED_COUNT=$(find "${XIBI_DIR}/tasks/triggered" -name "*.md" 2>/dev/null | wc -l)
+  if [[ "${TRIGGERED_COUNT}" -gt 0 ]]; then
+    log "Pipeline gate: ${TRIGGERED_COUNT} task(s) still in tasks/triggered/. Waiting for merge before firing next."
+    exit 0
+  fi
+fi
+
+
 TASK_NAME=$(basename "${SPEC_FILE}" .md)
 TASK_CONTENT=$(cat "${SPEC_FILE}")
 
