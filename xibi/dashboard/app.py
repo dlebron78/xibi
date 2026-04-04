@@ -96,6 +96,23 @@ def create_app(config: DashboardConfig) -> Flask:
     def get_db_conn() -> AbstractContextManager[sqlite3.Connection]:
         return xibi.db.open_db(app.config["DB_PATH"])  # type: ignore[return-value]
 
+
+    def _load_secrets(workdir: Any) -> dict:
+        """Load secrets.env from ~/.xibi/secrets.env, return key→value dict."""
+        import os
+        secrets_path = os.path.expanduser("~/.xibi/secrets.env")
+        result: dict = {}
+        try:
+            with open(secrets_path) as sf:
+                for line in sf:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, _, v = line.partition("=")
+                        result[k.strip()] = v.strip()
+        except FileNotFoundError:
+            pass
+        return result
+
     @app.route("/health")
     def health_full() -> Any:
         # We need a Config object. Since create_app doesn't take it, but the health check needs it,
@@ -221,8 +238,16 @@ def create_app(config: DashboardConfig) -> Flask:
         try:
             cfg = load_config(str(config_path)) if config_path.exists() else load_config()
             models = cfg.get("models", {}).get("text", {})
-            providers = cfg.get("providers", {})
-            result: dict[str, Any] = {"assignments": {}, "available_providers": list(providers.keys())}
+            providers = set(cfg.get("providers", {}).keys())
+            # Also detect cloud providers from secrets.env API keys
+            secrets = _load_secrets(workdir)
+            if secrets.get("GOOGLE_API_KEY") or secrets.get("GEMINI_API_KEY"):
+                providers.add("gemini")
+            if secrets.get("OPENAI_API_KEY"):
+                providers.add("openai")
+            if secrets.get("ANTHROPIC_API_KEY"):
+                providers.add("anthropic")
+            result: dict[str, Any] = {"assignments": {}, "available_providers": sorted(providers)}
             for effort in ["fast", "think", "review"]:
                 role_config = models.get(effort, {})
                 result["assignments"][effort] = {
@@ -253,7 +278,16 @@ def create_app(config: DashboardConfig) -> Flask:
         try:
             with open(config_path) as f:
                 cfg = json_mod.load(f)
-            if provider not in cfg.get("providers", {}):
+            # Accept providers from config.json OR secrets.env
+            secrets = _load_secrets(workdir)
+            known_providers = set(cfg.get("providers", {}).keys())
+            if secrets.get("GOOGLE_API_KEY") or secrets.get("GEMINI_API_KEY"):
+                known_providers.add("gemini")
+            if secrets.get("OPENAI_API_KEY"):
+                known_providers.add("openai")
+            if secrets.get("ANTHROPIC_API_KEY"):
+                known_providers.add("anthropic")
+            if provider not in known_providers:
                 return jsonify({"error": f"Unknown provider: {provider}"}), 400
             cfg.setdefault("models", {}).setdefault("text", {})
             role_config = cfg["models"]["text"].get(effort, {})
@@ -291,6 +325,7 @@ def create_app(config: DashboardConfig) -> Flask:
         with open(config_path) as f:
             cfg = json_mod.load(f)
         providers = cfg.get("providers", {})
+        secrets = _load_secrets(workdir)
         available: dict[str, Any] = {}
         if "ollama" in providers:
             try:
@@ -302,12 +337,24 @@ def create_app(config: DashboardConfig) -> Flask:
                     available["ollama"] = [{"name": m["name"], "size": m.get("size", 0)} for m in models]
             except Exception as e:
                 available["ollama"] = {"error": str(e)}
-        if "gemini" in providers:
-            available["gemini"] = [{"name": "gemini-2.5-flash"}, {"name": "gemini-2.5-pro"}]
-        if "anthropic" in providers:
-            available["anthropic"] = [{"name": "claude-haiku-4-5-20251001"}, {"name": "claude-sonnet-4-6"}]
-        if "openai" in providers:
-            available["openai"] = [{"name": "gpt-4.1-mini"}, {"name": "gpt-4.1"}]
+        if secrets.get("GOOGLE_API_KEY") or secrets.get("GEMINI_API_KEY"):
+            available["gemini"] = [
+                {"name": "gemini-2.5-flash-preview-04-17"},
+                {"name": "gemini-2.5-pro-preview-03-25"},
+                {"name": "gemini-2.0-flash"},
+            ]
+        if secrets.get("ANTHROPIC_API_KEY"):
+            available["anthropic"] = [
+                {"name": "claude-haiku-4-5-20251001"},
+                {"name": "claude-sonnet-4-6"},
+                {"name": "claude-opus-4-6"},
+            ]
+        if secrets.get("OPENAI_API_KEY"):
+            available["openai"] = [
+                {"name": "gpt-4.1-mini"},
+                {"name": "gpt-4.1"},
+                {"name": "o4-mini"},
+            ]
         return jsonify(available)
 
     @app.route("/")
