@@ -96,10 +96,7 @@ class MCPServerRegistry:
                     all_tool_names.add(final_name)
 
                     config_tier = server_conf.get("tier_override")
-                    if config_tier:
-                        tier = config_tier
-                    else:
-                        tier = _annotations_to_tier(tool.annotations)
+                    tier = config_tier or _annotations_to_tier(tool.annotations)
 
                     logger.info(
                         f"  tool '{final_name}': tier={tier} "
