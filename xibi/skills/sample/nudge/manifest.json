@@ -1,0 +1,39 @@
+{
+  "name": "nudge",
+  "description": "Send proactive notifications to the operator via Telegram",
+  "tools": [
+    {
+      "name": "nudge",
+      "description": "Surface important information to the operator via Telegram. Used by the observation cycle when it detects something worth notifying about.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "The notification message to send"
+          },
+          "thread_id": {
+            "type": "integer",
+            "description": "Optional thread ID this nudge relates to"
+          },
+          "refs": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Signal reference IDs that triggered this nudge"
+          },
+          "category": {
+            "type": "string",
+            "enum": ["urgent", "info", "digest", "alert"],
+            "default": "info",
+            "description": "Notification category for priority/formatting"
+          }
+        },
+        "required": ["message"]
+      },
+      "output_type": "action",
+      "timeout_secs": 10,
+      "tier": "YELLOW",
+      "access": "operator"
+    }
+  ]
+}
