@@ -9,7 +9,8 @@ from typing import Any
 
 from xibi.db import open_db
 from xibi.errors import XibiError
-from xibi.tools import PermissionTier, resolve_tier, validate_schema
+from xibi.security.content_scan import has_sensitive_content
+from xibi.tools import WRITE_TOOLS, PermissionTier, resolve_tier, validate_schema
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ class CommandResult:
     audit_required: bool  # True → caller must write audit log entry
     block_reason: str  # non-empty when allowed=False
     retry_hint: str  # non-empty when validation failed — include in re-prompt
+    source_bumped: bool = False  # True if tier was bumped due to external source or sensitive content
 
 
 class CommandLayer:
@@ -68,6 +70,7 @@ class CommandLayer:
         tool_name: str,
         tool_input: dict[str, Any],
         manifest_schema: dict[str, Any] | None = None,
+        prev_step_source: str | None = None,
     ) -> CommandResult:
         """
         Run all gates. Returns a CommandResult. Never raises.
@@ -75,11 +78,14 @@ class CommandLayer:
         Gate order:
         1. Schema validation — if errors, return allowed=False with retry_hint
         2. Permission tier — if RED and not interactive, return allowed=False
+        2.5 Sensitive content scan — force RED if outbound action contains sensitive data
         3. Action dedup — if duplicate, return allowed=False with dedup_suppressed=True
         4. All passed → return allowed=True, set audit_required=(tier == YELLOW)
         """
         try:
-            tier = resolve_tier(tool_name, self.profile)
+            base_tier = resolve_tier(tool_name, self.profile)
+            tier = resolve_tier(tool_name, self.profile, prev_step_source)
+            source_bumped = tier != base_tier
 
             # 1. Schema validation
             validation_errors = validate_schema(tool_name, tool_input, manifest_schema)
@@ -105,7 +111,25 @@ class CommandLayer:
                     audit_required=False,
                     block_reason=f"Tool '{tool_name}' requires user confirmation and cannot be run in non-interactive mode.",
                     retry_hint="",
+                    source_bumped=source_bumped,
                 )
+
+            # 2.5 Sensitive content scan — force RED if outbound action contains sensitive data
+            if tier != PermissionTier.RED and tool_name in WRITE_TOOLS and has_sensitive_content(tool_input):
+                tier = PermissionTier.RED
+                source_bumped = True  # reuse flag — content sensitivity forced the bump
+
+                if not self.interactive:
+                        return CommandResult(
+                            allowed=False,
+                            tier=tier,
+                            validation_errors=[],
+                            dedup_suppressed=False,
+                            audit_required=False,
+                            block_reason=f"Tool '{tool_name}' contains sensitive content and requires user confirmation, but cannot be run in non-interactive mode.",
+                            retry_hint="",
+                            source_bumped=source_bumped,
+                        )
 
             # 3. Action dedup
             if self._check_dedup(tool_name, tool_input):
@@ -128,6 +152,7 @@ class CommandLayer:
                 audit_required=(tier == PermissionTier.YELLOW),
                 block_reason="",
                 retry_hint="",
+                source_bumped=source_bumped,
             )
         except Exception as e:
             logger.exception(f"CommandLayer.check internal error: {e}")
@@ -147,6 +172,10 @@ class CommandLayer:
         tool_name: str,
         tool_input: dict[str, Any],
         result: dict[str, Any],
+        prev_step_source: str | None = None,
+        source_bumped: bool = False,
+        base_tier: str | None = None,
+        effective_tier: str | None = None,
     ) -> None:
         """
         Write an audit log entry for a YELLOW tool call that was executed.
@@ -171,8 +200,21 @@ class CommandLayer:
 
             with open_db(Path(self.db_path)) as conn, conn:
                 conn.execute(
-                    "INSERT INTO access_log (chat_id, authorized, user_name) VALUES (?, ?, ?)",
-                    (f"tool:{tool_name}", 1, json.dumps(payload, default=_json_default)),
+                    """
+                    INSERT INTO access_log (
+                        chat_id, authorized, user_name,
+                        prev_step_source, source_bumped, base_tier, effective_tier
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        f"tool:{tool_name}",
+                        1,
+                        json.dumps(payload, default=_json_default),
+                        prev_step_source,
+                        1 if source_bumped else 0,
+                        base_tier,
+                        effective_tier,
+                    ),
                 )
         except Exception as e:
             logger.warning(f"CommandLayer.audit failed: {e}")

@@ -7,7 +7,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 16  # increment when adding new migrations
+SCHEMA_VERSION = 17  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -47,6 +47,7 @@ class SchemaManager:
             (14, "radiant audit results", self._migration_14),
             (15, "session turns source column", self._migration_15),
             (16, "inference events trace_id", self._migration_16),
+            (17, "access_log extensions", self._migration_17),
         ]
 
         for version, description, func in migrations:
@@ -421,6 +422,18 @@ class SchemaManager:
             ALTER TABLE inference_events ADD COLUMN trace_id TEXT;
             CREATE INDEX IF NOT EXISTS idx_inference_events_trace ON inference_events(trace_id);
         """)
+
+    def _migration_17(self, conn: sqlite3.Connection) -> None:
+        # Idempotent addition of columns to access_log
+        new_cols = [
+            ("prev_step_source", "TEXT"),
+            ("source_bumped", "INTEGER NOT NULL DEFAULT 0"),
+            ("base_tier", "TEXT"),
+            ("effective_tier", "TEXT"),
+        ]
+        for col_name, col_type in new_cols:
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute(f"ALTER TABLE access_log ADD COLUMN {col_name} {col_type}")
 
 
 def migrate(db_path: Path) -> list[int]:

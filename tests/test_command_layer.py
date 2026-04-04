@@ -18,7 +18,24 @@ def temp_db(tmp_path):
             chat_id     TEXT NOT NULL,
             authorized  INTEGER NOT NULL,
             timestamp   DATETIME DEFAULT CURRENT_TIMESTAMP,
-            user_name   TEXT
+            user_name   TEXT,
+            prev_step_source TEXT,
+            source_bumped INTEGER NOT NULL DEFAULT 0,
+            base_tier   TEXT,
+            effective_tier TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS session_turns (
+            turn_id     TEXT PRIMARY KEY,
+            session_id  TEXT NOT NULL,
+            query       TEXT NOT NULL,
+            answer      TEXT NOT NULL,
+            tools_called TEXT NOT NULL DEFAULT '[]',
+            exit_reason TEXT NOT NULL DEFAULT 'finish',
+            summary     TEXT NOT NULL DEFAULT '',
+            created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+            source      TEXT NOT NULL DEFAULT 'user'
         )
     """)
     conn.commit()

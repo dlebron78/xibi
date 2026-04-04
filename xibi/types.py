@@ -17,6 +17,7 @@ class Step:
     duration_ms: int = 0
     parse_warning: str | None = None
     error: XibiError | None = None
+    source: str = "user"  # "user" | "mcp:server_name"
 
     def full_text(self) -> str:
         """Full detail — injected for the most recent steps."""

@@ -10,7 +10,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -297,6 +297,55 @@ class TelegramAdapter:
         except Exception:
             return "user"
 
+    def _get_decision_review(self) -> str:
+        """Query access_log for recent source-bumped or blocked actions since last interactive session."""
+        try:
+            # Query for actions in the last 24 hours that were bumped or blocked.
+            # source_bumped=1 OR (authorized=0 AND block_reason NOT NULL)
+            # The schema has 'authorized', 'block_reason' is in user_name payload for now.
+            # Wait, the migration added effective_tier but not block_reason to columns.
+            # Let's query based on source_bumped=1 and actions in the last hour as a heuristic for 'while away'.
+            # A better way is to track the last session timestamp.
+
+            # Simple heuristic: last 24h, source_bumped = 1
+            query = """
+                SELECT chat_id, user_name, timestamp, prev_step_source, effective_tier
+                FROM access_log
+                WHERE source_bumped = 1
+                AND timestamp > datetime('now', '-24 hours')
+                ORDER BY timestamp DESC
+                LIMIT 5
+            """
+
+            items = []
+            with open_db(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute(query).fetchall()
+                for r in rows:
+                    tool_name = r["chat_id"].replace("tool:", "")
+                    try:
+                        payload = json.loads(r["user_name"])
+                        # Extract target from tool_input if available
+                        tool_input = payload.get("tool_input", {})
+                        target = tool_input.get("to") or tool_input.get("recipient") or tool_input.get("thread_id") or "external"
+
+                        status = "Bumped to confirmation"
+                        if r["effective_tier"] == "red":
+                             status = "Held for review"
+
+                        reason = f"triggered by {r['prev_step_source']}"
+                        items.append(f"- {status}: {tool_name} to {target} ({reason})")
+                    except Exception:
+                        items.append(f"- Action: {tool_name} (bumped due to external source)")
+
+            if not items:
+                return ""
+
+            return "While you were away:\n" + "\n".join(items) + "\nAnything you'd like me to act on?"
+        except Exception as e:
+            logger.warning(f"Failed to generate decision review: {e}")
+            return ""
+
     def _handle_text(self, chat_id: int, user_text: str) -> None:
         """Handle core engine interaction and response sending."""
         self._api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
@@ -310,6 +359,25 @@ class TelegramAdapter:
             response = None
 
             session = self._get_session(chat_id)
+
+            # Decision review logic: if session is new or > 30 min since last turn
+            is_new_or_stale = False
+            with open_db(self.db_path) as conn:
+                last_turn = conn.execute(
+                    "SELECT created_at FROM session_turns WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
+                    (session.session_id,)
+                ).fetchone()
+                if not last_turn:
+                    is_new_or_stale = True
+                else:
+                    last_time = datetime.fromisoformat(last_turn[0])
+                    if datetime.utcnow() - last_time > timedelta(minutes=30):
+                        is_new_or_stale = True
+
+            review_text = ""
+            if is_new_or_stale:
+                review_text = self._get_decision_review()
+
             result = react_run(
                 user_text,
                 self.config,
@@ -347,6 +415,8 @@ class TelegramAdapter:
                 threading.Thread(target=_add_turn_safe, daemon=True).start()
 
             if response:
+                if review_text:
+                    response = f"{review_text}\n\n{response}"
                 self.send_message(chat_id, response)
 
             # Clear attachment if processing was successful
