@@ -300,6 +300,7 @@ class TestConversationRecall:
 
     def test_recall_keyword_match(self, core):
         import sqlite3
+
         from xibi.db import init_workdir
 
         init_workdir(Path(core.db_path.parent.parent))
@@ -322,6 +323,7 @@ class TestConversationRecall:
 
     def test_recall_limit(self, core):
         import sqlite3
+
         from xibi.db import init_workdir
 
         init_workdir(Path(core.db_path.parent.parent))
@@ -343,6 +345,7 @@ class TestConversationRecall:
 
     def test_recall_no_match(self, core):
         import sqlite3
+
         from xibi.db import init_workdir
 
         init_workdir(Path(core.db_path.parent.parent))

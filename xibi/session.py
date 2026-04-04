@@ -206,6 +206,16 @@ Exchanges:
         self.summarise_old_turns()
         return turn
 
+    def add_chitchat_turn(self, query: str, answer: str) -> None:
+        """Store a chitchat turn that bypassed the ReAct loop."""
+        with open_db(self.db_path) as conn, conn:
+            conn.execute(
+                """INSERT INTO session_turns
+                   (turn_id, session_id, query, answer, tools_called, exit_reason, summary, source)
+                   VALUES (?, ?, ?, ?, '[]', 'chitchat', '', 'user')""",
+                (str(uuid.uuid4()), self.session_id, query, answer),
+            )
+
     def _get_session_memories(self) -> str:
         """
         Fetch recent session_memory beliefs for injection into context.

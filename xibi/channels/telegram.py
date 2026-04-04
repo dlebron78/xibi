@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -10,6 +11,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -17,7 +19,8 @@ from typing import Any
 from xibi.db import open_db
 from xibi.executor import Executor
 from xibi.react import run as react_run
-from xibi.router import Config
+from xibi.router import Config, get_model
+from xibi.routing.chitchat import is_chitchat
 from xibi.routing.control_plane import ControlPlaneRouter
 from xibi.routing.shadow import ShadowMatcher
 from xibi.session import SessionContext
@@ -218,10 +221,8 @@ class TelegramAdapter:
     def _typing_loop(self, chat_id: int, stop_event: threading.Event) -> None:
         """Send 'typing' indicator every few seconds until stopped."""
         while not stop_event.is_set():
-            try:
+            with contextlib.suppress(Exception):
                 self._api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
-            except Exception:
-                pass  # Non-critical — just a UI hint
             stop_event.wait(TYPING_INTERVAL)
 
     def _download_file(self, file_id: str, chat_id: int) -> str | None:
@@ -355,9 +356,7 @@ class TelegramAdapter:
     def _handle_text(self, chat_id: int, user_text: str) -> None:
         """Handle core engine interaction and response sending."""
         stop_event = threading.Event()
-        typing_thread = threading.Thread(
-            target=self._typing_loop, args=(chat_id, stop_event), daemon=True
-        )
+        typing_thread = threading.Thread(target=self._typing_loop, args=(chat_id, stop_event), daemon=True)
         self._active_chats[chat_id] = {"stop": stop_event, "thread": typing_thread}
         typing_thread.start()
 
@@ -385,6 +384,49 @@ class TelegramAdapter:
             review_text = ""
             if is_new_or_stale:
                 review_text = self._get_decision_review()
+
+            # Chitchat fast-path: skip ReAct for conversational acknowledgements
+            if is_chitchat(user_text):
+                try:
+                    llm = get_model("text", "fast", config=self.config)
+                    chitchat_response = llm.generate(
+                        user_text,
+                        system=(
+                            "You are a helpful personal assistant. "
+                            "Respond warmly and naturally in 1–2 sentences. "
+                            "Do not start with 'I', 'Certainly', or 'Of course'."
+                        ),
+                    )
+
+                    # Tracing (optional, best-effort)
+                    try:
+                        from xibi.tracing import Span, Tracer
+
+                        tracer = Tracer(self.db_path)
+                        tracer.emit(
+                            Span(
+                                trace_id=f"chitchat-{uuid.uuid4().hex[:8]}",
+                                span_id=uuid.uuid4().hex[:8],
+                                parent_span_id=None,
+                                operation="chitchat_response",
+                                component="telegram",
+                                start_ms=int(time.time() * 1000),
+                                duration_ms=0,
+                                status="ok",
+                                attributes={"query": user_text[:100], "exit_reason": "chitchat"},
+                            )
+                        )
+                    except Exception:
+                        pass
+
+                    session.add_chitchat_turn(user_text, chitchat_response)
+                    if chitchat_response:
+                        if review_text:
+                            chitchat_response = f"{review_text}\n\n{chitchat_response}"
+                        self.send_message(chat_id, chitchat_response)
+                    return  # Success — skip react_run entirely
+                except Exception:
+                    logger.warning("Chitchat fast-path failed — falling through to ReAct", exc_info=True)
 
             result = react_run(
                 user_text,

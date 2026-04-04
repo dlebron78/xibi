@@ -71,7 +71,7 @@ class HeartbeatPoller:
         self._audit_tick_counter = 0
         self._jules_watcher = self._init_jules_watcher()
 
-    def _init_jules_watcher(self):
+    def _init_jules_watcher(self) -> Any | None:
         """Set up JulesWatcher if JULES_API_KEY is configured."""
         api_key = None
         xibi_env = Path.home() / ".xibi_env"
@@ -82,12 +82,14 @@ class HeartbeatPoller:
                     break
         if not api_key:
             import os as _os
+
             api_key = _os.environ.get("JULES_API_KEY", "")
         if not api_key:
             return None
         history_file = Path.home() / ".jules_trigger_state" / "history.jsonl"
         try:
             from xibi.heartbeat.jules_watcher import JulesWatcher
+
             llm = get_model(effort="fast", config_path=self.config_path)
             return JulesWatcher(
                 api_key=api_key,
@@ -357,7 +359,6 @@ class HeartbeatPoller:
                     logger.debug(f"Observation cycle skipped: {obs_result.skip_reason}")
             except Exception as e:
                 logger.warning(f"Observation cycle trigger failed: {e}", exc_info=True)
-
 
         # Poll Jules sessions for pending questions — auto-answer via LLM
         if self._jules_watcher:
