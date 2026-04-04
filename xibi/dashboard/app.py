@@ -340,10 +340,11 @@ def create_app(config: DashboardConfig) -> Flask:
         if secrets.get("GOOGLE_API_KEY") or secrets.get("GEMINI_API_KEY"):
             # Suggestions only — user can type any valid model name in the UI
             available["gemini"] = [
+                {"name": "gemini-3.1-pro-preview"},
+                {"name": "gemini-3-flash-preview"},
+                {"name": "gemini-3.1-flash-lite-preview"},
                 {"name": "gemini-2.5-pro"},
                 {"name": "gemini-2.5-flash"},
-                {"name": "gemini-2.0-flash"},
-                {"name": "gemini-2.0-flash-lite"},
             ]
         if secrets.get("ANTHROPIC_API_KEY"):
             available["anthropic"] = [
@@ -353,13 +354,12 @@ def create_app(config: DashboardConfig) -> Flask:
             ]
         if secrets.get("OPENAI_API_KEY"):
             available["openai"] = [
-                {"name": "gpt-4o"},
-                {"name": "gpt-4o-mini"},
+                {"name": "gpt-5.4"},
+                {"name": "gpt-5.4-mini"},
+                {"name": "gpt-5.4-nano"},
+                {"name": "gpt-5.4-pro"},
                 {"name": "o3"},
-                {"name": "o3-mini"},
                 {"name": "o4-mini"},
-                {"name": "gpt-4.1"},
-                {"name": "gpt-4.1-mini"},
             ]
         return jsonify(available)
 
