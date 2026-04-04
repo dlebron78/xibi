@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from xibi.errors import ErrorCategory, XibiError
-from xibi.tools import resolve_tier
 from xibi.router import (
     Config,
     clear_trace_context,
@@ -17,6 +16,7 @@ from xibi.router import (
     set_last_parse_status,
     set_trace_context,
 )
+from xibi.tools import resolve_tier
 from xibi.tracing import Span, Tracer
 from xibi.trust.gradient import FailureType, TrustGradient
 
