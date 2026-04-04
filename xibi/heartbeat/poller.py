@@ -19,6 +19,9 @@ from xibi.router import get_model
 if TYPE_CHECKING:
     from xibi.trust.gradient import TrustGradient
 
+# Jules watcher — lazy import to avoid hard dependency if Jules not configured
+_JulesWatcher = None
+
 logger = logging.getLogger(__name__)
 
 
@@ -66,6 +69,35 @@ class HeartbeatPoller:
 
         self._last_reflection_date: Any = None  # Tracks date as string or None
         self._audit_tick_counter = 0
+        self._jules_watcher = self._init_jules_watcher()
+
+    def _init_jules_watcher(self):
+        """Set up JulesWatcher if JULES_API_KEY is configured."""
+        api_key = None
+        xibi_env = Path.home() / ".xibi_env"
+        if xibi_env.exists():
+            for line in xibi_env.read_text().splitlines():
+                if line.startswith("JULES_API_KEY="):
+                    api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
+                    break
+        if not api_key:
+            import os as _os
+            api_key = _os.environ.get("JULES_API_KEY", "")
+        if not api_key:
+            return None
+        history_file = Path.home() / ".jules_trigger_state" / "history.jsonl"
+        try:
+            from xibi.heartbeat.jules_watcher import JulesWatcher
+            llm = get_model(effort="fast", config_path=self.config_path)
+            return JulesWatcher(
+                api_key=api_key,
+                history_file=history_file,
+                llm=llm,
+                broadcast_fn=self._broadcast,
+            )
+        except Exception as e:
+            logger.warning("Failed to init JulesWatcher: %s", e)
+            return None
 
     def _broadcast(self, text: str) -> None:
         for chat_id in self.allowed_chat_ids:
@@ -326,6 +358,13 @@ class HeartbeatPoller:
             except Exception as e:
                 logger.warning(f"Observation cycle trigger failed: {e}", exc_info=True)
 
+
+        # Poll Jules sessions for pending questions — auto-answer via LLM
+        if self._jules_watcher:
+            try:
+                self._jules_watcher.poll()
+            except Exception as e:
+                logger.warning("JulesWatcher poll failed: %s", e, exc_info=True)
         if self.radiant:
             self._audit_tick_counter += 1
             audit_interval = self.profile.get("audit_interval_ticks", 20)
