@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from dataclasses import dataclass
-from datetime import datetime
+from pathlib import Path
 
 from xibi.db import open_db
 
@@ -30,7 +30,7 @@ class Contact:
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> Contact:
-        return cls(**{k: row[k] for k in row.keys()})
+        return cls(**dict(row))
 
 
 def resolve_contact(
@@ -50,18 +50,19 @@ def resolve_contact(
         return None
 
     try:
-        with open_db(db_path) as conn:
+        with open_db(Path(db_path)) as conn:
             conn.row_factory = sqlite3.Row
 
             # 1. Exact channel match
-            row = conn.execute(
+            cursor = conn.execute(
                 """
                 SELECT c.* FROM contacts c
                 JOIN contact_channels cc ON c.id = cc.contact_id
                 WHERE cc.channel_type = ? AND cc.handle = ?
                 """,
                 (channel_type, handle.lower()),
-            ).fetchone()
+            )
+            row = cursor.fetchone()
 
             if row:
                 contact = Contact.from_row(row)
@@ -75,14 +76,15 @@ def resolve_contact(
                 if display_name:
                     # Check if display_name + domain matches
                     # We check other email handles at the same domain for the same display name
-                    row = conn.execute(
+                    cursor = conn.execute(
                         """
                         SELECT c.* FROM contacts c
                         JOIN contact_channels cc ON c.id = cc.contact_id
                         WHERE c.display_name = ? AND cc.handle LIKE '%@' || ?
                         """,
                         (display_name, domain),
-                    ).fetchone()
+                    )
+                    row = cursor.fetchone()
 
                     if row:
                         contact = Contact.from_row(row)
@@ -92,13 +94,14 @@ def resolve_contact(
 
             # 3. Name + Org match
             if display_name and organization:
-                rows = conn.execute(
+                cursor = conn.execute(
                     """
                     SELECT * FROM contacts
                     WHERE display_name LIKE ? AND organization LIKE ?
                     """,
                     (f"%{display_name}%", f"%{organization}%"),
-                ).fetchall()
+                )
+                rows = cursor.fetchall()
 
                 if len(rows) == 1:
                     contact = Contact.from_row(rows[0])
@@ -109,10 +112,11 @@ def resolve_contact(
                     logger.info(f"Ambiguous name_org match for ({display_name}, {organization}), skipping.")
             if display_name:
                 # Name only match (last resort)
-                rows = conn.execute(
+                cursor = conn.execute(
                     "SELECT * FROM contacts WHERE display_name = ?",
                     (display_name,),
-                ).fetchall()
+                )
+                rows = cursor.fetchall()
 
                 if len(rows) == 1:
                     contact = Contact.from_row(rows[0])

@@ -107,12 +107,12 @@ def create_app(config: DashboardConfig) -> Flask:
         workdir = app.config["DB_PATH"].parent.parent
         config_path = workdir / "config.json"
         try:
-            config = load_config(str(config_path)) if config_path.exists() else load_config()
+            cfg = load_config(str(config_path)) if config_path.exists() else load_config()
         except Exception:
             # If config is missing or invalid, get_system_health will report it via LLM check
-            config = {"models": {}, "providers": {}}  # type: ignore
+            cfg = {"models": {}, "providers": {}}  # type: ignore
 
-        report = get_system_health(app.config["DB_PATH"], config)
+        report = get_system_health(app.config["DB_PATH"], cfg)
         return jsonify(report)
 
     @app.route("/api/health")

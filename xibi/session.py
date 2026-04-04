@@ -8,10 +8,10 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from xibi.db import open_db
-from xibi.entities import create_contact, upsert_contact_channel
+from xibi.entities import create_contact
 from xibi.entities.resolver import resolve_contact
 from xibi.router import get_model
 
@@ -522,7 +522,7 @@ Skip generic words. Confidence > 0.7 only."""
                 source_turn_id=r["turn_id"],
                 source_tool=r["source_tool"],
                 confidence=r["confidence"],
-                contact_id=r["contact_id"],
+                contact_id=cast(dict[str, Any], dict(r)).get("contact_id"),
             )
             for r in rows
         ]
@@ -559,7 +559,7 @@ Skip generic words. Confidence > 0.7 only."""
 
             if contact:
                 # Link found contact
-                entity.contact_id = contact.id
+                entity.contact_id = cast(str, contact.id)
                 with open_db(self.db_path) as conn, conn:
                     conn.execute(
                         "UPDATE session_entities SET contact_id = ? WHERE session_id = ? AND entity_type = 'person' AND value = ?",
@@ -570,27 +570,27 @@ Skip generic words. Confidence > 0.7 only."""
                 # Check if this person appears in 2+ sessions
                 try:
                     with open_db(self.db_path) as conn:
-                        row = conn.execute(
+                        res_count = conn.execute(
                             "SELECT COUNT(DISTINCT session_id) FROM session_entities WHERE entity_type = 'person' AND value = ?",
                             (entity.value,),
                         ).fetchone()
-                        session_count = row[0] if row else 0
+                        session_count = res_count[0] if res_count else 0
 
                         if session_count >= 2:
-                            org = org_entities[0] if org_entities else None
-                            contact_id = create_contact(
+                            partial_org = org_entities[0] if org_entities else None
+                            new_contact_id_res = create_contact(
                                 display_name=entity.value,
-                                organization=org,
+                                organization=partial_org,
                                 discovered_via="session_mention",
                                 relationship="unknown",
                                 db_path=db_path,
                             )
-                            if contact_id:
-                                entity.contact_id = contact_id
+                            if new_contact_id_res:
+                                entity.contact_id = cast(str, new_contact_id_res)
                                 with conn:
                                     conn.execute(
                                         "UPDATE session_entities SET contact_id = ? WHERE session_id = ? AND entity_type = 'person' AND value = ?",
-                                        (contact_id, self.session_id, entity.value),
+                                        (new_contact_id_res, self.session_id, entity.value),
                                     )
                 except Exception as e:
                     logger.error(f"Failed partial contact creation: {e}")

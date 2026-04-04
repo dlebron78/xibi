@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import hashlib
-import sqlite3
+from pathlib import Path
+
 from xibi.db import open_db
 
 
@@ -16,7 +17,7 @@ def upsert_contact_channel(
     if not db_path:
         return False
     try:
-        with open_db(db_path) as conn:
+        with open_db(Path(db_path)) as conn:
             conn.execute(
                 """
                 INSERT INTO contact_channels (contact_id, channel_type, handle, verified)
@@ -50,7 +51,7 @@ def create_contact(
         contact_id = "contact-" + hashlib.md5(display_name.lower().encode()).hexdigest()[:8]
 
     try:
-        with open_db(db_path) as conn:
+        with open_db(Path(db_path)) as conn:
             conn.execute(
                 """
                 INSERT INTO contacts (id, display_name, email, organization, relationship, discovered_via, signal_count)
