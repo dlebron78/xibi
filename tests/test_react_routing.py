@@ -169,6 +169,7 @@ class TestReActRouting(unittest.TestCase):
 
         import tempfile
         from pathlib import Path
+
         with tempfile.TemporaryDirectory() as tmp_dir:
             db_path = Path(tmp_dir) / "test_routing.db"
             migrate(db_path)

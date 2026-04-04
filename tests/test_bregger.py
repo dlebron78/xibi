@@ -290,6 +290,7 @@ class TestConversationRecall:
     def test_recall_empty_history(self, core):
         from skills.memory.tools import recall_conversation
         from xibi.db import init_workdir
+
         init_workdir(Path(core.db_path.parent.parent))
 
         # Test empty
@@ -300,6 +301,7 @@ class TestConversationRecall:
     def test_recall_keyword_match(self, core):
         import sqlite3
         from xibi.db import init_workdir
+
         init_workdir(Path(core.db_path.parent.parent))
 
         from skills.memory.tools import recall_conversation
@@ -321,6 +323,7 @@ class TestConversationRecall:
     def test_recall_limit(self, core):
         import sqlite3
         from xibi.db import init_workdir
+
         init_workdir(Path(core.db_path.parent.parent))
 
         from skills.memory.tools import recall_conversation
@@ -341,6 +344,7 @@ class TestConversationRecall:
     def test_recall_no_match(self, core):
         import sqlite3
         from xibi.db import init_workdir
+
         init_workdir(Path(core.db_path.parent.parent))
 
         from skills.memory.tools import recall_conversation
@@ -362,6 +366,7 @@ class TestMemorySkill:
     def test_remember_basic(self, tmp_workdir):
         from skills.memory.tools import remember
         from xibi.db import init_workdir
+
         init_workdir(tmp_workdir)
 
         result = remember.run({"content": "buy milk", "_workdir": str(tmp_workdir)})
@@ -370,6 +375,7 @@ class TestMemorySkill:
     def test_remember_with_category(self, tmp_workdir):
         from skills.memory.tools import remember
         from xibi.db import init_workdir
+
         init_workdir(tmp_workdir)
 
         result = remember.run({"content": "Call Bob", "category": "task", "_workdir": str(tmp_workdir)})
@@ -383,6 +389,7 @@ class TestMemorySkill:
     def test_recall_all(self, tmp_workdir):
         from skills.memory.tools import recall, remember
         from xibi.db import init_workdir
+
         init_workdir(tmp_workdir)
 
         remember.run({"content": "item one", "_workdir": str(tmp_workdir)})
@@ -394,6 +401,7 @@ class TestMemorySkill:
     def test_recall_by_category(self, tmp_workdir):
         from skills.memory.tools import recall, remember
         from xibi.db import init_workdir
+
         init_workdir(tmp_workdir)
 
         remember.run({"content": "design spec", "category": "idea", "_workdir": str(tmp_workdir)})
@@ -404,6 +412,7 @@ class TestMemorySkill:
     def test_recall_by_keyword(self, tmp_workdir):
         from skills.memory.tools import recall, remember
         from xibi.db import init_workdir
+
         init_workdir(tmp_workdir)
 
         remember.run({"content": "order milk from store", "_workdir": str(tmp_workdir)})
@@ -413,6 +422,7 @@ class TestMemorySkill:
     def test_recall_empty(self, tmp_workdir):
         from skills.memory.tools import recall
         from xibi.db import init_workdir
+
         init_workdir(tmp_workdir)
 
         result = recall.run({"query": "xyznonexistent99", "_workdir": str(tmp_workdir)})

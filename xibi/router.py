@@ -5,7 +5,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, Protocol, TypedDict
+from typing import Any, Literal, Protocol, TypedDict, cast
 
 import requests
 
@@ -1009,6 +1009,32 @@ def get_model(
                             res = self.inner.generate_structured(prompt, schema, system, **kwargs)
                             self.breaker.record_success()
                             return res
+                        except XibiError as e:
+                            if e.category in (ErrorCategory.PROVIDER_DOWN, ErrorCategory.TIMEOUT):
+                                self.breaker.record_failure(FailureType.PERSISTENT)
+                            else:
+                                self.breaker.record_failure(FailureType.TRANSIENT)
+                            raise
+                        except Exception:
+                            self.breaker.record_failure(FailureType.PERSISTENT)
+                            raise
+
+                    def supports_tool_calling(self) -> bool:
+                        """True if the wrapped client has native tool-calling support."""
+                        return hasattr(self.inner, "generate_with_tools")
+
+                    def generate_with_tools(
+                        self,
+                        messages: list[dict[str, Any]],
+                        tools: list[dict[str, Any]],
+                        system: str | None = None,
+                        **kwargs: Any,
+                    ) -> dict[str, Any]:
+                        """Proxy to inner client's generate_with_tools. Records circuit-breaker state."""
+                        try:
+                            res = self.inner.generate_with_tools(messages, tools, system, **kwargs)  # type: ignore
+                            self.breaker.record_success()
+                            return cast(dict[str, Any], res)
                         except XibiError as e:
                             if e.category in (ErrorCategory.PROVIDER_DOWN, ErrorCategory.TIMEOUT):
                                 self.breaker.record_failure(FailureType.PERSISTENT)

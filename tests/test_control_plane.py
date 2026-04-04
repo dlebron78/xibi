@@ -101,5 +101,5 @@ def test_react_run_with_control_plane_falls_through(monkeypatch):
 
     result = run(query="find invoice", config=config, skill_registry=[], control_plane=router)
     assert result.answer == "react response"
-    assert len(result.steps) == 1
+    assert len(result.steps) == 0  # finish is a pseudo-tool, not appended to scratchpad
     assert result.exit_reason == "finish"

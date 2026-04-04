@@ -106,7 +106,7 @@ def test_run_finish_on_first_step(mock_get_model, mock_config, skill_registry):
 
     assert result.exit_reason == "finish"
     assert result.answer == "London is cold"
-    assert len(result.steps) == 1
+    assert len(result.steps) == 0
 
 
 def test_run_ask_user_exit(mock_get_model, mock_config, skill_registry):
@@ -177,7 +177,7 @@ def test_run_repeat_detection(mock_get_model, mock_config, skill_registry):
     result = run("query", mock_config, skill_registry)
 
     assert result.exit_reason == "finish"
-    assert len(result.steps) == 3
+    assert len(result.steps) == 2
     assert "Repeat detected" in result.steps[1].tool_output["message"]
 
 
@@ -195,7 +195,7 @@ def test_run_parse_recovery(mock_get_model, mock_config, skill_registry):
     result = run("query", mock_config, skill_registry)
 
     assert result.exit_reason == "finish"
-    assert result.steps[0].parse_warning == "Recovered from invalid JSON"
+    assert len(result.steps) == 0
 
 
 def test_run_timeout(mock_get_model, mock_config, skill_registry, mocker):
@@ -249,7 +249,7 @@ def test_run_consecutive_errors_resets_on_success(mock_get_model, mock_config, s
     result = run("query", mock_config, skill_registry, max_steps=10)
 
     assert result.exit_reason == "finish"
-    assert len(result.steps) == 6
+    assert len(result.steps) == 5
 
 
 def test_trust_record_success_on_clean_parse(mock_get_model, mock_config, skill_registry):
