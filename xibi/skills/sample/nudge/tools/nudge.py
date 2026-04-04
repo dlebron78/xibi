@@ -131,9 +131,7 @@ def run(params: dict[str, Any], context: dict[str, Any] | None = None) -> dict[s
                 # We need a minimal config and registry to satisfy TelegramAdapter's __init__
                 skills_dir = config.get("skill_dir", str(workdir / "skills"))
                 registry = SkillRegistry(skills_dir)
-                telegram_adapter = TelegramAdapter(
-                    config=cast(Config, config), skill_registry=registry, token=token
-                )
+                telegram_adapter = TelegramAdapter(config=cast(Config, config), skill_registry=registry, token=token)
                 result = telegram_adapter.send_message(chat_id=chat_id, text=text)
             except Exception as e:
                 logger.debug(f"nudge: falling back to direct urllib call due to: {e}")
