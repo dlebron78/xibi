@@ -355,14 +355,14 @@ class SkillRegistry:
                         f"⚠️  Skill {name}, Tool {tname}: 'irreversible' risk requires output_type 'action'", flush=True
                     )
 
-    def get_tool_min_tier(self, skill_name: str, tool_name: str) -> int:
+    def get_tool_min_effort(self, skill_name: str, tool_name: str) -> int:
         """Helper to check if a tool requires a minimum inference tier."""
         skill = self.skills.get(skill_name)
         if not skill:
             return 1
         for tool in skill["manifest"].get("tools", []):
             if tool.get("name") == tool_name:
-                return tool.get("min_tier", 1)
+                return tool.get("min_effort", 1)
         return 1
 
     def get_tool_meta(self, skill_name: str, tool_name: str) -> Optional[Dict[str, Any]]:
@@ -1703,10 +1703,10 @@ class IntentMapper:
         if intent in self._dynamic_map:
             mapping = self._dynamic_map[intent]
 
-            # min_tier check (Phase 9): If tool requires Tier 3+, skip Tier 1 path
+            # min_effort check (Phase 9): If tool requires Tier 3+, skip Tier 1 path
             if self.registry:
-                min_tier = self.registry.get_tool_min_tier(mapping["skill"], mapping["tool"])
-                if min_tier >= 3:
+                min_effort = self.registry.get_tool_min_effort(mapping["skill"], mapping["tool"])
+                if min_effort >= 3:
                     return None
 
             # Capture regex groups as parameters
@@ -3219,11 +3219,11 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                 consecutive_errors += 1
                 continue
 
-            # 5. Layer 1 escalation: min_tier routing
+            # 5. Layer 1 escalation: min_effort routing
             current_tier = 3
-            min_tier = tool_meta.get("min_tier", 3)
+            min_effort = tool_meta.get("min_effort", 3)
             cloud_cfg = self.config.get("cloud", {})
-            if min_tier > current_tier and cloud_cfg.get("enabled"):
+            if min_effort > current_tier and cloud_cfg.get("enabled"):
                 # Cloud escalation — V1 stub (cloud not yet wired)
                 step.tool_output = {
                     "error": "Cloud escalation not yet enabled.",

@@ -999,13 +999,13 @@ class TestSkillContract:
         assert plan["skill"] == "test_skill"
         assert plan["tool"] == "test_tool"
 
-    def test_intent_mapper_min_tier(self, tmp_path):
+    def test_intent_mapper_min_effort(self, tmp_path):
 
         from bregger_core import IntentMapper
 
         # Mock registry with a Tier 3 tool
         class MockRegistry:
-            def get_tool_min_tier(self, s, t):
+            def get_tool_min_effort(self, s, t):
                 return 3 if t == "complex_tool" else 1
 
         mapper = IntentMapper(MockRegistry())

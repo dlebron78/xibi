@@ -8,7 +8,7 @@
             "description": "List all files in the workspace directory. Use this first when the user refers to a file by approximate name.",
             "output_type": "raw",
             "risk": "safe",
-            "min_tier": 3,
+            "min_effort": 3,
             "max_output_size": 1024,
             "examples": [
                 "what files do you have",
@@ -26,7 +26,7 @@
             "description": "Read the contents of a file.",
             "output_type": "raw",
             "risk": "safe",
-            "min_tier": 3,
+            "min_effort": 3,
             "max_output_size": 4096,
             "examples": [
                 "read BUGS_AND_ISSUES.md",
@@ -49,7 +49,7 @@
             "description": "Create or overwrite a file with specific content.",
             "output_type": "action",
             "risk": "reversible",
-            "min_tier": 3,
+            "min_effort": 3,
             "max_output_size": 256,
             "examples": [
                 "write a note to notes.txt",
@@ -75,7 +75,7 @@
             "description": "Append content to an existing file.",
             "output_type": "action",
             "risk": "reversible",
-            "min_tier": 3,
+            "min_effort": 3,
             "max_output_size": 256,
             "examples": [
                 "add a note to BUGS_AND_ISSUES.md",

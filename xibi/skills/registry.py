@@ -50,10 +50,10 @@ class SkillRegistry:
         tools = skill.manifest.get("tools", [])
         return next((t for t in tools if t.get("name") == tool_name), None)
 
-    def get_tool_min_tier(self, skill_name: str, tool_name: str) -> int:
+    def get_tool_min_effort(self, skill_name: str, tool_name: str) -> int:
         tool_meta = self.get_tool_meta(skill_name, tool_name)
         if tool_meta:
-            res = tool_meta.get("min_tier", 1)
+            res = tool_meta.get("min_effort", 1)
             return int(res) if res is not None else 1
         return 1
 

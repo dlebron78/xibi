@@ -25,7 +25,7 @@
           }
         }
       },
-      "min_tier": 2,
+      "min_effort": 2,
       "output_type": "synthesis",
       "risk": "safe"
     },
@@ -53,7 +53,7 @@
           "query"
         ]
       },
-      "min_tier": 2,
+      "min_effort": 2,
       "output_type": "synthesis",
       "risk": "safe"
     },
@@ -94,7 +94,7 @@
           "start_datetime"
         ]
       },
-      "min_tier": 2,
+      "min_effort": 2,
       "output_type": "synthesis",
       "risk": "irreversible"
     }
