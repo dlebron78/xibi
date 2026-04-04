@@ -8,6 +8,7 @@ registered, the entire proactive loop is broken at the last mile.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -108,10 +109,8 @@ def run(params: dict[str, Any], context: dict[str, Any] | None = None) -> dict[s
             if not chat_id:
                 chat_id_str = os.environ.get("XIBI_TELEGRAM_CHAT_ID") or os.environ.get("TELEGRAM_CHAT_ID")
                 if chat_id_str:
-                    try:
+                    with contextlib.suppress(ValueError):
                         chat_id = int(chat_id_str)
-                    except ValueError:
-                        pass
 
             if not token or not chat_id:
                 logger.error(f"nudge: missing config (token found: {bool(token)}, chat_id found: {bool(chat_id)})")
@@ -128,7 +127,7 @@ def run(params: dict[str, Any], context: dict[str, Any] | None = None) -> dict[s
                 # We need a minimal config and registry to satisfy TelegramAdapter's __init__
                 skills_dir = config.get("skill_dir", str(workdir / "skills"))
                 registry = SkillRegistry(skills_dir)
-                telegram_adapter = TelegramAdapter(config=config, skill_registry=registry, token=token)
+                telegram_adapter = TelegramAdapter(config=config, skill_registry=registry, token=token)  # type: ignore[arg-type]
                 result = telegram_adapter.send_message(chat_id=chat_id, text=text)
             except Exception as e:
                 logger.debug(f"nudge: falling back to direct urllib call due to: {e}")
