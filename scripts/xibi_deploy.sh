@@ -2,7 +2,7 @@
 # xibi_deploy.sh — Auto-deploy Xibi on NucBox
 #
 # Watches ~/xibi for changes on main, pulls, and reinstalls the package.
-# When Xibi services exist (step 07+), add restart commands below.
+# Only restarts services when actual code changes (not just docs/reviews).
 #
 # Add to crontab:
 #   */5 * * * * bash ~/xibi/scripts/xibi_deploy.sh
@@ -26,13 +26,23 @@ fi
 log "New commits detected. Pulling..."
 git pull origin main --ff-only >> "${LOG}" 2>&1 || { log "ERROR: git pull failed"; exit 1; }
 
-log "Reinstalling xibi package..."
-pip install -e . --quiet --break-system-packages >> "${LOG}" 2>&1 \
-  && log "Install OK — now at $(git rev-parse --short HEAD)" \
-  || log "ERROR: pip install failed"
+# Check if any code files changed (not just docs/reviews/tasks)
+CODE_CHANGED=$(git diff --name-only "${LOCAL}" "${REMOTE}" | grep -cE '^(xibi/|tests/|scripts/|systemd/|pyproject\.toml|setup\.)')
 
-# ── Service restarts (step 36+) ───────────────────────────────────────────────
-if systemctl --user is-enabled xibi-telegram &>/dev/null; then
-    systemctl --user restart xibi-telegram  && log "Restarted xibi-telegram"
-    systemctl --user restart xibi-heartbeat && log "Restarted xibi-heartbeat"
+if [ "${CODE_CHANGED}" -gt 0 ]; then
+  log "Code changes detected (${CODE_CHANGED} files). Reinstalling..."
+  pip install -e . --quiet --break-system-packages >> "${LOG}" 2>&1 \
+    && log "Install OK — now at $(git rev-parse --short HEAD)" \
+    || log "ERROR: pip install failed"
+
+  # Restart services only when code changed
+  if systemctl --user is-enabled xibi-telegram &>/dev/null; then
+      systemctl --user restart xibi-telegram  && log "Restarted xibi-telegram"
+      systemctl --user restart xibi-heartbeat && log "Restarted xibi-heartbeat"
+  fi
+  if systemctl --user is-enabled xibi-dashboard &>/dev/null; then
+      systemctl --user restart xibi-dashboard && log "Restarted xibi-dashboard"
+  fi
+else
+  log "Non-code changes only (reviews/docs/tasks). Skipped restart. Now at $(git rev-parse --short HEAD)"
 fi
