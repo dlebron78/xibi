@@ -8,7 +8,7 @@
 > Priority: P0 (blocking), P1 (next sprint), P2 (soon), P3 (someday)
 > Category: bug, feature, tech-debt, question, security
 >
-> _Last groomed: 2026-04-03_
+> _Last groomed: 2026-04-04_
 
 ---
 
@@ -19,8 +19,6 @@ _(Jules: drop new items here during implementation. Cowork triages into Active o
 ---
 
 ## P1 — Next Sprint
-
-- [P1] [feature] **Chitchat fast-path** — simple messages ("thank you", "ok", "lol") go through the full ReAct loop and take 30-60s to respond. Add a fast-path classifier in `telegram.py` _before_ `react_run()`: short message + no question mark + no tool-relevant keywords → single direct LLM call with no tools, no scratchpad. False negatives are fine (worst case: takes normal path). Must not drop any real requests. Discussed 2026-04-03.
 
 - [P1] [tech-debt] **Dynamic effort escalation — `min_tier` → `min_effort` rename** — skill manifests use `min_tier` but the field means effort level (fast/think/review), not permission tier (GREEN/YELLOW/RED). Naming collision causes confusion. Rename to `min_effort` across all manifests and enforcement code. Also: `min_effort` is currently not enforced at dispatch time — wire it up so skills that need `think` or higher get it. Discussed 2026-04-03.
 
@@ -96,4 +94,5 @@ _(Jules: drop new items here during implementation. Cowork triages into Active o
 - ✅ Semantic routing fallback — shadow matcher removed; LLM classifier already the fallback
 - ✅ Three-tier routing confidence fusion — shadow removed; no longer applicable
 - ✅ Nudge message UX — replaced with continuous typing indicator (2026-04-03)
+- ✅ Chitchat fast-path — merged PR #48, heuristic classifier + LLM fast reply (2026-04-04)
 - ✅ JulesWatcher — heartbeat auto-answers Jules questions via API (2026-04-03)
