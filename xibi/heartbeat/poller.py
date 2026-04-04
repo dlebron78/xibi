@@ -9,11 +9,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import xibi.db
-from xibi.heartbeat.extractors import SignalExtractorRegistry
-from xibi.heartbeat.source_poller import SourcePoller
 from xibi.alerting.rules import RuleEngine
 from xibi.channels.telegram import TelegramAdapter
 from xibi.command_layer import CommandLayer
+from xibi.heartbeat.extractors import SignalExtractorRegistry
+from xibi.heartbeat.source_poller import SourcePoller
 from xibi.observation import ObservationCycle
 from xibi.radiant import Radiant
 from xibi.router import get_model

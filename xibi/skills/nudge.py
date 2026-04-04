@@ -87,9 +87,10 @@ async def nudge(message: str, thread_id: str | None = None, refs: list | None = 
         # Use TelegramAdapter if possible, otherwise raw urllib
         try:
             from typing import cast
+
             from xibi.channels.telegram import TelegramAdapter
-            from xibi.skills.registry import SkillRegistry
             from xibi.router import Config
+            from xibi.skills.registry import SkillRegistry
 
             skills_dir = config.get("skill_dir", str(workdir / "skills"))
             registry = SkillRegistry(skills_dir)
