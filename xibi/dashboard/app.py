@@ -212,6 +212,104 @@ def create_app(config: DashboardConfig) -> Flask:
         with get_db_conn() as conn:
             return jsonify(queries.get_observation_cycles(conn))
 
+    @app.route("/api/config/models", methods=["GET"])
+    def get_model_config() -> Any:
+        """Return current model assignments for all effort levels."""
+        from xibi.router import load_config
+        workdir = app.config["DB_PATH"].parent.parent
+        config_path = workdir / "config.json"
+        try:
+            cfg = load_config(str(config_path)) if config_path.exists() else load_config()
+            models = cfg.get("models", {}).get("text", {})
+            providers = cfg.get("providers", {})
+            result: dict[str, Any] = {"assignments": {}, "available_providers": list(providers.keys())}
+            for effort in ["fast", "think", "review"]:
+                role_config = models.get(effort, {})
+                result["assignments"][effort] = {
+                    "provider": role_config.get("provider", ""),
+                    "model": role_config.get("model", ""),
+                    "options": role_config.get("options", {}),
+                    "fallback": role_config.get("fallback"),
+                }
+            return jsonify(result)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/config/models", methods=["PUT"])
+    def update_model_config() -> Any:
+        """Update model assignment for a single effort level. Restarts heartbeat."""
+        import json as json_mod
+        import subprocess
+        workdir = app.config["DB_PATH"].parent.parent
+        config_path = workdir / "config.json"
+        data = request.get_json()
+        effort = data.get("effort")
+        if effort not in ("fast", "think", "review"):
+            return jsonify({"error": f"Invalid effort level: {effort}"}), 400
+        provider = data.get("provider")
+        model_name = data.get("model")
+        if not provider or not model_name:
+            return jsonify({"error": "provider and model are required"}), 400
+        try:
+            with open(config_path) as f:
+                cfg = json_mod.load(f)
+            if provider not in cfg.get("providers", {}):
+                return jsonify({"error": f"Unknown provider: {provider}"}), 400
+            cfg.setdefault("models", {}).setdefault("text", {})
+            role_config = cfg["models"]["text"].get(effort, {})
+            role_config["provider"] = provider
+            role_config["model"] = model_name
+            if "options" in data:
+                role_config["options"] = data["options"]
+            if "fallback" not in role_config:
+                defaults = {"fast": "think", "think": None, "review": None}
+                role_config["fallback"] = defaults.get(effort)
+            cfg["models"]["text"][effort] = role_config
+            with open(config_path, "w") as f:
+                json_mod.dump(cfg, f, indent=2)
+            restart_msg = "not attempted"
+            try:
+                result = subprocess.run(
+                    ["systemctl", "--user", "restart", "xibi-heartbeat"],
+                    capture_output=True, text=True, timeout=10,
+                )
+                restart_msg = "restarted" if result.returncode == 0 else f"failed: {result.stderr}"
+            except subprocess.TimeoutExpired:
+                restart_msg = "restart initiated (timeout waiting)"
+            except Exception as e:
+                restart_msg = f"error: {e}"
+            return jsonify({"status": "ok", "updated": {effort: role_config}, "heartbeat_restart": restart_msg})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/config/available_models", methods=["GET"])
+    def get_available_models() -> Any:
+        """List models available from each provider."""
+        import json as json_mod
+        workdir = app.config["DB_PATH"].parent.parent
+        config_path = workdir / "config.json"
+        with open(config_path) as f:
+            cfg = json_mod.load(f)
+        providers = cfg.get("providers", {})
+        available: dict[str, Any] = {}
+        if "ollama" in providers:
+            try:
+                import requests as req
+                base_url = providers["ollama"].get("base_url", "http://localhost:11434")
+                resp = req.get(f"{base_url}/api/tags", timeout=5)
+                if resp.status_code == 200:
+                    models = resp.json().get("models", [])
+                    available["ollama"] = [{"name": m["name"], "size": m.get("size", 0)} for m in models]
+            except Exception as e:
+                available["ollama"] = {"error": str(e)}
+        if "gemini" in providers:
+            available["gemini"] = [{"name": "gemini-2.5-flash"}, {"name": "gemini-2.5-pro"}]
+        if "anthropic" in providers:
+            available["anthropic"] = [{"name": "claude-haiku-4-5-20251001"}, {"name": "claude-sonnet-4-6"}]
+        if "openai" in providers:
+            available["openai"] = [{"name": "gpt-4.1-mini"}, {"name": "gpt-4.1"}]
+        return jsonify(available)
+
     @app.route("/")
     def index() -> str:
         return render_template("index.html")
