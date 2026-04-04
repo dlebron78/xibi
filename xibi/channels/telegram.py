@@ -430,6 +430,7 @@ class TelegramAdapter:
 
             # Production tracing
             from xibi.tracing import Tracer
+
             _tracer = Tracer(self.db_path)
 
             result = react_run(

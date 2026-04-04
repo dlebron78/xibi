@@ -230,11 +230,11 @@ def create_app(config: DashboardConfig) -> Flask:
         if not config_path.exists():
             return {}
 
-        with open(config_path, 'r') as f:
-            return json.load(f)
+        with open(config_path) as f:
+            return dict(json.load(f))
 
     @app.route("/api/config")
-    def config() -> Any:
+    def api_config() -> Any:
         """Return model configuration and profile."""
         try:
             cfg = _load_config()
@@ -245,14 +245,16 @@ def create_app(config: DashboardConfig) -> Flask:
             for effort, effort_cfg in models.items():
                 models_response[effort] = {
                     "provider": effort_cfg.get("provider", ""),
-                    "model": effort_cfg.get("model", "")
+                    "model": effort_cfg.get("model", ""),
                 }
 
-            return jsonify({
-                "models": {"text": models_response},
-                "react_format": cfg.get("react_format", "json"),
-                "profile": cfg.get("profile", {})
-            })
+            return jsonify(
+                {
+                    "models": {"text": models_response},
+                    "react_format": cfg.get("react_format", "json"),
+                    "profile": cfg.get("profile", {}),
+                }
+            )
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 

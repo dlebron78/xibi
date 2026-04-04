@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 from datetime import datetime, timedelta
@@ -431,9 +432,9 @@ def get_latest_spans(conn: sqlite3.Connection) -> dict:
 
     # Get most recent trace_id (exclude dev-env traces)
     cursor = conn.execute("""
-        SELECT trace_id FROM spans 
+        SELECT trace_id FROM spans
         WHERE trace_id NOT IN (
-            SELECT DISTINCT trace_id FROM spans s2 
+            SELECT DISTINCT trace_id FROM spans s2
             WHERE s2.attributes LIKE '%"env": "dev"%' OR s2.attributes LIKE '%\\"env\\": \\"dev\\"%'
         )
         ORDER BY start_ms DESC LIMIT 1
@@ -537,25 +538,28 @@ def get_trace_details(conn: sqlite3.Connection, limit: int = 15, offset: int = 0
     cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='spans'")
     if cursor.fetchone():
         # Get distinct trace_ids ordered by most recent
-        cursor = conn.execute("""
+        cursor = conn.execute(
+            """
             SELECT trace_id,
                    COUNT(*) as span_count,
                    MIN(start_ms) as start_ms,
                    MAX(start_ms + duration_ms) - MIN(start_ms) as total_ms
             FROM spans
             WHERE trace_id NOT IN (
-                SELECT DISTINCT trace_id FROM spans s2 
+                SELECT DISTINCT trace_id FROM spans s2
                 WHERE s2.attributes LIKE '%"env": "dev"%' OR s2.attributes LIKE '%\\"env\\": \\"dev\\"%'
             )
             GROUP BY trace_id
             ORDER BY MIN(start_ms) DESC
             LIMIT ? OFFSET ?
-        """, (limit, offset))
+        """,
+            (limit, offset),
+        )
         trace_rows = cursor.fetchall()
 
         if trace_rows:
             results = []
-            for trace_id, span_count, start_ms, total_ms in trace_rows:
+            for trace_id, _span_count, start_ms, total_ms in trace_rows:
                 # Get all spans for this trace
                 spans = conn.execute(
                     "SELECT operation, component, duration_ms, status, attributes "
@@ -591,20 +595,24 @@ def get_trace_details(conn: sqlite3.Connection, limit: int = 15, offset: int = 0
                     except Exception:
                         attrs = {}
                     if s[0] == "react.step":
-                        steps.append({
-                            "tool": attrs.get("tool", ""),
-                            "observation": (attrs.get("tool_output", "") or "")[:200],
-                            "duration_ms": s[2],
-                            "status": s[3],
-                            "thought": (attrs.get("thought", "") or "")[:200],
-                        })
+                        steps.append(
+                            {
+                                "tool": attrs.get("tool", ""),
+                                "observation": (attrs.get("tool_output", "") or "")[:200],
+                                "duration_ms": s[2],
+                                "status": s[3],
+                                "thought": (attrs.get("thought", "") or "")[:200],
+                            }
+                        )
                     elif s[0] == "quality.judge":
-                        steps.append({
-                            "tool": "quality.judge",
-                            "observation": "score=%s" % attrs.get("composite", "?"),
-                            "duration_ms": s[2],
-                            "status": s[3],
-                        })
+                        steps.append(
+                            {
+                                "tool": "quality.judge",
+                                "observation": "score={}".format(attrs.get("composite", "?")),
+                                "duration_ms": s[2],
+                                "status": s[3],
+                            }
+                        )
 
                 # Convert epoch ms to readable timestamp
                 try:
@@ -612,23 +620,25 @@ def get_trace_details(conn: sqlite3.Connection, limit: int = 15, offset: int = 0
                 except Exception:
                     ts = str(start_ms)
 
-                results.append({
-                    "id": trace_id,
-                    "created_at": ts,
-                    "model": "",
-                    "status": status,
-                    "total_ms": total_ms,
-                    "step_count": step_count,
-                    "prompt_tokens": 0,
-                    "response_tokens": 0,
-                    "tok_per_sec": 0,
-                    "answer_length": 0,
-                    "ram_start": 0,
-                    "ram_end": 0,
-                    "steps": steps,
-                    "route": exit_reason,
-                    "query": query,
-                })
+                results.append(
+                    {
+                        "id": trace_id,
+                        "created_at": ts,
+                        "model": "",
+                        "status": status,
+                        "total_ms": total_ms,
+                        "step_count": step_count,
+                        "prompt_tokens": 0,
+                        "response_tokens": 0,
+                        "tok_per_sec": 0,
+                        "answer_length": 0,
+                        "ram_start": 0,
+                        "ram_end": 0,
+                        "steps": steps,
+                        "route": exit_reason,
+                        "query": query,
+                    }
+                )
             return results
 
     # Fallback to traces table (Bregger legacy)
@@ -636,7 +646,8 @@ def get_trace_details(conn: sqlite3.Connection, limit: int = 15, offset: int = 0
     if not cursor.fetchone():
         return []
 
-    cursor = conn.execute("""
+    cursor = conn.execute(
+        """
         SELECT id, created_at, model, status, total_ms, step_count,
                total_prompt_tokens, total_response_tokens, overall_tok_per_sec,
                final_answer_length, ram_start_pct, ram_end_pct, steps_detail,
@@ -645,32 +656,34 @@ def get_trace_details(conn: sqlite3.Connection, limit: int = 15, offset: int = 0
         WHERE status IN ('completed', 'error')
         ORDER BY created_at DESC
         LIMIT ? OFFSET ?
-    """, (limit, offset))
+    """,
+        (limit, offset),
+    )
     rows = cursor.fetchall()
     results = []
     for r in rows:
         steps = []
-        try:
+        with contextlib.suppress(Exception):
             steps = json.loads(r[12]) if r[12] else []
-        except Exception:
-            pass
-        results.append({
-            "id": r[0],
-            "created_at": r[1],
-            "model": r[2],
-            "status": r[3],
-            "total_ms": r[4],
-            "step_count": r[5],
-            "prompt_tokens": r[6],
-            "response_tokens": r[7],
-            "tok_per_sec": r[8],
-            "answer_length": r[9],
-            "ram_start": r[10],
-            "ram_end": r[11],
-            "steps": steps,
-            "route": r[13],
-            "query": r[14]
-        })
+        results.append(
+            {
+                "id": r[0],
+                "created_at": r[1],
+                "model": r[2],
+                "status": r[3],
+                "total_ms": r[4],
+                "step_count": r[5],
+                "prompt_tokens": r[6],
+                "response_tokens": r[7],
+                "tok_per_sec": r[8],
+                "answer_length": r[9],
+                "ram_start": r[10],
+                "ram_end": r[11],
+                "steps": steps,
+                "route": r[13],
+                "query": r[14],
+            }
+        )
     return results
 
 

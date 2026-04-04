@@ -333,7 +333,11 @@ Exchanges:
                                     except Exception:
                                         last_seen = contact["last_seen"]
 
-                                rel_info = f"{contact['relationship']} at {contact['organization']}" if contact["organization"] else contact["relationship"]
+                                rel_info = (
+                                    f"{contact['relationship']} at {contact['organization']}"
+                                    if contact["organization"]
+                                    else contact["relationship"]
+                                )
                                 freq_info = "frequent contact" if contact["signal_count"] > 10 else "occasional contact"
                                 context_str = f"{e.value} ({rel_info}, {freq_info}, last seen {last_seen})"
                     except Exception:
