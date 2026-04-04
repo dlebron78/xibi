@@ -8,7 +8,6 @@ registered, the entire proactive loop is broken at the last mile.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 import os
@@ -107,6 +106,8 @@ def run(params: dict[str, Any], context: dict[str, Any] | None = None) -> dict[s
 
             chat_id = chat_id or config.get("telegram", {}).get("chat_id")
             if not chat_id:
+                import contextlib
+
                 chat_id_str = os.environ.get("XIBI_TELEGRAM_CHAT_ID") or os.environ.get("TELEGRAM_CHAT_ID")
                 if chat_id_str:
                     with contextlib.suppress(ValueError):
@@ -121,13 +122,18 @@ def run(params: dict[str, Any], context: dict[str, Any] | None = None) -> dict[s
 
             # Attempt to use TelegramAdapter for consistency, but have a raw fallback
             try:
+                from typing import cast
+
                 from xibi.channels.telegram import TelegramAdapter
+                from xibi.router import Config
                 from xibi.skills.registry import SkillRegistry
 
                 # We need a minimal config and registry to satisfy TelegramAdapter's __init__
                 skills_dir = config.get("skill_dir", str(workdir / "skills"))
                 registry = SkillRegistry(skills_dir)
-                telegram_adapter = TelegramAdapter(config=config, skill_registry=registry, token=token)  # type: ignore[arg-type]
+                telegram_adapter = TelegramAdapter(
+                    config=cast(Config, config), skill_registry=registry, token=token
+                )
                 result = telegram_adapter.send_message(chat_id=chat_id, text=text)
             except Exception as e:
                 logger.debug(f"nudge: falling back to direct urllib call due to: {e}")
