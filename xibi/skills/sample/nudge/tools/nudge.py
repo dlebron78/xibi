@@ -86,6 +86,7 @@ def run(params: dict[str, Any], context: dict[str, Any] | None = None) -> dict[s
                         if config:
                             break
                     except Exception:
+                        logger.debug("nudge: failed to parse config at %s", cfg_path, exc_info=True)
                         continue
 
             # Get token from env or .xibi_env
