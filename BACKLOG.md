@@ -20,13 +20,19 @@ _(Jules: drop new items here during implementation. Cowork triages into Active o
 
 ## P1 — Next Sprint
 
+- [P1] [bug] **Wire nudge() into executor** — observation cycle detects urgent signals but nudge tool is not registered. 67 cycles have run, every nudge attempt fails with "Unknown tool: nudge". Unblocks all proactive intelligence.
+
+- [P1] [tech-debt] **Heartbeat refactor** — sequential monolith tick() blocks on any slow phase. Need per-phase timeouts, error isolation, modular polling architecture. Critical before adding MCP sources (each adds latency). Also: logging is silent in journalctl.
+
+- [P1] [feature] **Thread lifecycle management** — 111 threads, all status="active", none ever resolve or go stale. Add periodic sweep: stale after N days no signals, resolved on user dismiss.
+
 ---
 
 ## P2 — Soon
 
 - [P2] [feature] **Memory compression (Mem0/Zep style)** — sessions lose context across conversations. When session turns exceed the window, compress old turns into structured belief summaries ("user prefers email over Slack", "ongoing: Miami conference") via a fast LLM call. Store in beliefs table. Long-horizon context without token blowout.
 
-- [P2] [feature] **Semantic memory recall (sqlite-vec)** — `recall` tool uses substring/keyword matching against beliefs. Add sqlite-vec, generate embeddings on `remember()` writes, recall becomes vector similarity search. Fallback to keyword if extension unavailable. Contained change: new `belief_embeddings` shadow table, updated migrations.
+- [P2] [feature] **RAG — Retrieval-Augmented Generation (sqlite-vec)** — `recall` tool uses substring/keyword matching against beliefs. Add sqlite-vec, generate embeddings on `remember()` writes, recall becomes vector similarity search. Fallback to keyword if extension unavailable. Primary use case: Puerto Rico tourism chatbot knowledge base. Also improves owner memory recall. Contained change: new `belief_embeddings` shadow table, updated migrations.
 
 - [P2] [feature] **LLM-as-Judge quality scoring** — after each `react.run()` that exits via `finish`, run a lightweight judge call (fast model, ~50 tokens) scoring the answer 1-5 on relevance and groundedness. Store in `spans` table. Dashboard shows score over time. Pairs with trust gradient: persistent quality decline → tighten audit interval.
 
@@ -72,7 +78,15 @@ _(Jules: drop new items here during implementation. Cowork triages into Active o
 
 ---
 
-## MCP Server Sequence (when ready)
+## Active Roadmap Steps
+
+- **step-46** — Centralized Entity & Contact System (queued for Jules)
+- **step-47** — MCP Semantic Alignment: fix protocol version, consume tool annotations for tier mapping, crash resilience, OTel tracing conventions. Blocks step-48.
+- **step-48** — MCP Phase 2: Resources + context injection, OAuth, HTTP transport, Xibi-as-server (fka step-43)
+
+---
+
+## MCP Server Sequence (after step-47 lands)
 1. **Web search** (Brave/Tavily) — read-only, no auth, lowest risk
 2. **Filesystem** (scoped sandbox) — validates stdio lifecycle
 3. **GitHub (read)** — validates env var secrets
@@ -93,4 +107,6 @@ _(Jules: drop new items here during implementation. Cowork triages into Active o
 - ✅ min_tier → min_effort rename — eliminated naming collision with permission tiers (2026-04-04)
 - ✅ OpenAI/Anthropic test expectations — SDKs installed, tests updated to verify api_key validation (2026-04-04)
 - ✅ Chitchat fast-path — merged PR #48, heuristic classifier + LLM fast reply (2026-04-04)
+- ✅ Gemma 4 think mode heartbeat fix — added think:false to config, 44x speedup on classify calls (2026-04-04)
+- ✅ Dashboard systemd service + dev/prod tracing — dashboard survives reboots, spans filtered by env (2026-04-04)
 - ✅ JulesWatcher — heartbeat auto-answers Jules questions via API (2026-04-03)
