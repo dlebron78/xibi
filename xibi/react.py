@@ -245,9 +245,7 @@ def dispatch(
 
         manifest_schema = tool_manifest.get("inputSchema") if tool_manifest else None
 
-        result = command_layer.check(
-            tool_name, tool_input, manifest_schema, prev_step_source=prev_step_source
-        )
+        result = command_layer.check(tool_name, tool_input, manifest_schema, prev_step_source=prev_step_source)
         if not result.allowed:
             if result.validation_errors:
                 return {"status": "error", "message": result.retry_hint, "retry": True}

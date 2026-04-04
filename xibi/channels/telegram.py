@@ -327,11 +327,16 @@ class TelegramAdapter:
                         payload = json.loads(r["user_name"])
                         # Extract target from tool_input if available
                         tool_input = payload.get("tool_input", {})
-                        target = tool_input.get("to") or tool_input.get("recipient") or tool_input.get("thread_id") or "external"
+                        target = (
+                            tool_input.get("to")
+                            or tool_input.get("recipient")
+                            or tool_input.get("thread_id")
+                            or "external"
+                        )
 
                         status = "Bumped to confirmation"
                         if r["effective_tier"] == "red":
-                             status = "Held for review"
+                            status = "Held for review"
 
                         reason = f"triggered by {r['prev_step_source']}"
                         items.append(f"- {status}: {tool_name} to {target} ({reason})")
@@ -365,7 +370,7 @@ class TelegramAdapter:
             with open_db(self.db_path) as conn:
                 last_turn = conn.execute(
                     "SELECT created_at FROM session_turns WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
-                    (session.session_id,)
+                    (session.session_id,),
                 ).fetchone()
                 if not last_turn:
                     is_new_or_stale = True

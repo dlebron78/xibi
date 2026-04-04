@@ -120,16 +120,16 @@ class CommandLayer:
                 source_bumped = True  # reuse flag — content sensitivity forced the bump
 
                 if not self.interactive:
-                        return CommandResult(
-                            allowed=False,
-                            tier=tier,
-                            validation_errors=[],
-                            dedup_suppressed=False,
-                            audit_required=False,
-                            block_reason=f"Tool '{tool_name}' contains sensitive content and requires user confirmation, but cannot be run in non-interactive mode.",
-                            retry_hint="",
-                            source_bumped=source_bumped,
-                        )
+                    return CommandResult(
+                        allowed=False,
+                        tier=tier,
+                        validation_errors=[],
+                        dedup_suppressed=False,
+                        audit_required=False,
+                        block_reason=f"Tool '{tool_name}' contains sensitive content and requires user confirmation, but cannot be run in non-interactive mode.",
+                        retry_hint="",
+                        source_bumped=source_bumped,
+                    )
 
             # 3. Action dedup
             if self._check_dedup(tool_name, tool_input):
