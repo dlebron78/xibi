@@ -13,9 +13,11 @@ from xibi.skills.registry import SkillRegistry
 def mock_config():
     return Config({"react_format": "json"})
 
+
 @pytest.fixture
 def mock_registry():
     return MagicMock(spec=SkillRegistry)
+
 
 @pytest.fixture
 def adapter(mock_config, mock_registry, tmp_path):
@@ -25,13 +27,10 @@ def adapter(mock_config, mock_registry, tmp_path):
     sm.migrate()
 
     with patch.dict(os.environ, {"XIBI_TELEGRAM_TOKEN": "fake_token", "XIBI_TELEGRAM_ALLOWED_CHAT_IDS": "123"}):
-        adapter = TelegramAdapter(
-            config=mock_config,
-            skill_registry=mock_registry,
-            db_path=db_path
-        )
+        adapter = TelegramAdapter(config=mock_config, skill_registry=mock_registry, db_path=db_path)
         adapter.send_message = MagicMock()
         return adapter
+
 
 @patch("xibi.channels.telegram.get_model")
 @patch("xibi.channels.telegram.react_run")
@@ -57,6 +56,7 @@ def test_chitchat_bypasses_react(mock_react_run, mock_get_model, adapter):
     adapter.send_message.assert_called_with(123, "You're welcome!")
     mock_react_run.assert_not_called()
 
+
 @patch("xibi.channels.telegram.get_model")
 @patch("xibi.channels.telegram.react_run")
 def test_non_chitchat_reaches_react(mock_react_run, mock_get_model, adapter):
@@ -77,6 +77,7 @@ def test_non_chitchat_reaches_react(mock_react_run, mock_get_model, adapter):
     mock_react_run.assert_called()
     # Note: send_message is called with result.answer
     adapter.send_message.assert_called_with(123, "Here are your emails.")
+
 
 @patch("xibi.channels.telegram.get_model")
 @patch("xibi.channels.telegram.react_run")

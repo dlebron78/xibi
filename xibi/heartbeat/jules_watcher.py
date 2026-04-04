@@ -7,6 +7,7 @@ Runs inside the heartbeat tick. For each recent session in AWAITING_USER_FEEDBAC
   4. Broadcasts a summary to Telegram so Daniel can see what was answered
   5. If the LLM cannot produce a confident answer, broadcasts the raw question instead
 """
+
 from __future__ import annotations
 
 import json
@@ -64,9 +65,7 @@ class JulesWatcher:
                     continue
 
                 task_name = entry.get("task", session_id)
-                question, activity_id, spec = self._find_pending_question(
-                    session_id, responded
-                )
+                question, activity_id, spec = self._find_pending_question(session_id, responded)
                 if not question or not activity_id:
                     continue
 
@@ -75,9 +74,7 @@ class JulesWatcher:
                 answer = self._generate_answer(question, spec, task_name)
                 if not answer:
                     # Couldn't generate — surface to Daniel
-                    self.broadcast(
-                        f"❓ **Jules needs your input on {task_name}:**\n\n{question[:600]}"
-                    )
+                    self.broadcast(f"❓ **Jules needs your input on {task_name}:**\n\n{question[:600]}")
                     # Mark as seen so we don't spam
                     responded[activity_id] = {
                         "session_id": session_id,
@@ -92,11 +89,7 @@ class JulesWatcher:
                 logger.info("Replied to Jules on %s: %s", task_name, answer[:120])
 
                 # Broadcast summary to Telegram
-                self.broadcast(
-                    f"🤖 **Auto-answered Jules on {task_name}**\n\n"
-                    f"Q: {question[:300]}\n\n"
-                    f"A: {answer[:300]}"
-                )
+                self.broadcast(f"🤖 **Auto-answered Jules on {task_name}**\n\nQ: {question[:300]}\n\nA: {answer[:300]}")
 
                 responded[activity_id] = {
                     "session_id": session_id,
@@ -151,9 +144,7 @@ class JulesWatcher:
                 break
         return activities
 
-    def _find_pending_question(
-        self, session_id: str, responded: dict
-    ) -> tuple[str | None, str | None, str]:
+    def _find_pending_question(self, session_id: str, responded: dict) -> tuple[str | None, str | None, str]:
         """Find the latest unanswered agentMessaged activity.
 
         Returns (question_text, activity_id, spec) or (None, None, "").

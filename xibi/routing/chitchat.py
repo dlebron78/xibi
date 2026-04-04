@@ -1,19 +1,64 @@
 from __future__ import annotations
 
-CHITCHAT_TOKENS: frozenset[str] = frozenset({
-    "ok", "okay", "sure", "thanks", "thank you", "got it", "sounds good",
-    "great", "perfect", "good", "cool", "nice", "awesome", "alright",
-    "noted", "understood", "makes sense", "lol", "haha", "hehe",
-    "no problem", "you're welcome", "my pleasure", "no worries",
-})
+CHITCHAT_TOKENS: frozenset[str] = frozenset(
+    {
+        "ok",
+        "okay",
+        "sure",
+        "thanks",
+        "thank you",
+        "got it",
+        "sounds good",
+        "great",
+        "perfect",
+        "good",
+        "cool",
+        "nice",
+        "awesome",
+        "alright",
+        "noted",
+        "understood",
+        "makes sense",
+        "lol",
+        "haha",
+        "hehe",
+        "no problem",
+        "you're welcome",
+        "my pleasure",
+        "no worries",
+    }
+)
 
-TOOL_KEYWORDS: frozenset[str] = frozenset({
-    "email", "mail", "send", "reply", "forward", "delete",
-    "calendar", "schedule", "meeting", "event", "remind",
-    "search", "find", "look up", "show", "list",
-    "remember", "note", "task", "todo",
-    "who", "what", "when", "where", "why", "how",
-})
+TOOL_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "email",
+        "mail",
+        "send",
+        "reply",
+        "forward",
+        "delete",
+        "calendar",
+        "schedule",
+        "meeting",
+        "event",
+        "remind",
+        "search",
+        "find",
+        "look up",
+        "show",
+        "list",
+        "remember",
+        "note",
+        "task",
+        "todo",
+        "who",
+        "what",
+        "when",
+        "where",
+        "why",
+        "how",
+    }
+)
 
 
 def _contains_chitchat_token(text: str) -> bool:

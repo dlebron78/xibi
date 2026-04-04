@@ -12,9 +12,11 @@ from xibi.heartbeat.jules_watcher import JulesWatcher
 def mock_llm():
     return MagicMock()
 
+
 @pytest.fixture
 def broadcast_fn():
     return MagicMock()
+
 
 @pytest.fixture
 def jules_watcher(tmp_path, mock_llm, broadcast_fn):
@@ -24,11 +26,13 @@ def jules_watcher(tmp_path, mock_llm, broadcast_fn):
         history_file=history_file,
         llm=mock_llm,
         broadcast_fn=broadcast_fn,
-        state_dir=tmp_path / "state"
+        state_dir=tmp_path / "state",
     )
+
 
 def test_load_recent_sessions_empty(jules_watcher):
     assert jules_watcher._load_recent_sessions() == []
+
 
 def test_load_recent_sessions(jules_watcher):
     history_file = jules_watcher.history_file
@@ -53,6 +57,7 @@ def test_load_recent_sessions(jules_watcher):
     assert "projects/p/sessions/s3" in session_ids
     assert "projects/p/sessions/s2" not in session_ids
 
+
 def test_api_get_success(jules_watcher):
     with patch("urllib.request.urlopen") as mock_urlopen:
         mock_response = MagicMock()
@@ -62,9 +67,11 @@ def test_api_get_success(jules_watcher):
         data = jules_watcher._api_get("sessions/s1")
         assert data["state"] == "AWAITING_USER_FEEDBACK"
 
+
 def test_get_session_state(jules_watcher):
     with patch.object(jules_watcher, "_api_get", return_value={"state": "RUNNING"}):
         assert jules_watcher._get_session_state("s1") == "RUNNING"
+
 
 def test_generate_answer(jules_watcher, mock_llm):
     mock_llm.generate.return_value = "This is the answer."
@@ -72,15 +79,18 @@ def test_generate_answer(jules_watcher, mock_llm):
     assert ans == "This is the answer."
     mock_llm.generate.assert_called()
 
+
 def test_generate_answer_escalate(jules_watcher, mock_llm):
     mock_llm.generate.return_value = "ESCALATE"
     ans = jules_watcher._generate_answer("question", "spec", "task")
     assert ans is None
 
+
 def test_poll_nothing_to_do(jules_watcher):
     with patch.object(jules_watcher, "_load_recent_sessions", return_value=[]):
         jules_watcher.poll()
         jules_watcher.broadcast.assert_not_called()
+
 
 def test_poll_auto_answers(jules_watcher, mock_llm):
     sessions = [{"session": "p/s1", "ts": datetime.utcnow().isoformat(), "task": "test-task"}]
@@ -113,6 +123,7 @@ def test_find_pending_question(jules_watcher):
         assert aid == "act2"
         assert spec == "The spec"
 
+
 def test_get_all_activities_paginated(jules_watcher):
     page1 = {"activities": [{"id": "a1"}], "nextPageToken": "t2"}
     page2 = {"activities": [{"id": "a2"}]}
@@ -128,21 +139,26 @@ def test_get_all_activities_paginated(jules_watcher):
         assert activities[0]["id"] == "a1"
         assert activities[1]["id"] == "a2"
 
+
 def test_load_state_corrupt(jules_watcher):
     jules_watcher.state_dir.mkdir(parents=True, exist_ok=True)
     jules_watcher.state_file.write_text("corrupt{")
     assert jules_watcher._load_state() == {}
 
+
 def test_api_get_http_error(jules_watcher):
     with patch("urllib.request.urlopen") as mock_urlopen:
         from urllib.error import HTTPError
+
         mock_urlopen.side_effect = HTTPError("url", 404, "Not Found", {}, None)
         with pytest.raises(RuntimeError, match="HTTP 404"):
             jules_watcher._api_get("path")
 
+
 def test_load_recent_sessions_exception(jules_watcher):
     with patch.object(Path, "read_text", side_effect=Exception("Read error")):
         assert jules_watcher._load_recent_sessions() == []
+
 
 def test_poll_auto_answer_failure(jules_watcher, mock_llm):
     sessions = [{"session": "p/s1", "ts": datetime.utcnow().isoformat()}]

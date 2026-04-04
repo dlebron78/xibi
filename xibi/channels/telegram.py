@@ -356,9 +356,7 @@ class TelegramAdapter:
     def _handle_text(self, chat_id: int, user_text: str) -> None:
         """Handle core engine interaction and response sending."""
         stop_event = threading.Event()
-        typing_thread = threading.Thread(
-            target=self._typing_loop, args=(chat_id, stop_event), daemon=True
-        )
+        typing_thread = threading.Thread(target=self._typing_loop, args=(chat_id, stop_event), daemon=True)
         self._active_chats[chat_id] = {"stop": stop_event, "thread": typing_thread}
         typing_thread.start()
 

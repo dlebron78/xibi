@@ -1,10 +1,11 @@
 import sqlite3
-import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
+
 import pytest
+
+from skills.memory.tools import archive, recall, remember
 from xibi.db import init_workdir
-from skills.memory.tools import remember, recall, archive, recall_conversation, manage_goal
 
 
 @pytest.fixture
