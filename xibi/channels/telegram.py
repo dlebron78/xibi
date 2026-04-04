@@ -26,7 +26,7 @@ from xibi.types import ReActResult
 
 logger = logging.getLogger(__name__)
 
-NUDGE_DELAY = 10.0
+TYPING_INTERVAL = 4.0  # Telegram typing status expires after ~5s
 
 
 def _safe_filename(file_name: str) -> str:
@@ -125,7 +125,7 @@ class TelegramAdapter:
         self.llm_routing_classifier = llm_routing_classifier
         self._pending_attachments: dict[int, str] = {}
         self._sessions: dict[int, SessionContext] = {}
-        # Per-chat nudge state: {chat_id: {"nudge_sent": bool, "nudge_timer": Timer | None}}
+        # Per-chat typing state: {chat_id: {"stop": threading.Event, "timer": Timer | None}}
         self._active_chats: dict[int, dict] = {}
         self._mock_sent: bool = False
 
@@ -215,13 +215,14 @@ class TelegramAdapter:
         params = {"chat_id": chat_id, "text": text}
         return self._api_call("sendMessage", params)
 
-    def _nudge_callback(self, chat_id: int) -> None:
-        state = self._active_chats.get(chat_id)
-        if state is None or state["nudge_sent"]:
-            return
-
-        self.send_message(chat_id, "🤔 Still working on it…")
-        state["nudge_sent"] = True
+    def _typing_loop(self, chat_id: int, stop_event: threading.Event) -> None:
+        """Send 'typing' indicator every few seconds until stopped."""
+        while not stop_event.is_set():
+            try:
+                self._api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
+            except Exception:
+                pass  # Non-critical — just a UI hint
+            stop_event.wait(TYPING_INTERVAL)
 
     def _download_file(self, file_id: str, chat_id: int) -> str | None:
         try:
@@ -353,10 +354,12 @@ class TelegramAdapter:
 
     def _handle_text(self, chat_id: int, user_text: str) -> None:
         """Handle core engine interaction and response sending."""
-        self._api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
-        timer = threading.Timer(NUDGE_DELAY, self._nudge_callback, args=(chat_id,))
-        self._active_chats[chat_id] = {"nudge_sent": False, "nudge_timer": timer}
-        timer.start()
+        stop_event = threading.Event()
+        typing_thread = threading.Thread(
+            target=self._typing_loop, args=(chat_id, stop_event), daemon=True
+        )
+        self._active_chats[chat_id] = {"stop": stop_event, "thread": typing_thread}
+        typing_thread.start()
 
         pending_path = self._pending_attachments.get(chat_id)
 
@@ -436,8 +439,8 @@ class TelegramAdapter:
             self.send_message(chat_id, "Sorry, I had a brain fart. Please try again.")
         finally:
             state = self._active_chats.pop(chat_id, None)
-            if state and state["nudge_timer"]:
-                state["nudge_timer"].cancel()
+            if state and state["stop"]:
+                state["stop"].set()
 
     def poll(self) -> None:
         from xibi.shutdown import is_shutdown_requested
