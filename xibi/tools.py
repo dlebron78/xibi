@@ -13,21 +13,6 @@ class PermissionTier(str, Enum):
 # Default tier for tools NOT listed below
 DEFAULT_TIER = PermissionTier.RED
 
-# Tools that perform write/destructive actions
-WRITE_TOOLS: set[str] = {
-    "create_draft",
-    "draft_email",
-    "send_email",
-    "reply_email",
-    "send_message",
-    "delete_email",
-    "delete_event",
-    "create_task",
-    "update_belief",
-    "nudge",
-    "log_signal",
-}
-
 # Tier declarations for known tools.
 # Callers may override via profile.json: {"tool_permissions": {"send_email": "yellow"}}
 TOOL_TIERS: dict[str, PermissionTier] = {
@@ -51,49 +36,38 @@ TOOL_TIERS: dict[str, PermissionTier] = {
 }
 
 
-def resolve_tier(
-    tool_name: str,
-    profile: dict[str, Any] | None = None,
-    prev_step_source: str | None = None,
-) -> PermissionTier:
+def resolve_tier(tool_name: str, profile: dict[str, Any] | None = None) -> PermissionTier:
     """
     Return the effective permission tier for tool_name.
     profile["tool_permissions"] can promote a tool (RED → YELLOW → GREEN).
     Demotion (GREEN → RED) is not supported — tier can only be relaxed, never tightened,
     via profile config (principle: promotions happen in config, never in code).
-
-    Context-aware bump: if the preceding step's content came from an
-    external source and this tool performs a write action, bump the tier.
     """
     base_tier = TOOL_TIERS.get(tool_name, DEFAULT_TIER)
-    effective_tier = base_tier
+    if not profile:
+        return base_tier
 
-    if profile:
-        overrides = profile.get("tool_permissions", {})
-        if tool_name in overrides:
-            override_str = overrides[tool_name].lower()
-            try:
-                override_tier = PermissionTier(override_str)
-                tier_order = {
-                    PermissionTier.GREEN: 0,
-                    PermissionTier.YELLOW: 1,
-                    PermissionTier.RED: 2,
-                }
-                # If override_tier is less restrictive than base_tier, use it.
-                if tier_order[override_tier] < tier_order[base_tier]:
-                    effective_tier = override_tier
-            except ValueError:
-                pass
+    overrides = profile.get("tool_permissions", {})
+    if tool_name not in overrides:
+        return base_tier
 
-    # Context-aware bump: if the preceding step's content came from an
-    # external source and this tool performs a write action, bump the tier.
-    if prev_step_source and prev_step_source.startswith("mcp:"):
-        if effective_tier == PermissionTier.GREEN and tool_name in WRITE_TOOLS:
-            effective_tier = PermissionTier.YELLOW
-        elif effective_tier == PermissionTier.YELLOW and tool_name in WRITE_TOOLS:
-            effective_tier = PermissionTier.RED
+    override_str = overrides[tool_name].lower()
+    try:
+        override_tier = PermissionTier(override_str)
+    except ValueError:
+        return base_tier
 
-    return effective_tier
+    tier_order = {
+        PermissionTier.GREEN: 0,
+        PermissionTier.YELLOW: 1,
+        PermissionTier.RED: 2,
+    }
+
+    # If override_tier is less restrictive than base_tier, use it.
+    if tier_order[override_tier] < tier_order[base_tier]:
+        return override_tier
+
+    return base_tier
 
 
 def validate_schema(

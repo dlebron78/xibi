@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import contextvars
 import json
 import os
@@ -1032,7 +1034,7 @@ def get_model(
                     ) -> dict[str, Any]:
                         """Proxy to inner client's generate_with_tools. Records circuit-breaker state."""
                         try:
-                            res = self.inner.generate_with_tools(messages, tools, system, **kwargs)  # type: ignore
+                            res = getattr(self.inner, "generate_with_tools")(messages, tools, system, **kwargs)
                             self.breaker.record_success()
                             return cast(dict[str, Any], res)
                         except XibiError as e:

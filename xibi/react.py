@@ -16,7 +16,6 @@ from xibi.router import (
     set_last_parse_status,
     set_trace_context,
 )
-from xibi.tools import resolve_tier
 from xibi.tracing import Span, Tracer
 from xibi.trust.gradient import FailureType, TrustGradient
 
@@ -228,7 +227,6 @@ def dispatch(
     skill_registry: list[dict[str, Any]],
     executor: Executor | None = None,
     command_layer: CommandLayer | None = None,
-    prev_step_source: str | None = None,
 ) -> dict[str, Any]:
     """Invoke a tool from the registry."""
     if command_layer is not None:
@@ -245,7 +243,7 @@ def dispatch(
 
         manifest_schema = tool_manifest.get("inputSchema") if tool_manifest else None
 
-        result = command_layer.check(tool_name, tool_input, manifest_schema, prev_step_source=prev_step_source)
+        result = command_layer.check(tool_name, tool_input, manifest_schema)
         if not result.allowed:
             if result.validation_errors:
                 return {"status": "error", "message": result.retry_hint, "retry": True}
@@ -258,15 +256,7 @@ def dispatch(
             executor.execute(tool_name, tool_input) if executor is not None else {"status": "ok", "message": "stub"}
         )
         if result.allowed and result.audit_required:
-            command_layer.audit(
-                tool_name,
-                tool_input,
-                output,
-                prev_step_source=prev_step_source,
-                source_bumped=result.source_bumped,
-                base_tier=str(resolve_tier(tool_name, command_layer.profile)),
-                effective_tier=str(result.tier),
-            )
+            command_layer.audit(tool_name, tool_input, output)
         return output
 
     if executor is not None:
@@ -776,48 +766,10 @@ def run(
                 step.tool_output = {"status": "error", "message": "Parse failure"}
                 tool_output = step.tool_output
             else:
-                # Determine the source of the content that led to this tool call.
-                # If the previous step was a tool that read external content, its
-                # source tag propagates forward as context for tier resolution.
-                prev_step_source = None
-                if len(scratchpad) > 0:
-                    prev = scratchpad[-1]
-                    prev_step_source = getattr(prev, "source", None)
-
                 tool_output = dispatch(
-                    step.tool,
-                    step.tool_input,
-                    skill_registry,
-                    executor=executor,
-                    command_layer=command_layer,
-                    prev_step_source=prev_step_source,
+                    step.tool, step.tool_input, skill_registry, executor=executor, command_layer=command_layer
                 )
                 step.tool_output = tool_output
-
-                # Tag the current step with its source.
-                # 1. Check tool_output for explicit source metadata.
-                # 2. If executor has skill info, check if it's marked as external_source.
-                # 3. If it's an MCP tool, the executor knows the server name.
-                if tool_output.get("source"):
-                    step.source = tool_output["source"]
-                elif executor:
-                    skill_name = executor.registry.find_skill_for_tool(step.tool)
-                    if skill_name:
-                        skill_info = executor.registry.skills[skill_name]
-                        if skill_info.manifest.get("external_source"):
-                            # Use skill name as source if no more specific info
-                            step.source = skill_name
-                        elif skill_name.startswith("mcp_"):
-                            step.source = f"mcp:{skill_name[4:]}"
-                    elif executor.mcp_executor and executor.mcp_executor.can_handle(step.tool):
-                        # Should have been caught by skill_name.startswith("mcp_") if registered,
-                        # but check mcp_executor directly for robustness.
-                        for skill in executor.mcp_executor.registry.skill_registry.get_skill_manifests():
-                            if skill.get("name", "").startswith("mcp_"):
-                                for t in skill.get("tools", []):
-                                    if t.get("name") == step.tool:
-                                        step.source = f"mcp:{t.get('server', 'unknown')}"
-                                        break
                 step.duration_ms = int((time.time() - step_start_time) * 1000)  # now includes tool time
 
                 if tool_output.get("_xibi_error"):
