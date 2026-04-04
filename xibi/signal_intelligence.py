@@ -309,14 +309,17 @@ def upsert_contact(
                 except Exception:
                     pass
 
-        contact_id = create_contact(
-            display_name=display_name,
-            email=email,
-            organization=organization,
-            discovered_via="email_inbound",
-            relationship=relationship,
-            db_path=db_str,
-        ) or f"contact-{hashlib.md5(email.lower().encode()).hexdigest()[:8]}"
+        contact_id = (
+            create_contact(
+                display_name=display_name,
+                email=email,
+                organization=organization,
+                discovered_via="email_inbound",
+                relationship=relationship,
+                db_path=db_str,
+            )
+            or f"contact-{hashlib.md5(email.lower().encode()).hexdigest()[:8]}"
+        )
 
     # Ensure channel row exists
     upsert_contact_channel(contact_id, email, "email", verified=1, db_path=db_str)
