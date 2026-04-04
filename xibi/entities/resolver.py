@@ -89,9 +89,7 @@ def resolve_contact(
                     if row:
                         contact = Contact.from_row(row)
                         _update_last_seen(conn, contact.id)
-                        logger.info(
-                            f"Resolved contact {contact.id} via cross_channel match ({display_name} @ {domain})"
-                        )
+                        logger.info(f"Resolved contact {contact.id} via cross_channel match ({display_name} @ {domain})")
                         return contact
 
             # 3. Name + Org match

@@ -89,14 +89,17 @@ def _track_outbound(to: str, db_path: str):
     """Track outbound email metrics and endorsement."""
     if not db_path:
         return
-    from xibi.entities.resolver import resolve_contact
+    from pathlib import Path
+
+    from xibi.db import open_db
     from xibi.entities import create_contact, upsert_contact_channel
+    from xibi.entities.resolver import resolve_contact
 
     contact = resolve_contact(to, "email", db_path=db_path)
     if contact:
         contact_id = contact.id
         try:
-            with sqlite3.connect(db_path) as conn:
+            with open_db(Path(db_path)) as conn, conn:
                 conn.execute(
                     "UPDATE contacts SET outbound_count = outbound_count + 1, user_endorsed = 1 WHERE id = ?",
                     (contact_id,)
@@ -113,7 +116,7 @@ def _track_outbound(to: str, db_path: str):
         )
         if contact_id:
             try:
-                with sqlite3.connect(db_path) as conn:
+                with open_db(Path(db_path)) as conn, conn:
                     conn.execute(
                         "UPDATE contacts SET outbound_count = 1, user_endorsed = 1 WHERE id = ?",
                         (contact_id,)

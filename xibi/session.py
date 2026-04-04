@@ -333,11 +333,7 @@ Exchanges:
                                     except Exception:
                                         last_seen = contact["last_seen"]
 
-                                rel_info = (
-                                    f"{contact['relationship']} at {contact['organization']}"
-                                    if contact["organization"]
-                                    else contact["relationship"]
-                                )
+                                rel_info = f"{contact['relationship']} at {contact['organization']}" if contact["organization"] else contact["relationship"]
                                 freq_info = "frequent contact" if contact["signal_count"] > 10 else "occasional contact"
                                 context_str = f"{e.value} ({rel_info}, {freq_info}, last seen {last_seen})"
                     except Exception:
@@ -533,68 +529,71 @@ Skip generic words. Confidence > 0.7 only."""
 
     def bridge_to_contacts(self, entities: list[SessionEntity], db_path: str) -> None:
         """Link person entities to contacts and create partial contacts if needed."""
-        org_entities = [e.value for e in entities if e.entity_type == "org"]
+        try:
+            org_entities = [e.value for e in entities if e.entity_type == "org"]
 
-        for entity in entities:
-            if entity.entity_type != "person":
-                continue
+            for entity in entities:
+                if entity.entity_type != "person":
+                    continue
 
-            # 1. Resolve contact
-            # Check for name match first
-            contact = resolve_contact(
-                handle=entity.value,
-                channel_type="session",
-                display_name=entity.value,
-                db_path=db_path,
-            )
+                # 1. Resolve contact
+                # Check for name match first
+                contact = resolve_contact(
+                    handle=entity.value,
+                    channel_type="session",
+                    display_name=entity.value,
+                    db_path=db_path,
+                )
 
-            # If not found, try with associated orgs from the same batch
-            if not contact:
-                for org in org_entities:
-                    contact = resolve_contact(
-                        handle=entity.value,
-                        channel_type="session",
-                        display_name=entity.value,
-                        organization=org,
-                        db_path=db_path,
-                    )
-                    if contact:
-                        break
+                # If not found, try with associated orgs from the same batch
+                if not contact:
+                    for org in org_entities:
+                        contact = resolve_contact(
+                            handle=entity.value,
+                            channel_type="session",
+                            display_name=entity.value,
+                            organization=org,
+                            db_path=db_path,
+                        )
+                        if contact:
+                            break
 
-            if contact:
-                # Link found contact
-                entity.contact_id = cast(str, contact.id)
-                with open_db(self.db_path) as conn, conn:
-                    conn.execute(
-                        "UPDATE session_entities SET contact_id = ? WHERE session_id = ? AND entity_type = 'person' AND value = ?",
-                        (contact.id, self.session_id, entity.value),
-                    )
-            else:
-                # 2. Try partial contact creation
-                # Check if this person appears in 2+ sessions
-                try:
-                    with open_db(self.db_path) as conn:
-                        res_count = conn.execute(
-                            "SELECT COUNT(DISTINCT session_id) FROM session_entities WHERE entity_type = 'person' AND value = ?",
-                            (entity.value,),
-                        ).fetchone()
-                        session_count = res_count[0] if res_count else 0
+                if contact:
+                    # Link found contact
+                    entity.contact_id = cast(str, contact.id)
+                    with open_db(self.db_path) as conn, conn:
+                        conn.execute(
+                            "UPDATE session_entities SET contact_id = ? WHERE session_id = ? AND entity_type = 'person' AND value = ?",
+                            (contact.id, self.session_id, entity.value),
+                        )
+                else:
+                    # 2. Try partial contact creation
+                    # Check if this person appears in 2+ sessions
+                    try:
+                        with open_db(self.db_path) as conn:
+                            res_count = conn.execute(
+                                "SELECT COUNT(DISTINCT session_id) FROM session_entities WHERE entity_type = 'person' AND value = ?",
+                                (entity.value,),
+                            ).fetchone()
+                            session_count = res_count[0] if res_count else 0
 
-                        if session_count >= 2:
-                            partial_org = org_entities[0] if org_entities else None
-                            new_contact_id_res = create_contact(
-                                display_name=entity.value,
-                                organization=partial_org,
-                                discovered_via="session_mention",
-                                relationship="unknown",
-                                db_path=db_path,
-                            )
-                            if new_contact_id_res:
-                                entity.contact_id = cast(str, new_contact_id_res)
-                                with conn:
-                                    conn.execute(
-                                        "UPDATE session_entities SET contact_id = ? WHERE session_id = ? AND entity_type = 'person' AND value = ?",
-                                        (new_contact_id_res, self.session_id, entity.value),
-                                    )
-                except Exception as e:
-                    logger.error(f"Failed partial contact creation: {e}")
+                            if session_count >= 2:
+                                partial_org = org_entities[0] if org_entities else None
+                                new_contact_id_res = create_contact(
+                                    display_name=entity.value,
+                                    organization=partial_org,
+                                    discovered_via="session_mention",
+                                    relationship="unknown",
+                                    db_path=db_path,
+                                )
+                                if new_contact_id_res:
+                                    entity.contact_id = cast(str, new_contact_id_res)
+                                    with conn:
+                                        conn.execute(
+                                            "UPDATE session_entities SET contact_id = ? WHERE session_id = ? AND entity_type = 'person' AND value = ?",
+                                            (new_contact_id_res, self.session_id, entity.value),
+                                        )
+                    except Exception as e:
+                        logger.error(f"Failed partial contact creation: {e}")
+        except Exception:
+            logger.warning("bridge_to_contacts failed — continuing without contact enrichment", exc_info=True)

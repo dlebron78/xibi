@@ -441,7 +441,6 @@ def run(
     tracer: Tracer | None = None,
     llm_routing_classifier: LLMRoutingClassifier | None = None,
     react_format: str = "json",
-    env: str = "prod",
 ) -> ReActResult:
     start_time = time.time()
 
@@ -467,7 +466,6 @@ def run(
                 duration_ms=result.duration_ms,
                 status="ok" if result.exit_reason in ("finish", "ask_user") else "error",
                 attributes={
-                    **({"env": env} if env != "prod" else {}),
                     "exit_reason": result.exit_reason,
                     "steps": str(len(result.steps)),
                     "query_preview": query[:80],
@@ -859,7 +857,6 @@ def run(
                             duration_ms=step.duration_ms,
                             status="ok" if not step.error else "error",
                             attributes={
-                                **({"env": env} if env != "prod" else {}),
                                 "step_num": step_num,
                                 "thought": step.thought,
                                 "tool": step.tool,

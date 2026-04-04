@@ -448,8 +448,13 @@ class SchemaManager:
             ("notes", "TEXT"),
         ]
         for col_name, col_type in contact_cols:
-            with contextlib.suppress(sqlite3.OperationalError):
+            try:
                 conn.execute(f"ALTER TABLE contacts ADD COLUMN {col_name} {col_type}")
+            except sqlite3.OperationalError as e:
+                if "duplicate column name" in str(e).lower():
+                    continue
+                logger.error(f"Migration 18 failed to add column {col_name}: {e}")
+                raise
 
         # Multi-channel identity table
         conn.executescript("""
@@ -467,8 +472,12 @@ class SchemaManager:
         """)
 
         # Extend session_entities table
-        with contextlib.suppress(sqlite3.OperationalError):
+        try:
             conn.execute("ALTER TABLE session_entities ADD COLUMN contact_id TEXT")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e).lower():
+                logger.error(f"Migration 18 failed to add contact_id to session_entities: {e}")
+                raise
 
 
 def migrate(db_path: Path) -> list[int]:
