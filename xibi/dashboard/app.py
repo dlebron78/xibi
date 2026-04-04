@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import psutil
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request
 
 import xibi.db
 from xibi.dashboard import queries

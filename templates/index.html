@@ -171,6 +171,18 @@
                 </div>
             </div>
         </div>
+
+        <!-- Model Configuration -->
+        <div class="panel">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-semibold text-blue-300">Model Configuration</h2>
+                <span id="model-config-status" class="text-xs text-slate-500"></span>
+            </div>
+            <div id="model-assignments" class="space-y-4">
+                <div class="text-slate-500 text-sm">Loading...</div>
+            </div>
+        </div>
+
     </div>
 
     <script>
@@ -185,6 +197,7 @@
         }
 
         async function init() {
+            loadModelConfig();
             refreshHealth();
             refreshInference();
             refreshTrust();
@@ -468,6 +481,104 @@
                         ${t.topic} <span class="ml-1 text-indigo-500">${t.count}</span>
                     </div>
                 `).join('');
+            }
+        }
+
+
+        let _availableModels = {};
+
+        async function loadModelConfig() {
+            const [config, models] = await Promise.all([
+                fetchData('/api/config/models'),
+                fetchData('/api/config/available_models'),
+            ]);
+            if (!config) return;
+            _availableModels = models || {};
+            const container = document.getElementById('model-assignments');
+            const efforts = ['fast', 'think', 'review'];
+            container.innerHTML = efforts.map(effort => {
+                const a = (config.assignments || {})[effort] || {};
+                const providers = config.available_providers || [];
+                const provModels = _availableModels[a.provider] || [];
+                const provOpts = providers.map(p =>
+                    '<option value="' + p + '"' + (p === a.provider ? ' selected' : '') + '>' + p + '</option>'
+                ).join('');
+                const modelOpts = provModels.map(m => {
+                    const n = m.name || m;
+                    return '<option value="' + n + '"' + (n === a.model ? ' selected' : '') + '>' + n + '</option>';
+                }).join('');
+                const optJson = JSON.stringify(a.options || {});
+                return '<div class="bg-slate-800/50 p-4 rounded border border-slate-700/50">'
+                    + '<div class="flex items-center justify-between mb-3">'
+                    + '<span class="text-sm font-bold uppercase tracking-wider text-slate-400">' + effort + '</span>'
+                    + '<span class="text-[10px] text-slate-600" id="save-status-' + effort + '"></span>'
+                    + '</div>'
+                    + '<div class="grid grid-cols-3 gap-3">'
+                    + '<div>'
+                    + '<label class="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">Provider</label>'
+                    + '<select id="provider-' + effort + '" onchange="onProviderChange(\'' + effort + '\')"'
+                    + ' class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-sm text-slate-200 focus:border-blue-500 focus:outline-none">'
+                    + provOpts + '</select></div>'
+                    + '<div>'
+                    + '<label class="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">Model</label>'
+                    + '<select id="model-' + effort + '"'
+                    + ' class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-sm text-slate-200 focus:border-blue-500 focus:outline-none">'
+                    + modelOpts + '</select></div>'
+                    + '<div class="flex items-end">'
+                    + '<button onclick="saveModel(\'' + effort + '\')"'
+                    + ' class="w-full bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold py-1.5 px-4 rounded transition-colors">'
+                    + 'Save</button></div></div>'
+                    + '<div class="mt-2">'
+                    + '<label class="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">Options (JSON)</label>'
+                    + '<input type="text" id="options-' + effort + '" value=\'' + optJson + '\''
+                    + ' class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-xs font-mono text-slate-300 focus:border-blue-500 focus:outline-none" />'
+                    + '</div></div>';
+            }).join('');
+        }
+
+        async function onProviderChange(effort) {
+            if (!Object.keys(_availableModels).length) {
+                _availableModels = await fetchData('/api/config/available_models') || {};
+            }
+            var provider = document.getElementById('provider-' + effort).value;
+            var modelSel = document.getElementById('model-' + effort);
+            var models = _availableModels[provider] || [];
+            modelSel.innerHTML = models.map(function(m) {
+                var name = m.name || m;
+                return '<option value="' + name + '">' + name + '</option>';
+            }).join('');
+        }
+
+        async function saveModel(effort) {
+            var provider = document.getElementById('provider-' + effort).value;
+            var model = document.getElementById('model-' + effort).value;
+            var optStr = document.getElementById('options-' + effort).value;
+            var status = document.getElementById('save-status-' + effort);
+            var options = {};
+            try { options = JSON.parse(optStr || '{}'); } catch(e) {
+                status.textContent = 'Invalid JSON';
+                status.className = 'text-[10px] text-red-400';
+                return;
+            }
+            status.textContent = 'Saving...';
+            status.className = 'text-[10px] text-yellow-400';
+            try {
+                var res = await fetch('/api/config/models', {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({effort: effort, provider: provider, model: model, options: options}),
+                });
+                var result = await res.json();
+                if (result.status === 'ok') {
+                    status.textContent = 'Saved — ' + result.heartbeat_restart;
+                    status.className = 'text-[10px] text-emerald-400';
+                } else {
+                    status.textContent = result.error;
+                    status.className = 'text-[10px] text-red-400';
+                }
+            } catch(e) {
+                status.textContent = 'Network error';
+                status.className = 'text-[10px] text-red-400';
             }
         }
 
