@@ -236,7 +236,13 @@ def create_app(config: DashboardConfig) -> Flask:
         workdir = app.config["DB_PATH"].parent.parent
         config_path = workdir / "config.json"
         try:
-            cfg = load_config(str(config_path)) if config_path.exists() else load_config()
+            try:
+                cfg = load_config(str(config_path)) if config_path.exists() else load_config()
+            except Exception:
+                # Config may reference providers not yet in providers section — read raw
+                import json as _json
+                with open(config_path) as _f:
+                    cfg = _json.load(_f)
             models = cfg.get("models", {}).get("text", {})
             providers = set(cfg.get("providers", {}).keys())
             # Also detect cloud providers from secrets.env API keys
@@ -299,6 +305,14 @@ def create_app(config: DashboardConfig) -> Flask:
                 defaults = {"fast": "think", "think": None, "review": None}
                 role_config["fallback"] = defaults.get(effort)
             cfg["models"]["text"][effort] = role_config
+            # Ensure provider exists in providers section (required by load_config validation)
+            _PROVIDER_DEFAULTS = {
+                "anthropic": {"api_key_env": "ANTHROPIC_API_KEY"},
+                "openai":    {"api_key_env": "OPENAI_API_KEY"},
+                "gemini":    {"api_key_env": "GEMINI_API_KEY"},
+            }
+            if provider not in cfg.get("providers", {}):
+                cfg.setdefault("providers", {})[provider] = _PROVIDER_DEFAULTS.get(provider, {})
             with open(config_path, "w") as f:
                 json_mod.dump(cfg, f, indent=2)
             restart_msg = "not attempted"
