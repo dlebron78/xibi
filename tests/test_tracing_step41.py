@@ -1,5 +1,6 @@
 import sqlite3
 import time
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -9,6 +10,7 @@ from xibi.db.migrations import SchemaManager
 from xibi.executor import Executor
 from xibi.react import run as react_run
 from xibi.router import (
+    Config,
     OllamaClient,
     _active_trace,
     clear_trace_context,
@@ -20,43 +22,44 @@ from xibi.tracing import Tracer
 
 
 @pytest.fixture
-def db_path(tmp_path):
+def db_path(tmp_path: Any) -> Any:
     db = tmp_path / "test.db"
     SchemaManager(db).migrate()
     return db
 
 
 @pytest.fixture
-def config(db_path):
+def config(db_path: Any) -> Config:
     return {
         "db_path": db_path,
         "models": {
             "text": {
-                "fast": {"provider": "ollama", "model": "qwen"},
-                "think": {"provider": "ollama", "model": "qwen"},
+                "fast": {"provider": "ollama", "model": "qwen", "options": {}, "fallback": None},
+                "think": {"provider": "ollama", "model": "qwen", "options": {}, "fallback": None},
             }
         },
-        "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+        "providers": {"ollama": {"base_url": "http://localhost:11434", "api_key_env": None}},
+        "mcp_servers": [],
     }
 
 
 # Router-level tests
 
 
-def test_token_extraction_from_ollama_response():
+def test_token_extraction_from_ollama_response() -> None:
     rjson = {"prompt_eval_count": 10, "eval_count": 5, "response": "ok"}
     p, r = OllamaClient._extract_tokens(rjson)
     assert p == 10
     assert r == 5
 
 
-def test_token_extraction_safe_on_missing_fields():
+def test_token_extraction_safe_on_missing_fields() -> None:
     p, r = OllamaClient._extract_tokens({})
     assert p == 0
     assert r == 0
 
 
-def test_inference_event_written_on_generate(db_path, config):
+def test_inference_event_written_on_generate(db_path: Any, config: Config) -> None:
     clear_trace_context()
     init_telemetry(db_path)
     client = OllamaClient("ollama", "qwen", {}, "http://localhost:11434")
@@ -77,7 +80,7 @@ def test_inference_event_written_on_generate(db_path, config):
         assert row["operation"] == "unknown"
 
 
-def test_inference_event_operation_from_context(db_path, config):
+def test_inference_event_operation_from_context(db_path: Any, config: Config) -> None:
     init_telemetry(db_path)
     client = OllamaClient("ollama", "qwen", {}, "http://localhost:11434")
     client._role = "fast"
@@ -94,11 +97,12 @@ def test_inference_event_operation_from_context(db_path, config):
     with open_db(db_path) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute("SELECT * FROM inference_events").fetchone()
+        assert row is not None
         assert row["operation"] == "heartbeat_tick"
         assert row["trace_id"] == "t1"
 
 
-def test_inference_event_written_without_trace_context(db_path, config):
+def test_inference_event_written_without_trace_context(db_path: Any, config: Config) -> None:
     init_telemetry(db_path)
     client = OllamaClient("ollama", "qwen", {}, "http://localhost:11434")
 
@@ -110,10 +114,11 @@ def test_inference_event_written_without_trace_context(db_path, config):
     with open_db(db_path) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute("SELECT * FROM inference_events").fetchone()
+        assert row is not None
         assert row["operation"] == "unknown"
 
 
-def test_span_emitted_when_trace_context_active(db_path, config):
+def test_span_emitted_when_trace_context_active(db_path: Any, config: Config) -> None:
     tracer = Tracer(db_path)
     init_telemetry(db_path, tracer=tracer)
     client = OllamaClient("ollama", "qwen", {}, "http://localhost:11434")
@@ -135,7 +140,7 @@ def test_span_emitted_when_trace_context_active(db_path, config):
         assert row["parent_span_id"] == "parent-456"
 
 
-def test_span_has_correct_parent_span_id(db_path, config):
+def test_span_has_correct_parent_span_id(db_path: Any, config: Config) -> None:
     tracer = Tracer(db_path)
     init_telemetry(db_path, tracer=tracer)
     client = OllamaClient("ollama", "qwen", {}, "http://localhost:11434")
@@ -152,10 +157,11 @@ def test_span_has_correct_parent_span_id(db_path, config):
     with open_db(db_path) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute("SELECT * FROM spans WHERE operation = 'llm.generate'").fetchone()
+        assert row is not None
         assert row["parent_span_id"] == "parent-s1"
 
 
-def test_no_span_without_trace_context(db_path, config):
+def test_no_span_without_trace_context(db_path: Any, config: Config) -> None:
     tracer = Tracer(db_path)
     init_telemetry(db_path, tracer=tracer)
     client = OllamaClient("ollama", "qwen", {}, "http://localhost:11434")
@@ -173,7 +179,7 @@ def test_no_span_without_trace_context(db_path, config):
         assert row_inf is not None
 
 
-def test_span_has_system_prompt_preview(db_path, config):
+def test_span_has_system_prompt_preview(db_path: Any, config: Config) -> None:
     tracer = Tracer(db_path)
     init_telemetry(db_path, tracer=tracer)
     client = OllamaClient("ollama", "qwen", {}, "http://localhost:11434")
@@ -191,6 +197,7 @@ def test_span_has_system_prompt_preview(db_path, config):
 
     with open_db(db_path) as conn:
         row = conn.execute("SELECT attributes FROM spans WHERE operation = 'llm.generate'").fetchone()
+        assert row is not None
         attrs = row[0]
         import json
 
@@ -199,7 +206,7 @@ def test_span_has_system_prompt_preview(db_path, config):
         assert attrs_dict["system_prompt_preview"].startswith("You are a helpful assistant")
 
 
-def test_generate_structured_also_traced(db_path, config):
+def test_generate_structured_also_traced(db_path: Any, config: Config) -> None:
     tracer = Tracer(db_path)
     init_telemetry(db_path, tracer=tracer)
     client = OllamaClient("ollama", "qwen", {}, "http://localhost:11434")
@@ -223,7 +230,7 @@ def test_generate_structured_also_traced(db_path, config):
 # Integration tests (with react.py)
 
 
-def test_react_run_sets_and_clears_trace_context(db_path, config):
+def test_react_run_sets_and_clears_trace_context(db_path: Any, config: Config) -> None:
     registry = SkillRegistry("xibi/skills/sample")
     tracer = Tracer(db_path)
     init_telemetry(db_path, tracer=tracer)
@@ -237,7 +244,7 @@ def test_react_run_sets_and_clears_trace_context(db_path, config):
     assert _active_trace.get() is None
 
 
-def test_multi_step_all_spans_have_same_trace_id(db_path, config):
+def test_multi_step_all_spans_have_same_trace_id(db_path: Any, config: Config) -> None:
     registry = SkillRegistry("xibi/skills/sample")
     tracer = Tracer(db_path)
     init_telemetry(db_path, tracer=tracer)
@@ -262,7 +269,7 @@ def test_multi_step_all_spans_have_same_trace_id(db_path, config):
         assert rows[0][0] == res.trace_id
 
 
-def test_inference_events_have_trace_id(db_path, config):
+def test_inference_events_have_trace_id(db_path: Any, config: Config) -> None:
     registry = SkillRegistry("xibi/skills/sample")
     tracer = Tracer(db_path)
     init_telemetry(db_path, tracer=tracer)
@@ -275,19 +282,20 @@ def test_inference_events_have_trace_id(db_path, config):
     with open_db(db_path) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute("SELECT trace_id FROM inference_events").fetchone()
+        assert row is not None
         assert row["trace_id"] == res.trace_id
 
 
 # Gap coverage tests
 
 
-def test_duration_uses_monotonic_not_wall_clock(db_path, config):
+def test_duration_uses_monotonic_not_wall_clock(db_path: Any, config: Config) -> None:
     init_telemetry(db_path)
     client = OllamaClient("ollama", "qwen", {}, "http://localhost:11434")
 
     with patch("requests.post") as mock_post:
         # Simulate a 100ms delay
-        def side_effect(*args, **kwargs):
+        def side_effect(*args: Any, **kwargs: Any) -> MagicMock:
             time.sleep(0.11)  # small buffer
             mock_res = MagicMock()
             mock_res.json.return_value = {"response": "ok"}
@@ -300,10 +308,11 @@ def test_duration_uses_monotonic_not_wall_clock(db_path, config):
     with open_db(db_path) as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute("SELECT duration_ms FROM inference_events").fetchone()
+        assert row is not None
         assert row["duration_ms"] >= 100
 
 
-def test_parse_recovery_updates_parse_status(db_path, config):
+def test_parse_recovery_updates_parse_status(db_path: Any, config: Config) -> None:
     registry = SkillRegistry("xibi/skills/sample")
     tracer = Tracer(db_path)
     init_telemetry(db_path, tracer=tracer)
@@ -329,7 +338,7 @@ def test_parse_recovery_updates_parse_status(db_path, config):
 # MCP-specific tests
 
 
-def test_native_tool_dispatch_span_source_is_native(db_path, config):
+def test_native_tool_dispatch_span_source_is_native(db_path: Any, config: Config) -> None:
     registry = SkillRegistry("xibi/skills/sample")
     executor = Executor(registry, config=config)
     tracer = Tracer(db_path)
@@ -354,7 +363,7 @@ def test_native_tool_dispatch_span_source_is_native(db_path, config):
         assert attrs["tool"] == "echo"
 
 
-def test_mcp_tool_dispatch_span_source_is_mcp(db_path, config):
+def test_mcp_tool_dispatch_span_source_is_mcp(db_path: Any, config: Config) -> None:
     from xibi.mcp.registry import MCPServerRegistry
 
     registry = SkillRegistry("xibi/skills/sample")
@@ -395,7 +404,7 @@ def test_mcp_tool_dispatch_span_source_is_mcp(db_path, config):
         assert attrs["server"] == "test_server"
 
 
-def test_tool_dispatch_span_has_input_preview(db_path, config):
+def test_tool_dispatch_span_has_input_preview(db_path: Any, config: Config) -> None:
     registry = SkillRegistry("xibi/skills/sample")
     executor = Executor(registry, config=config)
     tracer = Tracer(db_path)
@@ -411,13 +420,14 @@ def test_tool_dispatch_span_has_input_preview(db_path, config):
 
     with open_db(db_path) as conn:
         row = conn.execute("SELECT attributes FROM spans WHERE operation = 'tool.dispatch'").fetchone()
+        assert row is not None
         import json
 
         attrs = json.loads(row[0])
         assert len(attrs["input_preview"]) <= 400
 
 
-def test_tool_dispatch_span_duration_is_exact(db_path, config):
+def test_tool_dispatch_span_duration_is_exact(db_path: Any, config: Config) -> None:
     from xibi.executor import LocalHandlerExecutor
 
     registry = SkillRegistry("xibi/skills/sample")
@@ -431,7 +441,7 @@ def test_tool_dispatch_span_duration_is_exact(db_path, config):
         # since it's the one measured in Executor.execute()
         with patch.object(LocalHandlerExecutor, "_execute_with_timeout") as mock_exec:
 
-            def side_effect(*args, **kwargs):
+            def side_effect(*args: Any, **kwargs: Any) -> dict[str, Any]:
                 time.sleep(0.11)
                 return {"status": "ok", "result": "hello"}
 
@@ -448,7 +458,7 @@ def test_tool_dispatch_span_duration_is_exact(db_path, config):
         assert row["duration_ms"] >= 100
 
 
-def test_react_py_no_longer_emits_tool_dispatch(db_path, config):
+def test_react_py_no_longer_emits_tool_dispatch(db_path: Any, config: Config) -> None:
     # This is a bit hard to test purely without checking the code,
     # but we can verify it doesn't emit DOUBLE spans.
     registry = SkillRegistry("xibi/skills/sample")
@@ -476,7 +486,7 @@ def test_react_py_no_longer_emits_tool_dispatch(db_path, config):
         assert len(rows) == 1
 
 
-def test_full_waterfall_llm_then_tool_then_llm(db_path, config):
+def test_full_waterfall_llm_then_tool_then_llm(db_path: Any, config: Config) -> None:
     registry = SkillRegistry("xibi/skills/sample")
     tracer = Tracer(db_path)
     init_telemetry(db_path, tracer=tracer)

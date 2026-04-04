@@ -121,6 +121,7 @@ class Config(TypedDict, total=False):
     db_path: Path
     timeouts: TimeoutsConfig
     profile: dict[str, Any]
+    mcp_servers: list[dict[str, Any]]
 
 
 class ConfigValidationError(Exception):
