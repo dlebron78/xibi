@@ -96,10 +96,10 @@ def create_app(config: DashboardConfig) -> Flask:
     def get_db_conn() -> AbstractContextManager[sqlite3.Connection]:
         return xibi.db.open_db(app.config["DB_PATH"])  # type: ignore[return-value]
 
+
     def _load_secrets(workdir: Any) -> dict:
         """Load secrets.env from ~/.xibi/secrets.env, return key→value dict."""
         import os
-
         secrets_path = os.path.expanduser("~/.xibi/secrets.env")
         result: dict = {}
         try:
@@ -233,7 +233,6 @@ def create_app(config: DashboardConfig) -> Flask:
     def get_model_config() -> Any:
         """Return current model assignments for all effort levels."""
         from xibi.router import load_config
-
         workdir = app.config["DB_PATH"].parent.parent
         config_path = workdir / "config.json"
         try:
@@ -242,7 +241,6 @@ def create_app(config: DashboardConfig) -> Flask:
             except Exception:
                 # Config may reference providers not yet in providers section — read raw
                 import json as _json
-
                 with open(config_path) as _f:
                     cfg = _json.load(_f)
             models = cfg.get("models", {}).get("text", {})
@@ -273,7 +271,6 @@ def create_app(config: DashboardConfig) -> Flask:
         """Update model assignment for a single effort level. Restarts heartbeat."""
         import json as json_mod
         import subprocess
-
         workdir = app.config["DB_PATH"].parent.parent
         config_path = workdir / "config.json"
         data = request.get_json()
@@ -309,22 +306,20 @@ def create_app(config: DashboardConfig) -> Flask:
                 role_config["fallback"] = defaults.get(effort)
             cfg["models"]["text"][effort] = role_config
             # Ensure provider exists in providers section (required by load_config validation)
-            _provider_defaults = {
+            provider_defaults = {
                 "anthropic": {"api_key_env": "ANTHROPIC_API_KEY"},
-                "openai": {"api_key_env": "OPENAI_API_KEY"},
-                "gemini": {"api_key_env": "GEMINI_API_KEY"},
+                "openai":    {"api_key_env": "OPENAI_API_KEY"},
+                "gemini":    {"api_key_env": "GEMINI_API_KEY"},
             }
             if provider not in cfg.get("providers", {}):
-                cfg.setdefault("providers", {})[provider] = _provider_defaults.get(provider, {})
+                cfg.setdefault("providers", {})[provider] = provider_defaults.get(provider, {})
             with open(config_path, "w") as f:
                 json_mod.dump(cfg, f, indent=2)
             restart_msg = "not attempted"
             try:
                 result = subprocess.run(
                     ["systemctl", "--user", "restart", "xibi-heartbeat"],
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
+                    capture_output=True, text=True, timeout=10,
                 )
                 restart_msg = "restarted" if result.returncode == 0 else f"failed: {result.stderr}"
             except subprocess.TimeoutExpired:
@@ -339,7 +334,6 @@ def create_app(config: DashboardConfig) -> Flask:
     def get_available_models() -> Any:
         """List models available from each provider."""
         import json as json_mod
-
         workdir = app.config["DB_PATH"].parent.parent
         config_path = workdir / "config.json"
         with open(config_path) as f:
@@ -350,7 +344,6 @@ def create_app(config: DashboardConfig) -> Flask:
         if "ollama" in providers:
             try:
                 import requests as req
-
                 base_url = providers["ollama"].get("base_url", "http://localhost:11434")
                 resp = req.get(f"{base_url}/api/tags", timeout=5)
                 if resp.status_code == 200:
