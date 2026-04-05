@@ -109,6 +109,40 @@ class MCPClient:
 
         return self.server_capabilities
 
+    async def list_resources(self) -> list[dict]:
+        """List resources offered by this MCP server."""
+        if not self.server_capabilities.get("resources"):
+            return []
+
+        list_id = self._next_id()
+        list_msg = {"jsonrpc": "2.0", "id": list_id, "method": "resources/list"}
+        try:
+            response = self._send_and_receive(list_msg)
+            if response.get("id") != list_id:
+                raise RuntimeError("Resource listing failed: ID mismatch")
+            return cast(list[dict[Any, Any]], response.get("result", {}).get("resources", []))
+        except Exception as e:
+            logger.error(f"MCP resource listing failed for '{self.config.name}': {e}")
+            return []
+
+    async def read_resource(self, uri: str) -> dict:
+        """Read a specific resource by URI."""
+        read_id = self._next_id()
+        read_msg = {"jsonrpc": "2.0", "id": read_id, "method": "resources/read", "params": {"uri": uri}}
+        try:
+            response = self._send_and_receive(read_msg)
+            if response.get("id") != read_id:
+                raise RuntimeError("Resource read failed: ID mismatch")
+            contents = response.get("result", {}).get("contents", [])
+            return {
+                "uri": uri,
+                "contents": contents,
+                "status": "ok",
+            }
+        except Exception as e:
+            logger.error(f"MCP resource read failed for '{self.config.name}' (URI: {uri}): {e}")
+            return {"uri": uri, "status": "error", "error": str(e)}
+
     def _discover_tools(self) -> list[MCPToolManifest]:
         """Discover tools from the connected server."""
         list_id = self._next_id()

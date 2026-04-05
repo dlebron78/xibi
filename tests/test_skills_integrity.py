@@ -22,7 +22,7 @@ def test_manifest_schema():
 
 
 def test_tool_compilation_and_contract():
-    """Dynamically import every tool module and assert it exposes a run() function."""
+    """Dynamically import every tool module and assert it exposes a asyncio.run(run()) function."""
     project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     workdir = project_root
     manifest_paths = glob.glob(os.path.join(workdir, "skills", "*", "manifest.json"))
