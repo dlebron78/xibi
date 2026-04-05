@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ class SourcePoller:
 
         return results
 
-    async def _poll_source(self, source: dict) -> dict[str, Any]:
+    async def _poll_source(self, source: dict) -> dict:
         """Dispatch a single source poll to the right executor."""
         if source["type"] == "mcp":
             if not self.mcp_registry:
@@ -74,11 +74,9 @@ class SourcePoller:
             if not client:
                 raise ValueError(f"MCP client for '{server_name}' not found")
 
-            result: dict[str, Any] = await client.call_tool(tool_name, args)
-            return result
+            return cast(dict[Any, Any], await client.call_tool(tool_name, args))
         else:
             # Native tool — dispatch through executor
             tool_name = source["tool"]
             args = source.get("args", {})
-            result = await self.executor.execute(tool_name, args)
-            return dict(result)
+            return cast(dict[Any, Any], await self.executor.execute(tool_name, args))

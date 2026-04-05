@@ -1,3 +1,4 @@
+import asyncio
 import sqlite3
 from unittest.mock import MagicMock, patch
 
@@ -340,7 +341,7 @@ def test_purge_old_processed_messages(tmp_path, monkeypatch):
 # ── New Bug Fix tests ────────────────────────────────────────────────────────
 
 
-def test_handle_text_calls_react_run(monkeypatch, tmp_path):
+def test_handle_text_calls_react_asyncio.run(run(monkeypatch, tmp_path)):
     monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "test-token")
     registry = MagicMock()
     registry.get_skill_manifests.return_value = [{"name": "test_skill"}]

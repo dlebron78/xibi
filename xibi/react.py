@@ -423,7 +423,7 @@ def _parse_llm_response(response_text: str, react_format: str = "json") -> dict[
     return _parse_json_response(response_text)
 
 
-async def run(
+async def _run_async(
     query: str,
     config: Config,
     skill_registry: list[dict[str, Any]],
@@ -918,3 +918,20 @@ async def run(
     _emit_run_span(res)
     clear_trace_context()
     return res
+
+
+def run(*args, **kwargs):
+    import asyncio
+
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    if loop.is_running():
+        # If we are in an async context, this will still return a coroutine
+        # which is what callers expect in async context.
+        return _run_async(*args, **kwargs)
+    else:
+        return loop.run_until_complete(_run_async(*args, **kwargs))

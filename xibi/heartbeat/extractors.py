@@ -10,22 +10,18 @@ logger = logging.getLogger(__name__)
 class SignalExtractorRegistry:
     """Registry of source-specific signal extraction strategies."""
 
-    extractors: dict[str, Callable[[str, Any, dict], list[dict]]] = {}
+    extractors: dict[str, Callable[[str, Any, dict[str, Any]], list[dict[str, Any]]]] = {}
 
     @classmethod
-    def register(
-        cls, name: str
-    ) -> Callable[[Callable[[str, Any, dict], list[dict]]], Callable[[str, Any, dict], list[dict]]]:
-        def decorator(
-            fn: Callable[[str, Any, dict], list[dict]],
-        ) -> Callable[[str, Any, dict], list[dict]]:
+    def register(cls, name: str):
+        def decorator(fn: Callable[[str, Any, dict[str, Any]], list[dict[str, Any]]]):
             cls.extractors[name] = fn
             return fn
 
         return decorator
 
     @classmethod
-    def extract(cls, extractor_name: str, source_name: str, data: Any, context: dict) -> list[dict]:
+    def extract(cls, extractor_name: str, source_name: str, data: Any, context: dict[str, Any]) -> list[dict[str, Any]]:
         """
         Extract signals from raw data using the specified strategy.
         context should contain any needed dependencies like db_path or config.
@@ -42,7 +38,7 @@ class SignalExtractorRegistry:
 
 
 @SignalExtractorRegistry.register("email")
-def extract_email_signals(source: str, data: Any, context: dict) -> list[dict]:
+def extract_email_signals(source: str, data: Any, context: dict[str, Any]) -> list[dict[str, Any]]:
     """
     Extract signals from email data.
     data is expected to be a list of email dicts.
@@ -52,9 +48,6 @@ def extract_email_signals(source: str, data: Any, context: dict) -> list[dict]:
         return []
 
     signals = []
-    # Note: Classification and triage logic should happen here or before this step.
-    # For now, we'll keep it simple and just turn each email into a signal.
-    # The refined logic will be moved from poller.py.
     for email in data:
         email_id = str(email.get("id", ""))
         sender = email.get("from", email.get("sender", "unknown"))
@@ -78,7 +71,7 @@ def extract_email_signals(source: str, data: Any, context: dict) -> list[dict]:
 
 
 @SignalExtractorRegistry.register("calendar")
-def extract_calendar_signals(source: str, data: Any, context: dict) -> list[dict]:
+def extract_calendar_signals(source: str, data: Any, context: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract signals from calendar events."""
     if not isinstance(data, dict):
         logger.warning(f"Calendar extractor expected dict, got {type(data)}")
@@ -103,7 +96,7 @@ def extract_calendar_signals(source: str, data: Any, context: dict) -> list[dict
 
 
 @SignalExtractorRegistry.register("generic")
-def extract_generic_signals(source: str, data: Any, context: dict) -> list[dict]:
+def extract_generic_signals(source: str, data: Any, context: dict[str, Any]) -> list[dict[str, Any]]:
     """
     Generic extractor for tool results.
     """

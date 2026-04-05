@@ -215,7 +215,7 @@ class ObservationCycle:
             logger.warning(f"Failed to build resource context: {e}")
             return ""
 
-    async def run(
+    async def _run_async(
         self,
         executor: Any | None = None,
         command_layer: Any | None = None,
@@ -644,3 +644,17 @@ class ObservationCycle:
                 )
         except Exception as e:
             logger.error(f"Error persisting cycle {cycle_id}: {e}", exc_info=True)
+
+    def run(self, *args, **kwargs):
+        import asyncio
+
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        if loop.is_running():
+            return self._run_async(*args, **kwargs)
+        else:
+            return loop.run_until_complete(self._run_async(*args, **kwargs))

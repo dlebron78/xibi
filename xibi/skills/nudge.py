@@ -1,9 +1,6 @@
-"""
-nudge skill — send a proactive notification to the operator via Telegram.
-"""
-
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -16,11 +13,11 @@ logger = logging.getLogger(__name__)
 async def nudge(
     message: str,
     thread_id: str | None = None,
-    refs: list | None = None,
+    refs: list[str] | None = None,
     category: str = "info",
-    _config: dict | None = None,
+    _config: dict[str, Any] | None = None,
     _workdir: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     """Send a proactive notification to the operator via Telegram."""
     if not message:
         return {"status": "error", "error": "message is required"}
@@ -65,7 +62,7 @@ async def nudge(
                         continue
 
         # Get token from env or .xibi_env
-        token = os.environ.get("XIBI_TELEGRAM_TOKEN")
+        token = os.environ.get("XIBI_TELEGRAM_TOKEN") or os.environ.get("TELEGRAM_BOT_TOKEN")
         if not token:
             env_path = workdir.parent / ".xibi_env"
             if not env_path.exists():
@@ -75,15 +72,18 @@ async def nudge(
                 with open(env_path) as f:
                     for line in f:
                         line = line.strip()
-                        if line.startswith("XIBI_TELEGRAM_TOKEN="):
+                        if line.startswith("XIBI_TELEGRAM_TOKEN=") or line.startswith("TELEGRAM_BOT_TOKEN="):
                             token = line.split("=", 1)[1].strip("'\"")
                             break
 
         chat_id = config.get("telegram", {}).get("chat_id")
         if not chat_id:
-            chat_id_str = os.environ.get("XIBI_TELEGRAM_ALLOWED_CHAT_IDS", "").split(",")[0].strip()
+            chat_id_str = os.environ.get("XIBI_TELEGRAM_CHAT_ID") or os.environ.get("TELEGRAM_CHAT_ID")
+            if not chat_id_str:
+                chat_id_str = os.environ.get("XIBI_TELEGRAM_ALLOWED_CHAT_IDS", "").split(",")[0].strip()
             if chat_id_str:
-                chat_id = int(chat_id_str)
+                with contextlib.suppress(ValueError):
+                    chat_id = int(chat_id_str)
 
         if not token or not chat_id:
             logger.error(f"nudge: missing config (token found: {bool(token)}, chat_id found: {bool(chat_id)})")
@@ -113,8 +113,6 @@ async def nudge(
             payload = {"chat_id": chat_id, "text": text}
             data = json.dumps(payload).encode("utf-8")
             req = urllib.request.Request(api_url, data=data, headers={"Content-Type": "application/json"})
-            # urllib.request.urlopen is blocking, but we wrap it in asyncio.to_thread if we want to be truly async-friendly
-            # For simplicity in this tool, we just call it.
             with urllib.request.urlopen(req, timeout=10) as response:
                 result = json.loads(response.read().decode("utf-8"))
 

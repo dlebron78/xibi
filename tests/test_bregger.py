@@ -294,7 +294,7 @@ class TestConversationRecall:
         init_workdir(Path(core.db_path.parent.parent))
 
         # Test empty
-        res = recall_conversation.run({"query": "apple", "_workdir": core.db_path.parent.parent.as_posix()})
+        res = recall_conversation.asyncio.run(run({"query": "apple", "_workdir": core.db_path.parent.parent.as_posix())})
         assert res["status"] == "success"
         assert len(res["turns"]) == 0
 
@@ -316,7 +316,7 @@ class TestConversationRecall:
                 "INSERT INTO conversation_history (user_message, bot_response, created_at) VALUES ('hello banana', 'hi', '2024-01-02 10:00:00')"
             )
 
-        res = recall_conversation.run({"query": "banana", "_workdir": core.db_path.parent.parent.as_posix()})
+        res = recall_conversation.asyncio.run(run({"query": "banana", "_workdir": core.db_path.parent.parent.as_posix())})
         assert res["status"] == "success"
         assert len(res["turns"]) == 1
         assert "banana" in res["turns"][0]["user_message"]
@@ -357,7 +357,7 @@ class TestConversationRecall:
                 "INSERT INTO conversation_history (user_message, bot_response, created_at) VALUES ('hello apple', 'hi', '2024-01-01 10:00:00')"
             )
 
-        res = recall_conversation.run({"query": "zebra", "_workdir": core.db_path.parent.parent.as_posix()})
+        res = recall_conversation.asyncio.run(run({"query": "zebra", "_workdir": core.db_path.parent.parent.as_posix())})
         assert res["status"] == "success"
         assert len(res["turns"]) == 0
 
@@ -372,7 +372,7 @@ class TestMemorySkill:
 
         init_workdir(tmp_workdir)
 
-        result = remember.run({"content": "buy milk", "_workdir": str(tmp_workdir)})
+        result = remember.asyncio.run(run({"content": "buy milk", "_workdir": str(tmp_workdir))})
         assert result["status"] == "success", result.get("message")
 
     def test_remember_with_category(self, tmp_workdir):
@@ -381,7 +381,7 @@ class TestMemorySkill:
 
         init_workdir(tmp_workdir)
 
-        result = remember.run({"content": "Call Bob", "category": "task", "_workdir": str(tmp_workdir)})
+        result = remember.asyncio.run(run({"content": "Call Bob", "category": "task", "_workdir": str(tmp_workdir))})
         assert result["status"] == "success"
         db = self._db(tmp_workdir)
         with sqlite3.connect(db) as conn:
@@ -395,9 +395,9 @@ class TestMemorySkill:
 
         init_workdir(tmp_workdir)
 
-        remember.run({"content": "item one", "_workdir": str(tmp_workdir)})
-        remember.run({"content": "item two", "_workdir": str(tmp_workdir)})
-        result = recall.run({"_workdir": str(tmp_workdir)})
+        remember.asyncio.run(run({"content": "item one", "_workdir": str(tmp_workdir))})
+        remember.asyncio.run(run({"content": "item two", "_workdir": str(tmp_workdir))})
+        result = recall.asyncio.run(run({"_workdir": str(tmp_workdir))})
         assert result["status"] == "success"
         assert len(result["items"]) >= 2
 
@@ -407,9 +407,9 @@ class TestMemorySkill:
 
         init_workdir(tmp_workdir)
 
-        remember.run({"content": "design spec", "category": "idea", "_workdir": str(tmp_workdir)})
-        remember.run({"content": "grocery run", "category": "task", "_workdir": str(tmp_workdir)})
-        result = recall.run({"category": "idea", "_workdir": str(tmp_workdir)})
+        remember.asyncio.run(run({"content": "design spec", "category": "idea", "_workdir": str(tmp_workdir))})
+        remember.asyncio.run(run({"content": "grocery run", "category": "task", "_workdir": str(tmp_workdir))})
+        result = recall.asyncio.run(run({"category": "idea", "_workdir": str(tmp_workdir))})
         assert all(i["category"] == "idea" for i in result["items"])
 
     def test_recall_by_keyword(self, tmp_workdir):
@@ -418,8 +418,8 @@ class TestMemorySkill:
 
         init_workdir(tmp_workdir)
 
-        remember.run({"content": "order milk from store", "_workdir": str(tmp_workdir)})
-        result = recall.run({"query": "milk", "_workdir": str(tmp_workdir)})
+        remember.asyncio.run(run({"content": "order milk from store", "_workdir": str(tmp_workdir))})
+        result = recall.asyncio.run(run({"query": "milk", "_workdir": str(tmp_workdir))})
         assert any("milk" in i["content"] for i in result["items"])
 
     def test_recall_empty(self, tmp_workdir):
@@ -428,7 +428,7 @@ class TestMemorySkill:
 
         init_workdir(tmp_workdir)
 
-        result = recall.run({"query": "xyznonexistent99", "_workdir": str(tmp_workdir)})
+        result = recall.asyncio.run(run({"query": "xyznonexistent99", "_workdir": str(tmp_workdir))})
         assert result["status"] == "success"
         assert result["items"] == []
 
@@ -437,7 +437,7 @@ class TestEmailSkill:
     def test_send_email_missing_params(self):
         from skills.email.tools import send_email
 
-        result = send_email.run({"to": "test@example.com"})  # missing subject + body
+        result = send_email.asyncio.run(run({"to": "test@example.com"}))  # missing subject + body
         assert result["status"] == "error"
         assert "subject" in result["message"] and "body" in result["message"]
 
@@ -448,7 +448,7 @@ class TestEmailSkill:
         monkeypatch.setattr(sh, "which", lambda x: None)
         from skills.email.tools import send_email
 
-        result = send_email.run({"to": "bob@example.com", "subject": "Hello", "body": "Test body"})
+        result = send_email.asyncio.run(run({"to": "bob@example.com", "subject": "Hello", "body": "Test body"}))
         assert result["status"] == "error"
 
     def test_executive_validates_send_email(self):
@@ -716,7 +716,7 @@ class TestReActLoop:
         (tmp_workdir / "test_doc.md").write_text("# Test")
         from skills.filesystem.tools import list_files
 
-        result = list_files.run({"_workdir": str(tmp_workdir)})
+        result = list_files.asyncio.run(run({"_workdir": str(tmp_workdir))})
         assert result["status"] == "success"
         assert "test_doc.md" in result["content"]
         assert result["count"] >= 1
@@ -729,7 +729,7 @@ class TestReActLoop:
         try:
             from skills.filesystem.tools import list_files
 
-            result = list_files.run({})
+            result = list_files.asyncio.run(run({}))
             assert result["status"] == "error"
         finally:
             if env_backup:

@@ -71,7 +71,7 @@ def test_observation_cycle_passes_trust_gradient_to_reflex(tmp_path, mocker):
     mocker.patch.object(cycle, "_run_review_role", side_effect=Exception("fail"))
     mocker.patch.object(cycle, "_run_think_role", side_effect=Exception("fail"))
 
-    asyncio.run(cycle.run())
+    cycle.asyncio.asyncio.asyncio.run(run(run(asyncio.run(run()))
 
     assert spy.call_count == 1
     assert spy.call_args.kwargs["trust_gradient"] == trust_gradient
@@ -146,7 +146,7 @@ def test_compress_to_beliefs_source_preserved(tmp_path, mocker):
     # Mock LLM again for the user turn
     mock_llm.generate.return_value = json.dumps(
         {"beliefs": [{"key": "pref", "value": "User likes turtles", "confidence": 0.9}]}
-    )
+    )))
 
     # We need to clear the sentinel if it was written (though it shouldn't be since no user turns existed)
     conn.execute("DELETE FROM beliefs")

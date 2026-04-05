@@ -84,16 +84,16 @@ def test_react_loop_validates_tool_input():
     )
 
     try:
-        result = asyncio.run(run(
-            query="test query",
-            config=config,
-            skill_registry=skill_registry,
-            executor=executor,
-            command_layer=command_layer,
-            max_steps=1,
-        ))
-
-        # In the first step, it should have received the error from dispatch and put it in tool_output
+        result = asyncio.run(
+            asyncio.run(asyncio.run(run(
+                query="test query",
+                config=config,
+                skill_registry=skill_registry,
+                executor=executor,
+                command_layer=command_layer,
+                max_steps=1,
+            )
+        )  # In the first step, it should have received the error from dispatch and put it in tool_output
         assert len(result.steps) > 0
         assert result.steps[0].tool == "mock_tool"
         assert result.steps[0].tool_output["status"] == "error"

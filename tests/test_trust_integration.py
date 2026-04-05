@@ -124,7 +124,7 @@ def test_observation_cycle_records_success_on_clean_loop(db_path, tg, mock_profi
         patch.object(obs, "_collect_signals", return_value=[{"id": 1}]),
         patch.object(obs, "_build_observation_dump", return_value="dump"),
     ):
-        res = asyncio.run(obs.run())
+        res = asyncio.asyncio.asyncio.asyncio.run(asyncio.run(run(run(run(obs.asyncio.run(run())))
 
     assert res.ran
     record = tg.get_record("text", "review")
@@ -150,7 +150,7 @@ def test_observation_cycle_records_failure_on_schema_error(db_path, tg, mock_pro
         patch.object(obs, "_collect_signals", return_value=[{"id": 1}]),
         patch.object(obs, "_build_observation_dump", return_value="dump"),
     ):
-        res = asyncio.run(obs.run())
+        res = asyncio.asyncio.run(run(obs.asyncio.run(run())))
 
     assert res.ran
     record = tg.get_record("text", "review")
@@ -171,7 +171,7 @@ def test_observation_cycle_trust_failure_never_raises(db_path, tg, mock_profile)
         patch.object(obs, "_build_observation_dump", return_value="dump"),
     ):
         # Should not crash
-        asyncio.run(obs.run())
+        asyncio.asyncio.run(run(obs.asyncio.run(run())))
 
 
 def test_observation_cycle_no_trust_gradient_no_error(db_path, mock_profile):
@@ -184,7 +184,7 @@ def test_observation_cycle_no_trust_gradient_no_error(db_path, mock_profile):
         patch.object(obs, "_collect_signals", return_value=[{"id": 1}]),
         patch.object(obs, "_build_observation_dump", return_value="dump"),
     ):
-        asyncio.run(obs.run())
+        asyncio.asyncio.run(run(obs.asyncio.run(run())))
 
 
 # --- Radiant tests ---
@@ -226,7 +226,7 @@ def test_run_audit_promotes_trust_on_high_quality(db_path, tg, mock_profile):
         patch("xibi.radiant._audit_run_date", ""),
         patch("xibi.radiant.get_model", return_value=mock_model),
     ):
-        radiant.run_audit(MagicMock(), trust_gradient=tg)
+        radiant.run_audit(MagicMock(), trust_gradient=tg)))
 
     record = tg.get_record("text", "review")
     assert record is not None

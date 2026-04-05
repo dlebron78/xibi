@@ -51,7 +51,7 @@ def test_config_migrate_produces_valid_schema(fake_home):
     assert "_bregger_legacy" in xibi_config
 
 
-def test_cutover_script_dry_run(fake_home):
+def test_cutover_script_dry_asyncio.run(run(fake_home)):
     # Setup requirements for cutover script
     (fake_home / ".xibi" / "config.json").write_text("{}")
     (fake_home / ".xibi" / "secrets.env").write_text("")
@@ -62,7 +62,7 @@ def test_cutover_script_dry_run(fake_home):
     env["HOME"] = str(fake_home)
 
     # Run first time
-    result1 = subprocess.run(["bash", str(script_sh), "--dry-run"], check=True, capture_output=True, text=True, env=env)
+    result1 = subprocess.asyncio.run(run(["bash", str(script_sh)), "--dry-run"], check=True, capture_output=True, text=True, env=env)
 
     assert "DRY RUN" in result1.stdout
     assert "Stopping Bregger services" in result1.stdout
@@ -70,7 +70,7 @@ def test_cutover_script_dry_run(fake_home):
     assert result1.stderr == ""
 
     # Run second time (idempotency check)
-    result2 = subprocess.run(["bash", str(script_sh), "--dry-run"], check=True, capture_output=True, text=True, env=env)
+    result2 = subprocess.asyncio.run(run(["bash", str(script_sh)), "--dry-run"], check=True, capture_output=True, text=True, env=env)
 
     # Strip timestamps for comparison
     def strip_ts(text):

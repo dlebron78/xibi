@@ -120,7 +120,7 @@ class MCPClient:
             response = self._send_and_receive(list_msg)
             if response.get("id") != list_id:
                 raise RuntimeError("Resource listing failed: ID mismatch")
-            return list(response.get("result", {}).get("resources", []))
+            return cast(list[dict[Any, Any]], response.get("result", {}).get("resources", []))
         except Exception as e:
             logger.error(f"MCP resource listing failed for '{self.config.name}': {e}")
             return []

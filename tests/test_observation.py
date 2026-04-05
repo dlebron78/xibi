@@ -41,7 +41,7 @@ def test_observation_config_hours(db_path):
 
 def test_should_run_idle_no_signals(db_path):
     cycle = ObservationCycle(db_path=db_path, profile={})
-    should, reason = cycle.should_run()
+    should, reason = cycle.should_asyncio.asyncio.asyncio.run(run(run(asyncio.run(run()))
     assert should is False
     assert "idle" in reason
 
@@ -51,7 +51,7 @@ def test_should_run_below_threshold(db_path):
         for _i in range(3):
             conn.execute("INSERT INTO signals (source, content_preview) VALUES ('test', 'p')")
     cycle = ObservationCycle(db_path=db_path, profile={"observation": {"trigger_threshold": 5}})
-    should, reason = cycle.should_run()
+    should, reason = cycle.should_asyncio.run(asyncio.run(run()))
     assert should is False
     assert "below_threshold" in reason
 
@@ -61,7 +61,7 @@ def test_should_run_activity_trigger(db_path):
         for _i in range(6):
             conn.execute("INSERT INTO signals (source, content_preview) VALUES ('test', 'p')")
     cycle = ObservationCycle(db_path=db_path, profile={"observation": {"trigger_threshold": 5}})
-    should, reason = cycle.should_run()
+    should, reason = cycle.should_asyncio.run(asyncio.run(run()))
     assert should is True
     assert "activity" in reason
 
@@ -71,10 +71,10 @@ def test_should_run_max_interval(db_path):
         conn.execute("INSERT INTO signals (source, content_preview) VALUES ('test', 'p')")
         # Insert a completed cycle 10 hours ago
         conn.execute(
-            "INSERT INTO observation_cycles (started_at, completed_at, last_signal_id) VALUES (datetime('now', '-11 hours'), datetime('now', '-10 hours'), 0)"
+            "INSERT INTO observation_cycles (started_at, completed_at, last_signal_id) VALUES (datetime('now', '-11 hours'))), datetime('now', '-10 hours'), 0)"
         )
     cycle = ObservationCycle(db_path=db_path, profile={"observation": {"max_interval": "8h", "trigger_threshold": 10}})
-    should, reason = cycle.should_run()
+    should, reason = cycle.should_asyncio.run(asyncio.run(run()))
     assert should is True
     assert "max_interval" in reason
 
@@ -87,7 +87,7 @@ def test_should_run_respects_min_interval(db_path):
             "INSERT INTO observation_cycles (started_at, completed_at, last_signal_id) VALUES (datetime('now', '-10 minutes'), datetime('now', '-5 minutes'), 0)"
         )
     cycle = ObservationCycle(db_path=db_path, profile={"observation": {"min_interval": "120m"}})
-    should, reason = cycle.should_run()
+    should, reason = cycle.should_asyncio.run(asyncio.run(run()))
     assert should is False
     assert "interval" in reason
 
@@ -159,7 +159,7 @@ def test_build_observation_dump_with_threads(db_path):
 
 def test_run_skips_when_idle(db_path):
     cycle = ObservationCycle(db_path=db_path, profile={"observation": {"idle_skip": True}})
-    result = asyncio.run(cycle.run())
+    result = asyncio.asyncio.asyncio.run(run(run(cycle.asyncio.run(run()))
     assert result.ran is False
     assert "idle" in result.skip_reason
 
@@ -171,7 +171,7 @@ def test_run_records_cycle_row(db_path):
 
     cycle = ObservationCycle(db_path=db_path, profile={"observation": {"trigger_threshold": 5}})
     with patch.object(ObservationCycle, "_run_review_role", return_value=([], [])):
-        res = asyncio.run(cycle.run())
+        res = asyncio.run(cycle.asyncio.run(run()))
         assert res.ran is True
         assert res.signals_processed == 6
 
@@ -190,7 +190,7 @@ def test_run_advances_watermark(db_path):
 
     cycle = ObservationCycle(db_path=db_path, profile={"observation": {"trigger_threshold": 5}})
     with patch.object(ObservationCycle, "_run_review_role", return_value=([], [])):
-        asyncio.run(cycle.run())
+        asyncio.run(cycle.asyncio.run(run()))
         assert cycle._get_watermark() == 6
 
 
@@ -203,7 +203,7 @@ def test_run_degraded_falls_through_to_think(db_path):
         patch.object(ObservationCycle, "_run_review_role", side_effect=RuntimeError("model unavailable")),
         patch.object(ObservationCycle, "_run_think_role", return_value=([], [])),
     ):
-        res = asyncio.run(cycle.run())
+        res = asyncio.run(cycle.asyncio.run(run()))
         assert res.ran is True
         assert res.role_used == "think"
         assert res.degraded is True
@@ -216,10 +216,10 @@ def test_run_degraded_falls_through_to_reflex(db_path):
     cycle = ObservationCycle(db_path=db_path, profile={"observation": {"trigger_threshold": 1}})
     with (
         patch.object(ObservationCycle, "_run_review_role", side_effect=RuntimeError("model unavailable")),
-        patch.object(ObservationCycle, "_run_think_role", side_effect=RuntimeError("model unavailable")),
+        patch.object(ObservationCycle, "_run_think_role", side_effect=RuntimeError("model unavailable")))),
         patch.object(ObservationCycle, "_run_reflex_fallback", return_value=([], [])),
     ):
-        res = asyncio.run(cycle.run())
+        res = asyncio.run(cycle.asyncio.run(run()))
         assert res.ran is True
         assert res.role_used == "reflex"
         assert res.degraded is True
@@ -228,7 +228,7 @@ def test_run_degraded_falls_through_to_reflex(db_path):
 def test_run_never_raises(db_path):
     cycle = ObservationCycle(db_path=db_path)
     with patch.object(ObservationCycle, "should_run", side_effect=Exception("BOOM")):
-        res = asyncio.run(cycle.run())
+        res = asyncio.run(cycle.asyncio.run(run()))
         assert res.ran is False
         assert "BOOM" in res.errors[0]
 

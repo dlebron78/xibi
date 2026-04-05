@@ -35,7 +35,6 @@ def test_email_ingest_creates_contact(db_path):
 
 def test_email_ingest_domain_colleague(db_path):
     # Setup: Mock config with owner domain
-
     config = Config()
     config["email_from"] = "me@acme.com"
 
