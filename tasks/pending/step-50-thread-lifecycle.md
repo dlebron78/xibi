@@ -1,4 +1,4 @@
-# step-49 — Thread Lifecycle Management
+# step-50 — Thread Lifecycle Management
 
 > **Depends on:** step-48 (Multi-Source Framework — merged)
 > **Blocks:** nothing immediately
