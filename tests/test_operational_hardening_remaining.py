@@ -5,6 +5,7 @@ Covers SIGTERM loop check, DB startup validation, daily purge, narrow except, ex
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -177,11 +178,13 @@ def test_react_loop_propagates_keyboard_interrupt(tmp_path):
         patch("xibi.react.Tracer", MagicMock()),
         pytest.raises(KeyboardInterrupt),
     ):
-        react_run(
-            query="hello",
-            config={"db_path": str(db_path)},
-            skill_registry=[],
-            executor=executor,
+        asyncio.run(
+            react_run(
+                query="hello",
+                config={"db_path": str(db_path)},
+                skill_registry=[],
+                executor=executor,
+            )
         )
 
 

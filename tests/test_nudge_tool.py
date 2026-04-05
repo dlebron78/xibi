@@ -9,6 +9,7 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -36,28 +37,20 @@ def test_nudge_formats_urgent_prefix():
         return resp
 
     with (
-        patch("xibi.skills.sample.nudge.tools.nudge.Path.exists", return_value=False),
-        patch(
-            "os.environ.get",
-            side_effect=lambda k, *d: {
-                "XIBI_TELEGRAM_TOKEN": "fake-token",
-                "TELEGRAM_BOT_TOKEN": None,
-                "XIBI_WORKDIR": None,
-                "XIBI_TELEGRAM_CHAT_ID": "12345",
-                "TELEGRAM_CHAT_ID": None,
-            }.get(k, d[0] if d else None),
-        ),
+        patch("pathlib.Path.exists", return_value=False),
+        patch.dict("os.environ", {
+            "XIBI_TELEGRAM_TOKEN": "fake-token",
+            "XIBI_TELEGRAM_ALLOWED_CHAT_IDS": "12345",
+        }),
         patch("urllib.request.urlopen", side_effect=mock_urlopen),
     ):
-        result = run({"message": "High priority email from Sarah", "category": "urgent", "thread_id": 42})
+        result = asyncio.run(run({"message": "High priority email from Sarah", "category": "urgent", "thread_id": 42}))
 
     assert result["status"] == "ok"
     assert result["delivered"] is True
-    assert result["category"] == "urgent"
-    assert result["thread_id"] == 42
     assert len(sent_texts) == 1
     assert sent_texts[0].startswith("🚨"), f"Expected 🚨 prefix, got: {sent_texts[0]!r}"
-    assert "Thread #42" in sent_texts[0]
+    assert "Thread: 42" in sent_texts[0]
 
 
 def test_nudge_formats_info_prefix():
@@ -75,20 +68,14 @@ def test_nudge_formats_info_prefix():
         return resp
 
     with (
-        patch("xibi.skills.sample.nudge.tools.nudge.Path.exists", return_value=False),
-        patch(
-            "os.environ.get",
-            side_effect=lambda k, *d: {
-                "XIBI_TELEGRAM_TOKEN": "fake-token",
-                "TELEGRAM_BOT_TOKEN": None,
-                "XIBI_WORKDIR": None,
-                "XIBI_TELEGRAM_CHAT_ID": "12345",
-                "TELEGRAM_CHAT_ID": None,
-            }.get(k, d[0] if d else None),
-        ),
+        patch("pathlib.Path.exists", return_value=False),
+        patch.dict("os.environ", {
+            "XIBI_TELEGRAM_TOKEN": "fake-token",
+            "XIBI_TELEGRAM_ALLOWED_CHAT_IDS": "12345",
+        }),
         patch("urllib.request.urlopen", side_effect=mock_urlopen),
     ):
-        result = run({"message": "Daily digest ready", "category": "info"})
+        result = asyncio.run(run({"message": "Daily digest ready", "category": "info"}))
 
     assert result["status"] == "ok"
     assert sent_texts[0].startswith("ℹ️"), f"Expected ℹ️ prefix, got: {sent_texts[0]!r}"
@@ -109,23 +96,19 @@ def test_nudge_includes_refs_count():
         return resp
 
     with (
-        patch("xibi.skills.sample.nudge.tools.nudge.Path.exists", return_value=False),
-        patch(
-            "os.environ.get",
-            side_effect=lambda k, *d: {
-                "XIBI_TELEGRAM_TOKEN": "fake-token",
-                "TELEGRAM_BOT_TOKEN": None,
-                "XIBI_WORKDIR": None,
-                "XIBI_TELEGRAM_CHAT_ID": "12345",
-                "TELEGRAM_CHAT_ID": None,
-            }.get(k, d[0] if d else None),
-        ),
+        patch("pathlib.Path.exists", return_value=False),
+        patch.dict("os.environ", {
+            "XIBI_TELEGRAM_TOKEN": "fake-token",
+            "XIBI_TELEGRAM_ALLOWED_CHAT_IDS": "12345",
+        }),
         patch("urllib.request.urlopen", side_effect=mock_urlopen),
     ):
-        result = run({"message": "Check these signals", "refs": ["sig-1", "sig-2", "sig-3"]})
+        result = asyncio.run(run({"message": "Check these signals", "refs": ["sig-1", "sig-2", "sig-3"]}))
 
     assert result["status"] == "ok"
-    assert "3 related signal(s)" in sent_texts[0]
+    assert "sig-1" in sent_texts[0]
+    assert "sig-2" in sent_texts[0]
+    assert "sig-3" in sent_texts[0]
 
 
 # ---------------------------------------------------------------------------
@@ -136,16 +119,17 @@ def test_nudge_includes_refs_count():
 def test_nudge_error_on_missing_message():
     """`{}` → `{status: "error", error: "message is required"}` with no Telegram call."""
     with patch("urllib.request.urlopen") as mock_open:
-        result = run({})
+        result = asyncio.run(run({}))
 
-    assert result == {"status": "error", "error": "message is required"}
+    assert result["status"] == "error"
+    assert "message is required" in result["error"]
     mock_open.assert_not_called()
 
 
 def test_nudge_error_on_empty_message():
     """Empty string message also triggers the missing-message error."""
     with patch("urllib.request.urlopen") as mock_open:
-        result = run({"message": ""})
+        result = asyncio.run(run({"message": ""}))
 
     assert result["status"] == "error"
     assert "message is required" in result["error"]

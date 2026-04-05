@@ -4,7 +4,7 @@ import threading
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from xibi.alerting.rules import RuleEngine
 from xibi.heartbeat.poller import HeartbeatPoller, _infer_model, _infer_provider
@@ -98,7 +98,15 @@ def test_tick_marks_seen_email():
     with (
         patch("xibi.db.open_db", _make_mock_db_ctx()),
         patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
-        patch.object(HeartbeatPoller, "_check_email", return_value=[{"id": "e1", "from": "s1", "subject": "sub1"}]),
+        patch.object(
+            hp.source_poller,
+            "poll_due_sources",
+            new=AsyncMock(
+                return_value=[
+                    {"source": "email", "data": [{"id": "e1", "from": "s1", "subject": "sub1"}], "extractor": "email"}
+                ]
+            ),
+        ),
         patch.object(HeartbeatPoller, "_classify_email", return_value="DIGEST"),
     ):
         hp.tick()
@@ -131,7 +139,11 @@ def test_tick_urgent_broadcasts():
     with (
         patch("xibi.db.open_db", _make_mock_db_ctx()),
         patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
-        patch.object(HeartbeatPoller, "_check_email", return_value=[{"id": "e1"}]),
+        patch.object(
+            hp.source_poller,
+            "poll_due_sources",
+            new=AsyncMock(return_value=[{"source": "email", "data": [{"id": "e1"}], "extractor": "email"}]),
+        ),
         patch.object(HeartbeatPoller, "_classify_email", return_value="URGENT"),
         patch.object(HeartbeatPoller, "_broadcast") as mock_broadcast,
     ):
@@ -204,7 +216,15 @@ def test_auto_noise_prefilter():
     with (
         patch("xibi.db.open_db", _make_mock_db_ctx()),
         patch.object(HeartbeatPoller, "_is_quiet_hours", return_value=False),
-        patch.object(HeartbeatPoller, "_check_email", return_value=[{"id": "e1", "from": "newsletter@domain.com"}]),
+        patch.object(
+            hp.source_poller,
+            "poll_due_sources",
+            new=AsyncMock(
+                return_value=[
+                    {"source": "email", "data": [{"id": "e1", "from": "newsletter@domain.com"}], "extractor": "email"}
+                ]
+            ),
+        ),
         patch.object(HeartbeatPoller, "_classify_email") as mock_classify,
     ):
         hp.tick()
@@ -503,7 +523,7 @@ def test_poller_records_after_observation():
     obs_result = MagicMock()
     obs_result.ran = True
     obs_result.role_used = "review"
-    obs.run.return_value = obs_result
+    obs.run = AsyncMock(return_value=obs_result)
     profile = {"models": {"text": {"review": {"provider": "p1", "model": "m1"}}}}
     hp = HeartbeatPoller(
         Path("/tmp"),
