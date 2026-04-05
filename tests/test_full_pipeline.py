@@ -4,6 +4,7 @@ import asyncio
 import time
 from pathlib import Path
 from xibi.heartbeat.poller import HeartbeatPoller
+from xibi.signal_intelligence import SignalIntel, assign_threads
 
 class TestFullPipeline(unittest.TestCase):
     def test_full_tick_with_multiple_sources(self):
@@ -67,3 +68,37 @@ class TestFullPipeline(unittest.TestCase):
 
         assert end - start < 30
         loop.close()
+
+    def test_cross_source_thread_matching(self):
+        # We need a real DB for this test because assign_threads interacts with DB
+        tmp_db = Path("/tmp/xibi_match.db")
+        if tmp_db.exists(): tmp_db.unlink()
+
+        import sqlite3
+        with sqlite3.connect(tmp_db) as conn:
+            conn.execute("CREATE TABLE threads (id TEXT PRIMARY KEY, name TEXT, source_channels TEXT, signal_count INTEGER, status TEXT DEFAULT 'active', updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)")
+            conn.execute("CREATE TABLE signals (id INTEGER PRIMARY KEY, source TEXT, thread_id TEXT, topic_hint TEXT, entity_text TEXT, content_preview TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, ref_source TEXT, ref_id TEXT, intel_tier INTEGER DEFAULT 0)")
+
+        signals = [
+            {"id": 1, "source": "email", "topic_hint": "Q2 Planning", "entity_text": "boss@acme.com", "content_preview": "Hi"},
+            {"id": 2, "source": "calendar", "topic_hint": "Q2 Planning", "entity_text": "boss@acme.com", "content_preview": "Meeting"}
+        ]
+
+        intels1 = [SignalIntel(signal_id=1)]
+        intels2 = [SignalIntel(signal_id=2)]
+
+        # First call creates a thread
+        intels1 = assign_threads(signals[:1], intels1, tmp_db)
+        tid1 = intels1[0].thread_id
+
+        # Second call should match it
+        intels2 = assign_threads(signals[1:], intels2, tmp_db)
+        tid2 = intels2[0].thread_id
+
+        assert tid1 == tid2
+        assert tid1 is not None
+
+        if tmp_db.exists(): tmp_db.unlink()
+
+if __name__ == "__main__":
+    unittest.main()

@@ -48,7 +48,14 @@ class MCPClient:
         env = os.environ.copy()
         for k, v in self.config.env.items():
             # Resolve ${VAR} references
-            resolved_v = re.sub(r"\${(\w+)}", lambda m: os.environ.get(m.group(1), ""), v)
+            def replacer(m: Any) -> str:
+                var_name = m.group(1)
+                val = os.environ.get(var_name)
+                if val is None:
+                    raise ValueError(f"Missing environment variable: {var_name}")
+                return val
+
+            resolved_v = re.sub(r"\${(\w+)}", replacer, v)
             env[k] = resolved_v
         return env
 
