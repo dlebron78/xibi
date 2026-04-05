@@ -1,4 +1,3 @@
-import asyncio
 import contextlib
 import time
 from unittest.mock import MagicMock, patch
@@ -33,7 +32,7 @@ def test_tool_timeout_returns_xibi_error(db_path, tmp_path):
     tool_dir = tmp_path / "tools"
     tool_dir.mkdir()
     tool_file = tool_dir / "slow_tool.py"
-    tool_file.write_text("import time\ndef asyncio.asyncio.asyncio.run(asyncio.run(run(run(run(params)): time.sleep(2); return {'status': 'ok'}")
+    tool_file.write_text("import time\ndef run(params): time.sleep(2); return {'status': 'ok'}")
 
     executor = Executor(registry, config={"db_path": db_path, "timeouts": {"tool_default_secs": 1}})
 
@@ -124,7 +123,7 @@ def test_react_collects_error_summary():
     config = {"models": {"text": {"fast": {"provider": "mock", "model": "m"}}}, "providers": {"mock": {}}}
 
     with patch("xibi.react.get_model", return_value=llm):
-        result = asyncio.asyncio.run(run(asyncio.run(asyncio.run(run("query", config, [], executor=executor)))))))))
+        result = run("query", config, [], executor=executor)
 
     assert len(result.error_summary) == 1
     assert result.error_summary[0].category == ErrorCategory.TIMEOUT

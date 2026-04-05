@@ -34,7 +34,7 @@ class MCPExecutor:
                         return True
         return False
 
-    async def execute(self, tool_name: str, arguments: dict) -> dict:
+    def execute(self, tool_name: str, arguments: dict) -> dict:
         """Look up which server owns this tool, call it, return result dict."""
         for skill in self.registry.skill_registry.get_skill_manifests():
             if skill.get("name", "").startswith("mcp_"):
@@ -50,7 +50,7 @@ class MCPExecutor:
 
                         # Use original_name if it exists (for namespaced tools)
                         actual_tool_name = tool.get("original_name", tool_name)
-                        return await client.call_tool(actual_tool_name, arguments)
+                        return client.call_tool(actual_tool_name, arguments)
 
         return {"status": "error", "error": f"MCP tool not found: {tool_name}"}
 
@@ -69,7 +69,7 @@ class Executor:
         self.db_path = self.config.get("db_path") or Path.home() / ".xibi" / "data" / "xibi.db"
         self.mcp_executor = MCPExecutor(mcp_registry) if mcp_registry else None
 
-    async def execute(self, tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
+    def execute(self, tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
         # Filter out pseudo-tools
         if tool_name in ("finish", "ask_user", "error"):
             # These don't go through the full executor logic typically,
@@ -97,7 +97,7 @@ class Executor:
                 is_mcp = True
                 server_name = self._resolve_mcp_server(tool_name)
                 # Route to MCP
-                result = await self.mcp_executor.execute(tool_name, tool_input)  # type: ignore
+                result = self.mcp_executor.execute(tool_name, tool_input)  # type: ignore
             else:
                 error = XibiError(
                     category=ErrorCategory.TOOL_NOT_FOUND,
@@ -140,7 +140,7 @@ class Executor:
 
                 # 4. Execute with timeout
                 try:
-                    result = await self._execute_with_timeout(tool_name, tool_input, timeout, skill_info)
+                    result = self._execute_with_timeout(tool_name, tool_input, timeout, skill_info)
                     if result.get("status") == "error" and "_xibi_error" in result:
                         breaker.record_failure(FailureType.PERSISTENT)
                     else:
@@ -252,17 +252,16 @@ class Executor:
                         return str(tool.get("server", ""))
         return ""
 
-    async def _execute_with_timeout(self, tool_name: str, params: dict, timeout: int, skill_info: Any) -> dict:
+    def _execute_with_timeout(self, tool_name: str, params: dict, timeout: int, skill_info: Any) -> dict:
         # Check thread saturation before submitting — leave headroom for burst
         running = sum(1 for t in _EXECUTOR._threads if t.is_alive())
         if running >= _EXECUTOR_CAPACITY_WARNING:
             logger.warning("executor_near_capacity: running=%d, max=8", running)
 
-        import asyncio
-
+        future = _EXECUTOR.submit(self._execute_inner, tool_name, params, skill_info)
         try:
-            return await asyncio.wait_for(self._execute_inner(tool_name, params, skill_info), timeout=timeout)
-        except asyncio.TimeoutError:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
             error = XibiError(
                 category=ErrorCategory.TIMEOUT,
                 message=f"Tool '{tool_name}' exceeded {timeout}s timeout",
@@ -276,7 +275,7 @@ class Executor:
                 "_xibi_error": error,
             }
 
-    async def _execute_inner(self, tool_name: str, tool_input: dict[str, Any], skill_info: Any) -> dict[str, Any]:
+    def _execute_inner(self, tool_name: str, tool_input: dict[str, Any], skill_info: Any) -> dict[str, Any]:
         # Locate tool file
         tool_file = skill_info.path / "tools" / f"{tool_name}.py"
         if not tool_file.exists():
@@ -286,8 +285,6 @@ class Executor:
         params = tool_input.copy()
         if self.workdir:
             params["_workdir"] = str(self.workdir)
-        if self.config:
-            params["_config"] = self.config
 
         # Add tools dir to sys.path temporarily
         tools_dir = str(skill_info.path / "tools")
@@ -304,15 +301,7 @@ class Executor:
             if not hasattr(module, "run"):
                 return {"status": "error", "message": f"Tool '{tool_name}' missing 'run' function"}
 
-            import asyncio
-            import inspect
-
-            if inspect.iscoroutinefunction(module.run):
-                result = await module.run(params)
-            else:
-                # Wrap sync tools in thread to avoid blocking loop
-                result = await asyncio.to_thread(module.run, params)
-
+            result = module.run(params)
             if isinstance(result, dict):
                 return result
             return {"status": "error", "message": f"Tool '{tool_name}' returned non-dict result"}
@@ -325,11 +314,11 @@ class Executor:
 
 
 class LocalHandlerExecutor(Executor):
-    async def _execute_inner(self, tool_name: str, tool_input: dict[str, Any], skill_info: Any) -> dict[str, Any]:
+    def _execute_inner(self, tool_name: str, tool_input: dict[str, Any], skill_info: Any) -> dict[str, Any]:
         handler_file = skill_info.path / "handler.py"
 
         if not handler_file.exists():
-            return await super()._execute_inner(tool_name, tool_input, skill_info)
+            return super()._execute_inner(tool_name, tool_input, skill_info)
 
         # Add skill dir to sys.path temporarily
         skill_dir = str(skill_info.path)
@@ -353,17 +342,8 @@ class LocalHandlerExecutor(Executor):
             params = tool_input.copy()
             if self.workdir:
                 params["_workdir"] = str(self.workdir)
-            if self.config:
-                params["_config"] = self.config
 
-            import asyncio
-            import inspect
-
-            if inspect.iscoroutinefunction(handler_func):
-                result = await handler_func(params)
-            else:
-                result = await asyncio.to_thread(handler_func, params)
-
+            result = handler_func(params)
             if isinstance(result, dict):
                 return result
             return {"status": "error", "message": f"Tool '{tool_name}' returned non-dict result"}

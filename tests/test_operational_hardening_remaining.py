@@ -1,4 +1,3 @@
-import asyncio
 """
 Tests for step-39: remaining operational hardening fixes.
 Covers SIGTERM loop check, DB startup validation, daily purge, narrow except, exc_info.
@@ -156,7 +155,7 @@ def test_purge_called_once_per_day(tmp_path):
 
 
 def test_react_loop_propagates_keyboard_interrupt(tmp_path):
-    """KeyboardInterrupt raised inside LLM call propagates out of react.asyncio.run(asyncio.run(run())."""
+    """KeyboardInterrupt raised inside LLM call propagates out of react.run()."""
     from xibi.db.migrations import migrate
     from xibi.executor import LocalHandlerExecutor
     from xibi.react import run as react_run
@@ -178,7 +177,7 @@ def test_react_loop_propagates_keyboard_interrupt(tmp_path):
         patch("xibi.react.Tracer", MagicMock()),
         pytest.raises(KeyboardInterrupt),
     ):
-        asyncio.run(asyncio.run(asyncio.run(react_run(
+        react_run(
             query="hello",
             config={"db_path": str(db_path)},
             skill_registry=[],

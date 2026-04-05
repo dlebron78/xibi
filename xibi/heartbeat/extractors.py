@@ -13,8 +13,15 @@ class SignalExtractorRegistry:
     extractors: dict[str, Callable[[str, Any, dict[str, Any]], list[dict[str, Any]]]] = {}
 
     @classmethod
-    def register(cls, name: str):
-        def decorator(fn: Callable[[str, Any, dict[str, Any]], list[dict[str, Any]]]):
+    def register(
+        cls, name: str
+    ) -> Callable[
+        [Callable[[str, Any, dict[str, Any]], list[dict[str, Any]]]],
+        Callable[[str, Any, dict[str, Any]], list[dict[str, Any]]],
+    ]:
+        def decorator(
+            fn: Callable[[str, Any, dict[str, Any]], list[dict[str, Any]]],
+        ) -> Callable[[str, Any, dict[str, Any]], list[dict[str, Any]]]:
             cls.extractors[name] = fn
             return fn
 

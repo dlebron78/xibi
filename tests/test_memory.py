@@ -28,11 +28,11 @@ def test_remember_maps_decay_days(fresh_db):
     workdir = fresh_db["workdir"]
 
     # Insert a deadline
-    res1 = remember.asyncio.run(run({"category": "deadline", "content": "File taxes", "_workdir": workdir}))
+    res1 = remember.run({"category": "deadline", "content": "File taxes", "_workdir": workdir})
     assert res1["status"] == "success"
 
     # Insert a task (permanent)
-    res2 = remember.asyncio.run(run({"category": "task", "content": "Fix typo", "_workdir": workdir}))
+    res2 = remember.run({"category": "task", "content": "Fix typo", "_workdir": workdir})
     assert res2["status"] == "success"
 
     with sqlite3.connect(fresh_db["db_path"]) as conn:
@@ -49,7 +49,7 @@ def test_memory_decay_job(fresh_db):
     workdir = fresh_db["workdir"]
 
     # Seed data
-    remember.asyncio.run(run({"category": "deadline", "content": "Recent deadline", "_workdir": workdir}))
+    remember.run({"category": "deadline", "content": "Recent deadline", "_workdir": workdir})
 
     # Manually insert a stale deadline (8 days old, needs 7 to decay)
     with sqlite3.connect(db_path) as conn:
@@ -89,7 +89,7 @@ def test_recall_filters_expired(fresh_db):
         )
         conn.commit()
 
-    res = recall.asyncio.run(run({"category": "note", "_workdir": workdir}))
+    res = recall.run({"category": "note", "_workdir": workdir})
     assert res["status"] == "success"
     assert len(res["items"]) == 1
     assert res["items"][0]["content"] == "Active note"
@@ -126,12 +126,10 @@ def test_archive_tool(fresh_db):
     db_path = fresh_db["db_path"]
 
     # 1. Seed a belief using remember.py
-    remember.asyncio.run(
-        run({"category": "fact", "content": "Favorite color is indigo", "entity": "color", "_workdir": workdir})
-    )
+    remember.run({"category": "fact", "content": "Favorite color is indigo", "entity": "color", "_workdir": workdir})
 
     # 2. Phase 1: Dry run
-    res1 = archive.asyncio.run(run({"query": "indigo", "_confirmed": False, "_workdir": workdir}))
+    res1 = archive.run({"query": "indigo", "_confirmed": False, "_workdir": workdir})
     assert res1["status"] == "success"
     assert "Shall I forget this?" in res1["message"]
 
@@ -141,7 +139,7 @@ def test_archive_tool(fresh_db):
         assert cursor.fetchone()[0] is None
 
     # 3. Phase 2: Execution
-    res2 = archive.asyncio.run(run({"query": "indigo", "_confirmed": True, "_workdir": workdir}))
+    res2 = archive.run({"query": "indigo", "_confirmed": True, "_workdir": workdir})
     assert res2["status"] == "success"
     assert "forgotten this fact" in res2["message"]
 
@@ -154,6 +152,6 @@ def test_archive_tool(fresh_db):
 def test_archive_tool_no_match(fresh_db):
     """Verifies archive tool handles missing beliefs gracefully."""
     workdir = fresh_db["workdir"]
-    res = archive.asyncio.run(run({"query": "pizza", "_workdir": workdir}))
+    res = archive.run({"query": "pizza", "_workdir": workdir})
     assert res["status"] == "success"
     assert "couldn't find any active memory" in res["message"]

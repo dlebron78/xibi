@@ -1,4 +1,3 @@
-import asyncio
 from unittest.mock import MagicMock
 
 from xibi.react import run
@@ -85,9 +84,7 @@ def test_react_run_with_control_plane_intercepts():
     router = ControlPlaneRouter()
     config = Config(providers={})
     # ReAct should return without calling LLM (mock LLM not even needed)
-    result = asyncio.asyncio.run(
-        asyncio.run(run(asyncio.run(run(query="hello", config=config, skill_registry=[], control_plane=router)))
-    )
+    result = run(query="hello", config=config, skill_registry=[], control_plane=router)
     assert result.answer == "Hello! How can I help?"
     assert result.steps == []
     assert result.exit_reason == "finish"
@@ -102,9 +99,7 @@ def test_react_run_with_control_plane_falls_through(monkeypatch):
     mock_llm.generate.return_value = '{"thought": "test", "tool": "finish", "tool_input": {"answer": "react response"}}'
     monkeypatch.setattr("xibi.react.get_model", lambda **kwargs: mock_llm)
 
-    result = asyncio.asyncio.run(
-        run(asyncio.run(run(query="find invoice", config=config, skill_registry=[], control_plane=router)))
-    )
+    result = run(query="find invoice", config=config, skill_registry=[], control_plane=router)
     assert result.answer == "react response"
     assert len(result.steps) == 0  # finish is a pseudo-tool, not appended to scratchpad
     assert result.exit_reason == "finish"

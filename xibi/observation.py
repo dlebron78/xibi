@@ -645,16 +645,13 @@ class ObservationCycle:
         except Exception as e:
             logger.error(f"Error persisting cycle {cycle_id}: {e}", exc_info=True)
 
-    def run(self, *args, **kwargs):
+    def run(self, *args: Any, **kwargs: Any) -> ObservationResult:
         import asyncio
 
         try:
-            loop = asyncio.get_event_loop()
+            asyncio.get_running_loop()
+            # Already inside an async context — return the coroutine for the caller to await.
+            return self._run_async(*args, **kwargs)  # type: ignore[return-value]
         except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        if loop.is_running():
-            return self._run_async(*args, **kwargs)
-        else:
-            return loop.run_until_complete(self._run_async(*args, **kwargs))
+            # No running event loop — run synchronously with a fresh loop each time.
+            return asyncio.run(self._run_async(*args, **kwargs))

@@ -312,11 +312,8 @@ def main() -> None:
                     _spinner = threading.Thread(target=_spin, args=(_thinking,), daemon=True)
                     _spinner.start()
                 try:
-                    import asyncio
-
                     effective_format = str(args.react_format or config.get("react_format", "json"))
-                    # Use a local variable to help mypy with the coroutine return type
-                    coro = run(
+                    result = run(
                         query,
                         config,
                         registry.get_skill_manifests(),
@@ -328,7 +325,6 @@ def main() -> None:
                         tracer=tracer,
                         react_format=effective_format,
                     )
-                    result = asyncio.run(coro)
                 finally:
                     if spinner_active:
                         _thinking.set()

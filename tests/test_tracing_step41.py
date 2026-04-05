@@ -1,4 +1,3 @@
-import asyncio
 import sqlite3
 import time
 from unittest.mock import MagicMock, patch
@@ -116,7 +115,7 @@ def test_inference_event_written_without_trace_context(db_path, config):
 
 def test_span_emitted_when_trace_context_active(db_path, config):
     tracer = Tracer(db_path)
-    init_telemetry(db_path, tracer=tracer))
+    init_telemetry(db_path, tracer=tracer)
     client = OllamaClient("ollama", "qwen", {}, "http://localhost:11434")
 
     set_trace_context(trace_id="trace-123", span_id="parent-456", operation="test")
@@ -138,7 +137,7 @@ def test_span_emitted_when_trace_context_active(db_path, config):
 
 def test_span_has_correct_parent_span_id(db_path, config):
     tracer = Tracer(db_path)
-    init_telemetry(db_path, tracer=tracer))
+    init_telemetry(db_path, tracer=tracer)
     client = OllamaClient("ollama", "qwen", {}, "http://localhost:11434")
 
     set_trace_context(trace_id="t1", span_id="parent-s1", operation="test")
@@ -158,7 +157,7 @@ def test_span_has_correct_parent_span_id(db_path, config):
 
 def test_no_span_without_trace_context(db_path, config):
     tracer = Tracer(db_path)
-    init_telemetry(db_path, tracer=tracer))
+    init_telemetry(db_path, tracer=tracer)
     client = OllamaClient("ollama", "qwen", {}, "http://localhost:11434")
 
     with patch("requests.post") as mock_post:
@@ -176,7 +175,7 @@ def test_no_span_without_trace_context(db_path, config):
 
 def test_span_has_system_prompt_preview(db_path, config):
     tracer = Tracer(db_path)
-    init_telemetry(db_path, tracer=tracer))
+    init_telemetry(db_path, tracer=tracer)
     client = OllamaClient("ollama", "qwen", {}, "http://localhost:11434")
 
     set_trace_context(trace_id="t1", span_id="s1", operation="test")
@@ -202,7 +201,7 @@ def test_span_has_system_prompt_preview(db_path, config):
 
 def test_generate_structured_also_traced(db_path, config):
     tracer = Tracer(db_path)
-    init_telemetry(db_path, tracer=tracer))
+    init_telemetry(db_path, tracer=tracer)
     client = OllamaClient("ollama", "qwen", {}, "http://localhost:11434")
 
     set_trace_context(trace_id="t1", span_id="s1", operation="test")
@@ -227,13 +226,13 @@ def test_generate_structured_also_traced(db_path, config):
 def test_react_run_sets_and_clears_trace_context(db_path, config):
     registry = SkillRegistry("xibi/skills/sample")
     tracer = Tracer(db_path)
-    init_telemetry(db_path, tracer=tracer))
+    init_telemetry(db_path, tracer=tracer)
 
     with patch("xibi.router.OllamaClient._call_provider") as mock_call:
         mock_call.return_value = '{"thought": "done", "tool": "finish", "tool_input": {"answer": "ok"}}'
 
         with patch("xibi.router._check_provider_health", return_value=True):
-            asyncio.asyncio.asyncio.run(run(run(react_asyncio.run(run("hi", config, registry.get_skill_manifests()), tracer=tracer))))
+            react_run("hi", config, registry.get_skill_manifests(), tracer=tracer)
 
     assert _active_trace.get() is None
 
@@ -241,7 +240,7 @@ def test_react_run_sets_and_clears_trace_context(db_path, config):
 def test_multi_step_all_spans_have_same_trace_id(db_path, config):
     registry = SkillRegistry("xibi/skills/sample")
     tracer = Tracer(db_path)
-    init_telemetry(db_path, tracer=tracer))
+    init_telemetry(db_path, tracer=tracer)
 
     responses = [
         '{"thought": "use tool", "tool": "test_tool", "tool_input": {}}',
@@ -254,7 +253,7 @@ def test_multi_step_all_spans_have_same_trace_id(db_path, config):
             mock_dispatch.return_value = {"status": "ok", "result": "tool worked"}
 
             with patch("xibi.router._check_provider_health", return_value=True):
-                res = asyncio.run(react_asyncio.run(run("hi", config, registry.get_skill_manifests()), tracer=tracer))))))
+                res = react_run("hi", config, registry.get_skill_manifests(), tracer=tracer)
 
     with open_db(db_path) as conn:
         rows = conn.execute("SELECT trace_id FROM spans WHERE operation = 'llm.generate'").fetchall()
@@ -266,12 +265,12 @@ def test_multi_step_all_spans_have_same_trace_id(db_path, config):
 def test_inference_events_have_trace_id(db_path, config):
     registry = SkillRegistry("xibi/skills/sample")
     tracer = Tracer(db_path)
-    init_telemetry(db_path, tracer=tracer))
+    init_telemetry(db_path, tracer=tracer)
 
     with patch("xibi.router.OllamaClient._call_provider") as mock_call:
         mock_call.return_value = '{"thought": "done", "tool": "finish", "tool_input": {"answer": "ok"}}'
         with patch("xibi.router._check_provider_health", return_value=True):
-            res = asyncio.run(react_asyncio.run(run("hi", config, registry.get_skill_manifests()), tracer=tracer))))))
+            res = react_run("hi", config, registry.get_skill_manifests(), tracer=tracer)
 
     with open_db(db_path) as conn:
         conn.row_factory = sqlite3.Row
@@ -307,7 +306,7 @@ def test_duration_uses_monotonic_not_wall_clock(db_path, config):
 def test_parse_recovery_updates_parse_status(db_path, config):
     registry = SkillRegistry("xibi/skills/sample")
     tracer = Tracer(db_path)
-    init_telemetry(db_path, tracer=tracer))
+    init_telemetry(db_path, tracer=tracer)
 
     # First call returns bad JSON, second (recovery) returns good JSON
     responses = ["BAD JSON", '{"thought": "done", "tool": "finish", "tool_input": {"answer": "recovered"}}']
@@ -315,7 +314,7 @@ def test_parse_recovery_updates_parse_status(db_path, config):
     with patch("xibi.router.OllamaClient._call_provider") as mock_call:
         mock_call.side_effect = responses
         with patch("xibi.router._check_provider_health", return_value=True):
-            asyncio.run(react_asyncio.run(run("hi", config, registry.get_skill_manifests()), tracer=tracer))))
+            react_run("hi", config, registry.get_skill_manifests(), tracer=tracer)
 
     with open_db(db_path) as conn:
         # Get all llm.generate spans
@@ -334,7 +333,7 @@ def test_native_tool_dispatch_span_source_is_native(db_path, config):
     registry = SkillRegistry("xibi/skills/sample")
     executor = Executor(registry, config=config)
     tracer = Tracer(db_path)
-    init_telemetry(db_path, tracer=tracer))
+    init_telemetry(db_path, tracer=tracer)
 
     set_trace_context(trace_id="t1", span_id="s1", operation="test")
     try:
@@ -400,7 +399,7 @@ def test_tool_dispatch_span_has_input_preview(db_path, config):
     registry = SkillRegistry("xibi/skills/sample")
     executor = Executor(registry, config=config)
     tracer = Tracer(db_path)
-    init_telemetry(db_path, tracer=tracer))
+    init_telemetry(db_path, tracer=tracer)
 
     set_trace_context(trace_id="t1", span_id="s1", operation="test")
     try:
@@ -424,7 +423,7 @@ def test_tool_dispatch_span_duration_is_exact(db_path, config):
     registry = SkillRegistry("xibi/skills/sample")
     executor = LocalHandlerExecutor(registry, config=config)
     tracer = Tracer(db_path)
-    init_telemetry(db_path, tracer=tracer))
+    init_telemetry(db_path, tracer=tracer)
 
     set_trace_context(trace_id="t1", span_id="s1", operation="test")
     try:
@@ -443,7 +442,7 @@ def test_tool_dispatch_span_duration_is_exact(db_path, config):
 
     with open_db(db_path) as conn:
         conn.row_factory = sqlite3.Row
-        row = conn.execute("SELECT duration_ms FROM spans WHERE operation = 'tool.dispatch'"))).fetchone()
+        row = conn.execute("SELECT duration_ms FROM spans WHERE operation = 'tool.dispatch'").fetchone()
         # tolerance: should be around 110ms
         assert row is not None
         assert row["duration_ms"] >= 100
@@ -454,7 +453,7 @@ def test_react_py_no_longer_emits_tool_dispatch(db_path, config):
     # but we can verify it doesn't emit DOUBLE spans.
     registry = SkillRegistry("xibi/skills/sample")
     tracer = Tracer(db_path)
-    init_telemetry(db_path, tracer=tracer))
+    init_telemetry(db_path, tracer=tracer)
 
     with patch("xibi.router.OllamaClient._call_provider") as mock_call:
         mock_call.side_effect = [
@@ -469,7 +468,7 @@ def test_react_py_no_longer_emits_tool_dispatch(db_path, config):
             patch("xibi.router._check_provider_health", return_value=True),
         ):
             mock_exec_inner.return_value = {"status": "ok", "result": "done"}
-            asyncio.asyncio.asyncio.run(run(run(react_asyncio.run(run("hi", config, registry.get_skill_manifests()), tracer=tracer, executor=executor))))
+            react_run("hi", config, registry.get_skill_manifests(), tracer=tracer, executor=executor)
 
     with open_db(db_path) as conn:
         # Should have exactly 1 tool.dispatch span (from executor)
@@ -480,7 +479,7 @@ def test_react_py_no_longer_emits_tool_dispatch(db_path, config):
 def test_full_waterfall_llm_then_tool_then_llm(db_path, config):
     registry = SkillRegistry("xibi/skills/sample")
     tracer = Tracer(db_path)
-    init_telemetry(db_path, tracer=tracer))
+    init_telemetry(db_path, tracer=tracer)
 
     responses = [
         '{"thought": "use tool", "tool": "test_tool", "tool_input": {}}',
@@ -497,7 +496,7 @@ def test_full_waterfall_llm_then_tool_then_llm(db_path, config):
         ):
             mock_exec_inner.return_value = {"status": "ok", "result": "tool worked"}
 
-            asyncio.run(react_asyncio.run(run("hi", config, registry.get_skill_manifests()), tracer=tracer, executor=executor))))))
+            react_run("hi", config, registry.get_skill_manifests(), tracer=tracer, executor=executor)
 
     with open_db(db_path) as conn:
         # Spans should be: llm.generate, tool.dispatch, llm.generate

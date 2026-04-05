@@ -31,7 +31,7 @@ def test_execute_calls_run_function(tmp_path):
     (skill_dir / "manifest.json").write_text(json.dumps({"name": "skill1", "tools": [{"name": "tool1"}]}))
     tools_dir = skill_dir / "tools"
     tools_dir.mkdir()
-    (tools_dir / "tool1.py").write_text("def asyncio.run(run(params)): return {'status': 'ok', 'message': 'success'}")
+    (tools_dir / "tool1.py").write_text("def run(params): return {'status': 'ok', 'message': 'success'}")
 
     registry = SkillRegistry(tmp_path)
     executor = Executor(registry)
@@ -45,9 +45,7 @@ def test_execute_injects_workdir(tmp_path):
     (skill_dir / "manifest.json").write_text(json.dumps({"name": "skill1", "tools": [{"name": "tool1"}]}))
     tools_dir = skill_dir / "tools"
     tools_dir.mkdir()
-    (tools_dir / "tool1.py").write_text(
-        "def asyncio.run(run(params)): return {'status': 'ok', 'workdir': params.get('_workdir')}"
-    )
+    (tools_dir / "tool1.py").write_text("def run(params): return {'status': 'ok', 'workdir': params.get('_workdir')}")
 
     registry = SkillRegistry(tmp_path)
     workdir = tmp_path / "work"
@@ -62,7 +60,7 @@ def test_execute_does_not_mutate_input(tmp_path):
     (skill_dir / "manifest.json").write_text(json.dumps({"name": "skill1", "tools": [{"name": "tool1"}]}))
     tools_dir = skill_dir / "tools"
     tools_dir.mkdir()
-    (tools_dir / "tool1.py").write_text("def asyncio.run(run(params)): params['added'] = True; return {'status': 'ok'}")
+    (tools_dir / "tool1.py").write_text("def run(params): params['added'] = True; return {'status': 'ok'}")
 
     registry = SkillRegistry(tmp_path)
     executor = Executor(registry, workdir="/tmp")
@@ -78,7 +76,7 @@ def test_execute_handles_exception(tmp_path):
     (skill_dir / "manifest.json").write_text(json.dumps({"name": "skill1", "tools": [{"name": "tool1"}]}))
     tools_dir = skill_dir / "tools"
     tools_dir.mkdir()
-    (tools_dir / "tool1.py").write_text("def asyncio.run(run(params)): raise ValueError('boom')")
+    (tools_dir / "tool1.py").write_text("def run(params): raise ValueError('boom')")
 
     registry = SkillRegistry(tmp_path)
     executor = Executor(registry)

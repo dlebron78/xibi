@@ -18,7 +18,7 @@ def xibi_workdir():
 
 def test_remember_writes_to_xibi_db(xibi_workdir):
     # 1. call remember.run
-    res = remember.asyncio.run(run({"content": "test fact", "category": "preference", "_workdir": str(xibi_workdir))})
+    res = remember.run({"content": "test fact", "category": "preference", "_workdir": str(xibi_workdir)})
     assert res["status"] == "success"
 
     # 2. open xibi.db directly with sqlite3
@@ -39,7 +39,7 @@ def test_recall_reads_from_beliefs_table(xibi_workdir):
         )
         conn.commit()
 
-    res = recall.asyncio.run(run({"query": "belief_keyword", "_workdir": str(xibi_workdir))})
+    res = recall.run({"query": "belief_keyword", "_workdir": str(xibi_workdir)})
     assert res["status"] == "success"
     # assert the belief appears in the response with source: "belief"
     found = [
@@ -57,7 +57,7 @@ def test_recall_reads_from_ledger_table(xibi_workdir):
         )
         conn.commit()
 
-    res = recall.asyncio.run(run({"query": "ledger_keyword", "_workdir": str(xibi_workdir))})
+    res = recall.run({"query": "ledger_keyword", "_workdir": str(xibi_workdir)})
     assert res["status"] == "success"
     # assert the ledger item appears in the response with source: "ledger"
     found = [
@@ -78,7 +78,7 @@ def test_recall_merges_both_sources(xibi_workdir):
         )
         conn.commit()
 
-    res = recall.asyncio.run(run({"query": "shared_key", "_workdir": str(xibi_workdir))})
+    res = recall.run({"query": "shared_key", "_workdir": str(xibi_workdir)})
     assert res["status"] == "success"
     sources = [item.get("source") for item in res["items"]]
     assert "belief" in sources
@@ -94,7 +94,7 @@ def test_recall_excludes_compression_markers(xibi_workdir):
         )
         conn.commit()
 
-    res = recall.asyncio.run(run({"query": "marker_key", "_workdir": str(xibi_workdir))})
+    res = recall.run({"query": "marker_key", "_workdir": str(xibi_workdir)})
     assert res["status"] == "success"
     for item in res["items"]:
         assert item.get("key") != "marker_key"
@@ -109,7 +109,7 @@ def test_recall_excludes_expired_beliefs(xibi_workdir):
         )
         conn.commit()
 
-    res = recall.asyncio.run(run({"query": "expired_key", "_workdir": str(xibi_workdir))})
+    res = recall.run({"query": "expired_key", "_workdir": str(xibi_workdir)})
     assert res["status"] == "success"
     for item in res["items"]:
         assert item.get("key") != "expired_key"
@@ -122,7 +122,7 @@ def test_archive_expires_belief(xibi_workdir):
     )
 
     # call archive.run
-    res = archive.asyncio.run(run({"query": "test_key", "_confirmed": True, "_workdir": str(xibi_workdir))})
+    res = archive.run({"query": "test_key", "_confirmed": True, "_workdir": str(xibi_workdir)})
     assert res["status"] == "success"
 
     # open xibi.db directly and assert valid_until IS NOT NULL
@@ -135,7 +135,7 @@ def test_archive_expires_belief(xibi_workdir):
 
 def test_remember_missing_db_raises_cleanly():
     # call remember.run with nonexistent path
-    res = remember.asyncio.run(run({"content": "x", "_workdir": "/nonexistent/path/at/all"}))
+    res = remember.run({"content": "x", "_workdir": "/nonexistent/path/at/all"})
     assert res["status"] == "error"
     # Expecting a useful message from open_db or the tool
     assert (

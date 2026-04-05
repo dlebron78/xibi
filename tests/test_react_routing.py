@@ -1,4 +1,3 @@
-import asyncio
 from __future__ import annotations
 
 import unittest
@@ -26,7 +25,7 @@ class TestReActRouting(unittest.TestCase):
         mock_classifier = MagicMock()
         mock_classifier.classify.return_value = None
 
-        asyncio.run(asyncio.run(asyncio.run(react_run(
+        react_run(
             "test query",
             self.config,
             self.skill_registry,
@@ -46,7 +45,7 @@ class TestReActRouting(unittest.TestCase):
             skill="email", tool="list_emails", confidence=0.85, reasoning="test"
         )
 
-        asyncio.run(asyncio.run(react_run(
+        react_run(
             "test query",
             self.config,
             self.skill_registry,
@@ -74,7 +73,7 @@ class TestReActRouting(unittest.TestCase):
         )
         mock_classifier = MagicMock()
 
-        asyncio.run(asyncio.run(asyncio.run(react_run(
+        react_run(
             "test query",
             self.config,
             self.skill_registry,
@@ -98,13 +97,13 @@ class TestReActRouting(unittest.TestCase):
         )
         mock_classifier = MagicMock()
 
-        asyncio.run(asyncio.run(asyncio.run(react_run(
+        react_run(
             "test query",
             self.config,
             self.skill_registry,
             shadow=mock_shadow,
             llm_routing_classifier=mock_classifier,
-        ))
+        )
 
         mock_classifier.classify.assert_not_called()
 
@@ -115,7 +114,7 @@ class TestReActRouting(unittest.TestCase):
         mock_shadow.match.return_value = None
 
         # Should not raise AttributeError when llm_routing_classifier is None
-        asyncio.run(asyncio.run(asyncio.run(react_run(
+        react_run(
             "test query",
             self.config,
             self.skill_registry,
@@ -131,13 +130,13 @@ class TestReActRouting(unittest.TestCase):
         mock_classifier = MagicMock()
         mock_classifier.classify.side_effect = RuntimeError("test error")
 
-        result = asyncio.run(asyncio.run(react_asyncio.asyncio.run(run(run(
+        result = react_run(
             "test query",
             self.config,
             self.skill_registry,
             shadow=mock_shadow,
             llm_routing_classifier=mock_classifier,
-        )))
+        )
 
         self.assertEqual(result.exit_reason, "finish")
         self.assertEqual(result.answer, "ok")
@@ -150,7 +149,7 @@ class TestReActRouting(unittest.TestCase):
         mock_classifier = MagicMock()
         mock_classifier.classify.return_value = None
 
-        asyncio.run(asyncio.run(asyncio.run(react_run(
+        react_run(
             "test query",
             self.config,
             self.skill_registry,
@@ -182,7 +181,7 @@ class TestReActRouting(unittest.TestCase):
                     "XIBI_TELEGRAM_ALLOWED_CHAT_IDS": "123",
                     "XIBI_SYNC_SESSION": "1",
                 },
-            )):
+            ):
                 adapter = TelegramAdapter(
                     config=self.config,
                     skill_registry=mock_registry,
