@@ -13,10 +13,15 @@ class SignalExtractorRegistry:
     extractors: dict[str, Callable[[str, Any, dict], list[dict]]] = {}
 
     @classmethod
-    def register(cls, name: str):
-        def decorator(fn: Callable[[str, Any, dict], list[dict]]):
+    def register(
+        cls, name: str
+    ) -> Callable[[Callable[[str, Any, dict], list[dict]]], Callable[[str, Any, dict], list[dict]]]:
+        def decorator(
+            fn: Callable[[str, Any, dict], list[dict]],
+        ) -> Callable[[str, Any, dict], list[dict]]:
             cls.extractors[name] = fn
             return fn
+
         return decorator
 
     @classmethod
@@ -57,16 +62,18 @@ def extract_email_signals(source: str, data: Any, context: dict) -> list[dict]:
             sender = sender.get("name") or sender.get("addr", "unknown")
         subject = email.get("subject", "No Subject")
 
-        signals.append({
-            "source": source,
-            "topic_hint": subject,
-            "entity_text": str(sender),
-            "entity_type": "person",
-            "content_preview": f"{sender}: {subject}",
-            "ref_id": email_id,
-            "ref_source": "email",
-            "metadata": {"email": email}
-        })
+        signals.append(
+            {
+                "source": source,
+                "topic_hint": subject,
+                "entity_text": str(sender),
+                "entity_type": "person",
+                "content_preview": f"{sender}: {subject}",
+                "ref_id": email_id,
+                "ref_source": "email",
+                "metadata": {"email": email},
+            }
+        )
     return signals
 
 
@@ -79,17 +86,19 @@ def extract_calendar_signals(source: str, data: Any, context: dict) -> list[dict
 
     signals = []
     for event in data.get("events", []):
-        signals.append({
-            "source": source,
-            "type": "event",
-            "entity_text": event.get("organizer", "unknown"),
-            "topic_hint": event.get("summary", ""),
-            "content_preview": f"Event: {event.get('summary', '')} at {event.get('start', '')}",
-            "timestamp": event.get("start", ""),
-            "ref_id": event.get("id", ""),
-            "ref_source": "calendar",
-            "metadata": {"event": event},
-        })
+        signals.append(
+            {
+                "source": source,
+                "type": "event",
+                "entity_text": event.get("organizer", "unknown"),
+                "topic_hint": event.get("summary", ""),
+                "content_preview": f"Event: {event.get('summary', '')} at {event.get('start', '')}",
+                "timestamp": event.get("start", ""),
+                "ref_id": event.get("id", ""),
+                "ref_source": "calendar",
+                "metadata": {"event": event},
+            }
+        )
     return signals
 
 
@@ -107,11 +116,13 @@ def extract_generic_signals(source: str, data: Any, context: dict) -> list[dict]
     else:
         text = str(data)
 
-    return [{
-        "source": source,
-        "type": "mcp_result",
-        "content_preview": text[:500],
-        "raw": text,
-        "structured": structured,
-        "needs_llm_extraction": True,
-    }]
+    return [
+        {
+            "source": source,
+            "type": "mcp_result",
+            "content_preview": text[:500],
+            "raw": text,
+            "structured": structured,
+            "needs_llm_extraction": True,
+        }
+    ]

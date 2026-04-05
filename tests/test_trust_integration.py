@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -123,7 +124,7 @@ def test_observation_cycle_records_success_on_clean_loop(db_path, tg, mock_profi
         patch.object(obs, "_collect_signals", return_value=[{"id": 1}]),
         patch.object(obs, "_build_observation_dump", return_value="dump"),
     ):
-        res = obs.run()
+        res = asyncio.run(obs.run())
 
     assert res.ran
     record = tg.get_record("text", "review")
@@ -149,7 +150,7 @@ def test_observation_cycle_records_failure_on_schema_error(db_path, tg, mock_pro
         patch.object(obs, "_collect_signals", return_value=[{"id": 1}]),
         patch.object(obs, "_build_observation_dump", return_value="dump"),
     ):
-        res = obs.run()
+        res = asyncio.run(obs.run())
 
     assert res.ran
     record = tg.get_record("text", "review")
@@ -170,7 +171,7 @@ def test_observation_cycle_trust_failure_never_raises(db_path, tg, mock_profile)
         patch.object(obs, "_build_observation_dump", return_value="dump"),
     ):
         # Should not crash
-        obs.run()
+        asyncio.run(obs.run())
 
 
 def test_observation_cycle_no_trust_gradient_no_error(db_path, mock_profile):
@@ -183,7 +184,7 @@ def test_observation_cycle_no_trust_gradient_no_error(db_path, mock_profile):
         patch.object(obs, "_collect_signals", return_value=[{"id": 1}]),
         patch.object(obs, "_build_observation_dump", return_value="dump"),
     ):
-        obs.run()
+        asyncio.run(obs.run())
 
 
 # --- Radiant tests ---

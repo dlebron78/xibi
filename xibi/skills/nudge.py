@@ -13,7 +13,14 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-async def nudge(message: str, thread_id: str | None = None, refs: list | None = None, category: str = "info", _config: dict | None = None, _workdir: str | None = None) -> dict:
+async def nudge(
+    message: str,
+    thread_id: str | None = None,
+    refs: list | None = None,
+    category: str = "info",
+    _config: dict | None = None,
+    _workdir: str | None = None,
+) -> dict:
     """Send a proactive notification to the operator via Telegram."""
     if not message:
         return {"status": "error", "error": "message is required"}
@@ -48,6 +55,7 @@ async def nudge(message: str, thread_id: str | None = None, refs: list | None = 
                         with open(cfg_path) as f:
                             if ext == ".yaml":
                                 import yaml
+
                                 config = yaml.safe_load(f)
                             else:
                                 config = json.load(f)
@@ -100,6 +108,7 @@ async def nudge(message: str, thread_id: str | None = None, refs: list | None = 
         except Exception as e:
             logger.debug(f"nudge: falling back to raw urllib: {e}")
             import urllib.request
+
             api_url = f"https://api.telegram.org/bot{token}/sendMessage"
             payload = {"chat_id": chat_id, "text": text}
             data = json.dumps(payload).encode("utf-8")

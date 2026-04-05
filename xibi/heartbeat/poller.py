@@ -72,10 +72,11 @@ class HeartbeatPoller:
         self._last_reflection_date: Any = None  # Tracks date as string or None
         self._audit_tick_counter = 0
         self._jules_watcher = self._init_jules_watcher()
+        _mcp_exec = getattr(self.executor, "mcp_executor", None)
         self.source_poller = SourcePoller(
             config=self.profile if self.profile else {},
             executor=self.executor,
-            mcp_registry=getattr(self.executor, "mcp_executor", None).registry if hasattr(self.executor, "mcp_executor") and self.executor.mcp_executor else None
+            mcp_registry=_mcp_exec.registry if _mcp_exec is not None else None,
         )
 
     def _init_jules_watcher(self) -> Any | None:
@@ -255,10 +256,7 @@ class HeartbeatPoller:
             extractor_name = result["extractor"]
 
             raw_signals = SignalExtractorRegistry.extract(
-                extractor_name,
-                source_name,
-                data,
-                context={"db_path": self.db_path, "config": self.profile}
+                extractor_name, source_name, data, context={"db_path": self.db_path, "config": self.profile}
             )
 
             # Special processing for email signals (classification/triage)
@@ -282,7 +280,77 @@ class HeartbeatPoller:
                 except Exception as e:
                     logger.warning(f"Error logging signals for {source_name}: {e}", exc_info=True)
 
-    async def _process_email_signals(self, raw_signals: list[dict], seen_ids: set[str], triage_rules: dict, email_rules: list) -> None:
+        # Phase 3: Post-processing (Intelligence, Observation, Jules, Radiant)
+        if self.signal_intelligence_enabled:
+            try:
+                from xibi.signal_intelligence import enrich_signals
+
+                enriched = enrich_signals(
+                    db_path=self.db_path,
+                    config=None,
+                    batch_size=20,
+                    config_path=self.config_path,
+                    trust_gradient=self.trust_gradient,
+                )
+                if enriched > 0:
+                    logger.debug(f"Signal intelligence: enriched {enriched} signals")
+            except Exception as e:
+                logger.warning(f"Signal intelligence enrichment failed: {e}", exc_info=True)
+
+        if self.observation_cycle is not None:
+            try:
+                # Before running:
+                if self.radiant and self.radiant.ceiling_status()["throttle"]:
+                    logger.info("Radiant: cost ceiling reached, skipping observation cycle")
+                    obs_result = None
+                else:
+                    obs_result = await self.observation_cycle.run(
+                        executor=self.executor if hasattr(self, "executor") else None,
+                        command_layer=CommandLayer(
+                            db_path=str(self.db_path),
+                            profile=self.profile,
+                            interactive=False,  # ALWAYS non-interactive in heartbeat context
+                        ),
+                    )
+
+                if obs_result and obs_result.ran:
+                    logger.info(
+                        f"Observation cycle ran: {obs_result.signals_processed} signals, "
+                        f"role={obs_result.role_used}, actions={len(obs_result.actions_taken)}"
+                    )
+                    if self.radiant:
+                        self.radiant.record(
+                            role=obs_result.role_used,
+                            provider=_infer_provider(obs_result.role_used, self.profile),
+                            model=_infer_model(obs_result.role_used, self.profile),
+                            operation="observation_cycle",
+                            prompt_tokens=0,
+                            response_tokens=0,
+                            duration_ms=0,
+                        )
+                        self.radiant.check_and_nudge(self.adapter)
+                elif obs_result:
+                    logger.debug(f"Observation cycle skipped: {obs_result.skip_reason}")
+            except Exception as e:
+                logger.warning(f"Observation cycle trigger failed: {e}", exc_info=True)
+
+        # Poll Jules sessions for pending questions — auto-answer via LLM
+        if self._jules_watcher:
+            try:
+                self._jules_watcher.poll()
+            except Exception as e:
+                logger.warning("JulesWatcher poll failed: %s", e, exc_info=True)
+
+        if self.radiant:
+            self._audit_tick_counter += 1
+            audit_interval = self.profile.get("audit_interval_ticks", 20)
+            if self._audit_tick_counter >= audit_interval:
+                self._audit_tick_counter = 0
+                self.radiant.run_audit(self.adapter, trust_gradient=self.trust_gradient)
+
+    async def _process_email_signals(
+        self, raw_signals: list[dict], seen_ids: set[str], triage_rules: dict, email_rules: list
+    ) -> None:
         processed: list[dict] = []
         for sig in raw_signals:
             email = sig["metadata"]["email"]
@@ -308,15 +376,17 @@ class HeartbeatPoller:
             if verdict == "DIGEST":
                 verdict, subject = self._should_escalate(verdict, subject, subject, [])
 
-            processed.append({
-                "email": email,
-                "email_id": email_id,
-                "sender": sender,
-                "subject": subject,
-                "verdict": verdict,
-                "is_new": email_id not in seen_ids,
-                "sig": sig
-            })
+            processed.append(
+                {
+                    "email": email,
+                    "email_id": email_id,
+                    "sender": sender,
+                    "subject": subject,
+                    "verdict": verdict,
+                    "is_new": email_id not in seen_ids,
+                    "sig": sig,
+                }
+            )
 
         try:
             with xibi.db.open_db(self.db_path) as conn, conn:
@@ -337,7 +407,9 @@ class HeartbeatPoller:
                     if not item["is_new"] or item["verdict"] == "DEFER":
                         continue
 
-                    self.rules.log_triage_with_conn(conn, item["email_id"], str(item["sender"]), item["subject"], item["verdict"])
+                    self.rules.log_triage_with_conn(
+                        conn, item["email_id"], str(item["sender"]), item["subject"], item["verdict"]
+                    )
                     self.rules.mark_seen_with_conn(conn, item["email_id"])
 
                     if item["verdict"] == "URGENT":
@@ -346,75 +418,6 @@ class HeartbeatPoller:
                             self._broadcast(alert_msg)
         except Exception as e:
             logger.warning(f"Error in process_email_signals write phase: {e}", exc_info=True)
-
-        # Phase 3: Post-processing (Intelligence, Observation, Jules, Radiant)
-        if self.signal_intelligence_enabled:
-            try:
-                from xibi.signal_intelligence import enrich_signals
-
-                enriched = enrich_signals(
-                    db_path=self.db_path,
-                    config=None,
-                    batch_size=20,
-                    config_path=self.config_path,
-                    trust_gradient=self.trust_gradient,
-                )
-                if enriched > 0:
-                    logger.debug(f"Signal intelligence: enriched {enriched} signals")
-            except Exception as e:
-                logger.warning(f"Signal intelligence enrichment failed: {e}", exc_info=True)
-
-        if self.observation_cycle is not None:
-            try:
-                # Before running:
-                if self.radiant and self.radiant.ceiling_status()["throttle"]:
-                    logger.info("Radiant: cost ceiling reached, skipping observation cycle")
-                    # Instead of returning, we just skip this block so the rest of tick can finish
-                    obs_result = None
-                else:
-                    obs_result = await self.observation_cycle.run(
-                        executor=self.executor if hasattr(self, "executor") else None,
-                        command_layer=CommandLayer(
-                            db_path=str(self.db_path),
-                            profile=self.profile,
-                            interactive=False,  # ALWAYS non-interactive in heartbeat context
-                        ),
-                    )
-
-                if obs_result and obs_result.ran:
-                    logger.info(
-                        f"Observation cycle ran: {obs_result.signals_processed} signals, "
-                        f"role={obs_result.role_used}, actions={len(obs_result.actions_taken)}"
-                    )
-                    # After run() completes, record the inference event:
-                    if self.radiant:
-                        self.radiant.record(
-                            role=obs_result.role_used,
-                            provider=_infer_provider(obs_result.role_used, self.profile),
-                            model=_infer_model(obs_result.role_used, self.profile),
-                            operation="observation_cycle",
-                            prompt_tokens=0,  # ObservationCycle doesn't expose token counts yet — use 0
-                            response_tokens=0,
-                            duration_ms=0,  # ObservationResult doesn't have duration_ms yet
-                        )
-                        self.radiant.check_and_nudge(self.adapter)
-                elif obs_result:
-                    logger.debug(f"Observation cycle skipped: {obs_result.skip_reason}")
-            except Exception as e:
-                logger.warning(f"Observation cycle trigger failed: {e}", exc_info=True)
-
-        # Poll Jules sessions for pending questions — auto-answer via LLM
-        if self._jules_watcher:
-            try:
-                self._jules_watcher.poll()
-            except Exception as e:
-                logger.warning("JulesWatcher poll failed: %s", e, exc_info=True)
-        if self.radiant:
-            self._audit_tick_counter += 1
-            audit_interval = self.profile.get("audit_interval_ticks", 20)
-            if self._audit_tick_counter >= audit_interval:
-                self._audit_tick_counter = 0
-                self.radiant.run_audit(self.adapter, trust_gradient=self.trust_gradient)
 
     def digest_tick(self, force: bool = False) -> None:
         if self._is_quiet_hours() and not force:

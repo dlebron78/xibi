@@ -430,17 +430,23 @@ class TelegramAdapter:
 
             import asyncio
             from typing import cast
-            result = cast(ReActResult, asyncio.run(react_run(
-                user_text,
-                self.config,
-                self.skill_registry.get_skill_manifests(),
-                executor=self.executor,
-                control_plane=self.control_plane,
-                shadow=self.shadow,
-                session_context=session,
-                llm_routing_classifier=self.llm_routing_classifier,
-                react_format=str(self.config.get("react_format", "json")),
-            )))
+
+            result = cast(
+                ReActResult,
+                asyncio.run(
+                    react_run(
+                        user_text,
+                        self.config,
+                        self.skill_registry.get_skill_manifests(),
+                        executor=self.executor,
+                        control_plane=self.control_plane,
+                        shadow=self.shadow,
+                        session_context=session,
+                        llm_routing_classifier=self.llm_routing_classifier,
+                        react_format=str(self.config.get("react_format", "json")),
+                    )
+                ),
+            )
             if result.answer:
                 response = result.answer
             elif result.exit_reason in ("error", "timeout", "max_steps"):

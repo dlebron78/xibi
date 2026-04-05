@@ -37,26 +37,30 @@ class SourcePoller:
             try:
                 result = await self._poll_source(source)
                 self.last_poll[name] = now
-                results.append({
-                    "source": name,
-                    "type": source["type"],
-                    "data": result,
-                    "extractor": source.get("signal_extractor", "generic"),
-                })
+                results.append(
+                    {
+                        "source": name,
+                        "type": source["type"],
+                        "data": result,
+                        "extractor": source.get("signal_extractor", "generic"),
+                    }
+                )
             except Exception as e:
                 logger.error(f"Source '{name}' poll failed: {e}", exc_info=True)
                 # Don't update last_poll — retry next tick
-                results.append({
-                    "source": name,
-                    "type": source["type"],
-                    "data": None,
-                    "error": str(e),
-                    "extractor": source.get("signal_extractor", "generic"),
-                })
+                results.append(
+                    {
+                        "source": name,
+                        "type": source["type"],
+                        "data": None,
+                        "error": str(e),
+                        "extractor": source.get("signal_extractor", "generic"),
+                    }
+                )
 
         return results
 
-    async def _poll_source(self, source: dict) -> dict:
+    async def _poll_source(self, source: dict) -> dict[str, Any]:
         """Dispatch a single source poll to the right executor."""
         if source["type"] == "mcp":
             if not self.mcp_registry:
@@ -70,9 +74,11 @@ class SourcePoller:
             if not client:
                 raise ValueError(f"MCP client for '{server_name}' not found")
 
-            return await client.call_tool(tool_name, args)
+            result: dict[str, Any] = await client.call_tool(tool_name, args)
+            return result
         else:
             # Native tool — dispatch through executor
             tool_name = source["tool"]
             args = source.get("args", {})
-            return await self.executor.execute(tool_name, args)
+            result = await self.executor.execute(tool_name, args)
+            return dict(result)

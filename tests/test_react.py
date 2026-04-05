@@ -1,3 +1,4 @@
+import asyncio
 import json
 from unittest.mock import MagicMock
 
@@ -102,7 +103,7 @@ def test_run_finish_on_first_step(mock_get_model, mock_config, skill_registry):
         {"thought": "I have the answer", "tool": "finish", "tool_input": {"answer": "London is cold"}}
     )
 
-    result = run("query", mock_config, skill_registry)
+    result = asyncio.run(run("query", mock_config, skill_registry))
 
     assert result.exit_reason == "finish"
     assert result.answer == "London is cold"
@@ -117,7 +118,7 @@ def test_run_ask_user_exit(mock_get_model, mock_config, skill_registry):
         {"thought": "I need more info", "tool": "ask_user", "tool_input": {"question": "What is the date?"}}
     )
 
-    result = run("query", mock_config, skill_registry)
+    result = asyncio.run(run("query", mock_config, skill_registry))
 
     assert result.exit_reason == "ask_user"
     assert result.answer == "What is the date?"
@@ -141,7 +142,7 @@ def test_run_max_steps_exit(mock_get_model, mock_config, skill_registry):
         json.dumps({"thought": f"t{i}", "tool": "search", "tool_input": {"query": f"q{i}"}}) for i in range(15)
     ]
 
-    result = run("query", mock_config, skill_registry, max_steps=5)
+    result = asyncio.run(run("query", mock_config, skill_registry, max_steps=5))
 
     assert result.exit_reason == "max_steps"
     assert len(result.steps) == 5
@@ -154,7 +155,7 @@ def test_run_consecutive_errors_exit(mock_get_model, mock_config):
     # Tool "unknown" will return error from dispatch
     mock_llm.generate.return_value = json.dumps({"thought": "Trying unknown tool", "tool": "unknown", "tool_input": {}})
 
-    result = run("query", mock_config, [], max_steps=10)
+    result = asyncio.run(run("query", mock_config, [], max_steps=10))
 
     assert result.exit_reason == "error"
     assert len(result.steps) == 3
@@ -174,7 +175,7 @@ def test_run_repeat_detection(mock_get_model, mock_config, skill_registry):
         json.dumps({"thought": "t3", "tool": "finish", "tool_input": {"answer": "done"}}),
     ]
 
-    result = run("query", mock_config, skill_registry)
+    result = asyncio.run(run("query", mock_config, skill_registry))
 
     assert result.exit_reason == "finish"
     assert len(result.steps) == 2
@@ -192,7 +193,7 @@ def test_run_parse_recovery(mock_get_model, mock_config, skill_registry):
         json.dumps({"thought": "recovered", "tool": "finish", "tool_input": {"answer": "ok"}}),
     ]
 
-    result = run("query", mock_config, skill_registry)
+    result = asyncio.run(run("query", mock_config, skill_registry))
 
     assert result.exit_reason == "finish"
     assert len(result.steps) == 0
@@ -219,7 +220,7 @@ def test_run_timeout(mock_get_model, mock_config, skill_registry, mocker):
         {"thought": "thinking", "tool": "search", "tool_input": {"q": "something"}}
     )
 
-    result = run("query", mock_config, skill_registry, max_secs=60)
+    result = asyncio.run(run("query", mock_config, skill_registry, max_secs=60))
 
     assert result.exit_reason == "timeout"
 
@@ -246,7 +247,7 @@ def test_run_consecutive_errors_resets_on_success(mock_get_model, mock_config, s
     ]
     mock_llm.generate.side_effect = responses
 
-    result = run("query", mock_config, skill_registry, max_steps=10)
+    result = asyncio.run(run("query", mock_config, skill_registry, max_steps=10))
 
     assert result.exit_reason == "finish"
     assert len(result.steps) == 5
@@ -258,7 +259,7 @@ def test_trust_record_success_on_clean_parse(mock_get_model, mock_config, skill_
     mock_llm.generate.return_value = json.dumps({"thought": "done", "tool": "finish", "tool_input": {"answer": "ok"}})
 
     mock_trust = MagicMock()
-    run("query", mock_config, skill_registry, trust_gradient=mock_trust)
+    asyncio.run(run("query", mock_config, skill_registry, trust_gradient=mock_trust))
 
     mock_trust.record_success.assert_called_with("text", "fast")
 
@@ -270,7 +271,7 @@ def test_trust_record_failure_on_parse_error(mock_get_model, mock_config, skill_
     mock_llm.generate.return_value = "garbage"
 
     mock_trust = MagicMock()
-    run("query", mock_config, skill_registry, trust_gradient=mock_trust, max_steps=1)
+    asyncio.run(run("query", mock_config, skill_registry, trust_gradient=mock_trust, max_steps=1))
 
     # In the first step:
     # 1. First generate() returns "garbage" -> catch Exception
@@ -284,7 +285,7 @@ def test_trust_record_failure_on_timeout(mock_get_model, mock_config, skill_regi
     mocker.patch("time.time", side_effect=[0, 100, 110])  # start=0, first loop check=100 (>60)
 
     mock_trust = MagicMock()
-    run("query", mock_config, skill_registry, trust_gradient=mock_trust, max_secs=60)
+    asyncio.run(run("query", mock_config, skill_registry, trust_gradient=mock_trust, max_secs=60))
 
     mock_trust.record_failure.assert_called_with("text", "fast", FailureType.TRANSIENT)
 
@@ -298,7 +299,7 @@ def test_trust_injectable(mock_get_model, mock_config, skill_registry, tmp_path)
     migrate(db_path)
     trust = TrustGradient(db_path)
 
-    run("query", mock_config, skill_registry, trust_gradient=trust)
+    asyncio.run(run("query", mock_config, skill_registry, trust_gradient=trust))
 
     record = trust.get_record("text", "fast")
     assert record is not None

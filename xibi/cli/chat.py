@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 import atexit
 import contextlib
 import json
@@ -313,17 +314,19 @@ def main() -> None:
                     _spinner.start()
                 try:
                     effective_format = str(args.react_format or config.get("react_format", "json"))
-                    result = run(
-                        query,
-                        config,
-                        registry.get_skill_manifests(),
-                        executor=executor,
-                        control_plane=None,  # Already checked
-                        shadow=None if _multi else shadow,  # skip shadow for multi-source
-                        step_callback=step_callback,
-                        session_context=session,
-                        tracer=tracer,
-                        react_format=effective_format,
+                    result = asyncio.run(
+                        run(
+                            query,
+                            config,
+                            registry.get_skill_manifests(),
+                            executor=executor,
+                            control_plane=None,  # Already checked
+                            shadow=None if _multi else shadow,  # skip shadow for multi-source
+                            step_callback=step_callback,
+                            session_context=session,
+                            tracer=tracer,
+                            react_format=effective_format,
+                        )
                     )
                 finally:
                     if spinner_active:

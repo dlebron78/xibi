@@ -1,18 +1,15 @@
-import unittest
-from unittest.mock import patch, MagicMock
 import asyncio
-from xibi.skills.sample.nudge.tools.nudge import run
-import os
 import json
-from pathlib import Path
+import os
+import unittest
+from unittest.mock import MagicMock, patch
+
+from xibi.skills.sample.nudge.tools.nudge import run
+
 
 class TestNudge(unittest.TestCase):
     def setUp(self):
-        self.params = {
-            "message": "Test notification",
-            "category": "info",
-            "_workdir": "/tmp/xibi_test"
-        }
+        self.params = {"message": "Test notification", "category": "info", "_workdir": "/tmp/xibi_test"}
         os.makedirs("/tmp/xibi_test", exist_ok=True)
         with open("/tmp/xibi_test/config.json", "w") as f:
             json.dump({"telegram": {"chat_id": 12345}}, f)
@@ -50,6 +47,7 @@ class TestNudge(unittest.TestCase):
         self.assertEqual(res["status"], "error")
         self.assertIn("message is required", res["error"])
         loop.close()
+
 
 if __name__ == "__main__":
     unittest.main()

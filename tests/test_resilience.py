@@ -1,3 +1,4 @@
+import asyncio
 import contextlib
 import time
 from unittest.mock import MagicMock, patch
@@ -123,7 +124,7 @@ def test_react_collects_error_summary():
     config = {"models": {"text": {"fast": {"provider": "mock", "model": "m"}}}, "providers": {"mock": {}}}
 
     with patch("xibi.react.get_model", return_value=llm):
-        result = run("query", config, [], executor=executor)
+        result = asyncio.run(run("query", config, [], executor=executor))
 
     assert len(result.error_summary) == 1
     assert result.error_summary[0].category == ErrorCategory.TIMEOUT

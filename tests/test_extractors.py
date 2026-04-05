@@ -1,5 +1,7 @@
 import unittest
+
 from xibi.heartbeat.extractors import SignalExtractorRegistry
+
 
 class TestExtractors(unittest.TestCase):
     def test_email_extractor(self):
@@ -22,6 +24,7 @@ class TestExtractors(unittest.TestCase):
         self.assertEqual(len(signals), 1)
         self.assertEqual(signals[0]["raw"], "Raw text")
         self.assertTrue(signals[0]["needs_llm_extraction"])
+
 
 if __name__ == "__main__":
     unittest.main()

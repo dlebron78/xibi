@@ -155,11 +155,7 @@ class MCPServerRegistry:
                 res = await client.read_resource(uri)
                 if res.get("status") == "ok":
                     for content in res.get("contents", []):
-                        all_contents.append({
-                            "uri": uri,
-                            "content": content.get("text", ""),
-                            "server": server_name
-                        })
+                        all_contents.append({"uri": uri, "content": content.get("text", ""), "server": server_name})
         return all_contents
 
     def shutdown_all(self) -> None:

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import sqlite3
 from unittest.mock import MagicMock, patch
@@ -70,7 +71,7 @@ def test_observation_cycle_passes_trust_gradient_to_reflex(tmp_path, mocker):
     mocker.patch.object(cycle, "_run_review_role", side_effect=Exception("fail"))
     mocker.patch.object(cycle, "_run_think_role", side_effect=Exception("fail"))
 
-    cycle.run()
+    asyncio.run(cycle.run())
 
     assert spy.call_count == 1
     assert spy.call_args.kwargs["trust_gradient"] == trust_gradient

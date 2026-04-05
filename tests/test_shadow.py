@@ -1,3 +1,4 @@
+import asyncio
 import json
 from unittest.mock import MagicMock
 
@@ -172,9 +173,9 @@ def test_react_shadow_direct_calls_tool(mock_config):
     shadow = ShadowMatcher()
     shadow.build_corpus([("weather", "get_weather", "what is the weather")])
 
-    result = run(
+    result = asyncio.run(run(
         query="what is the weather", config=mock_config, skill_registry=skill_registry, executor=executor, shadow=shadow
-    )
+    ))
 
     assert result.answer == "Sunny"
     assert result.exit_reason == "finish"
@@ -200,13 +201,13 @@ def test_react_shadow_hint_prepends_context(mock_config, monkeypatch):
 
     monkeypatch.setattr(xibi.react, "get_model", mock_get_model)
 
-    run(
+    asyncio.run(run(
         query="get weather",
         config=mock_config,
         skill_registry=skill_registry,
         shadow=shadow,
         context="original context",
-    )
+    ))
 
     # Check if prompt passed to generate contains the hint
     args, kwargs = mock_llm.generate.call_args
@@ -226,7 +227,7 @@ def test_react_shadow_none_falls_through(mock_config, monkeypatch):
     mock_llm.generate.return_value = '{"thought": "using tool", "tool": "finish", "tool_input": {"answer": "done"}}'
     monkeypatch.setattr(xibi.react, "get_model", lambda *args, **kwargs: mock_llm)
 
-    run(query="unrelated query", config=mock_config, skill_registry=skill_registry, shadow=shadow)
+    asyncio.run(run(query="unrelated query", config=mock_config, skill_registry=skill_registry, shadow=shadow))
 
     args, kwargs = mock_llm.generate.call_args
     prompt = args[0]
@@ -240,7 +241,7 @@ def test_react_shadow_after_control_plane(mock_config):
     shadow = MagicMock(spec=ShadowMatcher)
     # Even if shadow would match, it shouldn't be called if CP matches
 
-    result = run(query="hi", config=mock_config, skill_registry=[], control_plane=cp, shadow=shadow)
+    result = asyncio.run(run(query="hi", config=mock_config, skill_registry=[], control_plane=cp, shadow=shadow))
 
     assert "Hello" in result.answer
     shadow.match.assert_not_called()

@@ -1,3 +1,4 @@
+import asyncio
 import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -158,7 +159,7 @@ def test_build_observation_dump_with_threads(db_path):
 
 def test_run_skips_when_idle(db_path):
     cycle = ObservationCycle(db_path=db_path, profile={"observation": {"idle_skip": True}})
-    result = cycle.run()
+    result = asyncio.run(cycle.run())
     assert result.ran is False
     assert "idle" in result.skip_reason
 
@@ -170,7 +171,7 @@ def test_run_records_cycle_row(db_path):
 
     cycle = ObservationCycle(db_path=db_path, profile={"observation": {"trigger_threshold": 5}})
     with patch.object(ObservationCycle, "_run_review_role", return_value=([], [])):
-        res = cycle.run()
+        res = asyncio.run(cycle.run())
         assert res.ran is True
         assert res.signals_processed == 6
 
@@ -189,7 +190,7 @@ def test_run_advances_watermark(db_path):
 
     cycle = ObservationCycle(db_path=db_path, profile={"observation": {"trigger_threshold": 5}})
     with patch.object(ObservationCycle, "_run_review_role", return_value=([], [])):
-        cycle.run()
+        asyncio.run(cycle.run())
         assert cycle._get_watermark() == 6
 
 
@@ -202,7 +203,7 @@ def test_run_degraded_falls_through_to_think(db_path):
         patch.object(ObservationCycle, "_run_review_role", side_effect=RuntimeError("model unavailable")),
         patch.object(ObservationCycle, "_run_think_role", return_value=([], [])),
     ):
-        res = cycle.run()
+        res = asyncio.run(cycle.run())
         assert res.ran is True
         assert res.role_used == "think"
         assert res.degraded is True
@@ -218,7 +219,7 @@ def test_run_degraded_falls_through_to_reflex(db_path):
         patch.object(ObservationCycle, "_run_think_role", side_effect=RuntimeError("model unavailable")),
         patch.object(ObservationCycle, "_run_reflex_fallback", return_value=([], [])),
     ):
-        res = cycle.run()
+        res = asyncio.run(cycle.run())
         assert res.ran is True
         assert res.role_used == "reflex"
         assert res.degraded is True
@@ -227,7 +228,7 @@ def test_run_degraded_falls_through_to_reflex(db_path):
 def test_run_never_raises(db_path):
     cycle = ObservationCycle(db_path=db_path)
     with patch.object(ObservationCycle, "should_run", side_effect=Exception("BOOM")):
-        res = cycle.run()
+        res = asyncio.run(cycle.run())
         assert res.ran is False
         assert "BOOM" in res.errors[0]
 

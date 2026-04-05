@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -25,12 +26,14 @@ class TestReActRouting(unittest.TestCase):
         mock_classifier = MagicMock()
         mock_classifier.classify.return_value = None
 
-        react_run(
-            "test query",
-            self.config,
-            self.skill_registry,
-            shadow=mock_shadow,
-            llm_routing_classifier=mock_classifier,
+        asyncio.run(
+            react_run(
+                "test query",
+                self.config,
+                self.skill_registry,
+                shadow=mock_shadow,
+                llm_routing_classifier=mock_classifier,
+            )
         )
 
         mock_classifier.classify.assert_called_once_with("test query", self.skill_registry)
@@ -45,12 +48,14 @@ class TestReActRouting(unittest.TestCase):
             skill="email", tool="list_emails", confidence=0.85, reasoning="test"
         )
 
-        react_run(
-            "test query",
-            self.config,
-            self.skill_registry,
-            shadow=mock_shadow,
-            llm_routing_classifier=mock_classifier,
+        asyncio.run(
+            react_run(
+                "test query",
+                self.config,
+                self.skill_registry,
+                shadow=mock_shadow,
+                llm_routing_classifier=mock_classifier,
+            )
         )
 
         # Check if the hint was injected into the context passed to llm.generate
@@ -73,12 +78,14 @@ class TestReActRouting(unittest.TestCase):
         )
         mock_classifier = MagicMock()
 
-        react_run(
-            "test query",
-            self.config,
-            self.skill_registry,
-            shadow=mock_shadow,
-            llm_routing_classifier=mock_classifier,
+        asyncio.run(
+            react_run(
+                "test query",
+                self.config,
+                self.skill_registry,
+                shadow=mock_shadow,
+                llm_routing_classifier=mock_classifier,
+            )
         )
 
         mock_classifier.classify.assert_not_called()
@@ -97,12 +104,14 @@ class TestReActRouting(unittest.TestCase):
         )
         mock_classifier = MagicMock()
 
-        react_run(
-            "test query",
-            self.config,
-            self.skill_registry,
-            shadow=mock_shadow,
-            llm_routing_classifier=mock_classifier,
+        asyncio.run(
+            react_run(
+                "test query",
+                self.config,
+                self.skill_registry,
+                shadow=mock_shadow,
+                llm_routing_classifier=mock_classifier,
+            )
         )
 
         mock_classifier.classify.assert_not_called()
@@ -114,12 +123,14 @@ class TestReActRouting(unittest.TestCase):
         mock_shadow.match.return_value = None
 
         # Should not raise AttributeError when llm_routing_classifier is None
-        react_run(
-            "test query",
-            self.config,
-            self.skill_registry,
-            shadow=mock_shadow,
-            llm_routing_classifier=None,
+        asyncio.run(
+            react_run(
+                "test query",
+                self.config,
+                self.skill_registry,
+                shadow=mock_shadow,
+                llm_routing_classifier=None,
+            )
         )
 
     @patch("xibi.react.get_model")
@@ -130,12 +141,14 @@ class TestReActRouting(unittest.TestCase):
         mock_classifier = MagicMock()
         mock_classifier.classify.side_effect = RuntimeError("test error")
 
-        result = react_run(
-            "test query",
-            self.config,
-            self.skill_registry,
-            shadow=mock_shadow,
-            llm_routing_classifier=mock_classifier,
+        result = asyncio.run(
+            react_run(
+                "test query",
+                self.config,
+                self.skill_registry,
+                shadow=mock_shadow,
+                llm_routing_classifier=mock_classifier,
+            )
         )
 
         self.assertEqual(result.exit_reason, "finish")
@@ -149,12 +162,14 @@ class TestReActRouting(unittest.TestCase):
         mock_classifier = MagicMock()
         mock_classifier.classify.return_value = None
 
-        react_run(
-            "test query",
-            self.config,
-            self.skill_registry,
-            shadow=mock_shadow,
-            llm_routing_classifier=mock_classifier,
+        asyncio.run(
+            react_run(
+                "test query",
+                self.config,
+                self.skill_registry,
+                shadow=mock_shadow,
+                llm_routing_classifier=mock_classifier,
+            )
         )
 
         args, kwargs = self.mock_llm.generate.call_args

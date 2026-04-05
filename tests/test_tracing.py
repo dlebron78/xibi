@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from unittest.mock import patch
@@ -93,11 +94,13 @@ def test_react_run_emits_root_span(tmp_path: Path):
     with patch("xibi.router.OllamaClient._call_provider") as mock_call:
         mock_call.return_value = json.dumps({"thought": "done", "tool": "finish", "tool_input": {"answer": "hello"}})
         with patch("xibi.router._check_provider_health", return_value=True):
-            result = run(
-                "query",
-                config,
-                [],
-                tracer=tracer,
+            result = asyncio.run(
+                run(
+                    "query",
+                    config,
+                    [],
+                    tracer=tracer,
+                )
             )
 
             assert result.answer == "hello"
@@ -135,12 +138,14 @@ def test_react_run_emits_tool_spans(tmp_path: Path):
             with patch.object(Executor, "_execute_with_timeout") as mock_exec_inner:
                 mock_exec_inner.return_value = {"status": "ok", "content": "tool_result"}
 
-                result = run(
-                    "query",
-                    config,
-                    [{"name": "my_tool", "tools": [{"name": "my_tool"}]}],
-                    executor=executor,
-                    tracer=tracer,
+                result = asyncio.run(
+                    run(
+                        "query",
+                        config,
+                        [{"name": "my_tool", "tools": [{"name": "my_tool"}]}],
+                        executor=executor,
+                        tracer=tracer,
+                    )
                 )
 
             trace = tracer.get_trace(result.trace_id)
@@ -192,6 +197,6 @@ def test_result_has_trace_id(tmp_path: Path):
     with patch("xibi.router.OllamaClient._call_provider") as mock_call:
         mock_call.return_value = json.dumps({"thought": "done", "tool": "finish", "tool_input": {"answer": "hello"}})
         with patch("xibi.router._check_provider_health", return_value=True):
-            result = run("query", config, [], tracer=tracer)
+            result = asyncio.run(run("query", config, [], tracer=tracer))
             assert result.trace_id is not None
             assert len(result.trace_id) == 16

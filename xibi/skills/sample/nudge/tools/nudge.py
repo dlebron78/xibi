@@ -16,5 +16,5 @@ async def run(params: dict[str, Any]) -> dict[str, Any]:
         refs=params.get("refs"),
         category=params.get("category", "info"),
         _config=params.get("_config"),
-        _workdir=params.get("_workdir")
+        _workdir=params.get("_workdir"),
     )

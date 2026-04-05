@@ -1,3 +1,4 @@
+import asyncio
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -118,7 +119,7 @@ def test_react_run_native_single_step_finish(config):
             "content": "thought",
         }
         with patch("xibi.router._check_provider_health", return_value=True):
-            result = run("query", config, skill_registry, react_format="native")
+            result = asyncio.run(run("query", config, skill_registry, react_format="native"))
             assert result.answer == "Done!"
             assert result.exit_reason == "finish"
             # finish step is NOT appended to scratchpad
@@ -135,7 +136,7 @@ def test_react_run_native_tool_then_finish(config):
         with patch("xibi.router._check_provider_health", return_value=True):
             executor = MagicMock()
             executor.execute.return_value = {"status": "ok", "result": "val"}
-            result = run("query", config, skill_registry, react_format="native", executor=executor)
+            result = asyncio.run(run("query", config, skill_registry, react_format="native", executor=executor))
             assert result.exit_reason == "finish"
             assert result.answer == "Done!"
             assert len(result.steps) == 1
@@ -152,7 +153,7 @@ def test_react_run_native_message_history_grows(config):
         with patch("xibi.router._check_provider_health", return_value=True):
             executor = MagicMock()
             executor.execute.return_value = {"status": "ok"}
-            run("query", config, skill_registry, react_format="native", executor=executor)
+            asyncio.run(run("query", config, skill_registry, react_format="native", executor=executor))
 
             assert mock_gen.call_count == 2
             # Second call should have 1 user + 1 assistant + 1 tool = 3 messages
@@ -173,7 +174,7 @@ def test_react_run_native_ask_user(config):
             "content": "need info",
         }
         with patch("xibi.router._check_provider_health", return_value=True):
-            result = run("query", config, skill_registry, react_format="native")
+            result = asyncio.run(run("query", config, skill_registry, react_format="native"))
             assert result.exit_reason == "ask_user"
             assert result.answer == "Why?"
 
@@ -187,7 +188,7 @@ def test_react_run_native_falls_back_to_json_if_not_supported(config):
     mock_llm.supports_tool_calling.return_value = False
 
     with patch("xibi.react.get_model", return_value=mock_llm):
-        result = run("query", config, [], react_format="native")
+        result = asyncio.run(run("query", config, [], react_format="native"))
         assert result.exit_reason == "finish"
         assert result.answer == "f"
         # Check that generate was called (json mode)
@@ -201,7 +202,7 @@ def test_react_run_native_respects_max_steps(config):
         with patch("xibi.router._check_provider_health", return_value=True):
             executor = MagicMock()
             executor.execute.return_value = {"status": "ok"}
-            result = run("query", config, skill_registry, react_format="native", executor=executor, max_steps=2)
+            result = asyncio.run(run("query", config, skill_registry, react_format="native", executor=executor, max_steps=2))
             assert result.exit_reason == "max_steps"
             assert len(result.steps) == 2
 
@@ -215,7 +216,7 @@ def test_react_run_native_stuck_detection(config):
             executor.execute.return_value = {"status": "ok"}
             # Stuck detection usually happens after a few repeats.
             # In react.py it seems it returns "error" if repeat detected 3 times consecutively.
-            result = run("query", config, skill_registry, react_format="native", executor=executor)
+            result = asyncio.run(run("query", config, skill_registry, react_format="native", executor=executor))
             assert result.exit_reason == "error"
             # It should have attempted t1, detected repeat, attempted again...
             assert any(
