@@ -1,17 +1,17 @@
+import os
+import sqlite3
 import pytest
-
+from pathlib import Path
 from xibi.db import open_db
 from xibi.db.migrations import migrate
-from xibi.entities import create_contact, upsert_contact_channel
 from xibi.entities.resolver import resolve_contact
-
+from xibi.entities import create_contact, upsert_contact_channel
 
 @pytest.fixture
 def db_path(tmp_path):
     db = tmp_path / "xibi_test.db"
     migrate(db)
     return str(db)
-
 
 def test_resolve_exact_channel_match(db_path):
     # Setup: Create contact and channel
@@ -23,7 +23,6 @@ def test_resolve_exact_channel_match(db_path):
     assert contact is not None
     assert contact.id == cid
     assert contact.display_name == "Alice"
-
 
 def test_resolve_cross_channel_match(db_path):
     # Setup: Contact with Slack handle but no email recorded in channels yet
@@ -41,7 +40,6 @@ def test_resolve_cross_channel_match(db_path):
     assert contact is not None
     assert contact.id == cid
 
-
 def test_resolve_name_org_match(db_path):
     # Setup: Create contact with name and org
     cid = create_contact("Alice", organization="Acme Corp", db_path=db_path)
@@ -50,7 +48,6 @@ def test_resolve_name_org_match(db_path):
     contact = resolve_contact("irrelevant", "session", display_name="Alice", organization="Acme Corp", db_path=db_path)
     assert contact is not None
     assert contact.id == cid
-
 
 def test_resolve_ambiguous_no_match(db_path):
     # Setup: Two contacts named Alice at Acme Corp
@@ -61,7 +58,6 @@ def test_resolve_ambiguous_no_match(db_path):
     contact = resolve_contact("irrelevant", "session", display_name="Alice", organization="Acme Corp", db_path=db_path)
     assert contact is None
 
-
 def test_resolve_creates_no_contact(db_path):
     # Test: Resolver does not create contacts
     contact = resolve_contact("bob@acme.com", "email", db_path=db_path)
@@ -70,7 +66,6 @@ def test_resolve_creates_no_contact(db_path):
     with open_db(db_path) as conn:
         row = conn.execute("SELECT COUNT(*) FROM contacts").fetchone()
         assert row[0] == 0
-
 
 def test_resolve_updates_last_seen(db_path):
     # Setup: Create contact with old last_seen
@@ -81,8 +76,7 @@ def test_resolve_updates_last_seen(db_path):
 
     # Test: Resolve updates last_seen
     import time
-
-    time.sleep(1.1)  # Ensure time passes for SQLite CURRENT_TIMESTAMP
+    time.sleep(1.1) # Ensure time passes for SQLite CURRENT_TIMESTAMP
     resolve_contact("alice@acme.com", "email", db_path=db_path)
 
     with open_db(db_path) as conn:

@@ -219,7 +219,7 @@ class MCPClient:
         self.process.stdin.write(msg_json + "\n")
         self.process.stdin.flush()
 
-    def call_tool(self, name: str, arguments: dict) -> dict[str, Any]:
+    async def call_tool(self, name: str, arguments: dict) -> dict[str, Any]:
         """
         Call a tool. Returns normalized Xibi result dict:
           {"status": "ok", "result": <str>}       on success

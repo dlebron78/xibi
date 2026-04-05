@@ -11,7 +11,7 @@ What this catches:
   - Missing `import sys` (or any import) that only surfaces at runtime
   - Tool listed in manifest but .py file deleted or renamed
   - Manifest JSON that's malformed after an edit
-  - Tool refactored without keeping the asyncio.run(run(params)) -> dict contract
+  - Tool refactored without keeping the run(params) -> dict contract
   - Helper files accidentally promoted to tool entries in manifest
 
 This suite should pass before every deploy to the NucBox.
@@ -33,7 +33,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 SKILLS_DIR = PROJECT_ROOT / "skills"
 
 # Helper files that live inside tools/ but are NOT tools themselves.
-# They won't appear in manifests, so we don't assert asyncio.run(run()) on them.
+# They won't appear in manifests, so we don't assert run() on them.
 HELPER_FILES = {"_google_auth.py", "__init__.py"}
 
 
@@ -177,28 +177,26 @@ class TestToolImports:
 
 
 # ---------------------------------------------------------------------------
-# Test 4 — asyncio.run(run()) contract
+# Test 4 — run() contract
 # ---------------------------------------------------------------------------
 
 
 class TestRunContract:
-    """Every tool must expose asyncio.run(run(params: dict)) -> dict."""
+    """Every tool must expose run(params: dict) -> dict."""
 
     @pytest.mark.parametrize("skill_name,tool_name,py_path", TOOL_CASES)
     def test_tool_has_run_function(self, skill_name, tool_name, py_path):
         mod = _import_tool(skill_name, py_path)
-        assert hasattr(mod, "run"), f"{skill_name}:{tool_name} missing asyncio.run(run()) function"
+        assert hasattr(mod, "run"), f"{skill_name}:{tool_name} missing run() function"
         assert callable(mod.run), f"{skill_name}:{tool_name} run is not callable"
 
     @pytest.mark.parametrize("skill_name,tool_name,py_path", TOOL_CASES)
     def test_run_accepts_dict_param(self, skill_name, tool_name, py_path):
-        """asyncio.run(run()) must accept at least one positional argument (the params dict)."""
+        """run() must accept at least one positional argument (the params dict)."""
         mod = _import_tool(skill_name, py_path)
         sig = inspect.signature(mod.run)
         params = list(sig.parameters.values())
-        assert len(params) >= 1, (
-            f"{skill_name}:{tool_name} asyncio.run(run()) takes no arguments — expected asyncio.run(run(params: dict))"
-        )
+        assert len(params) >= 1, f"{skill_name}:{tool_name} run() takes no arguments — expected run(params: dict)"
 
 
 # ---------------------------------------------------------------------------

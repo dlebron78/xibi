@@ -21,13 +21,16 @@ async def _run_async(params: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def run(*args: Any, **kwargs: Any) -> dict[str, Any]:
+def run(*args, **kwargs):
     import asyncio
 
     try:
-        asyncio.get_running_loop()
-        # Already inside an async context — return the coroutine for the caller to await.
-        return _run_async(*args, **kwargs)  # type: ignore[return-value]
+        loop = asyncio.get_event_loop()
     except RuntimeError:
-        # No running event loop — run synchronously with a fresh loop each time.
-        return asyncio.run(_run_async(*args, **kwargs))
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+    if loop.is_running():
+        return _run_async(*args, **kwargs)
+    else:
+        return loop.run_until_complete(_run_async(*args, **kwargs))
