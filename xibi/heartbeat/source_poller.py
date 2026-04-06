@@ -16,6 +16,7 @@ class SourcePoller:
         executor: Executor instance for native tools.
         mcp_registry: MCPServerRegistry instance for MCP tools.
         """
+        self.config = config
         self.sources = config.get("heartbeat", {}).get("sources", [])
         self.executor = executor
         self.mcp_registry = mcp_registry
@@ -68,7 +69,19 @@ class SourcePoller:
 
             server_name = source["server"]
             tool_name = source["tool"]
-            args = source.get("args", {})
+
+            if server_name == "jobspy":
+                job_profiles = self.config.get("job_search", {}).get("profiles", [])
+                if job_profiles:
+                    profile = job_profiles[0]  # Multi-profile support is Phase D Step 2
+                    args = {
+                        "query": f"{profile['query']} {profile.get('location', '')}".strip(),
+                        "results_wanted": source.get("args", {}).get("results_wanted", 10),
+                    }
+                else:
+                    args = source.get("args", {})
+            else:
+                args = source.get("args", {})
 
             client = self.mcp_registry.get_client(server_name)
             if not client:

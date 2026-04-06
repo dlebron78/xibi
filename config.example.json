@@ -122,8 +122,20 @@
         "tool": "search_jobs",
         "args": {"query": "software engineer", "results_wanted": 5},
         "interval_minutes": 60,
-        "signal_extractor": "generic"
+        "signal_extractor": "jobs"
       }
-    ]
+    ],
+    "job_search": {
+      "enabled": true,
+      "profiles": [
+        {
+          "name": "pm_miami",
+          "query": "product manager",
+          "location": "Miami, FL",
+          "salary_min": 120000,
+          "interval_minutes": 60
+        }
+      ]
+    }
   }
 }

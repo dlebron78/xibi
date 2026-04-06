@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import xibi.db
+import xibi.signal_intelligence as sig_intel
 from xibi.alerting.rules import RuleEngine
 from xibi.channels.telegram import TelegramAdapter
 from xibi.command_layer import CommandLayer
@@ -40,6 +41,7 @@ class HeartbeatPoller:
         quiet_end: int = 8,
         observation_cycle: ObservationCycle | None = None,
         profile: dict[str, Any] | None = None,
+        config: dict[str, Any] | None = None,
         signal_intelligence_enabled: bool = True,
         radiant: Radiant | None = None,
         config_path: str | None = None,
@@ -56,7 +58,8 @@ class HeartbeatPoller:
         self.quiet_start = quiet_start
         self.quiet_end = quiet_end
         self.observation_cycle = observation_cycle
-        self.profile = profile or {}
+        self.config = config or {}
+        self.profile = profile or self.config.get("profile", {})
         self.config_path = config_path or str(Path.home() / ".xibi" / "config.json")
         self.signal_intelligence_enabled = signal_intelligence_enabled
         self.radiant = radiant
@@ -74,7 +77,7 @@ class HeartbeatPoller:
         self._jules_watcher = self._init_jules_watcher()
         _mcp_exec = getattr(self.executor, "mcp_executor", None)
         self.source_poller = SourcePoller(
-            config=self.profile if self.profile else {},
+            config=self.config,
             executor=self.executor,
             mcp_registry=_mcp_exec.registry if _mcp_exec is not None else None,
         )
@@ -262,6 +265,11 @@ class HeartbeatPoller:
                 try:
                     with xibi.db.open_db(self.db_path) as conn, conn:
                         for sig in raw_signals:
+                            if sig.get("ref_id") and sig_intel.is_duplicate_signal(
+                                sig.get("ref_source", ""), sig["ref_id"], self.db_path
+                            ):
+                                logger.debug(f"Dedup skip: {sig['ref_id']} from {sig.get('ref_source')}")
+                                continue
                             self.rules.log_signal_with_conn(
                                 conn,
                                 source=sig["source"],
@@ -278,9 +286,7 @@ class HeartbeatPoller:
         # Phase 3: Post-processing (Intelligence, Observation, Jules, Radiant)
         if self.signal_intelligence_enabled:
             try:
-                from xibi.signal_intelligence import enrich_signals
-
-                enriched = enrich_signals(
+                enriched = sig_intel.enrich_signals(
                     db_path=self.db_path,
                     config=None,
                     batch_size=20,
