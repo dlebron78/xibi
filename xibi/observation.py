@@ -647,7 +647,9 @@ class ObservationCycle:
             "- The digest should be actionable — tell the user WHAT to do, not just what exists.\n"
             "- If a thread already has a good summary and correct priority, omit it from thread_updates.\n"
             "- Keep summaries under 200 characters.\n"
-            "- Do NOT call tools. Return only the JSON object above."
+            "- Do NOT call tools. Return only the JSON object above.\n"
+            "- CRITICAL: output RAW JSON only. No markdown, no code fences, no explanation. "
+            "Start your response with { and end with }. Nothing else."
         )
 
     def _get_all_active_threads(self) -> list[dict[str, Any]]:
@@ -742,11 +744,19 @@ class ObservationCycle:
                     try:
                         review_data = json.loads(response_text)
                     except json.JSONDecodeError:
-                        match = re.search(r"\{[\s\S]*?\}", response_text)
-                        if match:
-                            review_data = json.loads(match.group())
+                        # Strip markdown code fences if present
+                        cleaned = re.sub(r"```(?:json)?\s*|\s*```", "", response_text).strip()
+                        # Extract outermost JSON object: first { to last }
+                        start = cleaned.find("{")
+                        end = cleaned.rfind("}")
+                        if start != -1 and end != -1 and end > start:
+                            try:
+                                review_data = json.loads(cleaned[start:end + 1])
+                            except json.JSONDecodeError as je:
+                                batch_errors.append(f"Batch {batch_num}: JSON parse failed — {je} — {cleaned[start:start+120]}")
+                                continue
                         else:
-                            batch_errors.append(f"Batch {batch_num}: JSON parse failed — {response_text[:120]}")
+                            batch_errors.append(f"Batch {batch_num}: no JSON object found — {response_text[:120]}")
                             continue
 
                     all_thread_updates.extend(review_data.get("thread_updates", []))
