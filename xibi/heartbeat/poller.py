@@ -208,11 +208,42 @@ class HeartbeatPoller:
 
         asyncio.run(self.async_tick())
 
+    def _sweep_thread_lifecycle(self) -> None:
+        """Mark stale/resolved threads. Runs once per day."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        try:
+            with xibi.db.open_db(self.db_path) as conn:
+                cursor = conn.execute(
+                    "SELECT value FROM heartbeat_state WHERE key = 'thread_sweep_last_run'"
+                )
+                row = cursor.fetchone()
+                if row and row[0] == today:
+                    return
+                conn.execute(
+                    "INSERT OR REPLACE INTO heartbeat_state (key, value) "
+                    "VALUES ('thread_sweep_last_run', ?)",
+                    (today,),
+                )
+        except Exception as e:
+            logger.warning(f"Thread sweep gate error: {e}", exc_info=True)
+            return
+
+        from xibi.threads import sweep_stale_threads, sweep_resolved_threads
+        try:
+            stale = sweep_stale_threads(self.db_path)
+            resolved = sweep_resolved_threads(self.db_path)
+            if stale + resolved > 0:
+                logger.info(f"Thread sweep: {stale} stale, {resolved} resolved")
+        except Exception as e:
+            logger.warning(f"Thread lifecycle sweep failed: {e}", exc_info=True)
+
     async def async_tick(self) -> None:
         """Tick: poll sources → extract signals → intel → observation → digest."""
         if self._is_quiet_hours():
             logger.info("Quiet hours, skipping tick.")
             return
+
+        self._sweep_thread_lifecycle()
 
         # Phase 0: Multi-source polling
         poll_results = await self.source_poller.poll_due_sources()

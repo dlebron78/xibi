@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -218,6 +219,31 @@ class CommandLayer:
                 )
         except Exception as e:
             logger.warning(f"CommandLayer.audit failed: {e}")
+
+    def resolve_thread(self, thread_id: str) -> str:
+        """
+        Mark a thread as 'resolved' by operator request.
+        Returns a human-readable confirmation or error message.
+        """
+        try:
+            with open_db(Path(self.db_path)) as conn, conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT id, name, status FROM threads WHERE id = ?", (thread_id,)
+                ).fetchone()
+                if not row:
+                    return f"Thread '{thread_id}' not found."
+                if row["status"] == "resolved":
+                    return f"Thread '{row['name']}' is already resolved."
+                conn.execute(
+                    "UPDATE threads SET status = 'resolved', updated_at = CURRENT_TIMESTAMP "
+                    "WHERE id = ?",
+                    (thread_id,),
+                )
+                return f"✅ Thread '{row['name']}' marked as resolved."
+        except Exception as e:
+            logger.error(f"resolve_thread failed: {e}", exc_info=True)
+            return f"Error resolving thread: {e}"
 
     def _check_dedup(self, tool_name: str, tool_input: dict[str, Any]) -> bool:
         """
