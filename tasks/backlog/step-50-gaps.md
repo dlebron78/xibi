@@ -65,3 +65,85 @@ manually is tedious.
 with confirmation prompt.
 
 **Scope:** Small — add to telegram.py dispatch + command_layer.py.
+
+---
+
+## 6. Fix Signal Pipeline Panel (Empty)
+
+**Problem:** The Signal Pipeline panel on the dashboard is empty. The query in
+`queries.py:get_signal_pipeline()` groups by a `classification` column that does
+not exist in the signals table. The column check returns `{}`, so the panel renders
+nothing.
+
+**Fix:** Rewrite `get_signal_pipeline()` to group by columns that actually exist:
+`source` (email/calendar/jobs), `urgency` (low/medium/high), and `action_type`
+(fyi/action_needed/etc). Return a multi-faceted breakdown instead of a single
+classification count. Update the frontend stat boxes in `refreshSignals()` to
+render these groupings.
+
+**Scope:** ~20 lines in queries.py, ~15 lines in index.html JS.
+
+---
+
+## 7. Fix Active Threads Panel (Empty)
+
+**Problem:** The Active Threads chip section is empty. The `/api/signals` endpoint
+returns `active_threads` expecting a `topic` field, but the threads table uses
+`name`, `status`, `owner`, `signal_count` — no `topic` column. There are 122
+threads in the DB that should be visible.
+
+**Fix:** Rewrite the threads query to use actual schema: `name` for display,
+`status` for filtering (show active by default, toggle stale/resolved), `owner`
+for color coding, `signal_count` for sizing. Show as chips with signal count badge.
+
+**Scope:** ~15 lines in queries.py, ~20 lines in index.html JS.
+
+---
+
+## 8. Observation Cycles — Degradation Reason
+
+**Problem:** The Observation Cycles table shows role/degraded/errors but no *why*
+it degraded. 73 consecutive "reflex/YES" rows give no diagnostic path. All error
+counts are 0 because the error_log column is NULL (errors arent being captured).
+
+**Fix:** Three changes:
+(a) In `observation.py`, when a role fails and falls through, capture the exception
+    message in `error_log` JSON array before trying the next tier.
+(b) In `queries.py:get_observation_cycles()`, join to `inference_events` by
+    timestamp window to pull the model/provider/operation that failed.
+(c) In the template, add an expandable row or tooltip showing the degradation
+    chain: "review → [error] → think → [error] → reflex".
+
+**Scope:** ~10 lines in observation.py, ~20 lines in queries.py, ~25 lines in
+index.html. Medium effort.
+
+---
+
+## 9. Observation Cycles — Duration Column
+
+**Problem:** Started and Completed timestamps are shown as two columns but are
+usually identical (reflex is instant). When review actually runs, the duration
+matters but requires mental subtraction.
+
+**Fix:** Replace the two timestamp columns with: one timestamp (started_at) and
+one duration column showing human-readable elapsed time (e.g. "2.3s" or "<1s").
+Computed in JS from the two values already returned by the API.
+
+**Scope:** ~10 lines in index.html JS only. Trivial.
+
+---
+
+## 10. Source Health Widget
+
+**Problem:** No visibility into whether individual sources (email, calendar, jobs)
+are actually polling. If calendar OAuth expires again, the only signal is "calendar
+signals stop appearing" — which is invisible if you dont know to look.
+
+**Fix:** Add a "Source Health" row at the top of the dashboard showing each
+configured source with its last-poll timestamp and status (green/yellow/red based
+on how overdue it is vs its configured interval). Data source: track last successful
+poll per source in `heartbeat_state` table (key: `last_poll_{source}`).
+
+**Scope:** ~15 lines in poller source_poller.py (write timestamps), ~10 lines in
+queries.py, ~20 lines in index.html. Small-medium effort.
+
