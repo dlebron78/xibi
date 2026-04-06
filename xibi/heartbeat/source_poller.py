@@ -410,4 +410,4 @@ class SourcePoller:
             # Native tool — dispatch through executor
             tool_name = source["tool"]
             args = source.get("args", {})
-            return cast(dict[Any, Any], await self.executor.execute(tool_name, args))
+            return cast(dict[Any, Any], self.executor.execute(tool_name, args))
