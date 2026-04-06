@@ -44,7 +44,7 @@ class ObservationConfig:
     cost_ceiling_daily: float = 5.0  # not enforced this step — stored for future
     # Manager review settings
     manager_interval_hours: int = 8  # how often the manager reviews all accumulated work
-    manager_max_threads: int = 50  # max threads to include in manager review dump
+    manager_max_threads: int = 200  # max threads to include in manager review dump
 
 
 @dataclass
