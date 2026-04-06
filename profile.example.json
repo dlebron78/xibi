@@ -12,6 +12,16 @@
       "max_results": 5
     }
   ],
+  "watch_repos": [
+    {
+      "repo": "dlebron78/xibi",
+      "watch_commits": true,
+      "watch_issues": false,
+      "watch_prs": true,
+      "interval_minutes": 60,
+      "max_items": 10
+    }
+  ],
   "watch_dirs": [
     {
       "path": "~/Documents/notes",
