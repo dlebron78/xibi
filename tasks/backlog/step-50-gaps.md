@@ -185,3 +185,49 @@ polling is the correct architecture for a multi-source heartbeat.
 **Scope:** ~40 lines in client.py, ~10 lines in executor.py, ~15 lines in
 source_poller.py. Medium effort. Needs integration test with mock async MCP server.
 
+
+---
+
+## 12. Review Tier: Manager Pattern (Intern/Manager Architecture)
+
+**Priority: Tier 1 — this is why all triage fields are null**
+
+The observation cycle review tier is currently broken by design: it only processes NEW signals, same as reflex but with a more expensive model. That defeats the purpose.
+
+**Intern/Manager pattern:**
+- **Intern (local model, fast/think tier):** Runs every 15 min. Ingests signals, does best-effort triage (urgency, action_type, thread grouping). Fast, cheap, gets maybe 30% right. Leaves nulls — that is acceptable.
+- **Manager (Sonnet, review tier):** Runs periodically (every few hours or daily). Reviews ALL accumulated work, not just new signals. Fills in null urgency/action_type. Writes thread summaries. Assigns thread priorities/owners. Corrects bad intern classifications. Surfaces top items via nudge (daily briefing).
+
+**What needs to change:**
+- `should_run()` must NOT skip when there are no new signals — the manager reviews accumulated state, not just new data
+- `_build_observation_dump()` must include: all threads (with signal counts), all signals with null urgency/action_type (for backfill), active tasks, and beliefs — not just signals since last watermark
+- Add a "review_mode" flag to distinguish signal-processing runs from periodic review runs
+- Review tier trigger should be time-based (e.g., every 4h or daily) independent of new signal arrival
+- Thread table should be updated with summaries, priorities, and deadlines by the manager
+- Daily briefing nudge: top 3-5 items that need attention
+
+**Why this matters:** 70% of signals have null urgency. All threads have null summary/owner/deadline. The dashboards prioritization and filtering features are useless without this data. The local model cant reliably fill it in — thats why we pay for the cloud model.
+
+---
+
+## 12. Review Tier: Manager Pattern (Intern/Manager Architecture)
+
+**Priority: Tier 1 -- this is why all triage fields are null**
+
+The observation cycle review tier is currently broken by design: it only processes NEW signals, same as reflex but with a more expensive model. That defeats the purpose.
+
+Intern/Manager pattern:
+- Intern (local model, fast/think tier): Runs every 15 min. Ingests signals, does best-effort triage (urgency, action_type, thread grouping). Fast, cheap, gets maybe 30% right. Leaves nulls -- that is acceptable.
+- Manager (Sonnet, review tier): Runs periodically (every few hours or daily). Reviews ALL accumulated work, not just new signals. Fills in null urgency/action_type. Writes thread summaries. Assigns thread priorities/owners. Corrects bad intern classifications. Surfaces top items via nudge (daily briefing).
+
+What needs to change:
+- should_run() must NOT skip when there are no new signals -- the manager reviews accumulated state, not just new data
+- _build_observation_dump() must include: all threads (with signal counts), all signals with null urgency/action_type (for backfill), active tasks, and beliefs -- not just signals since last watermark
+- Add a review_mode flag to distinguish signal-processing runs from periodic review runs
+- Review tier trigger should be time-based (e.g., every 4h or daily) independent of new signal arrival
+- Thread table should be updated with summaries, priorities, and deadlines by the manager
+- Daily briefing nudge: top 3-5 items that need attention
+
+Why this matters: 70% of signals have null urgency. All threads have null summary/owner/deadline. The dashboard prioritization and filtering features are useless without this data. The local model cannot reliably fill it in -- that is why we pay for the cloud model.
+
+Spec must be written by Opus, not Sonnet.
