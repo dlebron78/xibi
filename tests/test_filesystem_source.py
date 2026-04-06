@@ -102,7 +102,7 @@ async def test_poll_watch_dirs_calls_mcp_when_due():
     }
     mcp_registry = MagicMock()
     client = MagicMock()
-    client.call_tool = AsyncMock()
+    client.call_tool = MagicMock()
     mcp_registry.get_client.return_value = client
 
     # list_directory response
@@ -117,7 +117,7 @@ async def test_poll_watch_dirs_calls_mcp_when_due():
 
     assert len(results) == 1
     assert results[0]["extractor"] == "file_content"
-    assert client.call_tool.await_count == 2
+    assert client.call_tool.call_count == 2
 
     # Verify path in first call
     args = client.call_tool.call_args_list[0].args
@@ -161,7 +161,7 @@ async def test_max_files_clamped_to_20():
     }
     mcp_registry = MagicMock()
     client = MagicMock()
-    client.call_tool = AsyncMock()
+    client.call_tool = MagicMock()
     mcp_registry.get_client.return_value = client
 
     # 30 files in listing
@@ -180,13 +180,10 @@ async def test_max_files_clamped_to_20():
 
 @pytest.mark.asyncio
 async def test_poll_watch_dirs_skips_read_on_empty_listing():
-    config = {
-        "mcp_servers": [{"name": "fs", "type": "filesystem"}],
-        "watch_dirs": [{"path": "/dir"}]
-    }
+    config = {"mcp_servers": [{"name": "fs", "type": "filesystem"}], "watch_dirs": [{"path": "/dir"}]}
     mcp_registry = MagicMock()
     client = MagicMock()
-    client.call_tool = AsyncMock()
+    client.call_tool = MagicMock()
     mcp_registry.get_client.return_value = client
 
     client.call_tool.return_value = {"content": []}
@@ -195,22 +192,23 @@ async def test_poll_watch_dirs_skips_read_on_empty_listing():
     results = await poller._poll_watch_dirs(datetime.utcnow())
 
     assert results == []
-    assert client.call_tool.await_count == 1 # only list_directory
+    assert client.call_tool.call_count == 1  # only list_directory
+
 
 @pytest.mark.asyncio
 async def test_extension_filter_applied():
     config = {
         "mcp_servers": [{"name": "fs", "type": "filesystem"}],
-        "watch_dirs": [{"path": "/dir", "extensions": ["md"]}]
+        "watch_dirs": [{"path": "/dir", "extensions": ["md"]}],
     }
     mcp_registry = MagicMock()
     client = MagicMock()
-    client.call_tool = AsyncMock()
+    client.call_tool = MagicMock()
     mcp_registry.get_client.return_value = client
 
     client.call_tool.side_effect = [
         {"content": [{"type": "text", "text": "notes.md\nimage.png\ndoc.txt"}]},
-        {"content": []}
+        {"content": []},
     ]
 
     poller = SourcePoller(config, MagicMock(), mcp_registry)

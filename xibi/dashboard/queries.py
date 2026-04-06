@@ -223,27 +223,89 @@ def get_circuit_breaker_states(db_path: Path) -> list[dict]:
     ]
 
 
-def get_signal_pipeline(conn: sqlite3.Connection, days: int = 7) -> dict[str, int]:
-    """Return signal counts by classification for the last 7 days."""
-    cursor = conn.execute("PRAGMA table_info(signals)")
-    columns = [info[1] for info in cursor.fetchall()]
+def get_active_threads(conn: sqlite3.Connection, limit: int = 20) -> list[dict]:
+    """
+    Return active threads from the threads table.
 
-    if "classification" not in columns:
-        return {}
+    Returns:
+    [{"name": str, "status": str, "owner": str, "signal_count": int}, ...]
 
-    created_at_col = "timestamp" if "timestamp" in columns else "created_at"
-    cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    Threads are sorted by signal_count DESC, limited to `limit` rows.
+    Returns [] if the threads table doesn't exist.
+    """
+    cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='threads'")
+    if not cursor.fetchone():
+        return []
 
     cursor = conn.execute(
-        f"""
-        SELECT classification, COUNT(*)
-        FROM signals
-        WHERE {created_at_col} >= ?
-        GROUP BY classification
-    """,
-        (cutoff,),
+        "SELECT name, status, owner, signal_count FROM threads WHERE status = 'active' ORDER BY signal_count DESC LIMIT ?",
+        (limit,),
     )
-    return {r[0]: r[1] for r in cursor.fetchall()}
+    return [{"name": r[0], "status": r[1], "owner": r[2], "signal_count": r[3]} for r in cursor.fetchall()]
+
+
+def get_signal_pipeline(conn: sqlite3.Connection, days: int = 7) -> dict:
+    """
+    Return signal counts broken down by source, urgency, and action_type.
+
+    Returns:
+    {
+        "by_source": {"email": 12, "calendar": 3, "jobs": 8, "github:dlebron78/xibi": 2, ...},
+        "by_urgency": {"high": 4, "medium": 11, "low": 5, "normal": 5},
+        "by_action_type": {"fyi": 15, "action_needed": 5, "request": 3, ...},
+        "total": 25
+    }
+    If signals table doesn't exist, return {"by_source": {}, "by_urgency": {}, "by_action_type": {}, "total": 0}
+    """
+    cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='signals'")
+    if not cursor.fetchone():
+        return {"by_source": {}, "by_urgency": {}, "by_action_type": {}, "total": 0}
+
+    cursor = conn.execute("PRAGMA table_info(signals)")
+    cols = {info[1] for info in cursor.fetchall()}
+
+    # Use COALESCE(created_at, timestamp) if both exist, otherwise whatever exists
+    if "created_at" in cols and "timestamp" in cols:
+        date_expr = "COALESCE(created_at, timestamp)"
+    elif "created_at" in cols:
+        date_expr = "created_at"
+    elif "timestamp" in cols:
+        date_expr = "timestamp"
+    else:
+        return {"by_source": {}, "by_urgency": {}, "by_action_type": {}, "total": 0}
+
+    cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+
+    result = {"by_source": {}, "by_urgency": {}, "by_action_type": {}, "total": 0}
+
+    # Total count
+    cursor = conn.execute(f"SELECT COUNT(*) FROM signals WHERE {date_expr} >= ?", (cutoff,))
+    result["total"] = cursor.fetchone()[0]
+
+    if result["total"] == 0:
+        return result
+
+    # By source
+    cursor = conn.execute(f"SELECT source, COUNT(*) FROM signals WHERE {date_expr} >= ? GROUP BY source", (cutoff,))
+    result["by_source"] = {r[0]: r[1] for r in cursor.fetchall()}
+
+    # By urgency
+    if "urgency" in cols:
+        cursor = conn.execute(
+            f"SELECT COALESCE(urgency, 'unknown'), COUNT(*) FROM signals WHERE {date_expr} >= ? GROUP BY 1",
+            (cutoff,),
+        )
+        result["by_urgency"] = {r[0]: r[1] for r in cursor.fetchall()}
+
+    # By action_type
+    if "action_type" in cols:
+        cursor = conn.execute(
+            f"SELECT COALESCE(action_type, 'unknown'), COUNT(*) FROM signals WHERE {date_expr} >= ? GROUP BY 1",
+            (cutoff,),
+        )
+        result["by_action_type"] = {r[0]: r[1] for r in cursor.fetchall()}
+
+    return result
 
 
 def get_inference_stats(conn: sqlite3.Connection) -> dict:

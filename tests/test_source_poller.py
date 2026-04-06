@@ -16,11 +16,7 @@ class TestSourcePoller(unittest.TestCase):
             }
         }
         self.executor = MagicMock()
-
-        async def mock_execute(*args, **kwargs):
-            return {"status": "ok"}
-
-        self.executor.execute = mock_execute
+        self.executor.execute.return_value = {"status": "ok"}
         self.mcp_registry = MagicMock()
         self.poller = SourcePoller(self.config, self.executor, self.mcp_registry)
 
@@ -43,10 +39,8 @@ class TestSourcePoller(unittest.TestCase):
         client = MagicMock()
         self.mcp_registry.get_client.return_value = client
 
-        async def mock_call_tool(*args, **kwargs):
-            return {"status": "ok", "result": "slack data"}
+        client.call_tool.return_value = {"status": "ok", "result": "slack data"}
 
-        client.call_tool = mock_call_tool
         self.poller.last_poll["slack"] = datetime.utcnow() - timedelta(minutes=20)
         results = loop.run_until_complete(self.poller.poll_due_sources())
         slack_res = next(r for r in results if r["source"] == "slack")
