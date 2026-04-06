@@ -295,3 +295,46 @@ up a proper test DB before each test.
 3. `/resolve thread-<id>` from Telegram updates the thread status and returns confirmation
 4. The sweep runs once per day in the heartbeat and is logged at INFO level
 5. No existing tests broken (`pytest` overall suite passes)
+
+---
+
+## Implementation Notes (added 2026-04-05)
+
+### /resolve Dispatch Location
+
+The spec says to follow the existing slash command pattern in `command_layer.py`, but
+`CommandLayer.check()` is a permission/gating system — it has no Telegram command
+dispatch. There are no existing slash commands.
+
+The actual hook point is `_handle_text()` in `xibi/channels/telegram.py` (line ~356).
+Add the `/resolve` check **before** the `is_chitchat()` block, similar pattern:
+
+```python
+# In _handle_text(), before is_chitchat check:
+if user_text.strip().startswith("/resolve"):
+    parts = user_text.strip().split(maxsplit=1)
+    thread_id = parts[1].strip() if len(parts) > 1 else ""
+    if not thread_id:
+        self.send_message(chat_id, "Usage: /resolve <thread_id>")
+        return
+    from xibi.command_layer import CommandLayer
+    reply = CommandLayer(self.db_path, self.profile).resolve_thread(thread_id)
+    self.send_message(chat_id, reply)
+    return
+```
+
+The `resolve_thread()` method still lives on `CommandLayer` as a pure DB operation —
+the Telegram adapter just calls it directly.
+
+**File to modify:** `xibi/channels/telegram.py` (in addition to `xibi/command_layer.py`)
+
+### make_thread Test Helper — SQL Gotcha
+
+The spec's `make_thread` helper uses an f-string SQL expression for `updated_at`:
+```python
+updated = f"datetime('now', '-{days_ago} days')"
+```
+This must be embedded as raw SQL, NOT as a parameterized value. Use `conn.execute()`
+with the expression directly in the SQL string — do not pass it as a `?` parameter or
+SQLite will store it as a literal string.
+
