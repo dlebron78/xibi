@@ -513,7 +513,7 @@ class HeartbeatPoller:
             return
 
         # Only surface items worth attention
-        important = [i for i in items if i.get('verdict') in ('URGENT', 'DIGEST')]
+        important = [i for i in items if i.get("verdict") in ("URGENT", "DIGEST")]
         if not important:
             return
 
@@ -522,6 +522,7 @@ class HeartbeatPoller:
             msg_lines.append(f"\u2022 {item['sender']}: {item['subject']} ({item['verdict']})")
 
         self._broadcast("\n".join(msg_lines))
+
     def recap_tick(self) -> None:
         logger.info("Running recap tick")
         self.digest_tick(force=True)
