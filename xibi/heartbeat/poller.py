@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 import xibi.db
 import xibi.signal_intelligence as sig_intel
 from xibi.alerting.rules import RuleEngine
+from xibi.channels.sheets import SheetsExporter
 from xibi.channels.telegram import TelegramAdapter
 from xibi.command_layer import CommandLayer
 from xibi.heartbeat.extractors import SignalExtractorRegistry
@@ -88,6 +89,7 @@ class HeartbeatPoller:
             executor=self.executor,
             mcp_registry=_mcp_exec.registry if _mcp_exec is not None else None,
         )
+        self.sheets_exporter = SheetsExporter(self.config.get("sheets_export", {}))
 
     def _init_jules_watcher(self) -> Any | None:
         """Set up JulesWatcher if JULES_API_KEY is configured."""
@@ -319,6 +321,16 @@ class HeartbeatPoller:
                         "source_metadata": result.get("metadata", {}),
                     },
                 )
+
+                # Side-channel: export job signals to Google Sheets (best-effort)
+                if extractor_name == "jobs" and raw_signals:
+                    try:
+                        self.sheets_exporter.export_job_signals(
+                            raw_signals,
+                            search_profile=source_name,
+                        )
+                    except Exception as e:
+                        logger.warning("Sheets export error for %s: %s", source_name, e)
 
                 # Special processing for email signals (classification/triage)
                 if extractor_name == "email":
