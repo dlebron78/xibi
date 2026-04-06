@@ -16,6 +16,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from xibi.command_layer import CommandLayer
 from xibi.db import open_db
 from xibi.executor import Executor
 from xibi.react import run as react_run
@@ -384,6 +385,17 @@ class TelegramAdapter:
             review_text = ""
             if is_new_or_stale:
                 review_text = self._get_decision_review()
+
+            # /resolve command: manual thread resolution
+            if user_text.strip().startswith("/resolve"):
+                parts = user_text.strip().split(maxsplit=1)
+                thread_id = parts[1].strip() if len(parts) > 1 else ""
+                if not thread_id:
+                    self.send_message(chat_id, "Usage: /resolve <thread_id>")
+                    return
+                reply = CommandLayer(str(self.db_path), self.config.get("profile", {})).resolve_thread(thread_id)
+                self.send_message(chat_id, reply)
+                return
 
             # Chitchat fast-path: skip ReAct for conversational acknowledgements
             if is_chitchat(user_text):
