@@ -7,7 +7,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 18  # increment when adding new migrations
+SCHEMA_VERSION = 19  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -49,6 +49,7 @@ class SchemaManager:
             (16, "inference events trace_id", self._migration_16),
             (17, "access_log extensions", self._migration_17),
             (18, "contacts extensions + contact_channels table", self._migration_18),
+            (19, "manager review: thread priority + review tracking", self._migration_19),
         ]
 
         for version, description, func in migrations:
@@ -478,6 +479,18 @@ class SchemaManager:
             if "duplicate column name" not in str(e).lower():
                 logger.error(f"Migration 18 failed to add contact_id to session_entities: {e}")
                 raise
+
+
+    def _migration_19(self, conn: sqlite3.Connection) -> None:
+        import contextlib
+        # Thread priority + last_reviewed_at for manager review pattern
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("ALTER TABLE threads ADD COLUMN priority TEXT DEFAULT NULL")
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("ALTER TABLE threads ADD COLUMN last_reviewed_at DATETIME DEFAULT NULL")
+        # Track whether an observation cycle was a manager review vs normal triage
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("ALTER TABLE observation_cycles ADD COLUMN review_mode TEXT DEFAULT 'triage'")
 
 
 def migrate(db_path: Path) -> list[int]:
