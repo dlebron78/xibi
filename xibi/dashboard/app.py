@@ -195,8 +195,10 @@ def create_app(config: DashboardConfig) -> Flask:
     @app.route("/api/signals")
     def signals() -> Any:
         with get_db_conn() as conn:
-            data = queries.get_recent_signals(conn)
-            return jsonify(data)
+            return jsonify({
+                "signals": queries.get_recent_signals(conn),
+                "active_threads": queries.get_active_threads(conn),
+            })
 
     @app.route("/api/signal_pipeline")
     def signal_pipeline() -> Any:

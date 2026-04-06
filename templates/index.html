@@ -567,22 +567,32 @@
 
         async function refreshSignals() {
             const [pipeline, signals] = await Promise.all([fetchData('/api/signal_pipeline'), fetchData('/api/signals')]);
-            if (pipeline) {
+            if (pipeline && pipeline.total !== undefined) {
                 const container = document.getElementById('signal-stats');
-                container.innerHTML = Object.entries(pipeline).map(([cls, count]) => `
-                    <div class="bg-slate-800/50 p-3 rounded text-center border border-slate-700/50">
-                        <div class="text-[10px] text-slate-500 font-bold uppercase tracking-tighter mb-1">${cls}</div>
-                        <div class="text-xl font-mono font-bold text-emerald-400">${count}</div>
-                    </div>
-                `).join('');
+                // Render by_source as primary stat boxes
+                const sourceEntries = Object.entries(pipeline.by_source || {}).slice(0, 6);
+                if (sourceEntries.length === 0) {
+                    container.innerHTML = '<div class="text-slate-500 text-xs col-span-full text-center py-2">No signals in last 7 days</div>';
+                } else {
+                    container.innerHTML = sourceEntries.map(([src, count]) => `
+                        <div class="bg-slate-800/50 p-3 rounded text-center border border-slate-700/50">
+                            <div class="text-[10px] text-slate-500 font-bold uppercase tracking-tighter mb-1">${src.split(':')[0]}</div>
+                            <div class="text-xl font-mono font-bold text-emerald-400">${count}</div>
+                        </div>
+                    `).join('');
+                }
             }
             if (signals && signals.active_threads) {
                 const container = document.getElementById('active-threads');
-                container.innerHTML = signals.active_threads.map(t => `
-                    <div class="bg-indigo-900/30 border border-indigo-500/30 px-3 py-1 rounded-full text-[10px] font-bold text-indigo-300 uppercase tracking-wide">
-                        ${t.topic} <span class="ml-1 text-indigo-500">${t.count}</span>
-                    </div>
-                `).join('');
+                if (signals.active_threads.length === 0) {
+                    container.innerHTML = '<div class="text-slate-500 text-xs">No active threads</div>';
+                } else {
+                    container.innerHTML = signals.active_threads.map(t => `
+                        <div class="bg-indigo-900/30 border border-indigo-500/30 px-3 py-1 rounded-full text-[10px] font-bold text-indigo-300 uppercase tracking-wide">
+                            ${t.name} <span class="ml-1 text-indigo-500">${t.signal_count}</span>
+                        </div>
+                    `).join('');
+                }
             }
         }
 
