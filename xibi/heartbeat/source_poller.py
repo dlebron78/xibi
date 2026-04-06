@@ -39,8 +39,7 @@ class SourcePoller:
             (
                 s
                 for s in self.config.get("mcp_servers", [])
-                if s.get("type") == "web_search"
-                or any(kw in s.get("name", "").lower() for kw in ("brave", "tavily"))
+                if s.get("type") == "web_search" or any(kw in s.get("name", "").lower() for kw in ("brave", "tavily"))
             ),
             None,
         )
