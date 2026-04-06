@@ -16,6 +16,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from xibi.command_layer import CommandLayer
 from xibi.db import open_db
 from xibi.executor import Executor
 from xibi.react import run as react_run
@@ -392,8 +393,6 @@ class TelegramAdapter:
                 if not thread_id:
                     self.send_message(chat_id, "Usage: /resolve <thread_id>")
                     return
-                from xibi.command_layer import CommandLayer
-
                 reply = CommandLayer(str(self.db_path), self.config.get("profile", {})).resolve_thread(thread_id)
                 self.send_message(chat_id, reply)
                 return
