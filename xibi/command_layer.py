@@ -231,16 +231,13 @@ class CommandLayer:
         try:
             with open_db(Path(self.db_path)) as conn, conn:
                 conn.row_factory = sqlite3.Row
-                row = conn.execute(
-                    "SELECT id, name, status FROM threads WHERE id = ?", (thread_id,)
-                ).fetchone()
+                row = conn.execute("SELECT id, name, status FROM threads WHERE id = ?", (thread_id,)).fetchone()
                 if not row:
                     return f"Thread '{thread_id}' not found."
                 if row["status"] == "resolved":
                     return f"Thread '{row['name']}' is already resolved."
                 conn.execute(
-                    "UPDATE threads SET status = 'resolved', updated_at = CURRENT_TIMESTAMP "
-                    "WHERE id = ?",
+                    "UPDATE threads SET status = 'resolved', updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                     (thread_id,),
                 )
                 return f"✅ Thread '{row['name']}' marked as resolved."
