@@ -5,7 +5,7 @@
     {
       "name": "nudge",
       "description": "Surface important information to the operator via Telegram. Used by the observation cycle when it detects something worth notifying about.",
-      "input_schema": {
+      "inputSchema": {
         "type": "object",
         "properties": {
           "message": {
