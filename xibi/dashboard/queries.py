@@ -241,9 +241,7 @@ def get_active_threads(conn: sqlite3.Connection, limit: int = 20) -> list[dict]:
         "SELECT name, status, owner, signal_count FROM threads WHERE status = 'active' ORDER BY signal_count DESC LIMIT ?",
         (limit,),
     )
-    return [
-        {"name": r[0], "status": r[1], "owner": r[2], "signal_count": r[3]} for r in cursor.fetchall()
-    ]
+    return [{"name": r[0], "status": r[1], "owner": r[2], "signal_count": r[3]} for r in cursor.fetchall()]
 
 
 def get_signal_pipeline(conn: sqlite3.Connection, days: int = 7) -> dict:
@@ -288,9 +286,7 @@ def get_signal_pipeline(conn: sqlite3.Connection, days: int = 7) -> dict:
         return result
 
     # By source
-    cursor = conn.execute(
-        f"SELECT source, COUNT(*) FROM signals WHERE {date_expr} >= ? GROUP BY source", (cutoff,)
-    )
+    cursor = conn.execute(f"SELECT source, COUNT(*) FROM signals WHERE {date_expr} >= ? GROUP BY source", (cutoff,))
     result["by_source"] = {r[0]: r[1] for r in cursor.fetchall()}
 
     # By urgency
