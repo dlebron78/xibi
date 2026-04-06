@@ -26,6 +26,7 @@ from xibi.routing.control_plane import ControlPlaneRouter
 from xibi.routing.shadow import ShadowMatcher
 from xibi.session import SessionContext
 from xibi.skills.registry import SkillRegistry
+from xibi.tracing import Tracer
 from xibi.types import ReActResult
 
 logger = logging.getLogger(__name__)
@@ -412,7 +413,7 @@ class TelegramAdapter:
 
                     # Tracing (optional, best-effort)
                     try:
-                        from xibi.tracing import Span, Tracer
+                        from xibi.tracing import Span
 
                         tracer = Tracer(self.db_path)
                         tracer.emit(
@@ -452,6 +453,7 @@ class TelegramAdapter:
                     control_plane=self.control_plane,
                     shadow=self.shadow,
                     session_context=session,
+                    tracer=Tracer(self.db_path),
                     llm_routing_classifier=self.llm_routing_classifier,
                     react_format=str(self.config.get("react_format", "json")),
                 ),
