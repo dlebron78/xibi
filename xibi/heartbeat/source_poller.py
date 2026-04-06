@@ -102,6 +102,134 @@ class SourcePoller:
 
         return results
 
+    async def _poll_watch_dirs(self, now: datetime) -> list[dict]:
+        """
+        For each watch directory in profile["watch_dirs"], check if interval elapsed.
+        If due, call the configured filesystem MCP server and return raw results.
+        Does nothing if no filesystem server is configured or no watch_dirs in profile.
+        """
+        import hashlib
+        import os
+
+        watch_dirs = self.config.get("watch_dirs", [])
+        if not watch_dirs:
+            return []
+
+        # Find filesystem server
+        fs_server_conf = next(
+            (
+                s
+                for s in self.config.get("mcp_servers", [])
+                if s.get("type") == "filesystem" or "filesystem" in s.get("name", "").lower()
+            ),
+            None,
+        )
+
+        if not fs_server_conf:
+            logger.debug("No filesystem MCP server configured for watch_dirs.")
+            return []
+
+        if not self.mcp_registry:
+            logger.debug("mcp_registry is not initialized for watch_dirs.")
+            return []
+
+        server_name = fs_server_conf["name"]
+        list_tool = fs_server_conf.get("list_tool", "list_directory")
+        read_tool = fs_server_conf.get("read_tool", "read_multiple_files")
+
+        client = self.mcp_registry.get_client(server_name)
+        if not client:
+            logger.warning(f"MCP client for '{server_name}' not found for watch_dirs")
+            return []
+
+        results = []
+        for dir_config in watch_dirs:
+            path = dir_config.get("path")
+            if not path:
+                continue
+
+            resolved_path = os.path.abspath(os.path.expanduser(path))
+            interval_min = dir_config.get("interval_minutes", 60)
+            interval = timedelta(minutes=interval_min)
+
+            dir_hash = hashlib.sha256(resolved_path.encode()).hexdigest()[:8]
+            poll_key = f"watchdir:{dir_hash}"
+            last = self.last_poll.get(poll_key, datetime.min)
+
+            if now - last < interval:
+                continue
+
+            try:
+                # 1. List directory
+                list_result = await client.call_tool(list_tool, {"path": resolved_path})
+                self.last_poll[poll_key] = now
+
+                # Extract file list from content
+                files_metadata = []
+                structured = list_result.get("structured")
+                if structured and "entries" in structured:
+                    for entry in structured["entries"]:
+                        if entry.get("type") == "file":
+                            files_metadata.append({"name": entry["name"], "modifiedAt": entry.get("modifiedAt", "")})
+                else:
+                    content_list = list_result.get("content", [])
+                    if not content_list:
+                        logger.debug(f"Empty listing for {resolved_path}")
+                        continue
+
+                    for item in content_list:
+                        if item.get("type") == "text" and "text" in item:
+                            # list_directory returns newline-separated filenames
+                            filenames = item["text"].splitlines()
+                            for fname in filenames:
+                                if fname.strip():
+                                    files_metadata.append({"name": fname.strip(), "modifiedAt": ""})
+
+                if not files_metadata:
+                    continue
+
+                # 2. Filter by extensions
+                extensions = dir_config.get("extensions", [])
+                if extensions:
+                    extensions = [ext.lower().lstrip(".") for ext in extensions]
+                    files_metadata = [
+                        f for f in files_metadata if any(f["name"].lower().endswith(f".{ext}") for ext in extensions)
+                    ]
+
+                if not files_metadata:
+                    continue
+
+                # 3. Sort by modifiedAt descending (newest first) and take max_files
+                files_metadata.sort(key=lambda x: x["modifiedAt"], reverse=True)
+
+                max_files = dir_config.get("max_files", 10)
+                if not (1 <= max_files <= 20):
+                    logger.warning(f"max_files {max_files} out of range [1, 20] for {resolved_path}. Clamping.")
+                    max_files = max(1, min(max_files, 20))
+
+                files_to_read = [f["name"] for f in files_metadata[:max_files]]
+                full_paths = [os.path.join(resolved_path, f) for f in files_to_read]
+
+                # 4. Call read_multiple_files
+                raw_mcp_result = await client.call_tool(read_tool, {"paths": full_paths})
+
+                results.append(
+                    {
+                        "source": f"filesystem:{os.path.basename(resolved_path)}",
+                        "type": "mcp",
+                        "data": raw_mcp_result,
+                        "extractor": "file_content",
+                        "metadata": {
+                            "watch_dir": resolved_path,
+                            "dir_config": dir_config,
+                        },
+                    }
+                )
+            except Exception as e:
+                logger.error(f"Watch dir '{resolved_path}' poll failed: {e}", exc_info=True)
+
+        return results
+
     async def poll_due_sources(self) -> list[dict]:
         """Poll all sources whose interval has elapsed. Returns raw results."""
         results = []
@@ -141,6 +269,9 @@ class SourcePoller:
 
         watch_results = await self._poll_watch_topics(now)
         results.extend(watch_results)
+
+        dir_results = await self._poll_watch_dirs(now)
+        results.extend(dir_results)
 
         return results
 

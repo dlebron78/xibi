@@ -51,6 +51,28 @@ def _url_to_ref_id(url: str) -> str:
     return hashlib.sha256(url.encode()).hexdigest()[:16]
 
 
+def _path_to_ref_id(path: str) -> str:
+    """Return a stable 16-char hex ID from a file path (SHA-256 prefix)."""
+    import hashlib
+
+    return hashlib.sha256(path.encode()).hexdigest()[:16]
+
+
+def _extract_filename(path: str) -> str:
+    """Extract the filename (last component) from a file path."""
+    from pathlib import PurePosixPath
+
+    return PurePosixPath(path).name or path
+
+
+def _extract_extension(path: str) -> str:
+    """Extract the file extension (without dot), lowercase."""
+    from pathlib import PurePosixPath
+
+    suffix = PurePosixPath(path).suffix
+    return suffix.lstrip(".").lower() if suffix else ""
+
+
 def _extract_domain(url: str) -> str:
     """Extract the domain from a URL, stripping www."""
     from urllib.parse import urlparse
@@ -62,6 +84,90 @@ def _extract_domain(url: str) -> str:
     if domain.startswith("www."):
         domain = domain[4:]
     return domain
+
+
+@SignalExtractorRegistry.register("file_content")
+def extract_file_content_signals(source: str, data: Any, context: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Extract signals from filesystem MCP tool results.
+
+    Supported data shapes (from @modelcontextprotocol/server-filesystem):
+      Single file result (from read_file):
+        {"content": [{"type": "text", "text": "<file content>"}]}
+        context["source_metadata"]["path"] contains the file path
+
+      Multiple files result (from read_multiple_files):
+        {"content": [{"type": "text", "text": "<path1>\n---\n<content1>"},
+                     {"type": "text", "text": "<path2>\n---\n<content2>"}]}
+    """
+    if not isinstance(data, dict) or "content" not in data or not data["content"]:
+        return extract_generic_signals(source, data, context)
+
+    signals = []
+    source_metadata = context.get("source_metadata", {})
+    watch_dir = source_metadata.get("watch_dir", "")
+
+    for item in data["content"]:
+        if item.get("type") != "text" or "text" not in item:
+            continue
+
+        text = item["text"]
+        if not text:
+            continue
+
+        # Multi-file parsing heuristic:
+        # Detect if text block contains \n---\n and first line looks like a path.
+        item_files = []
+        if "\n---\n" in text:
+            parts = text.split("\n---\n")
+            first_part = parts[0].strip()
+            if first_part.startswith(("/", "~", "./")) or "." in first_part:
+                # Multi-file detected within a single text block
+                current_path = first_part
+                for i in range(1, len(parts)):
+                    part = parts[i]
+                    if i < len(parts) - 1:
+                        if "\n" in part:
+                            content, next_path = part.rsplit("\n", 1)
+                            item_files.append((current_path, content))
+                            current_path = next_path.strip()
+                        else:
+                            item_files.append((current_path, part))
+                            current_path = "unknown"
+                    else:
+                        item_files.append((current_path, part))
+            else:
+                path = source_metadata.get("path", "unknown")
+                item_files.append((path, text))
+        else:
+            path = source_metadata.get("path", "unknown")
+            item_files.append((path, text))
+
+        for path, content in item_files:
+            display_content = content[:500]
+            if len(content) > 500:
+                display_content = display_content[:497] + "..."
+
+            signals.append(
+                {
+                    "source": source,
+                    "type": "file_content",
+                    "entity_text": _extract_filename(path),
+                    "entity_type": "file",
+                    "topic_hint": path,
+                    "content_preview": display_content,
+                    "ref_id": _path_to_ref_id(path),
+                    "ref_source": "filesystem",
+                    "metadata": {
+                        "path": path,
+                        "size_chars": len(content),
+                        "extension": _extract_extension(path),
+                        "watch_dir": watch_dir,
+                    },
+                }
+            )
+
+    return signals
 
 
 @SignalExtractorRegistry.register("web_search")

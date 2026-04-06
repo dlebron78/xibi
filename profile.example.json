@@ -12,6 +12,25 @@
       "max_results": 5
     }
   ],
+  "watch_dirs": [
+    {
+      "path": "~/Documents/notes",
+      "extensions": [
+        "md",
+        "txt"
+      ],
+      "interval_minutes": 60,
+      "max_files": 10
+    },
+    {
+      "path": "~/Desktop",
+      "extensions": [
+        "md"
+      ],
+      "interval_minutes": 120,
+      "max_files": 5
+    }
+  ],
   "observation": {
     "baseline": "3x/day",
     "min_interval": "2h",
