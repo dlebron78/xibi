@@ -1,16 +1,15 @@
+import pytest
 import hashlib
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
-
+from unittest.mock import MagicMock, patch, AsyncMock
 from xibi.heartbeat.extractors import (
-    _extract_domain,
     _url_to_ref_id,
+    _extract_domain,
     extract_web_search_signals,
+    SignalExtractorRegistry,
 )
-from xibi.heartbeat.poller import HeartbeatPoller
 from xibi.heartbeat.source_poller import SourcePoller
+from xibi.heartbeat.poller import HeartbeatPoller
 
 
 def test_url_to_ref_id_is_stable():
@@ -177,9 +176,9 @@ async def test_source_metadata_propagated_to_extractor_context():
         mock_extract.return_value = []
 
         # Setup HeartbeatPoller
-        MagicMock()
+        skills_dir = MagicMock()
         db_path = MagicMock()
-        MagicMock()
+        adapter = MagicMock()
         rules = MagicMock()
 
         poller = HeartbeatPoller.__new__(HeartbeatPoller)
