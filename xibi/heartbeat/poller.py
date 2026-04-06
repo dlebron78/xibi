@@ -508,7 +508,9 @@ class HeartbeatPoller:
 
         items = self.rules.pop_digest_items()
         if not items:
-            return  # Silence is the update when nothing happened
+            if force:
+                self._broadcast("No new digest items.")
+            return
 
         # Only surface items worth attention
         important = [i for i in items if i.get('verdict') in ('URGENT', 'DIGEST')]
@@ -591,7 +593,6 @@ class HeartbeatPoller:
                 self.tick()
                 tick_count += 1
 
-                ticks_per_hour = max(1, 60 // self.interval_minutes)
                 now = datetime.now()
 
                 # Check windows

@@ -63,19 +63,21 @@ def cmd_skill_test(args: Any) -> None:
 
         for tool in tools:
             tool_name = tool.get("name", "unknown")
-            # Check 3: each tool has input_schema
-            if "input_schema" in tool:
-                print(f'{check_mark(True)} Tool "{tool_name}" has input_schema')
+            # Check 3: each tool has inputSchema
+            if "inputSchema" in tool:
+                print(f'{check_mark(True)} Tool "{tool_name}" has inputSchema')
+            elif "input_schema" in tool:
+                print(f'{check_mark(True)} Tool "{tool_name}" has input_schema (legacy)')
             else:
-                print(f'{check_mark(False)} Tool "{tool_name}" missing input_schema')
+                print(f'{check_mark(False)} Tool "{tool_name}" missing inputSchema')
                 sys.exit(1)
 
-            # Check 4: input_schema is valid JSON Schema
-            schema = tool.get("input_schema")
+            # Check 4: inputSchema is valid JSON Schema
+            schema = tool.get("inputSchema") or tool.get("input_schema")
             try:
                 # Basic check: is it a dict?
                 if not isinstance(schema, dict):
-                    raise jsonschema.SchemaError("input_schema must be a dictionary")
+                    raise jsonschema.SchemaError("inputSchema must be a dictionary")
 
                 # Use jsonschema to validate the schema itself
                 jsonschema.Draft7Validator.check_schema(schema)
@@ -100,7 +102,7 @@ def cmd_skill_test(args: Any) -> None:
                 tool_name = tool.get("name")
                 # Create synthetic input from schema
                 mock_input: dict[str, Any] = {}
-                schema = tool.get("input_schema", {})
+                schema = tool.get("inputSchema") or tool.get("input_schema") or {}
                 required = schema.get("required", [])
                 properties = schema.get("properties", {})
 
