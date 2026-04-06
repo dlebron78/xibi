@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pytest
-
 from xibi.heartbeat.source_poller import SourcePoller
 
 
@@ -85,7 +84,11 @@ async def test_poller_falls_back_to_source_args_without_profile(mocker):
 
 @pytest.mark.asyncio
 async def test_poller_non_jobspy_source_unaffected(mocker):
-    config = {"job_search": {"profiles": [{"query": "product manager", "location": "Miami, FL"}]}}
+    config = {
+        "job_search": {
+            "profiles": [{"query": "product manager", "location": "Miami, FL"}]
+        }
+    }
     mcp_registry = mocker.Mock()
     client = mocker.AsyncMock()
     mcp_registry.get_client.return_value = client

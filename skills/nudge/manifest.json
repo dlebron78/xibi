@@ -5,7 +5,7 @@
     {
       "name": "nudge",
       "description": "Surface important information to the operator via Telegram. Used by the observation cycle when it detects something worth notifying about.",
-      "inputSchema": {
+      "input_schema": {
         "type": "object",
         "properties": {
           "message": {
@@ -18,26 +18,17 @@
           },
           "refs": {
             "type": "array",
-            "items": {
-              "type": "string"
-            },
+            "items": {"type": "string"},
             "description": "Signal reference IDs that triggered this nudge"
           },
           "category": {
             "type": "string",
-            "enum": [
-              "urgent",
-              "info",
-              "digest",
-              "alert"
-            ],
+            "enum": ["urgent", "info", "digest", "alert"],
             "default": "info",
             "description": "Notification category for priority/formatting"
           }
         },
-        "required": [
-          "message"
-        ]
+        "required": ["message"]
       },
       "output_type": "action",
       "timeout_secs": 10,

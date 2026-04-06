@@ -1,16 +1,13 @@
-import os
-from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
-
 import pytest
-
+from unittest.mock import MagicMock, AsyncMock, patch
+from datetime import datetime, timedelta
+import os
 from xibi.heartbeat.extractors import (
-    _issue_to_ref_id,
     _sha_to_ref_id,
+    _issue_to_ref_id,
     extract_github_activity_signals,
 )
 from xibi.heartbeat.source_poller import SourcePoller
-
 
 # Helper function tests
 def test_sha_to_ref_id_is_stable():
@@ -21,10 +18,8 @@ def test_sha_to_ref_id_is_stable():
     assert len(res1) == 16
     assert all(c in "0123456789abcdef" for c in res1)
 
-
 def test_sha_to_ref_id_different_shas_different_ids():
     assert _sha_to_ref_id("abc") != _sha_to_ref_id("def")
-
 
 def test_issue_to_ref_id_is_stable():
     repo = "owner/repo"
@@ -35,14 +30,11 @@ def test_issue_to_ref_id_is_stable():
     assert len(res1) == 16
     assert all(c in "0123456789abcdef" for c in res1)
 
-
 def test_issue_to_ref_id_different_repos_different_ids():
     assert _issue_to_ref_id("a/b", 1) != _issue_to_ref_id("c/d", 1)
 
-
 def test_issue_to_ref_id_different_numbers_different_ids():
     assert _issue_to_ref_id("a/b", 1) != _issue_to_ref_id("a/b", 2)
-
 
 # Extractor tests
 def test_github_activity_extractor_commits():
@@ -53,7 +45,7 @@ def test_github_activity_extractor_commits():
                     "sha": "abc123def456",
                     "message": "Fix bug\n\nDetails",
                     "author": {"name": "Alice"},
-                    "timestamp": "2026-01-01T00:00:00Z",
+                    "timestamp": "2026-01-01T00:00:00Z"
                 }
             ]
         }
@@ -69,7 +61,6 @@ def test_github_activity_extractor_commits():
     assert sig["ref_id"] == _sha_to_ref_id("abc123def456")
     assert sig["metadata"]["repo"] == "owner/repo"
 
-
 def test_github_activity_extractor_issues():
     data = {
         "structured": {
@@ -81,7 +72,7 @@ def test_github_activity_extractor_issues():
                     "user": {"login": "bob"},
                     "created_at": "2026-01-01T00:00:00Z",
                     "html_url": "https://github.com/owner/repo/issues/42",
-                    "body": "...",
+                    "body": "..."
                 }
             ]
         }
@@ -96,7 +87,6 @@ def test_github_activity_extractor_issues():
     assert sig["content_preview"] == "[open] #42: Login broken"
     assert sig["ref_id"] == _issue_to_ref_id("owner/repo", 42)
 
-
 def test_github_activity_extractor_prs():
     data = {
         "structured": {
@@ -108,7 +98,7 @@ def test_github_activity_extractor_prs():
                     "user": {"login": "alice"},
                     "created_at": "2026-01-01T00:00:00Z",
                     "html_url": "https://github.com/owner/repo/pull/57",
-                    "body": "...",
+                    "body": "..."
                 }
             ]
         }
@@ -121,7 +111,6 @@ def test_github_activity_extractor_prs():
     assert sig["type"] == "github_pr"
     assert sig["entity_text"] == "PR #57"
 
-
 def test_github_activity_extractor_fallback_on_unknown_structured():
     data = {"structured": {"unknown_key": []}}
     signals = extract_github_activity_signals("github", data, {})
@@ -129,24 +118,33 @@ def test_github_activity_extractor_fallback_on_unknown_structured():
     assert len(signals) == 1
     assert signals[0].get("needs_llm_extraction") is True
 
-
 def test_github_activity_extractor_skips_commit_missing_sha():
-    data = {"structured": {"commits": [{"message": "No sha"}]}}
+    data = {
+        "structured": {
+            "commits": [{"message": "No sha"}]
+        }
+    }
     signals = extract_github_activity_signals("github", data, {})
     assert len(signals) == 0
-
 
 def test_github_activity_extractor_skips_issue_missing_number():
-    data = {"structured": {"issues": [{"title": "No number"}]}}
+    data = {
+        "structured": {
+            "issues": [{"title": "No number"}]
+        }
+    }
     signals = extract_github_activity_signals("github", data, {})
     assert len(signals) == 0
-
 
 def test_github_activity_extractor_commit_first_line_only():
     data = {
         "structured": {
             "commits": [
-                {"sha": "abc123def456", "message": "Fix bug\n\nDetailed explanation here", "author": {"name": "Alice"}}
+                {
+                    "sha": "abc123def456",
+                    "message": "Fix bug\n\nDetailed explanation here",
+                    "author": {"name": "Alice"}
+                }
             ]
         }
     }
@@ -154,22 +152,22 @@ def test_github_activity_extractor_commit_first_line_only():
     assert signals[0]["topic_hint"] == "Fix bug"
     assert signals[0]["content_preview"] == "abc123de: Fix bug"
 
-
 # Poller tests
 @pytest.mark.asyncio
 async def test_poll_watch_repos_calls_mcp_for_commits():
     config = {
-        "watch_repos": [
-            {
-                "repo": "owner/repo",
-                "watch_commits": True,
-                "watch_issues": False,
-                "watch_prs": False,
-                "interval_minutes": 60,
-                "max_items": 10,
-            }
-        ],
-        "mcp_servers": [{"name": "github", "type": "github"}],
+        "watch_repos": [{
+            "repo": "owner/repo",
+            "watch_commits": True,
+            "watch_issues": False,
+            "watch_prs": False,
+            "interval_minutes": 60,
+            "max_items": 10
+        }],
+        "mcp_servers": [{
+            "name": "github",
+            "type": "github"
+        }]
     }
     mcp_registry = MagicMock()
     client = MagicMock()
@@ -186,23 +184,24 @@ async def test_poll_watch_repos_calls_mcp_for_commits():
     assert results[0]["metadata"]["event_type"] == "commits"
     client.call_tool.assert_called_once_with("list_commits", {"repo": "owner/repo", "max_results": 10})
 
-
 @pytest.mark.asyncio
 async def test_poll_watch_repos_skips_when_not_due():
     config = {
-        "watch_repos": [{"repo": "owner/repo", "interval_minutes": 60}],
-        "mcp_servers": [{"name": "github", "type": "github"}],
+        "watch_repos": [{
+            "repo": "owner/repo",
+            "interval_minutes": 60
+        }],
+        "mcp_servers": [{"name": "github", "type": "github"}]
     }
     mcp_registry = MagicMock()
     client = MagicMock()
-    client.call_tool = AsyncMock()
+    client.call_tool = AsyncMock(return_value={"structured": {}})
     mcp_registry.get_client.return_value = client
 
     poller = SourcePoller(config, MagicMock(), mcp_registry)
     now = datetime.utcnow()
     import hashlib
-
-    repo_hash = hashlib.sha256(b"owner/repo").hexdigest()[:8]
+    repo_hash = hashlib.sha256("owner/repo".encode()).hexdigest()[:8]
     # Set last poll for all default enabled event types (commits and prs)
     poller.last_poll[f"watchrepo:{repo_hash}:commits"] = now - timedelta(minutes=30)
     poller.last_poll[f"watchrepo:{repo_hash}:prs"] = now - timedelta(minutes=30)
@@ -213,7 +212,6 @@ async def test_poll_watch_repos_skips_when_not_due():
     assert len(results) == 0
     client.call_tool.assert_not_called()
 
-
 @pytest.mark.asyncio
 async def test_poll_watch_repos_no_server_no_crash():
     config = {"watch_repos": [{"repo": "a/b"}], "mcp_servers": []}
@@ -221,10 +219,12 @@ async def test_poll_watch_repos_no_server_no_crash():
     results = await poller._poll_watch_repos(datetime.utcnow())
     assert results == []
 
-
 @pytest.mark.asyncio
 async def test_poll_watch_repos_skips_when_no_token():
-    config = {"watch_repos": [{"repo": "owner/repo"}], "mcp_servers": [{"name": "github", "type": "github"}]}
+    config = {
+        "watch_repos": [{"repo": "owner/repo"}],
+        "mcp_servers": [{"name": "github", "type": "github"}]
+    }
     mcp_registry = MagicMock()
     client = MagicMock()
     client.call_tool = AsyncMock()
@@ -240,12 +240,14 @@ async def test_poll_watch_repos_skips_when_no_token():
     assert results == []
     client.call_tool.assert_not_called()
 
-
 @pytest.mark.asyncio
 async def test_max_items_clamped_to_20():
     config = {
-        "watch_repos": [{"repo": "owner/repo", "max_items": 50}],
-        "mcp_servers": [{"name": "github", "type": "github"}],
+        "watch_repos": [{
+            "repo": "owner/repo",
+            "max_items": 50
+        }],
+        "mcp_servers": [{"name": "github", "type": "github"}]
     }
     mcp_registry = MagicMock()
     client = MagicMock()
@@ -260,12 +262,16 @@ async def test_max_items_clamped_to_20():
     args = client.call_tool.call_args[0][1]
     assert args["max_results"] == 20
 
-
 @pytest.mark.asyncio
 async def test_poll_watch_repos_independent_per_event_type():
     config = {
-        "watch_repos": [{"repo": "owner/repo", "watch_commits": True, "watch_issues": True, "watch_prs": False}],
-        "mcp_servers": [{"name": "github", "type": "github"}],
+        "watch_repos": [{
+            "repo": "owner/repo",
+            "watch_commits": True,
+            "watch_issues": True,
+            "watch_prs": False
+        }],
+        "mcp_servers": [{"name": "github", "type": "github"}]
     }
     mcp_registry = MagicMock()
     client = MagicMock()

@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Minimal MCP server wrapping python-jobspy for Xibi integration."""
-
 from __future__ import annotations
 
 import json
-import logging
 import sys
+import logging
 
 logger = logging.getLogger("jobspy_mcp")
 
@@ -60,12 +59,8 @@ def _search_jobs(arguments: dict) -> dict:
                 "location": str(row.get("location", "")),
                 "url": str(row.get("job_url", "")),
                 "date_posted": str(row.get("date_posted", "")),
-                "salary_min": row.get("min_amount")
-                if row.get("min_amount") and str(row.get("min_amount")) != "nan"
-                else None,
-                "salary_max": row.get("max_amount")
-                if row.get("max_amount") and str(row.get("max_amount")) != "nan"
-                else None,
+                "salary_min": row.get("min_amount") if row.get("min_amount") and str(row.get("min_amount")) != "nan" else None,
+                "salary_max": row.get("max_amount") if row.get("max_amount") and str(row.get("max_amount")) != "nan" else None,
                 "site": str(row.get("site", "")),
                 "is_remote": bool(row.get("is_remote", False)),
                 "job_type": str(row.get("job_type", "")),

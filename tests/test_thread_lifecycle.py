@@ -13,7 +13,8 @@ from xibi.threads import sweep_resolved_threads, sweep_stale_threads
 def make_thread(conn, thread_id, name, status="active", days_ago=0, deadline=None):
     updated = f"datetime('now', '-{days_ago} days')"
     conn.execute(
-        f"INSERT INTO threads (id, name, status, updated_at, current_deadline) VALUES (?, ?, ?, {updated}, ?)",
+        f"INSERT INTO threads (id, name, status, updated_at, current_deadline) "
+        f"VALUES (?, ?, ?, {updated}, ?)",
         (thread_id, name, status, deadline),
     )
 
@@ -89,7 +90,7 @@ def test_sweep_resolved_from_stale(db_path):
 def test_sweep_resolved_deadline_passed(db_path):
     with xibi.db.open_db(db_path) as conn:
         # deadline passed 10 days ago
-        deadline = sqlite3.connect(":memory:").execute("SELECT date('now', '-10 days')").fetchone()[0]
+        deadline = (sqlite3.connect(":memory:").execute("SELECT date('now', '-10 days')").fetchone()[0])
         make_thread(conn, "t1", "Deadline Passed", status="active", days_ago=1, deadline=deadline)
 
     count = sweep_resolved_threads(db_path)
@@ -103,7 +104,7 @@ def test_sweep_resolved_deadline_passed(db_path):
 def test_sweep_resolved_deadline_recent(db_path):
     with xibi.db.open_db(db_path) as conn:
         # deadline passed 3 days ago
-        deadline = sqlite3.connect(":memory:").execute("SELECT date('now', '-3 days')").fetchone()[0]
+        deadline = (sqlite3.connect(":memory:").execute("SELECT date('now', '-3 days')").fetchone()[0])
         make_thread(conn, "t1", "Deadline Recent", status="active", days_ago=1, deadline=deadline)
 
     count = sweep_resolved_threads(db_path)
@@ -194,7 +195,11 @@ def test_heartbeat_sweep_runs_once_per_day(mock_resolved, mock_stale, db_path):
     mock_resolved.return_value = 0
 
     poller = HeartbeatPoller(
-        skills_dir=Path("/tmp"), db_path=db_path, adapter=MagicMock(), rules=MagicMock(), allowed_chat_ids=[123]
+        skills_dir=Path("/tmp"),
+        db_path=db_path,
+        adapter=MagicMock(),
+        rules=MagicMock(),
+        allowed_chat_ids=[123]
     )
 
     # Run 1
@@ -215,7 +220,11 @@ def test_heartbeat_sweep_runs_next_day(mock_resolved, mock_stale, db_path):
     mock_resolved.return_value = 0
 
     poller = HeartbeatPoller(
-        skills_dir=Path("/tmp"), db_path=db_path, adapter=MagicMock(), rules=MagicMock(), allowed_chat_ids=[123]
+        skills_dir=Path("/tmp"),
+        db_path=db_path,
+        adapter=MagicMock(),
+        rules=MagicMock(),
+        allowed_chat_ids=[123]
     )
 
     # Run 1
@@ -224,7 +233,9 @@ def test_heartbeat_sweep_runs_next_day(mock_resolved, mock_stale, db_path):
 
     # Simulate day change by updating heartbeat_state
     with xibi.db.open_db(db_path) as conn, conn:
-        conn.execute("UPDATE heartbeat_state SET value = '2000-01-01' WHERE key = 'thread_sweep_last_run'")
+        conn.execute(
+            "UPDATE heartbeat_state SET value = '2000-01-01' WHERE key = 'thread_sweep_last_run'"
+        )
 
     # Run 2 (different "day")
     poller._sweep_thread_lifecycle()

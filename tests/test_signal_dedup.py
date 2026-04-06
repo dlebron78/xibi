@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 
-from xibi.db import migrate, open_db
+from xibi.db import open_db, migrate
 from xibi.heartbeat.poller import HeartbeatPoller
 from xibi.signal_intelligence import is_duplicate_signal
 
@@ -68,20 +69,8 @@ async def test_dedup_in_tick(db_path: Path, mocker):
     )
 
     raw_signals = [
-        {
-            "source": "jobspy_source",
-            "ref_id": "job-123",
-            "ref_source": "jobspy",
-            "topic_hint": "T1",
-            "content_preview": "P1",
-        },
-        {
-            "source": "jobspy_source",
-            "ref_id": "job-456",
-            "ref_source": "jobspy",
-            "topic_hint": "T2",
-            "content_preview": "P2",
-        },
+        {"source": "jobspy_source", "ref_id": "job-123", "ref_source": "jobspy", "topic_hint": "T1", "content_preview": "P1"},
+        {"source": "jobspy_source", "ref_id": "job-456", "ref_source": "jobspy", "topic_hint": "T2", "content_preview": "P2"},
     ]
 
     # Mock poll_due_sources
@@ -102,10 +91,8 @@ async def test_dedup_in_tick(db_path: Path, mocker):
     # Patch is_duplicate_signal where it's used in poller.py
     # Since poller.py does 'import xibi.signal_intelligence as sig_intel'
     mock_dedup = mocker.patch("xibi.heartbeat.poller.sig_intel.is_duplicate_signal")
-
     def side_effect(ref_source, ref_id, db_path, window_hours=72):
         return ref_id == "job-123"
-
     mock_dedup.side_effect = side_effect
 
     # Run tick

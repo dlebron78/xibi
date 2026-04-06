@@ -1,8 +1,7 @@
-import asyncio
 import unittest
+from unittest.mock import MagicMock, patch
+import asyncio
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock
-
 from xibi.heartbeat.source_poller import SourcePoller
 
 
