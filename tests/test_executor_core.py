@@ -90,7 +90,10 @@ def test_nudge_execution_succeeds_with_mocked_telegram(temp_skills_dir):
     registry = SkillRegistry(temp_skills_dir)
     executor = Executor(registry=registry)
 
-    # nudge execution eventually calls xibi.skills.nudge.nudge
+    # We patch xibi.skills.nudge.nudge rather than the dynamic tools/nudge.py
+    # because tools/nudge.py imports nudge from xibi.skills.nudge, and that
+    # binding happens at module load time. The executor loads the tool module
+    # fresh on each execute() call, so it picks up the patched mock.
     with patch("xibi.skills.nudge.nudge") as mock_nudge:
         async def mock_nudge_impl(*args, **kwargs):
             return {"status": "ok", "delivered": True}
