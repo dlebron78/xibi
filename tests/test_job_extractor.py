@@ -31,7 +31,7 @@ def test_jobs_extractor_structured():
                     "posted_at": "2026-04-03",
                 }
             ]
-        }
+        },
     }
     signals = SignalExtractorRegistry.extract("jobs", "jobspy_source", data, {})
     assert len(signals) == 1
