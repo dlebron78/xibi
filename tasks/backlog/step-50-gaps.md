@@ -152,3 +152,36 @@ send a Telegram nudge summarizing what was swept. Only nudge for important/high-
 threads — requires thread priority classification (see item 7).
 
 **Scope:** Small change to poller.py, depends on item 7.
+
+---
+
+## Tier 1 — Fix what is broken now (continued)
+
+### 11. Async Source Polling Architecture
+
+**Problem:** `source_poller.py` declares `async def` on all poll methods but the
+underlying calls (`client.call_tool()` in `mcp/client.py` and `executor.execute()`
+in `executor.py`) are synchronous. Jules added `await` on sync methods across 5
+call sites, crashing all source polling. We hot-fixed by removing the awaits, but
+this leaves a serial polling bottleneck — each source blocks the next.
+
+The original step-48 code had the same bug from day one. Email only worked because
+it was hardcoded separately in `poller.py` Phase 2, bypassing source_poller.
+
+**Fix:** Make the underlying methods truly async:
+(a) `mcp/client.py` — `async def call_tool()` using `asyncio.create_subprocess_exec()`
+    instead of `subprocess.Popen`. The JSON-RPC stdio protocol is inherently I/O-bound
+    and benefits from async.
+(b) `executor.py` — `async def execute()` using `asyncio.to_thread()` to wrap sync
+    tool calls without blocking the event loop.
+(c) `source_poller.py` — restore `await` on both call sites, then use
+    `asyncio.gather()` in `poll_due_sources()` to poll all due sources concurrently
+    instead of sequentially.
+
+**Why this matters:** With 5+ sources (email, calendar, jobs, web search, filesystem,
+GitHub), serial polling means a slow or hanging source delays everything. Concurrent
+polling is the correct architecture for a multi-source heartbeat.
+
+**Scope:** ~40 lines in client.py, ~10 lines in executor.py, ~15 lines in
+source_poller.py. Medium effort. Needs integration test with mock async MCP server.
+
