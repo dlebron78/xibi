@@ -508,16 +508,18 @@ class HeartbeatPoller:
 
         items = self.rules.pop_digest_items()
         if not items:
-            if force:
-                self._broadcast("📥 Recap — no new emails triaged since last update. All quiet!")
+            return  # Silence is the update when nothing happened
+
+        # Only surface items worth attention
+        important = [i for i in items if i.get('verdict') in ('URGENT', 'DIGEST')]
+        if not important:
             return
 
-        msg_lines = ["📥 **Digest Recap**"]
-        for item in items[:10]:
-            msg_lines.append(f"• {item['sender']}: {item['subject']} ({item['verdict']})")
+        msg_lines = ["\U0001f4e5 **Digest Recap**"]
+        for item in important[:10]:
+            msg_lines.append(f"\u2022 {item['sender']}: {item['subject']} ({item['verdict']})")
 
         self._broadcast("\n".join(msg_lines))
-
     def recap_tick(self) -> None:
         logger.info("Running recap tick")
         self.digest_tick(force=True)
@@ -596,10 +598,7 @@ class HeartbeatPoller:
                 if (now.hour == 9 or now.hour == 18) and now.minute < 15:
                     self.recap_tick()
                     tick_count = 0
-                elif tick_count >= ticks_per_hour:
-                    self.digest_tick()
-                    tick_count = 0
-
+                # Hourly digest removed — digests only at 9 AM and 6 PM windows
                 if now.hour == 7 and now.minute < 15:
                     self.reflection_tick()
                     self._cleanup_telegram_cache()
