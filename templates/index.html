@@ -587,11 +587,27 @@
                 if (signals.active_threads.length === 0) {
                     container.innerHTML = '<div class="text-slate-500 text-xs">No active threads</div>';
                 } else {
-                    container.innerHTML = signals.active_threads.map(t => `
-                        <div class="bg-indigo-900/30 border border-indigo-500/30 px-3 py-1 rounded-full text-[10px] font-bold text-indigo-300 uppercase tracking-wide">
-                            ${t.name} <span class="ml-1 text-indigo-500">${t.signal_count}</span>
-                        </div>
-                    `).join('');
+                    const priorityStyle = {
+                        critical: 'bg-red-900/40 border-red-500/50 text-red-300',
+                        high:     'bg-orange-900/40 border-orange-500/50 text-orange-300',
+                        medium:   'bg-yellow-900/30 border-yellow-500/40 text-yellow-300',
+                        low:      'bg-slate-800/40 border-slate-600/40 text-slate-400',
+                    };
+                    const priorityDot = {
+                        critical: '🔴',
+                        high:     '🟠',
+                        medium:   '🟡',
+                        low:      '⚪',
+                    };
+                    container.innerHTML = signals.active_threads.map(t => {
+                        const p = t.priority || null;
+                        const style = p ? priorityStyle[p] : 'bg-indigo-900/30 border-indigo-500/30 text-indigo-300';
+                        const dot = p ? (priorityDot[p] + ' ') : '';
+                        const tooltip = t.summary ? ` title="${t.summary.replace(/"/g, '&quot;')}"` : '';
+                        return `<div class="border px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide cursor-default ${style}"${tooltip}>
+                            ${dot}${t.name} <span class="ml-1 opacity-60">${t.signal_count}</span>
+                        </div>`;
+                    }).join('');
                 }
             }
         }

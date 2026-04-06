@@ -228,20 +228,50 @@ def get_active_threads(conn: sqlite3.Connection, limit: int = 20) -> list[dict]:
     Return active threads from the threads table.
 
     Returns:
-    [{"name": str, "status": str, "owner": str, "signal_count": int}, ...]
+    [{"name": str, "status": str, "owner": str, "signal_count": int,
+      "priority": str|None, "summary": str|None}, ...]
 
-    Threads are sorted by signal_count DESC, limited to `limit` rows.
-    Returns [] if the threads table doesn't exist.
+    Threads are sorted by priority (critical→high→medium→low→unset) then
+    signal_count DESC. Returns [] if the threads table doesn't exist.
     """
     cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='threads'")
     if not cursor.fetchone():
         return []
 
-    cursor = conn.execute(
-        "SELECT name, status, owner, signal_count FROM threads WHERE status = 'active' ORDER BY signal_count DESC LIMIT ?",
-        (limit,),
-    )
-    return [{"name": r[0], "status": r[1], "owner": r[2], "signal_count": r[3]} for r in cursor.fetchall()]
+    # Check if priority column exists (migration 19)
+    col_cursor = conn.execute("PRAGMA table_info(threads)")
+    cols = {row[1] for row in col_cursor.fetchall()}
+    has_priority = "priority" in cols
+    has_summary = "summary" in cols
+
+    priority_order = "CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END"
+
+    if has_priority and has_summary:
+        cursor = conn.execute(
+            f"SELECT name, status, owner, signal_count, priority, summary "
+            f"FROM threads WHERE status = 'active' "
+            f"ORDER BY {priority_order}, signal_count DESC LIMIT ?",
+            (limit,),
+        )
+        return [{"name": r[0], "status": r[1], "owner": r[2], "signal_count": r[3],
+                 "priority": r[4], "summary": r[5]} for r in cursor.fetchall()]
+    elif has_priority:
+        cursor = conn.execute(
+            f"SELECT name, status, owner, signal_count, priority "
+            f"FROM threads WHERE status = 'active' "
+            f"ORDER BY {priority_order}, signal_count DESC LIMIT ?",
+            (limit,),
+        )
+        return [{"name": r[0], "status": r[1], "owner": r[2], "signal_count": r[3],
+                 "priority": r[4], "summary": None} for r in cursor.fetchall()]
+    else:
+        cursor = conn.execute(
+            "SELECT name, status, owner, signal_count FROM threads WHERE status = 'active' "
+            "ORDER BY signal_count DESC LIMIT ?",
+            (limit,),
+        )
+        return [{"name": r[0], "status": r[1], "owner": r[2], "signal_count": r[3],
+                 "priority": None, "summary": None} for r in cursor.fetchall()]
 
 
 def get_signal_pipeline(conn: sqlite3.Connection, days: int = 7) -> dict:
