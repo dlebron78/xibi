@@ -86,7 +86,7 @@ class SourcePoller:
             }
 
             try:
-                raw_mcp_result = await client.call_tool(tool_name, args)
+                raw_mcp_result = client.call_tool(tool_name, args)
                 self.last_poll[poll_key] = now
                 results.append(
                     {
@@ -161,7 +161,7 @@ class SourcePoller:
 
             try:
                 # 1. List directory
-                list_result = await client.call_tool(list_tool, {"path": resolved_path})
+                list_result = client.call_tool(list_tool, {"path": resolved_path})
                 self.last_poll[poll_key] = now
 
                 # Extract file list from content
@@ -211,7 +211,7 @@ class SourcePoller:
                 full_paths = [os.path.join(resolved_path, f) for f in files_to_read]
 
                 # 4. Call read_multiple_files
-                raw_mcp_result = await client.call_tool(read_tool, {"paths": full_paths})
+                raw_mcp_result = client.call_tool(read_tool, {"paths": full_paths})
 
                 results.append(
                     {
@@ -359,7 +359,7 @@ class SourcePoller:
                     continue
 
                 try:
-                    raw_mcp_result = await client.call_tool(tool_name, {"repo": repo, "max_results": max_items})
+                    raw_mcp_result = client.call_tool(tool_name, {"repo": repo, "max_results": max_items})
                     self.last_poll[poll_key] = now
                     results.append(
                         {
@@ -405,9 +405,9 @@ class SourcePoller:
             if not client:
                 raise ValueError(f"MCP client for '{server_name}' not found")
 
-            return cast(dict[Any, Any], await client.call_tool(tool_name, args))
+            return cast(dict[Any, Any], client.call_tool(tool_name, args))
         else:
             # Native tool — dispatch through executor
             tool_name = source["tool"]
             args = source.get("args", {})
-            return cast(dict[Any, Any], await self.executor.execute(tool_name, args))
+            return cast(dict[Any, Any], self.executor.execute(tool_name, args))
