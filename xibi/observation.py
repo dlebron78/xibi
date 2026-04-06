@@ -740,7 +740,7 @@ class ObservationCycle:
                 try:
                     batch_dump = self._build_batch_dump(batch, batch_num, len(batches))
                     prompt = f"system: {system_prompt}\n\nuser: {batch_dump}"
-                    response_text = llm.generate(prompt, max_tokens=8192)
+                    response_text = llm.generate(prompt, max_tokens=16000)
 
                     try:
                         review_data = json.loads(response_text)
