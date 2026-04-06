@@ -632,6 +632,7 @@ async def _run_async(
         )
 
     for step_num in range(1, max_steps + 1):
+        error_obj: XibiError | None = None
         elapsed = time.time() - start_time
         if elapsed > max_secs:
             # Timeout — transient failure
@@ -651,7 +652,7 @@ async def _run_async(
 
                 if tool_name == "error":
                     # Handle same as json mode parse error
-                    error = XibiError(
+                    error_obj = XibiError(
                         category=ErrorCategory.PARSE_FAILURE,
                         message="I had trouble understanding the response. Retrying.",
                         component="router",
@@ -663,7 +664,7 @@ async def _run_async(
                         tool="error",
                         tool_input=tool_input,
                         duration_ms=int((time.time() - step_start_time) * 1000),
-                        error=error,
+                        error=error_obj,
                     )
                 else:
                     step = Step(
@@ -686,7 +687,7 @@ async def _run_async(
                     # Parse succeeded — record success
                     trust.record_success(_trust_specialty, _trust_effort)
                     parse_warning = None
-                    error = None
+                    error_obj = None
                 except Exception:
                     # Recovery attempt
                     try:
@@ -701,14 +702,14 @@ async def _run_async(
                         # Recovered parse — still a success (LLM produced valid JSON on retry)
                         trust.record_success(_trust_specialty, _trust_effort)
                         parse_warning = "Recovered from invalid JSON"
-                        error = None
+                        error_obj = None
                     except Exception as inner_e:
                         set_last_parse_status("failed")
                         # Persistent failure — LLM could not produce parseable JSON
                         trust.record_failure(_trust_specialty, _trust_effort, FailureType.PERSISTENT)
                         parsed = {"thought": f"Failed to parse LLM response: {str(inner_e)}", "tool": "error"}
                         parse_warning = "Failed to parse JSON"
-                        error = XibiError(
+                        error_obj = XibiError(
                             category=ErrorCategory.PARSE_FAILURE,
                             message="I had trouble understanding the response. Retrying.",
                             component="router",
@@ -722,7 +723,7 @@ async def _run_async(
                     tool_input=parsed.get("tool_input", {}),
                     duration_ms=int((time.time() - step_start_time) * 1000),
                     parse_warning=parse_warning,
-                    error=error,
+                    error=error_obj,
                 )
 
             # Common handling for tool dispatch and loop control
