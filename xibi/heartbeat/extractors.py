@@ -391,9 +391,12 @@ def extract_email_signals(source: str, data: Any, context: dict[str, Any]) -> li
     data is expected to be a list of email dicts, or a dict wrapper with a result key
     (returned by executor.execute() envelope).
     """
-    # Unwrap executor dict envelope if present
-    if isinstance(data, dict) and "result" in data:
-        data = data["result"]
+    # Unwrap executor dict envelope: list_unread returns {"emails": [...], "status": "success"}
+    if isinstance(data, dict):
+        if "emails" in data:
+            data = data["emails"]
+        elif "result" in data:
+            data = data["result"]
     if not isinstance(data, list):
         logger.warning(f"Email extractor expected list, got {type(data)}")
         return []
