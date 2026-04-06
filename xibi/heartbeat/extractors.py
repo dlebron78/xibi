@@ -388,8 +388,12 @@ def extract_web_search_signals(source: str, data: Any, context: dict[str, Any]) 
 def extract_email_signals(source: str, data: Any, context: dict[str, Any]) -> list[dict[str, Any]]:
     """
     Extract signals from email data.
-    data is expected to be a list of email dicts.
+    data is expected to be a list of email dicts, or a dict wrapper with a result key
+    (returned by executor.execute() envelope).
     """
+    # Unwrap executor dict envelope if present
+    if isinstance(data, dict) and "result" in data:
+        data = data["result"]
     if not isinstance(data, list):
         logger.warning(f"Email extractor expected list, got {type(data)}")
         return []
@@ -487,6 +491,9 @@ def extract_job_signals(source: str, data: Any, context: dict[str, Any]) -> list
 @SignalExtractorRegistry.register("calendar")
 def extract_calendar_signals(source: str, data: Any, context: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract signals from calendar events."""
+    # Unwrap executor dict envelope if present
+    if isinstance(data, dict) and "result" in data:
+        data = data["result"]
     if not isinstance(data, dict):
         logger.warning(f"Calendar extractor expected dict, got {type(data)}")
         return []
