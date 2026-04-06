@@ -724,8 +724,9 @@ class ObservationCycle:
             system_prompt = self._build_review_system_prompt()
             llm = get_model(specialty="text", effort="review", config=self.profile)
 
-            # Batch through threads in chunks of 40 to stay within LLM output limits
-            BATCH_SIZE = 40
+            # Batch through threads in chunks of 20. Each thread produces ~100 output tokens
+            # (thread_id + priority + summary). 20 threads ≈ 2000 tokens, well within 8192.
+            BATCH_SIZE = 20
             all_thread_updates: list[dict[str, Any]] = []
             all_signal_flags: list[dict[str, Any]] = []
             all_digests: list[str] = []
@@ -739,7 +740,7 @@ class ObservationCycle:
                 try:
                     batch_dump = self._build_batch_dump(batch, batch_num, len(batches))
                     prompt = f"system: {system_prompt}\n\nuser: {batch_dump}"
-                    response_text = llm.generate(prompt)
+                    response_text = llm.generate(prompt, max_tokens=8192)
 
                     try:
                         review_data = json.loads(response_text)
