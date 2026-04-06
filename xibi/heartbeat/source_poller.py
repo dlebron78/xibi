@@ -273,6 +273,110 @@ class SourcePoller:
         dir_results = await self._poll_watch_dirs(now)
         results.extend(dir_results)
 
+        repo_results = await self._poll_watch_repos(now)
+        results.extend(repo_results)
+
+        return results
+
+    async def _poll_watch_repos(self, now: datetime) -> list[dict]:
+        """
+        For each repo in profile["watch_repos"], check if interval elapsed.
+        If due, call the configured GitHub MCP server for each enabled event type
+        (commits, issues, pull requests) and return raw results.
+        Does nothing if no GitHub server is configured or no watch_repos in profile.
+        """
+        import hashlib
+        import os
+
+        watch_repos = self.config.get("watch_repos", [])
+        if not watch_repos:
+            return []
+
+        # Find GitHub server
+        github_server_conf = next(
+            (
+                s
+                for s in self.config.get("mcp_servers", [])
+                if s.get("type") == "github" or "github" in s.get("name", "").lower()
+            ),
+            None,
+        )
+
+        if not github_server_conf:
+            logger.debug("No GitHub MCP server configured for watch_repos.")
+            return []
+
+        if not self.mcp_registry:
+            logger.debug("mcp_registry is not initialized for watch_repos.")
+            return []
+
+        if not os.environ.get("GITHUB_TOKEN"):
+            logger.warning(
+                "GITHUB_TOKEN not set — GitHub MCP source is configured but cannot authenticate. "
+                "Set GITHUB_TOKEN in your environment to enable repository watching."
+            )
+            return []
+
+        server_name = github_server_conf["name"]
+        client = self.mcp_registry.get_client(server_name)
+        if not client:
+            logger.warning(f"MCP client for '{server_name}' not found for watch_repos")
+            return []
+
+        # Tool names from config
+        commits_tool = github_server_conf.get("commits_tool", "list_commits")
+        issues_tool = github_server_conf.get("issues_tool", "list_issues")
+        prs_tool = github_server_conf.get("prs_tool", "list_pull_requests")
+
+        results = []
+        for repo_config in watch_repos:
+            repo = repo_config.get("repo")
+            if not repo:
+                continue
+
+            interval_min = repo_config.get("interval_minutes", 60)
+            interval = timedelta(minutes=interval_min)
+            max_items = repo_config.get("max_items", 10)
+            if not (1 <= max_items <= 20):
+                logger.warning(f"max_items {max_items} out of range [1, 20] for repo '{repo}'. Clamping.")
+                max_items = max(1, min(max_items, 20))
+
+            repo_hash = hashlib.sha256(repo.encode()).hexdigest()[:8]
+
+            event_types = []
+            if repo_config.get("watch_commits", True):
+                event_types.append(("commits", commits_tool))
+            if repo_config.get("watch_issues", False):
+                event_types.append(("issues", issues_tool))
+            if repo_config.get("watch_prs", True):
+                event_types.append(("prs", prs_tool))
+
+            for event_type, tool_name in event_types:
+                poll_key = f"watchrepo:{repo_hash}:{event_type}"
+                last = self.last_poll.get(poll_key, datetime.min)
+
+                if now - last < interval:
+                    continue
+
+                try:
+                    raw_mcp_result = await client.call_tool(tool_name, {"repo": repo, "max_results": max_items})
+                    self.last_poll[poll_key] = now
+                    results.append(
+                        {
+                            "source": f"github:{repo}",
+                            "type": "mcp",
+                            "data": raw_mcp_result,
+                            "extractor": "github_activity",
+                            "metadata": {
+                                "repo": repo,
+                                "event_type": event_type,
+                                "repo_config": repo_config,
+                            },
+                        }
+                    )
+                except Exception as e:
+                    logger.error(f"Watch repo '{repo}' ({event_type}) poll failed: {e}", exc_info=True)
+
         return results
 
     async def _poll_source(self, source: dict) -> dict:

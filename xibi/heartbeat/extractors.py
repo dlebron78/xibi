@@ -86,6 +86,155 @@ def _extract_domain(url: str) -> str:
     return domain
 
 
+def _sha_to_ref_id(sha: str) -> str:
+    """Return a stable 16-char hex ID from a Git commit SHA."""
+    import hashlib
+
+    return hashlib.sha256(sha.encode()).hexdigest()[:16]
+
+
+def _issue_to_ref_id(repo: str, number: int) -> str:
+    """Return a stable 16-char hex ID from a repo + issue/PR number pair."""
+    import hashlib
+
+    return hashlib.sha256(f"{repo}#{number}".encode()).hexdigest()[:16]
+
+
+@SignalExtractorRegistry.register("github_activity")
+def extract_github_activity_signals(source: str, data: Any, context: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Extract signals from GitHub MCP tool results.
+
+    Supported data shapes (from @modelcontextprotocol/server-github):
+
+      Commits result (from list_commits):
+        {"structured": {"commits": [{"sha": str, "message": str,
+          "author": {"name": str, "email": str}, "timestamp": str}, ...]}}
+
+      Issues result (from list_issues):
+        {"structured": {"issues": [{"number": int, "title": str, "state": str,
+          "body": str, "user": {"login": str}, "created_at": str, "html_url": str}, ...]}}
+
+      Pull requests result (from list_pull_requests):
+        {"structured": {"pull_requests": [{"number": int, "title": str, "state": str,
+          "body": str, "user": {"login": str}, "created_at": str, "html_url": str}, ...]}}
+
+    Falls back to generic extractor if none of the structured keys are recognized.
+    """
+    if not isinstance(data, dict) or "structured" not in data:
+        return extract_generic_signals(source, data, context)
+
+    structured = data["structured"]
+    repo = context.get("source_metadata", {}).get("repo", "")
+    signals = []
+
+    if "commits" in structured:
+        for commit in structured["commits"]:
+            sha = commit.get("sha")
+            message = commit.get("message")
+            if not sha or message is None:
+                continue
+
+            author = commit.get("author", {})
+            author_name = author.get("name") or author.get("login") or "unknown"
+            author_email = author.get("email", "")
+            timestamp = commit.get("timestamp", "")
+            message_first_line = message.splitlines()[0] if message else "(no message)"
+
+            signals.append(
+                {
+                    "source": source,
+                    "type": "github_commit",
+                    "entity_text": author_name,
+                    "entity_type": "developer",
+                    "topic_hint": message_first_line,
+                    "content_preview": f"{sha[:8]}: {message_first_line}",
+                    "ref_id": _sha_to_ref_id(sha),
+                    "ref_source": "github",
+                    "metadata": {
+                        "sha": sha,
+                        "sha_short": sha[:8],
+                        "author": author_name,
+                        "author_email": author_email,
+                        "timestamp": timestamp,
+                        "repo": repo,
+                    },
+                }
+            )
+
+    elif "issues" in structured:
+        for issue in structured["issues"]:
+            number = issue.get("number")
+            title = issue.get("title")
+            if number is None or title is None:
+                continue
+
+            state = issue.get("state", "unknown")
+            user_login = issue.get("user", {}).get("login", "unknown")
+            created_at = issue.get("created_at", "")
+            html_url = issue.get("html_url", "")
+
+            signals.append(
+                {
+                    "source": source,
+                    "type": "github_issue",
+                    "entity_text": f"#{number}",
+                    "entity_type": "issue",
+                    "topic_hint": title,
+                    "content_preview": f"[{state}] #{number}: {title}",
+                    "ref_id": _issue_to_ref_id(repo, number),
+                    "ref_source": "github",
+                    "metadata": {
+                        "number": number,
+                        "title": title,
+                        "state": state,
+                        "author": user_login,
+                        "created_at": created_at,
+                        "url": html_url,
+                        "repo": repo,
+                    },
+                }
+            )
+
+    elif "pull_requests" in structured:
+        for pr in structured["pull_requests"]:
+            number = pr.get("number")
+            title = pr.get("title")
+            if number is None or title is None:
+                continue
+
+            state = pr.get("state", "unknown")
+            user_login = pr.get("user", {}).get("login", "unknown")
+            created_at = pr.get("created_at", "")
+            html_url = pr.get("html_url", "")
+
+            signals.append(
+                {
+                    "source": source,
+                    "type": "github_pr",
+                    "entity_text": f"PR #{number}",
+                    "entity_type": "pull_request",
+                    "topic_hint": title,
+                    "content_preview": f"[{state}] PR #{number}: {title}",
+                    "ref_id": _issue_to_ref_id(repo, number),
+                    "ref_source": "github",
+                    "metadata": {
+                        "number": number,
+                        "title": title,
+                        "state": state,
+                        "author": user_login,
+                        "created_at": created_at,
+                        "url": html_url,
+                        "repo": repo,
+                    },
+                }
+            )
+    else:
+        return extract_generic_signals(source, data, context)
+
+    return signals
+
+
 @SignalExtractorRegistry.register("file_content")
 def extract_file_content_signals(source: str, data: Any, context: dict[str, Any]) -> list[dict[str, Any]]:
     """
