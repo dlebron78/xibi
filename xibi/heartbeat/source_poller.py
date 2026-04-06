@@ -170,10 +170,7 @@ class SourcePoller:
                 if structured and "entries" in structured:
                     for entry in structured["entries"]:
                         if entry.get("type") == "file":
-                            files_metadata.append({
-                                "name": entry["name"],
-                                "modifiedAt": entry.get("modifiedAt", "")
-                            })
+                            files_metadata.append({"name": entry["name"], "modifiedAt": entry.get("modifiedAt", "")})
                 else:
                     content_list = list_result.get("content", [])
                     if not content_list:
@@ -196,8 +193,7 @@ class SourcePoller:
                 if extensions:
                     extensions = [ext.lower().lstrip(".") for ext in extensions]
                     files_metadata = [
-                        f for f in files_metadata
-                        if any(f["name"].lower().endswith(f".{ext}") for ext in extensions)
+                        f for f in files_metadata if any(f["name"].lower().endswith(f".{ext}") for ext in extensions)
                     ]
 
                 if not files_metadata:
