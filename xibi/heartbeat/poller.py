@@ -310,7 +310,14 @@ class HeartbeatPoller:
 
             try:
                 raw_signals = SignalExtractorRegistry.extract(
-                    extractor_name, source_name, data, context={"db_path": self.db_path, "config": self.profile}
+                    extractor_name,
+                    source_name,
+                    data,
+                    context={
+                        "db_path": self.db_path,
+                        "config": self.profile,
+                        "source_metadata": result.get("metadata", {}),
+                    },
                 )
 
                 # Special processing for email signals (classification/triage)

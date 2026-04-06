@@ -44,6 +44,91 @@ class SignalExtractorRegistry:
             return []
 
 
+def _url_to_ref_id(url: str) -> str:
+    """Return a stable 16-char hex ID from the URL (SHA-256 prefix)."""
+    import hashlib
+
+    return hashlib.sha256(url.encode()).hexdigest()[:16]
+
+
+def _extract_domain(url: str) -> str:
+    """Extract the domain from a URL, stripping www."""
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url)
+    domain = parsed.netloc or url
+    if not parsed.netloc and "/" in domain:
+        domain = domain.split("/")[0]
+    if domain.startswith("www."):
+        domain = domain[4:]
+    return domain
+
+
+@SignalExtractorRegistry.register("web_search")
+def extract_web_search_signals(source: str, data: Any, context: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Extract signals from web search MCP tool results.
+
+    Expected data shape (from Brave or Tavily MCP):
+      dict with "structured" key containing:
+        {"results": [{"title": str, "url": str, "snippet": str, ...}, ...]}
+      OR
+      dict with "result" key (plain text fallback)
+    """
+    structured = None
+    if isinstance(data, dict):
+        structured = data.get("structured")
+
+    if not structured or "results" not in structured:
+        # Fallback behavior: if data has no structured results key, fall back to generic
+        return extract_generic_signals(source, data, context)
+
+    results = structured.get("results", [])
+    if not results:
+        return []
+
+    signals = []
+    query = context.get("source_metadata", {}).get("query", "")
+
+    for res in results:
+        title = res.get("title")
+        url = res.get("url")
+        snippet = res.get("snippet", "")
+
+        if not url:
+            continue
+
+        title = title or "Untitled"
+        url = url or ""
+
+        # Snippet Truncation: content_preview ≤ 500 chars total (title + separator + snippet)
+        # separator is " — " (3 chars). If longer than 500 - len(title) - 4, truncate.
+        max_snippet_len = 500 - len(title) - 4
+        display_snippet = snippet
+        if len(display_snippet) > max_snippet_len:
+            display_snippet = display_snippet[: max_snippet_len - 3] + "..."
+
+        signals.append(
+            {
+                "source": source,
+                "type": "web_result",
+                "entity_text": _extract_domain(url),
+                "entity_type": "website",
+                "topic_hint": title,
+                "content_preview": f"{title} — {display_snippet}",
+                "ref_id": _url_to_ref_id(url) if url else "",
+                "ref_source": "web_search",
+                "metadata": {
+                    "title": title,
+                    "url": url,
+                    "snippet": snippet,
+                    "query": query,
+                },
+            }
+        )
+    return signals
+
+
 @SignalExtractorRegistry.register("email")
 def extract_email_signals(source: str, data: Any, context: dict[str, Any]) -> list[dict[str, Any]]:
     """
