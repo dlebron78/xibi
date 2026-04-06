@@ -356,7 +356,32 @@ Exchanges:
         if memories:
             lines.append(memories)
 
+        # Append belief summaries (compressed old turns)
+        summaries = self._get_belief_summaries()
+        if summaries:
+            lines.insert(0, summaries + "\n")
+
         return "\n".join(lines)
+
+    def _get_belief_summaries(self) -> str:
+        """Fetch belief_summaries for this session."""
+        try:
+            with open_db(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute(
+                    "SELECT summary FROM belief_summaries WHERE session_id = ? ORDER BY created_at ASC",
+                    (self.session_id,),
+                ).fetchall()
+                if not rows:
+                    return ""
+
+                parts = ["Summary of earlier conversation:"]
+                for r in rows:
+                    parts.append(r["summary"])
+                return "\n".join(parts)
+        except Exception as e:
+            logger.debug("Failed to fetch belief summaries: %s", e)
+            return ""
 
     def is_continuation(self, query: str) -> bool:
         # Signal 1: Markers

@@ -16,9 +16,10 @@ except ImportError:
 
 from xibi.executor import LocalHandlerExecutor
 from xibi.mcp.registry import MCPServerRegistry
+from xibi.memory import compress_session_turns
 from xibi.quality import apply_quality_to_trust, quality_score_span
 from xibi.react import handle_intent, run
-from xibi.router import Config
+from xibi.router import Config, get_model
 from xibi.routing.control_plane import ControlPlaneRouter
 from xibi.routing.llm_classifier import LLMRoutingClassifier
 from xibi.routing.shadow import ShadowMatcher
@@ -361,6 +362,14 @@ def main() -> None:
 
                 # Persist turn
                 session.add_turn(query, result)
+
+                # Trigger memory compression post-turn
+                try:
+                    fast_model = get_model(specialty="text", effort="fast", config=config)
+                    compress_session_turns(_db_path, _session_id, fast_model)
+                except Exception as e:
+                    if args.debug:
+                        print(f"  [memory] compression skipped/failed: {e}")
 
         duration = (time.time() - start_time) * 1000
         if result:
