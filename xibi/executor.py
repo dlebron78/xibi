@@ -68,6 +68,33 @@ class Executor:
         self.config = config or {}
         self.db_path = self.config.get("db_path") or Path.home() / ".xibi" / "data" / "xibi.db"
         self.mcp_executor = MCPExecutor(mcp_registry) if mcp_registry else None
+        self._register_core_skills()
+
+    def _register_core_skills(self) -> None:
+        """
+        Ensure core tools are always available in the registry regardless of
+        what the user's skills_dir contains.
+
+        Core tools are loaded from the bundled xibi/skills/sample/ directory.
+        If a core tool is already in the registry (user has their own version),
+        the user's version takes precedence — we do not overwrite.
+        """
+        try:
+            import xibi.skills as _skills_pkg
+
+            sample_dir = Path(_skills_pkg.__file__).parent / "sample"
+            if not sample_dir.exists():
+                logger.warning("core skills dir not found: %s", sample_dir)
+                return
+
+            core_registry = SkillRegistry(sample_dir)
+
+            for skill_name, skill_info in core_registry.skills.items():
+                if skill_name not in self.registry.skills:
+                    self.registry.skills[skill_name] = skill_info
+                    logger.debug("executor: registered core skill '%s' from %s", skill_name, skill_info.path)
+        except Exception as e:
+            logger.warning("executor: failed to register core skills: %s", e)
 
     def execute(self, tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
         # Filter out pseudo-tools
