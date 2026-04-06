@@ -27,9 +27,9 @@ if TYPE_CHECKING:
 _JulesWatcher = None
 
 # Timeout constants for async_tick phases
-_PHASE0_TIMEOUT_SECS = 90   # source polling (MCP + email + JobSpy)
-_PHASE1_TIMEOUT_SECS = 10   # DB read (tasks, seen_ids, triage_rules)
-_PHASE2_TIMEOUT_SECS = 60   # signal extraction + classification loop
+_PHASE0_TIMEOUT_SECS = 90  # source polling (MCP + email + JobSpy)
+_PHASE1_TIMEOUT_SECS = 10  # DB read (tasks, seen_ids, triage_rules)
+_PHASE2_TIMEOUT_SECS = 60  # signal extraction + classification loop
 _PHASE3_TIMEOUT_SECS = 180  # signal_intelligence + observation + Jules + Radiant
 
 logger = logging.getLogger(__name__)
@@ -220,15 +220,12 @@ class HeartbeatPoller:
         today = datetime.now().strftime("%Y-%m-%d")
         try:
             with xibi.db.open_db(self.db_path) as conn:
-                cursor = conn.execute(
-                    "SELECT value FROM heartbeat_state WHERE key = 'thread_sweep_last_run'"
-                )
+                cursor = conn.execute("SELECT value FROM heartbeat_state WHERE key = 'thread_sweep_last_run'")
                 row = cursor.fetchone()
                 if row and row[0] == today:
                     return
                 conn.execute(
-                    "INSERT OR REPLACE INTO heartbeat_state (key, value) "
-                    "VALUES ('thread_sweep_last_run', ?)",
+                    "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('thread_sweep_last_run', ?)",
                     (today,),
                 )
         except Exception as e:
@@ -297,8 +294,11 @@ class HeartbeatPoller:
         for idx, result in enumerate(poll_results):
             if time.monotonic() > phase2_deadline:
                 remaining_count = len(poll_results) - idx
-                logger.warning("Phase 2 timeout: extraction loop exceeded %ds, %d sources skipped",
-                               _PHASE2_TIMEOUT_SECS, remaining_count)
+                logger.warning(
+                    "Phase 2 timeout: extraction loop exceeded %ds, %d sources skipped",
+                    _PHASE2_TIMEOUT_SECS,
+                    remaining_count,
+                )
                 break
 
             if result.get("error"):

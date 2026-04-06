@@ -1,27 +1,27 @@
 import asyncio
+import contextlib
 import logging
-import time
-import sqlite3
-import json
-import os
 from pathlib import Path
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from xibi.__main__ import cmd_heartbeat
 from xibi.heartbeat.poller import (
-    HeartbeatPoller,
     _PHASE0_TIMEOUT_SECS,
     _PHASE3_TIMEOUT_SECS,
+    HeartbeatPoller,
 )
-from xibi.__main__ import cmd_heartbeat
+
 
 @pytest.fixture
 def db_path(tmp_path):
     path = tmp_path / "test_xibi.db"
     import xibi.db
+
     xibi.db.migrate(path)
     return path
+
 
 @pytest.fixture
 def mock_poller(db_path):
@@ -52,6 +52,7 @@ def mock_poller(db_path):
     poller._broadcast = MagicMock()
     return poller
 
+
 @pytest.mark.asyncio
 async def test_phase0_timeout_continues_to_phase2(mock_poller):
     # Mock poll_due_sources to hang
@@ -62,14 +63,16 @@ async def test_phase0_timeout_continues_to_phase2(mock_poller):
     mock_poller.source_poller.poll_due_sources.side_effect = slow_poll
 
     # We need to monkeypatch the timeout constant to be small for the test
-    with patch("xibi.heartbeat.poller._PHASE0_TIMEOUT_SECS", 0.1), \
-         patch("xibi.heartbeat.poller.SignalExtractorRegistry.extract") as mock_extract:
-
+    with (
+        patch("xibi.heartbeat.poller._PHASE0_TIMEOUT_SECS", 0.1),
+        patch("xibi.heartbeat.poller.SignalExtractorRegistry.extract") as mock_extract,
+    ):
         await mock_poller.async_tick()
 
         # Verify Phase 0 timed out (poll_results should be empty list)
         # and Phase 2 (extraction) was skipped but didn't crash
         assert mock_extract.call_count == 0
+
 
 @pytest.mark.asyncio
 async def test_phase0_exception_continues_to_phase2(mock_poller):
@@ -80,37 +83,37 @@ async def test_phase0_exception_continues_to_phase2(mock_poller):
         # poll_results defaults to [] on Phase 0 error
         assert mock_extract.call_count == 0
 
+
 @pytest.mark.asyncio
 async def test_phase2_timeout_partial_processing(mock_poller):
-    mock_poller.source_poller.poll_due_sources.return_value = [
-        {"source": "s1", "extractor": "e1", "data": {}},
-        {"source": "s2", "extractor": "e2", "data": {}},
-        {"source": "s3", "extractor": "e3", "data": {}},
-    ]
+    # Use multiple results
+    results = [{"source": f"s{i}", "extractor": "e", "data": {}} for i in range(5)]
+    mock_poller.source_poller.poll_due_sources.return_value = results
 
     with patch("xibi.heartbeat.poller.SignalExtractorRegistry.extract") as mock_extract:
-        # Patch time.monotonic globally but be careful
-        with patch("xibi.heartbeat.poller.time.monotonic") as mock_time:
-            start_time = 1000.0
+        # Patch time.monotonic ONLY in the poller module
+        start_time = 1000.0
+        current_time = [start_time]
 
-            # Let's try a simpler approach to mock the deadline hit
-            mock_time.side_effect = [
-                start_time,       # Phase 2 deadline calc
-                start_time + 1,   # Loop 1 check (OK)
-                start_time + 100, # Loop 2 check (Timeout!)
-                start_time + 101, # Extra
-            ]
+        def mock_monotonic():
+            return current_time[0]
+
+        with patch("xibi.heartbeat.poller.time.monotonic", side_effect=mock_monotonic):
+            # side_effect for mock_extract to advance time!
+            def extract_side_effect(*args, **kwargs):
+                current_time[0] += 100.0  # Advance time past 60s limit
+                return []
+
+            mock_extract.side_effect = extract_side_effect
 
             # Since async_tick uses "from asyncio import wait_for", and wait_for uses loop.time(),
-            # we must also patch loop.time() or just allow Phase 3 to raise an exception if it hits StopIteration.
-            # We wrap the tick in a try/except to ignore the StopIteration from the messed up mock.
-            try:
-                await mock_poller.async_tick()
-            except Exception:
-                pass
+            # patching xibi.heartbeat.poller.time.monotonic is safe as it doesn't affect asyncio.
 
-            # Extraction should have been called at least once
-            assert mock_extract.call_count >= 1
+            await mock_poller.async_tick()
+
+            # It should have called extract exactly once, then timed out and breaked.
+            assert mock_extract.call_count == 1
+
 
 @pytest.mark.asyncio
 async def test_phase3_subtask_isolation_signal_intel_crash(mock_poller):
@@ -124,6 +127,7 @@ async def test_phase3_subtask_isolation_signal_intel_crash(mock_poller):
         assert mock_poller.observation_cycle.run.called
         assert mock_poller._jules_watcher.poll.called
 
+
 @pytest.mark.asyncio
 async def test_phase3_subtask_isolation_observation_crash(mock_poller):
     mock_poller.observation_cycle.run.side_effect = RuntimeError("Obs Boom")
@@ -132,21 +136,41 @@ async def test_phase3_subtask_isolation_observation_crash(mock_poller):
 
     assert mock_poller._jules_watcher.poll.called
     # In _run_phase3 3d: if self.radiant: ... self.radiant.run_audit(...)
-    # We need to make sure audit_interval is reached
     mock_poller._audit_tick_counter = 100
     await mock_poller._run_phase3()
     assert mock_poller.radiant.run_audit.called
+
+
+@pytest.mark.asyncio
+async def test_phase3_subtask_isolation_jules_crash(mock_poller):
+    mock_poller._jules_watcher.poll.side_effect = RuntimeError("Jules Boom")
+    await mock_poller._run_phase3()
+    # Radiant audit should still be attempted (3d)
+    mock_poller._audit_tick_counter = 100
+    await mock_poller._run_phase3()
+    assert mock_poller.radiant.run_audit.called
+
+
+@pytest.mark.asyncio
+async def test_phase3_subtask_isolation_radiant_crash(mock_poller):
+    mock_poller.radiant.run_audit.side_effect = RuntimeError("Radiant Boom")
+    mock_poller._audit_tick_counter = 100
+    await mock_poller._run_phase3()
+    # Should not crash the whole method
+
 
 @pytest.mark.asyncio
 async def test_phase3_timeout_logged_not_raised(mock_poller):
     async def slow_phase3():
         await asyncio.sleep(10)
 
-    with patch.object(mock_poller, "_run_phase3", side_effect=slow_phase3), \
-         patch("xibi.heartbeat.poller._PHASE3_TIMEOUT_SECS", 0.1):
-
+    with (
+        patch.object(mock_poller, "_run_phase3", side_effect=slow_phase3),
+        patch("xibi.heartbeat.poller._PHASE3_TIMEOUT_SECS", 0.1),
+    ):
         # Should not raise TimeoutError, should be caught and logged
         await mock_poller.async_tick()
+
 
 def test_logging_configured_in_heartbeat_command(tmp_path):
     args = MagicMock()
@@ -160,41 +184,45 @@ def test_logging_configured_in_heartbeat_command(tmp_path):
     config_path.write_text('{"profile": {}}')
 
     # Mock necessary parts to avoid real initialization
-    with patch("xibi.db.migrate"), \
-         patch("xibi.router.init_telemetry"), \
-         patch("xibi.mcp.registry.MCPServerRegistry"), \
-         patch("xibi.executor.LocalHandlerExecutor"), \
-         patch("xibi.channels.telegram.TelegramAdapter") as mock_adapter_cls, \
-         patch("xibi.heartbeat.poller.HeartbeatPoller") as mock_poller_cls, \
-         patch("xibi.db.open_db"), \
-         patch("os.environ", {"XIBI_TELEGRAM_TOKEN": "fake_token", "XIBI_WORKDIR": str(workdir)}):
-
+    with (
+        patch("xibi.db.migrate"),
+        patch("xibi.router.init_telemetry"),
+        patch("xibi.mcp.registry.MCPServerRegistry"),
+        patch("xibi.executor.LocalHandlerExecutor"),
+        patch("xibi.channels.telegram.TelegramAdapter"),
+        patch("xibi.heartbeat.poller.HeartbeatPoller") as mock_poller_cls,
+        patch("xibi.db.open_db"),
+        patch("os.environ", {"XIBI_TELEGRAM_TOKEN": "fake_token", "XIBI_WORKDIR": str(workdir)}),
+    ):
         mock_poller = mock_poller_cls.return_value
-        mock_poller.run.side_effect = KeyboardInterrupt() # Exit loop
+        mock_poller.run.side_effect = KeyboardInterrupt()  # Exit loop
 
         # Clear existing handlers to test basicConfig
         logging.root.handlers = []
 
-        try:
+        with contextlib.suppress(KeyboardInterrupt, SystemExit):
             cmd_heartbeat(args)
-        except (KeyboardInterrupt, SystemExit):
-            pass
 
         assert len(logging.root.handlers) > 0
         assert any(isinstance(h, logging.StreamHandler) for h in logging.root.handlers)
         assert logging.root.level == logging.INFO
 
+
 def test_phase0_timeout_value_is_90_seconds():
     assert _PHASE0_TIMEOUT_SECS == 90
+
 
 def test_phase3_timeout_value_is_180_seconds():
     assert _PHASE3_TIMEOUT_SECS == 180
 
+
 def test_phase3_signals_not_passed_to_run_phase3(mock_poller):
     import inspect
+
     sig = inspect.signature(mock_poller._run_phase3)
     # Instance method signature should have 0 parameters when inspected from the instance
     assert len(sig.parameters) == 0
+
 
 @pytest.mark.asyncio
 async def test_phase2_exception_continues_loop(mock_poller):
@@ -210,3 +238,53 @@ async def test_phase2_exception_continues_loop(mock_poller):
         await mock_poller.async_tick()
 
         assert mock_extract.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_phase1_error_continues_to_phase2(mock_poller):
+    mock_poller.source_poller.poll_due_sources.return_value = []
+    with patch("xibi.db.open_db", side_effect=RuntimeError("DB Boom")):
+        # Should log Phase 1 error but continue
+        await mock_poller.async_tick()
+
+
+@pytest.mark.asyncio
+async def test_phase2_skips_error_results(mock_poller):
+    mock_poller.source_poller.poll_due_sources.return_value = [
+        {"source": "s1", "error": "some error", "data": None, "extractor": "e1"}
+    ]
+    with patch("xibi.heartbeat.poller.SignalExtractorRegistry.extract") as mock_extract:
+        await mock_poller.async_tick()
+        assert mock_extract.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_run_phase3_skips_optional_components(mock_poller):
+    mock_poller.signal_intelligence_enabled = False
+    mock_poller.observation_cycle = None
+    mock_poller._jules_watcher = None
+    mock_poller.radiant = None
+
+    await mock_poller._run_phase3()
+    # Should not crash
+
+
+def test_sweep_thread_lifecycle_gate_error(mock_poller):
+    # Force HeartbeatPoller._sweep_thread_lifecycle to run (it was mocked in fixture)
+    orig_sweep = HeartbeatPoller._sweep_thread_lifecycle
+    with patch("xibi.db.open_db", side_effect=RuntimeError("DB Boom")):
+        orig_sweep(mock_poller)
+        # Should catch and return
+
+
+def test_sweep_thread_lifecycle_sweep_error(mock_poller):
+    # Force HeartbeatPoller._sweep_thread_lifecycle to run
+    orig_sweep = HeartbeatPoller._sweep_thread_lifecycle
+    # Mock the gate to pass
+    mock_conn = MagicMock()
+    mock_conn.execute.return_value.fetchone.return_value = None  # Not run today
+    with patch("xibi.db.open_db") as mock_open:
+        mock_open.return_value.__enter__.return_value = mock_conn
+        with patch("xibi.heartbeat.poller.sweep_stale_threads", side_effect=RuntimeError("Sweep Boom")):
+            orig_sweep(mock_poller)
+            # Should catch
