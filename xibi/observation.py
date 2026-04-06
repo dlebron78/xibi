@@ -650,6 +650,44 @@ class ObservationCycle:
             "- Do NOT call tools. Return only the JSON object above."
         )
 
+    def _get_all_active_threads(self) -> list[dict[str, Any]]:
+        """Fetch all active threads ordered by priority (nulls last) then signal_count."""
+        try:
+            with open_db(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute(
+                    "SELECT id, name, status, signal_count, owner, current_deadline, "
+                    "summary, priority, last_reviewed_at, source_channels "
+                    "FROM threads WHERE status = 'active' "
+                    "ORDER BY CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 "
+                    "WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, signal_count DESC "
+                    "LIMIT ?",
+                    (self.config.manager_max_threads,),
+                )
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.warning(f"Manager review: failed to fetch threads: {e}", exc_info=True)
+            return []
+
+    def _build_batch_dump(self, threads: list[dict[str, Any]], batch_num: int, total_batches: int) -> str:
+        """Build a compact review dump for a single batch of threads."""
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        lines = [
+            f"MANAGER REVIEW — {now_str} UTC — Batch {batch_num}/{total_batches}",
+            f"Review {len(threads)} threads. Assign priority and summary for each.",
+            "",
+            "THREADS:",
+        ]
+        for t in threads:
+            priority_str = t.get("priority") or "UNSET"
+            owner_str = t.get("owner") or "unclear"
+            summary_str = t.get("summary") or "(no summary)"
+            deadline_str = f", deadline: {t['current_deadline']}" if t.get("current_deadline") else ""
+            lines.append(f"[{t['id']}] {t['name']}")
+            lines.append(f"  priority={priority_str} | owner={owner_str} | signals={t['signal_count']}{deadline_str}")
+            lines.append(f"  summary: {summary_str[:150]}")
+        return "\n".join(lines)
+
     def _run_manager_review(
         self,
         executor: Any | None = None,
@@ -681,33 +719,53 @@ class ObservationCycle:
                 )
                 cycle_id = cursor.lastrowid
 
-            review_dump = self._build_review_dump()
             system_prompt = self._build_review_system_prompt()
-
-            logger.info("Manager review: calling review model with full-state dump")
             llm = get_model(specialty="text", effort="review", config=self.profile)
 
-            prompt = f"system: {system_prompt}\n\nuser: {review_dump}"
-            response_text = llm.generate(prompt)
+            # Batch through threads in chunks of 40 to stay within LLM output limits
+            BATCH_SIZE = 40
+            all_thread_updates: list[dict[str, Any]] = []
+            all_signal_flags: list[dict[str, Any]] = []
+            all_digests: list[str] = []
+            batch_errors: list[str] = []
 
-            # Parse the structured JSON response
-            try:
-                # Try direct JSON parse first
-                review_data = json.loads(response_text)
-            except json.JSONDecodeError:
-                # Fallback: extract JSON from response text
-                match = re.search(r"\{[\s\S]*\}", response_text)
-                if match:
-                    review_data = json.loads(match.group())
-                else:
-                    raise ValueError(f"Manager review returned non-JSON response: {response_text[:200]}")
+            threads = self._get_all_active_threads()
+            batches = [threads[i:i + BATCH_SIZE] for i in range(0, len(threads), BATCH_SIZE)]
+            logger.info(f"Manager review: {len(threads)} threads in {len(batches)} batches")
 
-            # Apply updates
-            updates_applied = self._apply_manager_updates(review_data)
+            for batch_num, batch in enumerate(batches, 1):
+                try:
+                    batch_dump = self._build_batch_dump(batch, batch_num, len(batches))
+                    prompt = f"system: {system_prompt}\n\nuser: {batch_dump}"
+                    response_text = llm.generate(prompt)
+
+                    try:
+                        review_data = json.loads(response_text)
+                    except json.JSONDecodeError:
+                        match = re.search(r"\{[\s\S]*?\}", response_text)
+                        if match:
+                            review_data = json.loads(match.group())
+                        else:
+                            batch_errors.append(f"Batch {batch_num}: JSON parse failed — {response_text[:120]}")
+                            continue
+
+                    all_thread_updates.extend(review_data.get("thread_updates", []))
+                    all_signal_flags.extend(review_data.get("signal_flags", []))
+                    if review_data.get("digest"):
+                        all_digests.append(review_data["digest"])
+
+                except Exception as e:
+                    batch_errors.append(f"Batch {batch_num}: {e}")
+                    logger.warning(f"Manager review batch {batch_num} failed: {e}")
+
+            # Apply all updates
+            merged = {"thread_updates": all_thread_updates, "signal_flags": all_signal_flags}
+            updates_applied = self._apply_manager_updates(merged)
             result.actions_taken = updates_applied
+            result.errors.extend(batch_errors)
 
-            # Fire digest nudge if we have one
-            digest = review_data.get("digest", "")
+            # Compose and fire single digest nudge from all batches
+            digest = "\n".join(all_digests) if all_digests else ""
             if digest and executor is not None:
                 try:
                     nudge_output = dispatch(
@@ -734,13 +792,13 @@ class ObservationCycle:
 
             result.ran = True
             result.role_used = "review"
-            result.new_watermark = watermark  # Manager review doesn't advance the signal watermark
+            result.degraded = len(batch_errors) > 0
+            result.new_watermark = watermark
             if cycle_id is not None:
                 self._persist_cycle(cycle_id, result)
 
-            thread_count = len(review_data.get("thread_updates", []))
-            signal_count = len(review_data.get("signal_flags", []))
-            logger.info(f"Manager review complete: {thread_count} thread updates, {signal_count} signal flags")
+            logger.info(f"Manager review complete: {len(all_thread_updates)} thread updates, "
+                        f"{len(all_signal_flags)} signal flags, {len(batch_errors)} batch errors")
             return result
 
         except Exception as e:
