@@ -213,22 +213,20 @@ class HeartbeatPoller:
         today = datetime.now().strftime("%Y-%m-%d")
         try:
             with xibi.db.open_db(self.db_path) as conn:
-                cursor = conn.execute(
-                    "SELECT value FROM heartbeat_state WHERE key = 'thread_sweep_last_run'"
-                )
+                cursor = conn.execute("SELECT value FROM heartbeat_state WHERE key = 'thread_sweep_last_run'")
                 row = cursor.fetchone()
                 if row and row[0] == today:
                     return
                 conn.execute(
-                    "INSERT OR REPLACE INTO heartbeat_state (key, value) "
-                    "VALUES ('thread_sweep_last_run', ?)",
+                    "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('thread_sweep_last_run', ?)",
                     (today,),
                 )
         except Exception as e:
             logger.warning(f"Thread sweep gate error: {e}", exc_info=True)
             return
 
-        from xibi.threads import sweep_stale_threads, sweep_resolved_threads
+        from xibi.threads import sweep_resolved_threads, sweep_stale_threads
+
         try:
             stale = sweep_stale_threads(self.db_path)
             resolved = sweep_resolved_threads(self.db_path)

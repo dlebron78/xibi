@@ -393,6 +393,7 @@ class TelegramAdapter:
                     self.send_message(chat_id, "Usage: /resolve <thread_id>")
                     return
                 from xibi.command_layer import CommandLayer
+
                 reply = CommandLayer(str(self.db_path), self.config.get("profile", {})).resolve_thread(thread_id)
                 self.send_message(chat_id, reply)
                 return
