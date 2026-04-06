@@ -25,6 +25,7 @@ WRITE_TOOLS: set[str] = {
     "create_task",
     "update_belief",
     "nudge",
+    "send_document",
     "log_signal",
 }
 
@@ -42,6 +43,7 @@ TOOL_TIERS: dict[str, PermissionTier] = {
     "update_belief": PermissionTier.YELLOW,
     "create_task": PermissionTier.YELLOW,
     "nudge": PermissionTier.YELLOW,
+    "send_document": PermissionTier.YELLOW,
     "log_signal": PermissionTier.YELLOW,
     # Red — sends, deletes, financial, first-time destructive
     "send_email": PermissionTier.RED,

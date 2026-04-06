@@ -34,6 +34,32 @@
       "timeout_secs": 10,
       "tier": "YELLOW",
       "access": "operator"
+    },
+    {
+      "name": "send_document",
+      "description": "Upload a local file to the operator via Telegram as a document attachment. Use this when the operator asks for results 'as a file', 'as a CSV', 'as a download', or any time text-only delivery would be lossy or truncated. The file must already exist on disk — write it first via the filesystem MCP or another tool, then call send_document with the path.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "file_path": {
+            "type": "string",
+            "description": "Absolute path (or ~-expanded path) to the file on the local filesystem"
+          },
+          "caption": {
+            "type": "string",
+            "description": "Optional caption text shown beneath the document in Telegram (max 1024 chars)"
+          },
+          "chat_id": {
+            "type": "integer",
+            "description": "Optional override for target chat. Defaults to the configured operator chat."
+          }
+        },
+        "required": ["file_path"]
+      },
+      "output_type": "action",
+      "timeout_secs": 30,
+      "tier": "YELLOW",
+      "access": "operator"
     }
   ]
 }
