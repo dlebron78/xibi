@@ -6,6 +6,7 @@ import logging
 import re
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -19,6 +20,26 @@ if TYPE_CHECKING:
     from xibi.trust.gradient import TrustGradient
 
 logger = logging.getLogger(__name__)
+
+
+def is_duplicate_signal(ref_source: str, ref_id: str, db_path: Path, window_hours: int = 72) -> bool:
+    """
+    Return True if a signal with this (ref_source, ref_id) was logged within window_hours.
+    Default 72h window prevents job listing signal spam across multiple poll cycles.
+    """
+    if not ref_id:
+        return False
+    try:
+        with open_db(db_path) as conn:
+            cutoff = (datetime.utcnow() - timedelta(hours=window_hours)).isoformat()
+            row = conn.execute(
+                "SELECT id FROM signals WHERE ref_source = ? AND ref_id = ? AND timestamp > ?",
+                (ref_source, ref_id, cutoff),
+            ).fetchone()
+            return row is not None
+    except Exception as e:
+        logger.error(f"is_duplicate_signal failed: {e}", exc_info=True)
+        return False
 
 
 @dataclass

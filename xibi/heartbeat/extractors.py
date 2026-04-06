@@ -77,6 +77,73 @@ def extract_email_signals(source: str, data: Any, context: dict[str, Any]) -> li
     return signals
 
 
+def _normalize_company(name: str) -> str:
+    """Normalize company name for thread matching."""
+    suffixes = [", Inc.", " Inc.", " LLC", " Ltd.", " Corp.", ", Corp.", " Co.", " AG", " SE", " PLC"]
+    for suffix in suffixes:
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    return name.strip()
+
+
+@SignalExtractorRegistry.register("jobs")
+def extract_job_signals(source: str, data: Any, context: dict[str, Any]) -> list[dict[str, Any]]:
+    """
+    Extract one signal per job listing from JobSpy MCP tool results.
+    """
+    structured = None
+    if isinstance(data, dict):
+        structured = data.get("structured")
+
+    if not structured or "jobs" not in structured:
+        # Fallback: generic extraction with extractor hint for signal intelligence
+        return [
+            {
+                "source": source,
+                "type": "job_batch",
+                "raw": data.get("result", str(data)) if isinstance(data, dict) else str(data),
+                "needs_llm_extraction": True,
+                "extractor_hint": "jobs",
+                "content_preview": "Job search results (unstructured)",
+            }
+        ]
+
+    signals = []
+    for job in structured.get("jobs", []):
+        job_id = str(job.get("id", ""))
+        company = _normalize_company(job.get("company", "Unknown Company"))
+        title = job.get("title", "Unknown Role")
+        location = job.get("location", "")
+        salary_range = ""
+        if job.get("salary_min") and job.get("salary_max"):
+            salary_range = f"${job['salary_min']:,}–${job['salary_max']:,}"
+
+        signals.append(
+            {
+                "source": source,
+                "type": "job_listing",
+                "entity_text": company,
+                "entity_type": "company",
+                "topic_hint": f"{title} at {company}",
+                "content_preview": f"{title} | {company} | {location}{' | ' + salary_range if salary_range else ''}",
+                "ref_id": job_id,
+                "ref_source": "jobspy",
+                "metadata": {
+                    "job": job,
+                    "title": title,
+                    "company": company,
+                    "location": location,
+                    "salary_min": job.get("salary_min"),
+                    "salary_max": job.get("salary_max"),
+                    "url": job.get("url", ""),
+                    "posted_at": job.get("posted_at", ""),
+                },
+            }
+        )
+    return signals
+
+
 @SignalExtractorRegistry.register("calendar")
 def extract_calendar_signals(source: str, data: Any, context: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract signals from calendar events."""

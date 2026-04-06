@@ -175,6 +175,7 @@ def cmd_heartbeat(args: argparse.Namespace) -> None:
         observation_cycle=obs,
         radiant=radiant,
         profile=config.get("profile"),
+        config=config,
         config_path=str(config_path),
         executor=executor,
     )
