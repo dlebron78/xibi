@@ -36,9 +36,7 @@ def compress_session_turns(
             conn.execute("INSERT OR IGNORE INTO sessions (id) VALUES (?)", (session_id,))
 
             # 2. Count turns
-            res = conn.execute(
-                "SELECT COUNT(*) FROM session_turns WHERE session_id = ?", (session_id,)
-            ).fetchone()
+            res = conn.execute("SELECT COUNT(*) FROM session_turns WHERE session_id = ?", (session_id,)).fetchone()
             total_turns = res[0] if res else 0
 
             if total_turns < turn_threshold:
@@ -58,7 +56,7 @@ def compress_session_turns(
             # We look at existing summaries for this session to see what ranges are covered.
             existing = conn.execute(
                 "SELECT turn_range FROM belief_summaries WHERE session_id = ? AND source = 'llm_compression'",
-                (session_id,)
+                (session_id,),
             ).fetchall()
             compressed_ranges = {r["turn_range"] for r in existing if r["turn_range"]}
 
@@ -71,7 +69,7 @@ def compress_session_turns(
 
             max_compress_index = total_turns - (turn_threshold - compression_batch)
             if max_compress_index < compression_batch:
-                 return {"status": "skipped", "reason": "not enough old turns to compress"}
+                return {"status": "skipped", "reason": "not enough old turns to compress"}
 
             # Find first uncompressed batch
             start = 1
@@ -79,7 +77,9 @@ def compress_session_turns(
                 turn_range = f"{start}-{start + compression_batch - 1}"
                 if turn_range not in compressed_ranges:
                     # Found a batch to compress!
-                    return _do_compression(conn, db_path, session_id, model_client, start, start + compression_batch - 1)
+                    return _do_compression(
+                        conn, db_path, session_id, model_client, start, start + compression_batch - 1
+                    )
                 start += compression_batch
 
             return {"status": "skipped", "reason": "all old turns already compressed"}
@@ -90,12 +90,7 @@ def compress_session_turns(
 
 
 def _do_compression(
-    conn: sqlite3.Connection,
-    db_path: Path,
-    session_id: str,
-    model_client: ModelClient,
-    start_idx: int,
-    end_idx: int
+    conn: sqlite3.Connection, db_path: Path, session_id: str, model_client: ModelClient, start_idx: int, end_idx: int
 ) -> dict[str, Any]:
     # 1. Fetch turns
     # Indices are 1-based relative to chronological order
@@ -107,7 +102,7 @@ def _do_compression(
             WHERE session_id = ?
         ) WHERE rn BETWEEN ? AND ?
         """,
-        (session_id, start_idx, end_idx)
+        (session_id, start_idx, end_idx),
     ).fetchall()
 
     if not rows:
@@ -134,7 +129,7 @@ Extract beliefs (one per line):"""
         summary = model_client.generate(prompt).strip()
 
         if not summary:
-             return {"status": "skipped", "reason": "LLM returned empty summary"}
+            return {"status": "skipped", "reason": "LLM returned empty summary"}
 
         # 2. Store summary
         turn_range = f"{start_idx}-{end_idx}"
@@ -149,14 +144,14 @@ Extract beliefs (one per line):"""
             INSERT INTO belief_summaries (id, session_id, summary, turn_range, source)
             VALUES (?, ?, ?, ?, 'llm_compression')
             """,
-            (summary_id, session_id, summary, turn_range)
+            (summary_id, session_id, summary, turn_range),
         )
 
         return {
             "status": "success",
             "summary_id": summary_id,
             "turn_range": turn_range,
-            "belief_count": len(summary.splitlines())
+            "belief_count": len(summary.splitlines()),
         }
 
     except Exception as e:
