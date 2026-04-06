@@ -93,7 +93,15 @@ def cmd_telegram(args: argparse.Namespace) -> None:
 
 def cmd_heartbeat(args: argparse.Namespace) -> None:
     """Run the heartbeat poller."""
+    import logging as _logging
     import os
+
+    _logging.basicConfig(
+        level=_logging.INFO,
+        format="%(asctime)s %(name)-30s %(levelname)-8s %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+        force=True,  # override any previously configured handlers
+    )
 
     from xibi.alerting.rules import RuleEngine
     from xibi.heartbeat.poller import HeartbeatPoller

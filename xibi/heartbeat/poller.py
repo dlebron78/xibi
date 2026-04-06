@@ -26,6 +26,12 @@ if TYPE_CHECKING:
 # Jules watcher — lazy import to avoid hard dependency if Jules not configured
 _JulesWatcher = None
 
+# Timeout constants for async_tick phases
+_PHASE0_TIMEOUT_SECS = 90   # source polling (MCP + email + JobSpy)
+_PHASE1_TIMEOUT_SECS = 10   # DB read (tasks, seen_ids, triage_rules)
+_PHASE2_TIMEOUT_SECS = 60   # signal extraction + classification loop
+_PHASE3_TIMEOUT_SECS = 180  # signal_intelligence + observation + Jules + Radiant
+
 logger = logging.getLogger(__name__)
 
 
@@ -239,6 +245,8 @@ class HeartbeatPoller:
 
     async def async_tick(self) -> None:
         """Tick: poll sources → extract signals → intel → observation → digest."""
+        import asyncio
+
         if self._is_quiet_hours():
             logger.info("Quiet hours, skipping tick.")
             return
@@ -246,7 +254,16 @@ class HeartbeatPoller:
         self._sweep_thread_lifecycle()
 
         # Phase 0: Multi-source polling
-        poll_results = await self.source_poller.poll_due_sources()
+        poll_results: list = []
+        try:
+            poll_results = await asyncio.wait_for(
+                self.source_poller.poll_due_sources(),
+                timeout=_PHASE0_TIMEOUT_SECS,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Phase 0 timeout (%ds): source polling exceeded limit", _PHASE0_TIMEOUT_SECS)
+        except Exception as e:
+            logger.warning("Phase 0 error: %s", e, exc_info=True)
 
         # Phase 1: Task Reminders & Rules Load
         due_tasks: list = []
@@ -270,13 +287,20 @@ class HeartbeatPoller:
                 seen_ids = self.rules.get_seen_ids_with_conn(conn)
                 triage_rules = self.rules.load_triage_rules_with_conn(conn)
         except Exception as e:
-            logger.warning(f"Tick read phase error: {e}", exc_info=True)
+            logger.warning(f"Phase 1 error: {e}", exc_info=True)
 
         for task in due_tasks:
             self._broadcast(f"⏰ Task reminder: {task['goal']} (ID: {task['id']})")
 
         # Phase 2: Signal Extraction and Classification
-        for result in poll_results:
+        phase2_deadline = time.monotonic() + _PHASE2_TIMEOUT_SECS
+        for idx, result in enumerate(poll_results):
+            if time.monotonic() > phase2_deadline:
+                remaining_count = len(poll_results) - idx
+                logger.warning("Phase 2 timeout: extraction loop exceeded %ds, %d sources skipped",
+                               _PHASE2_TIMEOUT_SECS, remaining_count)
+                break
+
             if result.get("error"):
                 continue
 
@@ -284,16 +308,16 @@ class HeartbeatPoller:
             source_name = result["source"]
             extractor_name = result["extractor"]
 
-            raw_signals = SignalExtractorRegistry.extract(
-                extractor_name, source_name, data, context={"db_path": self.db_path, "config": self.profile}
-            )
+            try:
+                raw_signals = SignalExtractorRegistry.extract(
+                    extractor_name, source_name, data, context={"db_path": self.db_path, "config": self.profile}
+                )
 
-            # Special processing for email signals (classification/triage)
-            if extractor_name == "email":
-                await self._process_email_signals(raw_signals, seen_ids, triage_rules, email_rules)
-            else:
-                # Standard signal logging
-                try:
+                # Special processing for email signals (classification/triage)
+                if extractor_name == "email":
+                    await self._process_email_signals(raw_signals, seen_ids, triage_rules, email_rules)
+                else:
+                    # Standard signal logging
                     with xibi.db.open_db(self.db_path) as conn, conn:
                         for sig in raw_signals:
                             if sig.get("ref_id") and sig_intel.is_duplicate_signal(
@@ -311,10 +335,26 @@ class HeartbeatPoller:
                                 ref_id=sig.get("ref_id"),
                                 ref_source=sig.get("ref_source"),
                             )
-                except Exception as e:
-                    logger.warning(f"Error logging signals for {source_name}: {e}", exc_info=True)
+            except Exception as e:
+                logger.warning(f"Error processing signals for {source_name}: {e}", exc_info=True)
 
-        # Phase 3: Post-processing (Intelligence, Observation, Jules, Radiant)
+        # Phase 3: Post-processing
+        try:
+            await asyncio.wait_for(
+                self._run_phase3(),
+                timeout=_PHASE3_TIMEOUT_SECS,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("Phase 3 timeout (%ds): intelligence/observation exceeded limit", _PHASE3_TIMEOUT_SECS)
+        except Exception as e:
+            logger.warning("Phase 3 error: %s", e, exc_info=True)
+
+    async def _run_phase3(self) -> None:
+        """
+        Signal intelligence, observation cycle, Jules watcher, Radiant audit.
+        Each sub-task is isolated — one failure does not skip the rest.
+        """
+        # 3a: Signal intelligence enrichment
         if self.signal_intelligence_enabled:
             try:
                 enriched = sig_intel.enrich_signals(
@@ -325,16 +365,16 @@ class HeartbeatPoller:
                     trust_gradient=self.trust_gradient,
                 )
                 if enriched > 0:
-                    logger.debug(f"Signal intelligence: enriched {enriched} signals")
+                    logger.debug("Signal intelligence: enriched %d signals", enriched)
             except Exception as e:
-                logger.warning(f"Signal intelligence enrichment failed: {e}", exc_info=True)
+                logger.warning("Signal intelligence enrichment failed: %s", e, exc_info=True)
 
+        # 3b: Observation cycle
         if self.observation_cycle is not None:
             try:
                 # Before running:
                 if self.radiant and self.radiant.ceiling_status()["throttle"]:
                     logger.info("Radiant: cost ceiling reached, skipping observation cycle")
-                    obs_result = None
                 else:
                     obs_result = await self.observation_cycle.run(  # type: ignore[misc]
                         executor=self.executor if hasattr(self, "executor") else None,
@@ -345,40 +385,44 @@ class HeartbeatPoller:
                         ),
                     )
 
-                if obs_result and obs_result.ran:
-                    logger.info(
-                        f"Observation cycle ran: {obs_result.signals_processed} signals, "
-                        f"role={obs_result.role_used}, actions={len(obs_result.actions_taken)}"
-                    )
-                    if self.radiant:
-                        self.radiant.record(
-                            role=obs_result.role_used,
-                            provider=_infer_provider(obs_result.role_used, self.profile),
-                            model=_infer_model(obs_result.role_used, self.profile),
-                            operation="observation_cycle",
-                            prompt_tokens=0,
-                            response_tokens=0,
-                            duration_ms=0,
+                    if obs_result and obs_result.ran:
+                        logger.info(
+                            f"Observation cycle ran: {obs_result.signals_processed} signals, "
+                            f"role={obs_result.role_used}, actions={len(obs_result.actions_taken)}"
                         )
-                        self.radiant.check_and_nudge(self.adapter)
-                elif obs_result:
-                    logger.debug(f"Observation cycle skipped: {obs_result.skip_reason}")
+                        if self.radiant:
+                            self.radiant.record(
+                                role=obs_result.role_used,
+                                provider=_infer_provider(obs_result.role_used, self.profile),
+                                model=_infer_model(obs_result.role_used, self.profile),
+                                operation="observation_cycle",
+                                prompt_tokens=0,
+                                response_tokens=0,
+                                duration_ms=0,
+                            )
+                            self.radiant.check_and_nudge(self.adapter)
+                    elif obs_result:
+                        logger.debug(f"Observation cycle skipped: {obs_result.skip_reason}")
             except Exception as e:
-                logger.warning(f"Observation cycle trigger failed: {e}", exc_info=True)
+                logger.warning("Observation cycle error: %s", e, exc_info=True)
 
-        # Poll Jules sessions for pending questions — auto-answer via LLM
+        # 3c: Jules watcher
         if self._jules_watcher:
             try:
                 self._jules_watcher.poll()
             except Exception as e:
-                logger.warning("JulesWatcher poll failed: %s", e, exc_info=True)
+                logger.warning("Jules watcher error: %s", e, exc_info=True)
 
+        # 3d: Radiant audit
         if self.radiant:
-            self._audit_tick_counter += 1
-            audit_interval = self.profile.get("audit_interval_ticks", 20)
-            if self._audit_tick_counter >= audit_interval:
-                self._audit_tick_counter = 0
-                self.radiant.run_audit(self.adapter, trust_gradient=self.trust_gradient)
+            try:
+                self._audit_tick_counter += 1
+                audit_interval = self.profile.get("audit_interval_ticks", 20)
+                if self._audit_tick_counter >= audit_interval:
+                    self._audit_tick_counter = 0
+                    self.radiant.run_audit(self.adapter, trust_gradient=self.trust_gradient)
+            except Exception as e:
+                logger.warning("Radiant audit error: %s", e, exc_info=True)
 
     async def _process_email_signals(
         self, raw_signals: list[dict], seen_ids: set[str], triage_rules: dict, email_rules: list
