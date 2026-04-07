@@ -27,6 +27,7 @@ def test_tool_timeout_returns_xibi_error(db_path, tmp_path):
         )
     }
     registry.find_skill_for_tool.return_value = "slow_skill"
+    registry.find_local_skill_for_tool.return_value = "slow_skill"
 
     # Create a tool file that sleeps
     tool_dir = tmp_path / "tools"

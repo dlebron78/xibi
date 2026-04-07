@@ -12,6 +12,7 @@ class SkillInfo:
     name: str
     manifest: dict[str, Any]
     path: Path  # directory containing manifest.json
+    source: str = "local"  # "local" | "mcp" — distinguishes hand-authored skills from synthetic MCP injections
 
 
 class SkillRegistry:
@@ -64,6 +65,21 @@ class SkillRegistry:
                 return skill_name
         return None
 
+    def find_local_skill_for_tool(self, tool_name: str) -> str | None:
+        """Like find_skill_for_tool, but ignores synthetic MCP-injected entries.
+
+        Use this in the executor's dispatch collision check so that an MCP tool
+        registered via register() does not falsely appear as a local-skill match
+        and block the MCP routing path.
+        """
+        for skill_name, skill_info in self.skills.items():
+            if skill_info.source != "local":
+                continue
+            tools = skill_info.manifest.get("tools", [])
+            if any(t.get("name") == tool_name for t in tools):
+                return skill_name
+        return None
+
     def register(self, manifest: dict[str, Any]) -> None:
         """Register a synthetic skill manifest in-memory without writing to disk."""
         name = manifest.get("name")
@@ -72,7 +88,7 @@ class SkillRegistry:
             return
 
         # SkillInfo expects a path. For synthetic skills, we use a dummy path.
-        self.skills[name] = SkillInfo(name=name, manifest=manifest, path=Path("/dev/null"))
+        self.skills[name] = SkillInfo(name=name, manifest=manifest, path=Path("/dev/null"), source="mcp")
 
     def validate(self) -> list[str]:
         warnings = []

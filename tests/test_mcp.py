@@ -331,6 +331,7 @@ def test_mcp_span_has_semconv_attributes():
     skill_reg = MagicMock(spec=SkillRegistry)
     skill_reg.skills = {}
     skill_reg.find_skill_for_tool.return_value = None
+    skill_reg.find_local_skill_for_tool.return_value = None
     skill_reg.get_skill_manifests.return_value = [{"name": "mcp_s1", "tools": [{"name": "t1", "server": "s1"}]}]
 
     mcp_reg = MagicMock(spec=MCPServerRegistry)
