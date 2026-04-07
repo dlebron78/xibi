@@ -483,6 +483,7 @@ class SchemaManager:
 
     def _migration_19(self, conn: sqlite3.Connection) -> None:
         import contextlib
+
         # Thread priority + last_reviewed_at for manager review pattern
         with contextlib.suppress(sqlite3.OperationalError):
             conn.execute("ALTER TABLE threads ADD COLUMN priority TEXT DEFAULT NULL")

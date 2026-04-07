@@ -543,8 +543,10 @@ class ObservationCycle:
                 null_summary = sum(1 for t in threads if not t.get("summary"))
                 total_active = len(threads)
 
-            lines.append(f"OVERVIEW: {total_active} active threads, "
-                         f"{null_priority} missing priority, {null_summary} missing summary")
+            lines.append(
+                f"OVERVIEW: {total_active} active threads, "
+                f"{null_priority} missing priority, {null_summary} missing summary"
+            )
             lines.append("")
 
             # Thread details
@@ -554,12 +556,12 @@ class ObservationCycle:
                 owner_str = t["owner"] or "unclear"
                 summary_str = t["summary"] or "(no summary)"
                 deadline_str = f", deadline: {t['current_deadline']}" if t.get("current_deadline") else ""
-                reviewed_str = f", last reviewed: {t['last_reviewed_at']}" if t.get("last_reviewed_at") else ", never reviewed"
+                reviewed_str = (
+                    f", last reviewed: {t['last_reviewed_at']}" if t.get("last_reviewed_at") else ", never reviewed"
+                )
                 channels = t.get("source_channels") or "[]"
 
-                lines.append(
-                    f"[{t['id']}] {t['name']}"
-                )
+                lines.append(f"[{t['id']}] {t['name']}")
                 lines.append(
                     f"  priority={priority_str} | owner={owner_str} | signals={t['signal_count']} | "
                     f"channels={channels}{deadline_str}{reviewed_str}"
@@ -592,8 +594,7 @@ class ObservationCycle:
             # Recent signal distribution for context
             with open_db(self.db_path) as conn:
                 cursor = conn.execute(
-                    "SELECT urgency, COUNT(*) as cnt FROM signals "
-                    "WHERE urgency IS NOT NULL GROUP BY urgency"
+                    "SELECT urgency, COUNT(*) as cnt FROM signals WHERE urgency IS NOT NULL GROUP BY urgency"
                 )
                 dist = {row[0]: row[1] for row in cursor.fetchall()}
             if dist:
@@ -725,18 +726,18 @@ class ObservationCycle:
                 cycle_id = cursor.lastrowid
 
             system_prompt = self._build_review_system_prompt()
-            llm = get_model(specialty="text", effort="review", config=self.profile)
+            llm = get_model(specialty="text", effort="review", config=self.profile)  # type: ignore[arg-type]
 
             # Batch through threads in chunks of 20. Each thread produces ~100 output tokens
             # (thread_id + priority + summary). 20 threads ≈ 2000 tokens, well within 8192.
-            BATCH_SIZE = 20
+            batch_size = 20
             all_thread_updates: list[dict[str, Any]] = []
             all_signal_flags: list[dict[str, Any]] = []
             all_digests: list[str] = []
             batch_errors: list[str] = []
 
             threads = self._get_all_active_threads()
-            batches = [threads[i:i + BATCH_SIZE] for i in range(0, len(threads), BATCH_SIZE)]
+            batches = [threads[i : i + batch_size] for i in range(0, len(threads), batch_size)]
             logger.info(f"Manager review: {len(threads)} threads in {len(batches)} batches")
 
             for batch_num, batch in enumerate(batches, 1):
@@ -755,9 +756,11 @@ class ObservationCycle:
                         end = cleaned.rfind("}")
                         if start != -1 and end != -1 and end > start:
                             try:
-                                review_data = json.loads(cleaned[start:end + 1])
+                                review_data = json.loads(cleaned[start : end + 1])
                             except json.JSONDecodeError as je:
-                                batch_errors.append(f"Batch {batch_num}: JSON parse failed — {je} — {cleaned[start:start+120]}")
+                                batch_errors.append(
+                                    f"Batch {batch_num}: JSON parse failed — {je} — {cleaned[start : start + 120]}"
+                                )
                                 continue
                         else:
                             batch_errors.append(f"Batch {batch_num}: no JSON object found — {response_text[:120]}")
@@ -794,12 +797,14 @@ class ObservationCycle:
                         executor=executor,
                         command_layer=command_layer,
                     )
-                    result.actions_taken.append({
-                        "tool": "nudge",
-                        "input": {"category": "digest"},
-                        "output": nudge_output,
-                        "allowed": nudge_output.get("status") not in ("blocked", "suppressed"),
-                    })
+                    result.actions_taken.append(
+                        {
+                            "tool": "nudge",
+                            "input": {"category": "digest"},
+                            "output": nudge_output,
+                            "allowed": nudge_output.get("status") not in ("blocked", "suppressed"),
+                        }
+                    )
                 except Exception as e:
                     logger.warning(f"Manager review: failed to send digest nudge: {e}")
                     result.errors.append(f"Digest nudge failed: {e}")
@@ -811,8 +816,10 @@ class ObservationCycle:
             if cycle_id is not None:
                 self._persist_cycle(cycle_id, result)
 
-            logger.info(f"Manager review complete: {len(all_thread_updates)} thread updates, "
-                        f"{len(all_signal_flags)} signal flags, {len(batch_errors)} batch errors")
+            logger.info(
+                f"Manager review complete: {len(all_thread_updates)} thread updates, "
+                f"{len(all_signal_flags)} signal flags, {len(batch_errors)} batch errors"
+            )
             return result
 
         except Exception as e:
@@ -866,20 +873,28 @@ class ObservationCycle:
                             params,
                         )
 
-                        actions.append({
-                            "tool": "manager_thread_update",
-                            "input": {"thread_id": thread_id, "priority": priority, "summary_updated": bool(summary)},
-                            "output": {"status": "ok"},
-                            "allowed": True,
-                        })
+                        actions.append(
+                            {
+                                "tool": "manager_thread_update",
+                                "input": {
+                                    "thread_id": thread_id,
+                                    "priority": priority,
+                                    "summary_updated": bool(summary),
+                                },
+                                "output": {"status": "ok"},
+                                "allowed": True,
+                            }
+                        )
             except Exception as e:
                 logger.error(f"Manager review: failed to apply thread updates: {e}", exc_info=True)
-                actions.append({
-                    "tool": "manager_thread_update",
-                    "input": {"batch": True},
-                    "output": {"status": "error", "message": str(e)},
-                    "allowed": False,
-                })
+                actions.append(
+                    {
+                        "tool": "manager_thread_update",
+                        "input": {"batch": True},
+                        "output": {"status": "error", "message": str(e)},
+                        "allowed": False,
+                    }
+                )
 
         # Signal flags — update urgency/action_type for signals the manager flagged
         signal_flags = review_data.get("signal_flags", [])
@@ -907,12 +922,14 @@ class ObservationCycle:
                                 f"UPDATE signals SET {', '.join(sets)} WHERE id = ?",
                                 params_s,
                             )
-                            actions.append({
-                                "tool": "manager_signal_flag",
-                                "input": {"signal_id": signal_id},
-                                "output": {"status": "ok"},
-                                "allowed": True,
-                            })
+                            actions.append(
+                                {
+                                    "tool": "manager_signal_flag",
+                                    "input": {"signal_id": signal_id},
+                                    "output": {"status": "ok"},
+                                    "allowed": True,
+                                }
+                            )
             except Exception as e:
                 logger.error(f"Manager review: failed to apply signal flags: {e}", exc_info=True)
 

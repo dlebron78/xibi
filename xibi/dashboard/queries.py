@@ -244,7 +244,9 @@ def get_active_threads(conn: sqlite3.Connection, limit: int = 20) -> list[dict]:
     has_priority = "priority" in cols
     has_summary = "summary" in cols
 
-    priority_order = "CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END"
+    priority_order = (
+        "CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END"
+    )
 
     if has_priority and has_summary:
         cursor = conn.execute(
@@ -253,8 +255,10 @@ def get_active_threads(conn: sqlite3.Connection, limit: int = 20) -> list[dict]:
             f"ORDER BY {priority_order}, signal_count DESC LIMIT ?",
             (limit,),
         )
-        return [{"name": r[0], "status": r[1], "owner": r[2], "signal_count": r[3],
-                 "priority": r[4], "summary": r[5]} for r in cursor.fetchall()]
+        return [
+            {"name": r[0], "status": r[1], "owner": r[2], "signal_count": r[3], "priority": r[4], "summary": r[5]}
+            for r in cursor.fetchall()
+        ]
     elif has_priority:
         cursor = conn.execute(
             f"SELECT name, status, owner, signal_count, priority "
@@ -262,16 +266,20 @@ def get_active_threads(conn: sqlite3.Connection, limit: int = 20) -> list[dict]:
             f"ORDER BY {priority_order}, signal_count DESC LIMIT ?",
             (limit,),
         )
-        return [{"name": r[0], "status": r[1], "owner": r[2], "signal_count": r[3],
-                 "priority": r[4], "summary": None} for r in cursor.fetchall()]
+        return [
+            {"name": r[0], "status": r[1], "owner": r[2], "signal_count": r[3], "priority": r[4], "summary": None}
+            for r in cursor.fetchall()
+        ]
     else:
         cursor = conn.execute(
             "SELECT name, status, owner, signal_count FROM threads WHERE status = 'active' "
             "ORDER BY signal_count DESC LIMIT ?",
             (limit,),
         )
-        return [{"name": r[0], "status": r[1], "owner": r[2], "signal_count": r[3],
-                 "priority": None, "summary": None} for r in cursor.fetchall()]
+        return [
+            {"name": r[0], "status": r[1], "owner": r[2], "signal_count": r[3], "priority": None, "summary": None}
+            for r in cursor.fetchall()
+        ]
 
 
 def get_signal_pipeline(conn: sqlite3.Connection, days: int = 7) -> dict:
