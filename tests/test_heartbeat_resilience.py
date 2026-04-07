@@ -35,7 +35,7 @@ def mock_poller(db_path):
     poller.config = {"profile": poller.profile}
     poller.signal_intelligence_enabled = True
     poller.observation_cycle = MagicMock()
-    poller.observation_cycle.run = AsyncMock()
+    poller.observation_cycle.run = MagicMock()
     poller.radiant = MagicMock()
     poller.radiant.ceiling_status.return_value = {"throttle": False}
     poller._jules_watcher = MagicMock()
@@ -123,7 +123,7 @@ async def test_phase3_subtask_isolation_signal_intel_crash(mock_poller):
         # Ensure _run_phase3 is awaited
         await mock_poller._run_phase3()
 
-        # observation_cycle.run is an AsyncMock, it should be called
+        # observation_cycle.run is sync (MagicMock); it should be called
         assert mock_poller.observation_cycle.run.called
         assert mock_poller._jules_watcher.poll.called
 

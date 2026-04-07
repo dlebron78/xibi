@@ -395,7 +395,7 @@ class HeartbeatPoller:
                 if self.radiant and self.radiant.ceiling_status()["throttle"]:
                     logger.info("Radiant: cost ceiling reached, skipping observation cycle")
                 else:
-                    obs_result = await self.observation_cycle.run(  # type: ignore[misc]
+                    obs_result = self.observation_cycle.run(
                         executor=self.executor if hasattr(self, "executor") else None,
                         command_layer=CommandLayer(
                             db_path=str(self.db_path),
