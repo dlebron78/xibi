@@ -10,11 +10,13 @@ from xibi.skills.registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
 
+
 @pytest.fixture
 def temp_skills_dir(tmp_path):
     d = tmp_path / "skills"
     d.mkdir()
     return d
+
 
 def test_nudge_registered_when_not_in_user_skills(temp_skills_dir):
     registry = SkillRegistry(temp_skills_dir)
@@ -22,6 +24,7 @@ def test_nudge_registered_when_not_in_user_skills(temp_skills_dir):
 
     assert "nudge" in executor.registry.skills
     assert executor.registry.find_skill_for_tool("nudge") == "nudge"
+
 
 def test_nudge_skill_info_has_correct_path(temp_skills_dir):
     registry = SkillRegistry(temp_skills_dir)
@@ -32,6 +35,7 @@ def test_nudge_skill_info_has_correct_path(temp_skills_dir):
     assert (skill_info.path / "manifest.json").exists()
     assert (skill_info.path / "tools" / "nudge.py").exists()
 
+
 def test_user_skill_not_overwritten_by_core(temp_skills_dir):
     # Create a custom nudge skill in temp_skills_dir
     custom_nudge_dir = temp_skills_dir / "nudge"
@@ -39,7 +43,7 @@ def test_user_skill_not_overwritten_by_core(temp_skills_dir):
     manifest = {
         "name": "nudge",
         "description": "Custom nudge",
-        "tools": [{"name": "nudge", "description": "custom", "output_type": "action"}]
+        "tools": [{"name": "nudge", "description": "custom", "output_type": "action"}],
     }
     with open(custom_nudge_dir / "manifest.json", "w") as f:
         json.dump(manifest, f)
@@ -54,16 +58,19 @@ def test_user_skill_not_overwritten_by_core(temp_skills_dir):
     assert executor.registry.skills["nudge"].path == custom_nudge_dir
     assert executor.registry.skills["nudge"].manifest["description"] == "Custom nudge"
 
+
 def test_non_nudge_core_skills_registered(temp_skills_dir):
     registry = SkillRegistry(temp_skills_dir)
     executor = Executor(registry=registry)
 
     import xibi.skills as _skills_pkg
+
     sample_dir = Path(_skills_pkg.__file__).parent / "sample"
 
     core_registry = SkillRegistry(sample_dir)
     for skill_name in core_registry.skills:
         assert skill_name in executor.registry.skills
+
 
 def test_core_registration_does_not_crash_on_missing_sample_dir(temp_skills_dir):
     registry = SkillRegistry(temp_skills_dir)
@@ -77,6 +84,7 @@ def test_core_registration_does_not_crash_on_missing_sample_dir(temp_skills_dir)
     # Note: SkillRegistry(temp_skills_dir) doesn't have it either.
     assert "nudge" not in executor.registry.skills
 
+
 def test_executor_can_locate_nudge_tool_file(temp_skills_dir):
     registry = SkillRegistry(temp_skills_dir)
     executor = Executor(registry=registry)
@@ -86,15 +94,20 @@ def test_executor_can_locate_nudge_tool_file(temp_skills_dir):
     skill_info = executor.registry.skills[skill_name]
     assert (skill_info.path / "tools" / "nudge.py").exists()
 
+
 def test_nudge_execution_succeeds_with_mocked_telegram(temp_skills_dir):
     registry = SkillRegistry(temp_skills_dir)
     executor = Executor(registry=registry)
 
-    # We patch xibi.skills.nudge.nudge rather than the dynamic tools/nudge.py
-    # because tools/nudge.py imports nudge from xibi.skills.nudge, and that
-    # binding happens at module load time. The executor loads the tool module
-    # fresh on each execute() call, so it picks up the patched mock.
-    with patch("xibi.skills.nudge.nudge") as mock_nudge:
+    # patch.object on the actual module because patch("xibi.skills.nudge.nudge")
+    # fails: xibi.skills.__init__.py exports 'nudge' as an attribute, which shadows
+    # the submodule during __import__ traversal. Using importlib + patch.object
+    # bypasses this: it targets the module in sys.modules directly.
+    import importlib
+
+    nudge_module = importlib.import_module("xibi.skills.nudge")
+    with patch.object(nudge_module, "nudge") as mock_nudge:
+
         async def mock_nudge_impl(*args, **kwargs):
             return {"status": "ok", "delivered": True}
 
@@ -105,6 +118,7 @@ def test_nudge_execution_succeeds_with_mocked_telegram(temp_skills_dir):
         assert result["status"] == "ok"
         assert result["delivered"] is True
         mock_nudge.assert_called_once()
+
 
 def test_core_registration_is_idempotent(temp_skills_dir):
     registry = SkillRegistry(temp_skills_dir)

@@ -4,10 +4,10 @@ import uuid
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from xibi.db import open_db, migrate
+from xibi.db import migrate, open_db
 from xibi.memory import compress_session_turns
 from xibi.session import SessionContext
-from xibi.types import ReActResult
+
 
 class TestMemoryCompression(unittest.TestCase):
     def setUp(self):
@@ -28,14 +28,16 @@ class TestMemoryCompression(unittest.TestCase):
                 idx = i + offset
                 conn.execute(
                     "INSERT INTO session_turns (turn_id, session_id, query, answer) VALUES (?, ?, ?, ?)",
-                    (str(uuid.uuid4()), self.session_id, f"query {idx}", f"answer {idx}")
+                    (str(uuid.uuid4()), self.session_id, f"query {idx}", f"answer {idx}"),
                 )
 
     def test_compress_when_turn_threshold_exceeded(self):
         self._add_turns(50)
         self.mock_model.generate.return_value = "User: Likes tests\nOngoing: Memory compression"
 
-        result = compress_session_turns(self.db_file, self.session_id, self.mock_model, turn_threshold=50, compression_batch=20)
+        result = compress_session_turns(
+            self.db_file, self.session_id, self.mock_model, turn_threshold=50, compression_batch=20
+        )
 
         self.assertEqual(result["status"], "success")
         self.assertEqual(result["turn_range"], "1-20")
@@ -49,7 +51,9 @@ class TestMemoryCompression(unittest.TestCase):
 
     def test_no_compress_when_below_threshold(self):
         self._add_turns(49)
-        result = compress_session_turns(self.db_file, self.session_id, self.mock_model, turn_threshold=50, compression_batch=20)
+        result = compress_session_turns(
+            self.db_file, self.session_id, self.mock_model, turn_threshold=50, compression_batch=20
+        )
         self.assertEqual(result["status"], "skipped")
         self.assertIn("below threshold", result["reason"])
 
@@ -71,8 +75,12 @@ class TestMemoryCompression(unittest.TestCase):
         self._add_turns(50)
         self.mock_model.generate.return_value = "Summary"
 
-        res1 = compress_session_turns(self.db_file, self.session_id, self.mock_model, turn_threshold=50, compression_batch=20)
-        res2 = compress_session_turns(self.db_file, self.session_id, self.mock_model, turn_threshold=50, compression_batch=20)
+        res1 = compress_session_turns(
+            self.db_file, self.session_id, self.mock_model, turn_threshold=50, compression_batch=20
+        )
+        res2 = compress_session_turns(
+            self.db_file, self.session_id, self.mock_model, turn_threshold=50, compression_batch=20
+        )
 
         self.assertEqual(res1["status"], "success")
         self.assertEqual(res2["status"], "skipped")
@@ -88,7 +96,7 @@ class TestMemoryCompression(unittest.TestCase):
         with open_db(self.db_file) as conn:
             conn.execute(
                 "INSERT INTO belief_summaries (id, session_id, summary) VALUES (?, ?, ?)",
-                ("id1", self.session_id, "User: Likes cake")
+                ("id1", self.session_id, "User: Likes cake"),
             )
 
         session_ctx = SessionContext(self.session_id, self.db_file)
@@ -101,7 +109,9 @@ class TestMemoryCompression(unittest.TestCase):
         self._add_turns(50)
         self.mock_model.generate.side_effect = Exception("LLM Down")
 
-        result = compress_session_turns(self.db_file, self.session_id, self.mock_model, turn_threshold=50, compression_batch=20)
+        result = compress_session_turns(
+            self.db_file, self.session_id, self.mock_model, turn_threshold=50, compression_batch=20
+        )
 
         self.assertEqual(result["status"], "error")
         self.assertIn("LLM Down", result["message"])
@@ -121,21 +131,28 @@ class TestMemoryCompression(unittest.TestCase):
         # 1. First compression at 50 turns (1-20)
         self._add_turns(50)
         self.mock_model.generate.return_value = "Summary 1"
-        res1 = compress_session_turns(self.db_file, self.session_id, self.mock_model, turn_threshold=50, compression_batch=20)
+        res1 = compress_session_turns(
+            self.db_file, self.session_id, self.mock_model, turn_threshold=50, compression_batch=20
+        )
         self.assertEqual(res1["status"], "success")
         self.assertEqual(res1["turn_range"], "1-20")
 
         # 2. Add more turns to hit next batch (21-40)
         # To trigger 21-40, we need total_turns >= 40 + (50-20) = 70
-        self._add_turns(20, offset=50) # Total 70
+        self._add_turns(20, offset=50)  # Total 70
         self.mock_model.generate.return_value = "Summary 2"
-        res2 = compress_session_turns(self.db_file, self.session_id, self.mock_model, turn_threshold=50, compression_batch=20)
+        res2 = compress_session_turns(
+            self.db_file, self.session_id, self.mock_model, turn_threshold=50, compression_batch=20
+        )
         self.assertEqual(res2["status"], "success")
         self.assertEqual(res2["turn_range"], "21-40")
 
         with open_db(self.db_file) as conn:
-            count = conn.execute("SELECT COUNT(*) FROM belief_summaries WHERE session_id = ?", (self.session_id,)).fetchone()[0]
+            count = conn.execute(
+                "SELECT COUNT(*) FROM belief_summaries WHERE session_id = ?", (self.session_id,)
+            ).fetchone()[0]
             self.assertEqual(count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()

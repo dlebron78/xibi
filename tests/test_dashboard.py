@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 from pathlib import Path
@@ -265,10 +266,8 @@ def test_signal_pipeline_grouped(client, db_path: Path):
 
     with sqlite3.connect(db_path) as conn:
         # Add urgency column if missing (fixture only has classification)
-        try:
+        with contextlib.suppress(sqlite3.OperationalError):
             conn.execute("ALTER TABLE signals ADD COLUMN urgency TEXT")
-        except sqlite3.OperationalError:
-            pass
 
         conn.execute(
             "INSERT INTO signals (source, urgency, content_preview) VALUES (?, ?, ?)",

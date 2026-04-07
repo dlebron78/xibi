@@ -320,6 +320,7 @@ class ObservationCycle:
                 result.errors.extend(errors)
             except Exception as e:
                 logger.info(f"Review role failed, falling back to think: {e}")
+                result.errors.append(f"review role failed: {e}")
                 try:
                     actions, errors = self._run_think_role(observation_dump, executor, command_layer)
                     result.role_used = "think"
@@ -328,6 +329,7 @@ class ObservationCycle:
                     result.errors.extend(errors)
                 except Exception as e2:
                     logger.info(f"Think role failed, falling back to reflex: {e2}")
+                    result.errors.append(f"think role failed: {e2}")
                     actions, errors = self._run_reflex_fallback(
                         signals, executor, command_layer, trust_gradient=self.trust_gradient
                     )
