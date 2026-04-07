@@ -251,17 +251,19 @@ def test_breaker_wrapped_client_proxies_generate_with_tools():
             "providers": {"ollama": {"base_url": "u"}},
             "db_path": ":memory:",
         }
-        with patch("xibi.router.OllamaClient", return_value=inner):
-            with patch("xibi.router._check_provider_health", return_value=True):
-                with patch("xibi.router.CircuitBreaker") as mock_breaker_cls:
-                    mock_breaker = mock_breaker_cls.return_value
-                    # Ensure breaker is closed
-                    mock_breaker.is_open.return_value = False
-                    client = get_model()
-                    res = client.generate_with_tools([], [])
-                    assert res == {"ok": True}
-                    inner.generate_with_tools.assert_called_once()
-                    mock_breaker.record_success.assert_called_once()
+        with (
+            patch("xibi.router.OllamaClient", return_value=inner),
+            patch("xibi.router._check_provider_health", return_value=True),
+            patch("xibi.router.CircuitBreaker") as mock_breaker_cls,
+        ):
+            mock_breaker = mock_breaker_cls.return_value
+            # Ensure breaker is closed
+            mock_breaker.is_open.return_value = False
+            client = get_model()
+            res = client.generate_with_tools([], [])
+            assert res == {"ok": True}
+            inner.generate_with_tools.assert_called_once()
+            mock_breaker.record_success.assert_called_once()
 
 
 def test_breaker_wrapped_client_supports_tool_calling_true():
@@ -278,13 +280,15 @@ def test_breaker_wrapped_client_supports_tool_calling_true():
             "providers": {"ollama": {"base_url": "u"}},
             "db_path": ":memory:",
         }
-        with patch("xibi.router.OllamaClient", return_value=inner):
-            with patch("xibi.router._check_provider_health", return_value=True):
-                with patch("xibi.router.CircuitBreaker") as mock_breaker_cls:
-                    mock_breaker = mock_breaker_cls.return_value
-                    mock_breaker.is_open.return_value = False
-                    client = get_model()
-                    assert client.supports_tool_calling() is True
+        with (
+            patch("xibi.router.OllamaClient", return_value=inner),
+            patch("xibi.router._check_provider_health", return_value=True),
+            patch("xibi.router.CircuitBreaker") as mock_breaker_cls,
+        ):
+            mock_breaker = mock_breaker_cls.return_value
+            mock_breaker.is_open.return_value = False
+            client = get_model()
+            assert client.supports_tool_calling() is True
 
 
 def test_breaker_wrapped_client_supports_tool_calling_false():
@@ -302,8 +306,10 @@ def test_breaker_wrapped_client_supports_tool_calling_false():
             "providers": {"gemini": {"api_key_env": "K"}},
             "db_path": ":memory:",
         }
-        with patch("xibi.router.GeminiClient", return_value=inner):
-            with patch("xibi.router._check_provider_health", return_value=True):
-                with patch.dict("os.environ", {"K": "v"}):
-                    client = get_model()
-                    assert client.supports_tool_calling() is False
+        with (
+            patch("xibi.router.GeminiClient", return_value=inner),
+            patch("xibi.router._check_provider_health", return_value=True),
+            patch.dict("os.environ", {"K": "v"}),
+        ):
+            client = get_model()
+            assert client.supports_tool_calling() is False

@@ -7,7 +7,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 19  # increment when adding new migrations
+SCHEMA_VERSION = 20  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -50,6 +50,7 @@ class SchemaManager:
             (17, "access_log extensions", self._migration_17),
             (18, "contacts extensions + contact_channels table", self._migration_18),
             (19, "manager review: thread priority + review tracking", self._migration_19),
+            (20, "belief_summaries table for session compression", self._migration_20),
         ]
 
         for version, description, func in migrations:
@@ -480,9 +481,9 @@ class SchemaManager:
                 logger.error(f"Migration 18 failed to add contact_id to session_entities: {e}")
                 raise
 
-
     def _migration_19(self, conn: sqlite3.Connection) -> None:
         import contextlib
+
         # Thread priority + last_reviewed_at for manager review pattern
         with contextlib.suppress(sqlite3.OperationalError):
             conn.execute("ALTER TABLE threads ADD COLUMN priority TEXT DEFAULT NULL")
@@ -491,6 +492,29 @@ class SchemaManager:
         # Track whether an observation cycle was a manager review vs normal triage
         with contextlib.suppress(sqlite3.OperationalError):
             conn.execute("ALTER TABLE observation_cycles ADD COLUMN review_mode TEXT DEFAULT 'triage'")
+
+    def _migration_20(self, conn: sqlite3.Connection) -> None:
+        sql_path = Path(__file__).parent / "migrations" / "0020_belief_summaries.sql"
+        if sql_path.exists():
+            conn.executescript(sql_path.read_text())
+        else:
+            # Fallback if file missing
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id TEXT PRIMARY KEY,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS belief_summaries (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    turn_range TEXT,
+                    source TEXT DEFAULT 'llm_compression',
+                    FOREIGN KEY(session_id) REFERENCES sessions(id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_belief_summaries_session ON belief_summaries(session_id);
+            """)
 
 
 def migrate(db_path: Path) -> list[int]:

@@ -33,8 +33,8 @@ def test_bridge_links_known_person(db_path):
 
 def test_bridge_partial_creation(db_path):
     # Setup: Person mentioned in 3 sessions (entities stored in DB first)
-    session1 = SessionContext("s1", db_path)
-    session2 = SessionContext("s2", db_path)
+    SessionContext("s1", db_path)
+    SessionContext("s2", db_path)
     session3 = SessionContext("s3", db_path)
 
     # Pre-populate session_entities in 2 different sessions

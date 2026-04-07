@@ -61,6 +61,6 @@ def test_write_tools_comprehensive():
     # all WRITE_TOOLS members are in TOOL_TIERS (or handled by default RED)
     # This just ensures we didn't typo tool names in WRITE_TOOLS
 
-    for tool in WRITE_TOOLS:
+    for _tool in WRITE_TOOLS:
         # It's fine if it's not in TOOL_TIERS, it defaults to RED
         pass

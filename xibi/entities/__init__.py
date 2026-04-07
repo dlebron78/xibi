@@ -51,6 +51,9 @@ def create_contact(
         contact_id = "contact-" + hashlib.md5(display_name.lower().encode()).hexdigest()[:8]
 
     try:
+        # Write contact row and commit before opening a second connection for the channel.
+        # Both operations write to the same WAL db; nesting open_db calls deadlocks SQLite
+        # (second connection waits 30 s for the first's implicit transaction to commit).
         with open_db(Path(db_path)) as conn:
             conn.execute(
                 """
@@ -64,8 +67,9 @@ def create_contact(
                 """,
                 (contact_id, display_name, email, organization, relationship, discovered_via),
             )
-            if email:
-                upsert_contact_channel(contact_id, email, "email", verified=1, db_path=db_path)
-            return contact_id
+        # open_db committed above — safe to open a second connection for the channel row.
+        if email:
+            upsert_contact_channel(contact_id, email, "email", verified=1, db_path=db_path)
+        return contact_id
     except Exception:
         return None

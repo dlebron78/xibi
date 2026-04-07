@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+
 from xibi.heartbeat.source_poller import SourcePoller
 
 
@@ -75,20 +76,13 @@ async def test_poller_falls_back_to_source_args_without_profile(mocker):
 
     client.call_tool.assert_called_once()
     args, kwargs = client.call_tool.call_args
-    if args:
-        params = args[1]
-    else:
-        params = kwargs["arguments"]
+    params = args[1] if args else kwargs["arguments"]
     assert params["query"] == "standard query"
 
 
 @pytest.mark.asyncio
 async def test_poller_non_jobspy_source_unaffected(mocker):
-    config = {
-        "job_search": {
-            "profiles": [{"query": "product manager", "location": "Miami, FL"}]
-        }
-    }
+    config = {"job_search": {"profiles": [{"query": "product manager", "location": "Miami, FL"}]}}
     mcp_registry = mocker.Mock()
     client = mocker.AsyncMock()
     mcp_registry.get_client.return_value = client
@@ -107,8 +101,5 @@ async def test_poller_non_jobspy_source_unaffected(mocker):
 
     client.call_tool.assert_called_once()
     args, kwargs = client.call_tool.call_args
-    if args:
-        params = args[1]
-    else:
-        params = kwargs["arguments"]
+    params = args[1] if args else kwargs["arguments"]
     assert params["query"] == "important query"

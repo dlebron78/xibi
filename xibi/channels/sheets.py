@@ -73,10 +73,7 @@ class SheetsExporter:
             import gspread  # type: ignore
             from google.oauth2.service_account import Credentials  # type: ignore
         except ImportError as e:
-            raise SheetsExportError(
-                "gspread / google-auth not installed. Run: "
-                "pip install gspread google-auth"
-            ) from e
+            raise SheetsExportError("gspread / google-auth not installed. Run: pip install gspread google-auth") from e
 
         creds_path = self.config.get("credentials_path")
         if not creds_path:
@@ -102,7 +99,7 @@ class SheetsExporter:
         if not sheet_id:
             raise SheetsExportError("sheets_export.jobs.spreadsheet_id is required")
 
-        sh = self._client.open_by_key(sheet_id)  # type: ignore[union-attr]
+        sh = self._client.open_by_key(sheet_id)  # type: ignore[attr-defined]
         try:
             ws = sh.worksheet(ws_name)
         except Exception:

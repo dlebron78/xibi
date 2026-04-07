@@ -91,7 +91,7 @@ def _load_config(workdir: Path, _config: dict[str, Any] | None) -> dict[str, Any
                 else:
                     data = json.load(f)
             if data:
-                return data
+                return dict(data)
         except Exception as e:
             logger.debug("send_document: failed reading %s: %s", cfg_path, e)
     return {}
@@ -119,9 +119,7 @@ def _build_multipart_body(
         _field("caption", caption[:1024])  # Telegram caption limit
 
     parts.append(f"--{boundary}\r\n".encode())
-    parts.append(
-        f'Content-Disposition: form-data; name="document"; filename="{file_name}"\r\n'.encode()
-    )
+    parts.append(f'Content-Disposition: form-data; name="document"; filename="{file_name}"\r\n'.encode())
     parts.append(f"Content-Type: {mime_type}\r\n\r\n".encode())
     parts.append(file_bytes)
     parts.append(b"\r\n")
