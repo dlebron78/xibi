@@ -1,14 +1,19 @@
 # step-59 — Scheduled Actions: Universal Action Scheduler Foundation
 
-> **Depends on:** step-57 (Memory Compression — merged 2026-04, migration 19 landed)
+> **Depends on:** step-57 (memory compression — migration 20), step-60 (runtime
+> fallback chain), step-61 (result handles). All merged as of 2026-04-08.
 > **Blocks:** Recurring exports, periodic summaries, autonomous polling cadences,
 > any future feature that needs "do X on a schedule"
-> **Scope:** Add a core scheduled-actions kernel: one new table, one heartbeat
+> **Scope:** Add a core scheduled-actions kernel: two new tables, one heartbeat
 > hook, one dispatcher with extension points, plus an internal Python API.
 > **No** ReAct tool surface, **no** Telegram commands, **no** cron parser yet —
 > those land in later specs. This step lays the foundation only.
-> **Refreshed 2026-04-07** to update self-references and stale future-step
-> table after step renumbering. Kernel design unchanged.
+> **Refreshed 2026-04-08** to (a) correct the migration number (now 21; 20 was
+> consumed by belief_summaries in step-57), (b) integrate with step-60's runtime
+> fallback chain for internal_hook handlers that invoke LLMs, (c) clarify that
+> scheduled actions do NOT participate in step-61's result handle store, and
+> (d) propagate trace IDs into inference event telemetry so scheduled LLM calls
+> are auditable. Kernel design unchanged.
 
 ---
 
@@ -145,6 +150,18 @@ CREATE INDEX idx_scheduled_action_runs_action
 `internal_hook` is the escape hatch the kernel itself uses to migrate the
 existing hardcoded heartbeat behaviors into the scheduler over time.
 
+**internal_hook and the step-60 fallback chain.** Internal hooks that need
+an LLM (e.g. `manager_review`, `daily_summary`) MUST obtain their model via
+`xibi.router.get_model(role=...)` rather than instantiating provider clients
+directly. This is non-negotiable: going through `get_model` is what gives a
+scheduled LLM call the full `ChainedModelClient` — runtime fallback across
+primary/secondary/tertiary roles, per-role circuit breakers, and inference
+event telemetry. A hook that bypasses `get_model` silently loses all of
+that and defeats the point of step-60. The kernel does not enforce this
+(it can't inspect hook bodies), so spec-compliant hook authors are on the
+honor system. Tests for any new hook should assert that it resolves via
+the router.
+
 ---
 
 ### 2. New Module: `xibi/scheduling/__init__.py` and `xibi/scheduling/kernel.py`
@@ -273,6 +290,20 @@ be safe against the heartbeat process being killed mid-tick. Each row's
 state machine transitions atomically so a kill leaves the row in a coherent
 state (the run row is the source of truth for "did this start").
 
+**Trace propagation into inference events (step-60 integration).** Each
+`scheduled_action_runs` row gets a fresh `trace_id` at start. The kernel
+stashes this on a `contextvars.ContextVar` (`current_scheduled_trace_id`)
+for the duration of the handler call. The router's inference event
+emitter (added in step-60) reads this ContextVar and, if set, stamps the
+resulting `inference_events` rows with the same trace_id. Net effect: a
+scheduled `manager_review` hook that makes three LLM calls produces one
+`scheduled_action_runs` row and three `inference_events` rows all joinable
+by trace_id, plus the corresponding `spans` rows — a complete audit trail
+for every autonomous decision the scheduler makes. The router change is a
+two-line addition (read the ContextVar, pass as an optional attribute);
+no schema change needed because `inference_events` already carries
+`trace_id` per migration 16.
+
 **Catch-up vs skip semantics:** if the heartbeat was down for hours,
 `next_run_at` will be far in the past for some interval triggers. The
 kernel runs each due action **at most once per tick**, then advances
@@ -365,6 +396,22 @@ summary) migrate into the scheduler without becoming first-class tools.
 The function receives the same `ExecutionContext` so it can use the
 executor and db.
 
+**Scheduled actions do NOT get a result handle store (step-61 note).**
+`HandleStore` is a run-scoped object owned by a single ReAct loop. A
+scheduled `tool_call` action runs outside any ReAct run and has no handle
+store, so any tool it invokes that would normally wrap a large output in
+a handle should receive `handle_store=None` and fall back to returning
+raw payload. The kernel truncates whatever comes back to 500 chars for
+`output_preview`; the full result is NOT persisted beyond that truncation,
+because scheduled actions are meant to produce side effects (sent emails,
+written files, logged rows) rather than deliver data back to a caller.
+If a future scheduled action genuinely needs to persist a large result,
+it should write to disk or a table itself inside the handler — that's an
+application-level decision, not a kernel concern. The tool registry MUST
+accept `handle_store=None` without crashing for this to work; any tool
+that unconditionally calls `handle_store.create(...)` needs a None guard
+before this kernel can safely invoke it on a schedule.
+
 ---
 
 ### 5. Heartbeat Integration (`xibi/heartbeat/poller.py`)
@@ -394,10 +441,13 @@ it's already cost-heavy with observation/intelligence.
 
 ### 6. Migration
 
-Migration 21 (next available — 19 and 20 are already taken; sessions table
-duplicates are a separate cleanup item) creates both tables and indexes.
-Idempotent. No data backfill needed; existing `tasks` table is untouched
-and continues to work for one-shot text reminders.
+Migration 21 (next available — 20 was consumed by `belief_summaries` in
+step-57) creates both `scheduled_actions` and `scheduled_action_runs`
+tables plus the two indexes above. Idempotent. No data backfill needed;
+existing `tasks` table is untouched and continues to work for one-shot
+text reminders. The migration registers as
+`(21, "scheduled actions kernel: actions and run history", self._migration_21)`
+in `xibi/db/migrations.py`.
 
 ---
 
@@ -445,8 +495,16 @@ Unit tests (`tests/scheduling/`):
 - `test_handlers.py`
   - `tool_call` dispatches through executor with correct args
   - `tool_call` propagates executor errors as HandlerResult.error
+  - `tool_call` tolerates `handle_store=None` (no crash when a tool that
+    usually wraps large output in a handle is invoked on a schedule)
   - `internal_hook` calls registered Python function
+  - `internal_hook` sees `current_scheduled_trace_id` ContextVar set
+    during its call and cleared afterward
   - Unknown action_type raises `UnknownActionType`
+- `test_router_trace_propagation.py` (new, lives in tests/ root)
+  - With the ContextVar set, a router inference event carries the scheduled
+    trace_id as attribute
+  - With the ContextVar unset, router behavior is unchanged from step-60
 - `test_api.py`
   - Round-trip: register → list → fire_now → run history present
   - `register_action` rejects unknown trigger_type with helpful error
@@ -464,8 +522,8 @@ Integration test (`tests/integration/test_scheduled_actions_in_heartbeat.py`):
 
 ## Exit Criteria
 
-- [ ] Migration 20 lands cleanly on a fresh DB and on the production NucBox snapshot
-- [ ] All unit tests above pass
+- [ ] Migration 21 lands cleanly on a fresh DB and on the production NucBox snapshot
+- [ ] All unit tests above pass (including `test_router_trace_propagation.py`)
 - [ ] Integration test passes
 - [ ] `HeartbeatPoller` tick latency on an empty schedule table is within
       noise of pre-step-59 baseline (measured via tracing spans)
@@ -473,8 +531,14 @@ Integration test (`tests/integration/test_scheduled_actions_in_heartbeat.py`):
       Python REPL using only `xibi.scheduling.api`
 - [ ] No new public tools, no new Telegram commands, no new dashboard
       surface — those are explicitly later steps
-- [ ] `scheduled_actions` and `scheduled_action_runs` tables are documented
-      in the dev docs (~/Documents/Dev Docs/Xibi/architecture/data-model.md)
+- [ ] A scheduled `internal_hook` that calls an LLM produces joinable
+      rows in `scheduled_action_runs`, `inference_events`, and `spans`
+      under a single shared `trace_id`
+- [ ] Any existing tool that unconditionally calls `handle_store.create()`
+      has been audited and now tolerates `handle_store=None`
+- [ ] The two new tables are documented in-repo at
+      `docs/architecture/data-model.md` (create the file if absent). Dev
+      Docs sync is a separate manual step and not a merge blocker.
 
 ---
 
@@ -500,3 +564,11 @@ Integration test (`tests/integration/test_scheduled_actions_in_heartbeat.py`):
 - **Note: the existing inert `SheetsExporter` (commit fb15e58) is not
   removed in this step.** It is dormant (`enabled: false` default) and will
   be deleted in a follow-up spec when the real Telegram document export lands.
+- **Note: trust propagation through scheduled actions is simpler than
+  through result handles.** Step-61 left the question of how trust tiers
+  flow through an opaque handle reference open as a design item. Scheduled
+  actions don't have that problem because the action's own `trust_tier`
+  column is checked at dispatch time and the resulting tool call goes
+  through the normal `TrustGradient` — no handle indirection involved.
+  When the handle trust-propagation question is resolved in its own spec,
+  nothing in step-59 needs to change.
