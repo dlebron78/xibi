@@ -48,10 +48,11 @@ class Step:
 class ReActResult:
     answer: str
     steps: list[Step]
-    exit_reason: Literal["finish", "ask_user", "max_steps", "timeout", "error"]
+    exit_reason: Literal["finish", "ask_user", "max_steps", "timeout", "error", "partial"]
     duration_ms: int
     error_summary: list[XibiError] = field(default_factory=list)
     trace_id: str | None = None
+    degraded: bool = False
 
     def user_facing_failure_message(self) -> str:
         """

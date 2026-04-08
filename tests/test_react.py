@@ -143,7 +143,9 @@ def test_run_max_steps_exit(mock_get_model, mock_config, skill_registry):
 
     result = run("query", mock_config, skill_registry, max_steps=5)
 
-    assert result.exit_reason == "max_steps"
+    # After step-60 graceful degradation: max_steps with salvageable scratchpad
+    # surfaces a partial answer instead of bare "max_steps".
+    assert result.exit_reason in ("max_steps", "partial")
     assert len(result.steps) == 5
 
 

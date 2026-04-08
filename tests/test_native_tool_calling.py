@@ -202,7 +202,8 @@ def test_react_run_native_respects_max_steps(config):
             executor = MagicMock()
             executor.execute.return_value = {"status": "ok"}
             result = run("query", config, skill_registry, react_format="native", executor=executor, max_steps=2)
-            assert result.exit_reason == "max_steps"
+            # step-60 graceful degradation: max_steps with salvageable scratchpad → "partial"
+            assert result.exit_reason in ("max_steps", "partial")
             assert len(result.steps) == 2
 
 

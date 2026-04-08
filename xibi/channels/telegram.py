@@ -459,8 +459,14 @@ class TelegramAdapter:
                 ),
             )
             if result.answer:
-                response = result.answer
-            elif result.exit_reason in ("error", "timeout", "max_steps"):
+                if getattr(result, "degraded", False) is True:
+                    response = (
+                        "⚠️ I ran into trouble completing this — here's what I managed to gather:\n\n"
+                        + result.answer
+                    )
+                else:
+                    response = result.answer
+            elif result.exit_reason in ("error", "timeout", "max_steps", "partial"):
                 response = result.user_facing_failure_message()
             else:
                 response = "I didn't get an answer. Try rephrasing?"

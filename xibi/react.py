@@ -31,6 +31,107 @@ from xibi.types import ReActResult, Step
 
 logger = logging.getLogger(__name__)
 
+
+def _format_observation_for_user(output: Any) -> str:
+    """Cheap, deterministic formatter. Pure Python — no LLM call."""
+    if output is None:
+        return ""
+    if isinstance(output, str):
+        return output[:2000] + ("…" if len(output) > 2000 else "")
+    if isinstance(output, list):
+        return _render_list_for_user(output[:20])
+    if isinstance(output, dict):
+        return _render_dict_for_user(output)
+    return str(output)[:2000]
+
+
+def _render_dict_for_user(d: dict) -> str:
+    # Prefer common content fields when present
+    for key in ("content", "answer", "message", "text", "summary"):
+        v = d.get(key)
+        if isinstance(v, str) and v:
+            return v[:2000] + ("…" if len(v) > 2000 else "")
+        if isinstance(v, list) and v:
+            return _render_list_for_user(v[:20])
+    # Otherwise stringify top-level fields, skipping noisy keys
+    skip = {"status", "_xibi_error"}
+    parts: list[str] = []
+    for k, v in d.items():
+        if k in skip:
+            continue
+        sv = str(v)
+        if len(sv) > 200:
+            sv = sv[:200] + "…"
+        parts.append(f"- {k}: {sv}")
+        if len(parts) >= 12:
+            break
+    if not parts:
+        return str(d)[:2000]
+    return "\n".join(parts)
+
+
+def _render_list_for_user(items: list) -> str:
+    lines: list[str] = []
+    for i, item in enumerate(items, start=1):
+        if isinstance(item, dict):
+            # Pull a few likely-useful keys
+            label = (
+                item.get("title")
+                or item.get("name")
+                or item.get("subject")
+                or item.get("summary")
+                or str(list(item.values())[0])[:80] if item else ""
+            )
+            extra_bits: list[str] = []
+            for k in ("company", "url", "link", "date", "from", "location"):
+                if k in item and item[k]:
+                    extra_bits.append(f"{k}={str(item[k])[:80]}")
+            extras = " (" + ", ".join(extra_bits) + ")" if extra_bits else ""
+            lines.append(f"{i}. {str(label)[:200]}{extras}")
+        else:
+            lines.append(f"{i}. {str(item)[:200]}")
+    return "\n".join(lines)
+
+
+def _build_partial_answer(scratchpad: list[Any], reason: str) -> str | None:
+    """Extract useful observations from the scratchpad and format them as a
+    degraded answer. Returns None if nothing salvageable exists.
+
+    Pure Python. No model call. Deterministic. Operates on Step objects whose
+    tool_output is a dict and whose error attribute may be set.
+    """
+    useful: list[tuple[str, str]] = []
+    for entry in scratchpad:
+        # Skip steps with errors or empty outputs
+        if getattr(entry, "error", None) is not None:
+            continue
+        tool_output = getattr(entry, "tool_output", None)
+        if not tool_output:
+            continue
+        if isinstance(tool_output, dict) and tool_output.get("status") == "error":
+            continue
+        formatted = _format_observation_for_user(tool_output)
+        if not formatted.strip():
+            continue
+        tool = getattr(entry, "tool", "tool") or "tool"
+        # Skip control-plane tools that aren't user-relevant
+        if tool in ("finish", "ask_user", "error"):
+            continue
+        useful.append((tool, formatted))
+
+    if not useful:
+        return None
+
+    lines = [
+        f"I couldn't complete this task cleanly ({reason}), but here's what I gathered:",
+        "",
+    ]
+    for i, (tool, formatted) in enumerate(useful[-5:], start=1):
+        lines.append(f"**{i}. From `{tool}`:**")
+        lines.append(formatted)
+        lines.append("")
+    return "\n".join(lines)
+
 _FINISH_TOOL = {
     "name": "finish",
     "description": (
@@ -880,14 +981,22 @@ async def _run_async(
             if step.tool == "error" or tool_output.get("status") == "error":
                 consecutive_errors += 1
                 if consecutive_errors >= 3:
+                    partial = _build_partial_answer(scratchpad, "3 consecutive tool failures")
                     res = ReActResult(
-                        answer="",
+                        answer=partial or "",
                         steps=scratchpad,
-                        exit_reason="error",
+                        exit_reason="partial" if partial is not None else "error",
                         duration_ms=int((time.time() - start_time) * 1000),
+                        degraded=True,
                     )
                     res.error_summary = [s.error for s in scratchpad if s.error is not None]
                     res.trace_id = _run_trace_id
+                    if partial is not None:
+                        logger.warning(
+                            "run %s degraded: exiting with partial answer after %d consecutive errors",
+                            _run_trace_id,
+                            consecutive_errors,
+                        )
                     _emit_run_span(res)
                     clear_trace_context()
                     return res
@@ -898,24 +1007,44 @@ async def _run_async(
             # Catch specific recoverable errors only — KeyboardInterrupt and SystemExit propagate
             failure_type = FailureType.PERSISTENT if isinstance(e, XibiError) else FailureType.TRANSIENT
             trust.record_failure(_trust_specialty, _trust_effort, failure_type)
-            # Handle unexpected LLM errors
+            # Graceful degradation: salvage scratchpad observations into a partial answer.
+            reason = e.user_message() if isinstance(e, XibiError) else f"{type(e).__name__}: {e}"
+            partial = _build_partial_answer(scratchpad, reason)
             res = ReActResult(
-                answer="", steps=scratchpad, exit_reason="error", duration_ms=int((time.time() - start_time) * 1000)
+                answer=partial or "",
+                steps=scratchpad,
+                exit_reason="partial" if partial is not None else "error",
+                duration_ms=int((time.time() - start_time) * 1000),
+                degraded=True,
             )
             if isinstance(e, XibiError):
                 res.error_summary = [e]
             else:
                 res.error_summary = [s.error for s in scratchpad if s.error is not None]
             res.trace_id = _run_trace_id
+            if partial is not None:
+                logger.warning(
+                    "run %s degraded: exiting with partial answer after %s",
+                    _run_trace_id,
+                    type(e).__name__,
+                )
             _emit_run_span(res)
             clear_trace_context()
             return res
 
+    # Max-steps exhausted: try graceful degradation before giving up.
+    partial = _build_partial_answer(scratchpad, "max reasoning steps reached")
     res = ReActResult(
-        answer="", steps=scratchpad, exit_reason="max_steps", duration_ms=int((time.time() - start_time) * 1000)
+        answer=partial or "",
+        steps=scratchpad,
+        exit_reason="partial" if partial is not None else "max_steps",
+        duration_ms=int((time.time() - start_time) * 1000),
+        degraded=True if partial is not None else False,
     )
     res.error_summary = [s.error for s in scratchpad if s.error is not None]
     res.trace_id = _run_trace_id
+    if partial is not None:
+        logger.warning("run %s degraded: exiting with partial answer at max_steps", _run_trace_id)
     _emit_run_span(res)
     clear_trace_context()
     return res
