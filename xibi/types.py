@@ -21,9 +21,17 @@ class Step:
 
     def full_text(self) -> str:
         """Full detail — injected for the most recent steps."""
-        out = str(self.tool_output)
-        if len(out) > 4000:
-            out = out[:4000] + "... [truncated]"
+        if "handle" in self.tool_output:
+            out = (
+                f"<handle:{self.tool_output['handle']} "
+                f"schema={self.tool_output['schema']} "
+                f"items={self.tool_output.get('item_count', '?')}>"
+                f"\nSummary: {self.tool_output.get('summary', '')}"
+            )
+        else:
+            out = str(self.tool_output)
+            if len(out) > 4000:
+                out = out[:4000] + "... [truncated]"
         return (
             f"Step {self.step_num}:\n"
             f"  Thought: {self.thought}\n"
@@ -35,7 +43,9 @@ class Step:
     def one_line_summary(self) -> str:
         """Compressed summary for older steps — preserves key data."""
         input_summary = json.dumps(self.tool_input, separators=(",", ":"))[:100]
-        if self.tool_output.get("status") == "error":
+        if "handle" in self.tool_output:
+            output_hint = f"<handle:{self.tool_output['handle']} schema={self.tool_output['schema']}>"
+        elif self.tool_output.get("status") == "error":
             output_hint = f"ERROR: {self.tool_output.get('message', '?')[:120]}"
         elif self.tool_output.get("content"):
             output_hint = str(self.tool_output["content"])[:400]

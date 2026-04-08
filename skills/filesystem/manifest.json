@@ -65,9 +65,17 @@
                     "content": {
                         "type": "string",
                         "description": "Content to write."
+                    },
+                    "handle": {
+                        "type": "string",
+                        "description": "Handle ID from a prior tool call. If provided, content of the handle will be written."
                     }
                 },
-                "required": ["filepath", "content"]
+                "required": ["filepath"],
+                "oneOf": [
+                    {"required": ["content"]},
+                    {"required": ["handle"]}
+                ]
             }
         },
         {
