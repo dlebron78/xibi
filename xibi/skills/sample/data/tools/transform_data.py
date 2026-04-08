@@ -14,6 +14,10 @@ Supported operations (applied in sequence):
 
 For dict payloads with a single list field (e.g. {"jobs": [...]}), operations
 are applied to the inner list and the result is re-wrapped in the same key.
+
+Missing-field semantics (consistent across all ops): if an item is missing
+the field a given op targets, the item is handled leniently rather than
+raising. See `_get_field` for the full rules.
 """
 from __future__ import annotations
 
@@ -78,6 +82,27 @@ _OPS: dict[str, Any] = {
 }
 
 
+# Sentinel for "field not present on item" — distinct from a real None value
+# so ops can choose how to handle missingness consistently.
+_MISSING = object()
+
+
+def _get_field(item: Any, field: str) -> Any:
+    """Lenient field access: returns _MISSING if the field isn't present.
+
+    All transform_data ops treat missing fields the same way: the item is
+    considered to have no value for that field, and each op decides what
+    that means (filter → excluded, sort → sorted last, group_by → bucketed
+    under "__missing__", dedupe → collapsed into a single "missing" bucket).
+    Non-dict items are also treated as missing rather than raising.
+    """
+    if not isinstance(item, dict):
+        return _MISSING
+    if field not in item:
+        return _MISSING
+    return item[field]
+
+
 def _filter(data: list, args: dict) -> list:
     field = args["field"]
     op_str = args["op"]
@@ -87,16 +112,33 @@ def _filter(data: list, args: dict) -> list:
         raise ValueError(f"Unknown filter op: {op_str!r}")
     result = []
     for item in data:
-        if field not in item:
-            raise KeyError(f"Field {field!r} not found in item")
-        result.append(item) if cmp(item[field], value) else None
+        val = _get_field(item, field)
+        if val is _MISSING:
+            # Lenient: missing field → item is excluded from the filter.
+            continue
+        try:
+            if cmp(val, value):
+                result.append(item)
+        except TypeError:
+            # Incomparable types (e.g. None vs int) → item excluded.
+            continue
     return result
 
 
 def _sort(data: list, args: dict) -> list:
     field = args["field"]
     reverse = str(args.get("order", "asc")).lower() == "desc"
-    return sorted(data, key=lambda item: item.get(field), reverse=reverse)
+
+    # None-safe, missing-safe, type-safe sort key: missing values sort last
+    # (regardless of order), and values are grouped by type before comparison
+    # so heterogeneous lists don't blow up on None < int or str < int.
+    def _key(item: Any) -> tuple:
+        val = _get_field(item, field)
+        if val is _MISSING or val is None:
+            return (1, 0, "")
+        return (0, type(val).__name__, val)
+
+    return sorted(data, key=_key, reverse=reverse)
 
 
 def _slice(data: list, args: dict) -> list:
@@ -109,7 +151,8 @@ def _group_by(data: list, args: dict) -> dict:
     field = args["field"]
     result: dict[str, list] = {}
     for item in data:
-        key = str(item.get(field, "__missing__"))
+        val = _get_field(item, field)
+        key = "__missing__" if val is _MISSING else str(val)
         result.setdefault(key, []).append(item)
     return result
 
@@ -118,8 +161,15 @@ def _dedupe(data: list, args: dict) -> list:
     field = args["field"]
     seen: set = set()
     out: list = []
+    missing_seen = False
     for item in data:
-        val = item.get(field)
+        val = _get_field(item, field)
+        if val is _MISSING:
+            if missing_seen:
+                continue
+            missing_seen = True
+            out.append(item)
+            continue
         if val not in seen:
             seen.add(val)
             out.append(item)

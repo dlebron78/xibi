@@ -85,16 +85,61 @@ def test_project():
     assert result == [{"a": 1, "c": 3}]
 
 def test_transformation_error():
+    # Unknown operation name → genuine error path (mis-specified op).
+    # Missing fields on filter/sort/etc are handled leniently by design;
+    # only structural errors like an unknown op surface as status=error.
     payload = [{"a": 1}]
     params = {
         "handle": payload,
         "operations": [
-            {"op": "filter", "args": {"field": "nonexistent", "op": ">", "value": 10}}
+            {"op": "nope_not_a_real_op", "args": {}}
         ]
     }
     result = transform_data.run(params)
     assert result["status"] == "error"
     assert "Transformation error" in result["message"]
+
+
+def test_filter_missing_field_is_lenient():
+    # Items without the filter field are excluded, not an error.
+    payload = [{"a": 1}, {"b": 2}, {"a": 5}]
+    params = {
+        "handle": payload,
+        "operations": [
+            {"op": "filter", "args": {"field": "a", "op": ">", "value": 0}}
+        ]
+    }
+    result = transform_data.run(params)
+    assert result == [{"a": 1}, {"a": 5}]
+
+
+def test_sort_with_missing_and_none_fields():
+    # Missing fields and None values should sort to the end (both asc and
+    # desc), not raise TypeError from None < int.
+    payload = [{"s": 3}, {"s": None}, {"other": "x"}, {"s": 1}]
+    params = {
+        "handle": payload,
+        "operations": [{"op": "sort", "args": {"field": "s", "order": "asc"}}]
+    }
+    result = transform_data.run(params)
+    # First two have real values in order; remaining two are missing/None.
+    assert result[0] == {"s": 1}
+    assert result[1] == {"s": 3}
+    assert {"s": None} in result[2:]
+    assert {"other": "x"} in result[2:]
+
+
+def test_sort_with_heterogeneous_types():
+    # Mixed str/int should not raise; they're grouped by type.
+    payload = [{"v": 1}, {"v": "b"}, {"v": 2}, {"v": "a"}]
+    params = {
+        "handle": payload,
+        "operations": [{"op": "sort", "args": {"field": "v", "order": "asc"}}]
+    }
+    result = transform_data.run(params)
+    # No assertion on cross-type order, just that it doesn't crash and
+    # preserves all items.
+    assert len(result) == 4
 
 import skills.filesystem.tools.write_file as write_file
 

@@ -27,7 +27,7 @@ async def test_model_uses_handle_when_present():
 
         assert "HANDLES — large tool outputs" in system_prompt
         assert "handle" in system_prompt
-        assert "write_file(path=\"jobs.md\", handle=\"h_a4f1\")" in system_prompt
+        assert "write_file(filepath=\"jobs.md\", handle=\"h_a4f1\")" in system_prompt
 
     # Test #15 behavior: feed it a scratchpad with a handle and see if it uses it.
     # We'll mock the LLM to return a write_file call.

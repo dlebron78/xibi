@@ -731,7 +731,7 @@ async def _run_async(
         '  {"status": "ok", "handle": "h_a4f1", "schema": "list[dict] (25 items)", "summary": "...", "item_count": 25}\n'
         "This means the full data is stored out-of-band and you have a reference to it. "
         "To use the data, pass the handle string as a parameter to any tool that accepts it. Example:\n"
-        '  write_file(path="jobs.md", handle="h_a4f1")\n'
+        '  write_file(filepath="jobs.md", handle="h_a4f1")\n'
         '  transform_data(handle="h_a4f1", operations=[{"op": "sort", "args": {"field": "salary", "order": "desc"}}])\n'
         "Do NOT try to read the bytes of a handle directly. Do NOT include handle IDs in prose responses to the user — "
         "they are internal references and will look like noise. The handle is valid only for the current run.\n"

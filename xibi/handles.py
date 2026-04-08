@@ -95,11 +95,17 @@ class HandleStore:
         return self._handles.get(handle_id)
 
     def drop(self, handle_id: str) -> None:
-        if handle_id in self._handles:
-            handle = self._handles.pop(handle_id)
-            if handle_id in self._payloads:
-                self._payloads.pop(handle_id)
-                self._total_bytes -= handle.size_bytes
+        if handle_id not in self._handles:
+            return
+        handle = self._handles.pop(handle_id)
+        # Always decrement byte accounting when a handle is removed, even if
+        # the payload dict has somehow diverged from the handle dict. Keeping
+        # these two in lockstep is the whole point of drop() being the single
+        # mutation path; letting them drift silently breaks eviction.
+        self._total_bytes -= handle.size_bytes
+        if self._total_bytes < 0:
+            self._total_bytes = 0
+        self._payloads.pop(handle_id, None)
 
     def _generate_unique_id(self) -> str:
         for _attempt in range(8):
