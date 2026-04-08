@@ -119,7 +119,9 @@ def _render_list_for_user(items: list) -> str:
                 or item.get("name")
                 or item.get("subject")
                 or item.get("summary")
-                or str(list(item.values())[0])[:80] if item else ""
+                or str(list(item.values())[0])[:80]
+                if item
+                else ""
             )
             extra_bits: list[str] = []
             for k in ("company", "url", "link", "date", "from", "location"):
@@ -170,6 +172,7 @@ def _build_partial_answer(scratchpad: list[Any], reason: str) -> str | None:
         lines.append(formatted)
         lines.append("")
     return "\n".join(lines)
+
 
 _FINISH_TOOL = {
     "name": "finish",
@@ -370,7 +373,7 @@ def dispatch(
     command_layer: CommandLayer | None = None,
     prev_step_source: str | None = None,
     handle_store: HandleStore | None = None,
-) -> dict[str, Any]:
+) -> Any:
     """Invoke a tool from the registry."""
     # 0. Resolve handles in input
     resolved_input = _resolve_handles_in_input(tool_input, handle_store)
@@ -725,11 +728,11 @@ async def _run_async(
     _handle_instructions = (
         "\nHANDLES — large tool outputs\n"
         "Some tools return outputs containing a `handle` field that looks like this:\n"
-        "  {\"status\": \"ok\", \"handle\": \"h_a4f1\", \"schema\": \"list[dict] (25 items)\", \"summary\": \"...\", \"item_count\": 25}\n"
+        '  {"status": "ok", "handle": "h_a4f1", "schema": "list[dict] (25 items)", "summary": "...", "item_count": 25}\n'
         "This means the full data is stored out-of-band and you have a reference to it. "
         "To use the data, pass the handle string as a parameter to any tool that accepts it. Example:\n"
-        "  write_file(path=\"jobs.md\", handle=\"h_a4f1\")\n"
-        "  transform_data(handle=\"h_a4f1\", operations=[{\"op\": \"sort\", \"args\": {\"field\": \"salary\", \"order\": \"desc\"}}])\n"
+        '  write_file(path="jobs.md", handle="h_a4f1")\n'
+        '  transform_data(handle="h_a4f1", operations=[{"op": "sort", "args": {"field": "salary", "order": "desc"}}])\n'
         "Do NOT try to read the bytes of a handle directly. Do NOT include handle IDs in prose responses to the user — "
         "they are internal references and will look like noise. The handle is valid only for the current run.\n"
     )
@@ -760,7 +763,7 @@ async def _run_async(
             "   <thought>I already have this information from earlier.</thought>\n"
             "   <tool>finish</tool>\n"
             "   <answer>your answer</answer>\n"
-            ) + _handle_instructions
+        ) + _handle_instructions
     elif react_format == "text":
         _format_instructions = (
             "Instructions:\n"
@@ -772,7 +775,7 @@ async def _run_async(
             '- Final answer: Action: finish, Action Input: {"final_answer": "your response"}\n'
             '- Ask user: Action: ask_user, Action Input: {"question": "..."}\n'
             "IMPORTANT: If answer is already in context, go directly to finish.\n"
-            ) + _handle_instructions
+        ) + _handle_instructions
     else:
         _format_instructions = (
             "Instructions:\n"
@@ -780,10 +783,12 @@ async def _run_async(
             "2. Special tools:\n"
             '   - "finish": Use when you have the final answer. Input: {"answer": "..."}\n'
             '   - "ask_user": Use when you need more information. Input: {"question": "..."}\n'
-            ) + _handle_instructions
+        ) + _handle_instructions
 
     if react_format == "native":
-        system_prompt = (f"{context_block}\n\n" if context_block else "") + ("\n".join(_identity_lines)) + _handle_instructions
+        system_prompt = (
+            (f"{context_block}\n\n" if context_block else "") + ("\n".join(_identity_lines)) + _handle_instructions
+        )
     else:
         system_prompt = (f"{context_block}\n\n" if context_block else "") + (
             "\n".join(_identity_lines) + f"\n\n{_tools_block}\n\n{_format_instructions}"

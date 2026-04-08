@@ -461,8 +461,7 @@ class TelegramAdapter:
             if result.answer:
                 if getattr(result, "degraded", False) is True:
                     response = (
-                        "⚠️ I ran into trouble completing this — here's what I managed to gather:\n\n"
-                        + result.answer
+                        "⚠️ I ran into trouble completing this — here's what I managed to gather:\n\n" + result.answer
                     )
                 else:
                     response = result.answer
