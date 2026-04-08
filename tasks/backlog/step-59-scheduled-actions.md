@@ -1,35 +1,14 @@
 # step-59 — Scheduled Actions: Universal Action Scheduler Foundation
 
-> **Depends on:** step-57 (memory compression — migration 20), step-60 (runtime
-> fallback chain), step-61 (result handles). All merged as of 2026-04-08.
+> **Depends on:** step-57 (Memory Compression — merged 2026-04, migration 19 landed)
 > **Blocks:** Recurring exports, periodic summaries, autonomous polling cadences,
 > any future feature that needs "do X on a schedule"
-> **Scope:** Add a core scheduled-actions kernel: two new tables, one heartbeat
+> **Scope:** Add a core scheduled-actions kernel: one new table, one heartbeat
 > hook, one dispatcher with extension points, plus an internal Python API.
 > **No** ReAct tool surface, **no** Telegram commands, **no** cron parser yet —
 > those land in later specs. This step lays the foundation only.
-
-## Technical Readiness Review (TRR) Record
-
-| Field | Value |
-|---|---|
-| **Last TRR** | 2026-04-08 |
-| **Repo HEAD at review** | `e44ff3a` |
-| **Reviewer** | Sonnet, grounded against live codebase |
-| **Verdict** | **PASS** after the amendments in this document were applied inline (2026-04-08) |
-| **Gap types covered** | spec-to-code, spec-to-vision, implementation specificity |
-
-Every ‼️ callout below is a TRR finding that was applied directly to the spec
-rather than kept in a separate review doc. Findings are left visible (not
-silently merged) so future readers can see what shifted and why. When this
-spec moves to `pending/` and eventually `done/`, the TRR record stays as
-evidence that a grounding pass happened at `e44ff3a`.
-
-**Refreshed 2026-04-08** (TRR pass): corrected trust gate (`CommandLayer`,
-not `TrustGradient`), dropped the `trust_tier` column, made the kernel
-async, unwound a redundant ContextVar proposal, added spec-to-vision
-alignment notes (autonomy-level interaction), and added ten implementation
-specificity clarifications so Jules does not have to guess.
+> **Refreshed 2026-04-07** to update self-references and stale future-step
+> table after step renumbering. Kernel design unchanged.
 
 ---
 
@@ -68,24 +47,11 @@ run them and how to dispatch them.
 - The kernel is **dispatcher-extensible**. New action types register handlers
   at import time. Adding "send a Telegram document" later is one handler
   registration, not a kernel rewrite.
-- All scheduled runs flow through the **existing executor and `CommandLayer`**
-  (`xibi/command_layer.py:69`), constructed with `interactive=False`. No
-  tool can run on a schedule that the same tool couldn't run interactively
+- All scheduled runs flow through the **existing executor and trust gradient**.
+  No tool can run on a schedule that the same tool couldn't run interactively
   under the same trust tier. No new permission surface.
-- **Scheduled actions cannot execute RED-tier tools.** The kernel's
-  `CommandLayer` has `interactive=False`, which hard-blocks RED at
-  `command_layer.py:106–116`. This is a security-positive invariant: the
-  same gate that protects heartbeat-context tool use protects scheduled
-  use. A RED tool dispatched on a schedule is blocked with
-  `status='skipped'`, `error=result.block_reason`.
 - Every run is **observable** via the existing `tracing.Tracer` and a new
-  `scheduled_action_runs` history table, joinable against `inference_events`
-  and `spans` by shared `trace_id` (see ‼️ TRR-C4 below).
-- Scheduled actions are **L2-only by construction** (see ‼️ TRR-V1 below).
-  L1 users cannot register scheduled actions because unattended execution
-  is the whole point; L1 + scheduling is a contradiction. If a future spec
-  wants "L1 scheduled action queues a user prompt instead of executing,"
-  that's a deliberate new design, not a default.
+  `scheduled_action_runs` history table.
 
 ---
 
@@ -122,9 +88,10 @@ CREATE TABLE scheduled_actions (
     run_count       INTEGER NOT NULL DEFAULT 0,
     consecutive_failures INTEGER NOT NULL DEFAULT 0,
 
-    -- Provenance (tier is NOT stored per-action; see ‼️ TRR-C3 below)
+    -- Provenance & trust
     created_by      TEXT NOT NULL,              -- 'user' | 'observation' | 'system'
     created_via     TEXT,                       -- 'telegram' | 'cli' | 'internal' | 'react'
+    trust_tier      TEXT NOT NULL DEFAULT 'green', -- mirrors PermissionTier
 
     -- Bookkeeping
     created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -177,18 +144,6 @@ CREATE INDEX idx_scheduled_action_runs_action
 
 `internal_hook` is the escape hatch the kernel itself uses to migrate the
 existing hardcoded heartbeat behaviors into the scheduler over time.
-
-**internal_hook and the step-60 fallback chain.** Internal hooks that need
-an LLM (e.g. `manager_review`, `daily_summary`) MUST obtain their model via
-`xibi.router.get_model(role=...)` rather than instantiating provider clients
-directly. This is non-negotiable: going through `get_model` is what gives a
-scheduled LLM call the full `ChainedModelClient` — runtime fallback across
-primary/secondary/tertiary roles, per-role circuit breakers, and inference
-event telemetry. A hook that bypasses `get_model` silently loses all of
-that and defeats the point of step-60. The kernel does not enforce this
-(it can't inspect hook bodies), so spec-compliant hook authors are on the
-honor system. Tests for any new hook should assert that it resolves via
-the router.
 
 ---
 
@@ -252,46 +207,23 @@ class ScheduledActionKernel:
         self,
         db_path: Path,
         executor: Executor,
-        command_layer: CommandLayer,       # ‼️ TRR-C1: was 'trust_gradient'
+        trust_gradient: TrustGradient,
         tracer: Tracer | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
         max_per_tick: int = 25,
         per_action_timeout_secs: int = 60,
-    ) -> None:
-        """
-        command_layer MUST be constructed with interactive=False by the
-        caller. This is how the kernel inherits the RED-blocking behavior.
-        """
+    ) -> None: ...
 
-    async def tick(self) -> KernelTickResult:  # ‼️ TRR-H1: async, not sync
+    def tick(self) -> KernelTickResult:
         """
         Pull due actions, dispatch each through the appropriate handler,
         record runs, recompute next_run_at, return a summary.
 
         Called once per heartbeat from a new Phase 1.5 (between Phase 1
-        DB read and Phase 2 extraction). Bounded by max_per_tick AND
-        per_action_timeout_secs (via asyncio.wait_for) to protect the
-        heartbeat. Handlers run sequentially within a tick; do NOT add
-        asyncio.gather across handlers without reworking trace
-        propagation (see ‼️ TRR-S7).
+        DB read and Phase 2 extraction). Synchronous; bounded by
+        max_per_tick AND per_action_timeout_secs to protect the heartbeat.
         """
 ```
-
-> ‼️ **TRR-C1 — CommandLayer, not TrustGradient.** An earlier draft of this
-> spec routed the permission check through `TrustGradient`. That was wrong:
-> `TrustGradient` (`xibi/trust/gradient.py:57`) is the audit-interval and
-> consecutive-clean-outputs tracker — it has no `check(tier)` method and is
-> not a permission gate. The real gate is `CommandLayer.check()` at
-> `xibi/command_layer.py:69`. The TRR grounding pass corrected this before
-> promotion.
->
-> ‼️ **TRR-H1 — Kernel is async.** `HeartbeatPoller.async_tick` is `async def`
-> and wraps each phase in `asyncio.wait_for(...)`. A synchronous kernel
-> `tick()` called from inside `async_tick` would block the event loop and
-> starve concurrent work (telegram polling, etc.). Signal-based `Timeout()`
-> wrappers also don't work inside asyncio. Solution: make `tick` async,
-> use `asyncio.wait_for` for per-action timeouts, and wrap synchronous
-> handler work in `asyncio.to_thread(...)` to keep the loop responsive.
 
 **Tick algorithm (the load-bearing bit):**
 
@@ -309,38 +241,14 @@ class ScheduledActionKernel:
    - Insert a `scheduled_action_runs` row with `status='running'`,
      `started_at=now`, `trace_id=<new uuid>`. Commit so concurrent ticks
      can't double-fire.
-   - Look up the handler for `action_type`. If unknown → raise
-     `XibiError(category=ErrorCategory.VALIDATION, component="scheduler",
-     message="unknown action_type")` (see ‼️ TRR-S5), mark
-     `status='error'`, continue.
-   - **Command gate (‼️ TRR-C1):** for `tool_call` actions, the kernel calls
-     `command_layer.check(tool_name, action_config["args"], manifest_schema,
-     prev_step_source=None)`. If `result.allowed is False`, mark
-     `status='skipped'`, `error=result.block_reason`, continue to the next
-     action (kernel still UPDATEs `last_run_at` etc. so repeat failures
-     accumulate normally). If `result.audit_required`, the kernel calls
-     `command_layer.audit(...)` after successful dispatch with the same
-     parameters shape react.py uses at line 407–416. `internal_hook`
-     actions bypass this gate because hooks are trusted code (see ‼️ TRR-Q2
-     in Open Questions) — their authors are responsible for their effects.
-   - **Trace context (‼️ TRR-C4):** the kernel generates a `trace_id =
-     uuid.uuid4().hex` (matching `xibi/tracing.py`), inserts the
-     `scheduled_action_runs` row with that trace_id, then calls
-     `router.set_trace_context(trace_id=trace_id, span_id=None,
-     operation="scheduled_action.run")`. Any LLM calls the handler makes
-     automatically emit `inference_events` rows stamped with that
-     trace_id, because `router._emit_telemetry()` already reads the
-     existing `_active_trace` ContextVar at `xibi/router.py:171`. **No
-     router changes needed.** After the handler returns or raises, the
-     kernel calls `router.clear_trace_context()` in a `finally` block.
-   - Run the handler via `asyncio.wait_for(handler_coro,
-     timeout=per_action_timeout_secs)`. Synchronous work inside the
-     handler (executor calls, DB writes, most tools) uses
-     `asyncio.to_thread(...)` to keep the event loop responsive. Catch
-     all exceptions. Capture return value as `output_preview` after
-     serializing with `json.dumps(..., default=str, separators=(",", ":"))`
-     (matches `xibi/handles.py:45`, see ‼️ TRR-S4) and slicing to 500
-     chars (see ‼️ TRR-S3).
+   - Look up the handler for `action_type`. If unknown → mark
+     `status='error'`, error="unknown action_type", continue.
+   - **Trust check:** the kernel asks `trust_gradient` whether the action's
+     `trust_tier` is currently permitted. If not → `status='skipped'`,
+     `error='trust gate'`. This is the same gate that protects interactive
+     tool use, applied to scheduled use.
+   - Run the handler under a `Timeout(per_action_timeout_secs)` wrapper.
+     Catch all exceptions. Capture stdout/return value as `output_preview`.
    - Update the run row: `finished_at`, `duration_ms`, `status`, `output_preview`,
      `error`.
    - Update the parent `scheduled_actions` row:
@@ -364,14 +272,6 @@ class ScheduledActionKernel:
 be safe against the heartbeat process being killed mid-tick. Each row's
 state machine transitions atomically so a kill leaves the row in a coherent
 state (the run row is the source of truth for "did this start").
-
-**Trace propagation** is described inline in the tick algorithm step 2
-above. Summary: the kernel calls `router.set_trace_context(...)` before
-each handler and `router.clear_trace_context()` after. Zero router
-changes. The previous version of this spec proposed adding a new
-ContextVar and a two-line router change; the TRR grounding pass found
-that both were redundant with the existing
-`xibi/router.py:30, 36, 47, 51, 171` plumbing.
 
 **Catch-up vs skip semantics:** if the heartbeat was down for hours,
 `next_run_at` will be far in the past for some interval triggers. The
@@ -408,15 +308,9 @@ def _interval(config: dict, after: datetime) -> datetime: ...
 
 @register_trigger("oneshot")
 def _oneshot(config: dict, after: datetime) -> datetime:
-    """Returns 'at' on first call.
-
-    ‼️ TRR-H5: on SUCCESS the kernel auto-disables the oneshot by setting
-    enabled=0 (NOT by returning datetime.max, which would leave the row
-    enabled but unreachable). On FAILURE the oneshot falls through the
-    normal backoff/auto-disable path — _compute_next_run returns `after`
-    unchanged so the kernel's backoff rule (+2^failures hours) applies
-    and after 10 consecutive failures auto-disable kicks in. Net effect:
-    no oneshot can get stuck enabled-but-unreachable."""
+    """Returns 'at' on first call; returns datetime.max afterward (effectively
+    never re-runs). The kernel auto-disables oneshots after their first
+    successful run."""
 
 @register_trigger("cron")
 def _cron(config: dict, after: datetime) -> datetime:
@@ -455,13 +349,10 @@ class HandlerResult:
 def _tool_call(action_config: dict, ctx: ExecutionContext) -> HandlerResult:
     tool = action_config["tool"]
     args = action_config.get("args", {})
-    # Note: command_layer.check has already been called by the kernel
-    # before dispatching to this handler. Here we just execute.
     result = ctx.executor.execute(tool, args)
-    preview = json.dumps(result, default=str, separators=(",", ":"))[:500]
     if result.get("status") == "error":
-        return HandlerResult("error", preview, result.get("error"))
-    return HandlerResult("success", preview)
+        return HandlerResult("error", str(result)[:500], result.get("error"))
+    return HandlerResult("success", str(result.get("result", result))[:500])
 
 @register_handler("internal_hook")
 def _internal_hook(action_config: dict, ctx: ExecutionContext) -> HandlerResult:
@@ -469,64 +360,29 @@ def _internal_hook(action_config: dict, ctx: ExecutionContext) -> HandlerResult:
     via xibi.scheduling.handlers.register_internal_hook(name, fn)."""
 ```
 
-> ‼️ **TRR-S1 — Handler registration timing.** Handlers in
-> `xibi/scheduling/handlers.py` register at module import time via the
-> decorator. `xibi/scheduling/__init__.py` imports `handlers` unconditionally
-> so that importing `xibi.scheduling` is sufficient to populate the
-> built-in registry. External hooks register via explicit
-> `register_internal_hook(name, fn)` calls during bootstrap in
-> `xibi/__main__.py` alongside `init_telemetry()`.
->
-> ‼️ **TRR-S9 — Handler DB connections.** Handlers open their own
-> short-lived connections via `xibi.db.open_db(ctx.db_path)`; the kernel's
-> connection is owned by the kernel and not shared. Matches the rest of
-> the codebase.
-
 `internal_hook` is how core features (manager review, Jules audit, daily
 summary) migrate into the scheduler without becoming first-class tools.
 The function receives the same `ExecutionContext` so it can use the
 executor and db.
-
-**Scheduled actions do not participate in step-61 handle wrapping.** The
-kernel calls `executor.execute()` directly (not the ReAct dispatch helper
-at `xibi/react.py:375`), so the `HandleStore` / `_maybe_wrap_in_handle`
-path is simply not on the scheduled code path. Tools don't touch
-`HandleStore` themselves — the wrapping happens in react.py's
-dispatcher, which the scheduler doesn't use. An earlier version of this
-spec proposed an audit pass for "tools that unconditionally call
-`handle_store.create()`"; the TRR grounding pass found zero such tools
-and that audit is unnecessary.
 
 ---
 
 ### 5. Heartbeat Integration (`xibi/heartbeat/poller.py`)
 
 A new **Phase 1.5** runs the kernel between Phase 1 (DB read) and Phase 2
-(signal extraction), inserted in `xibi/heartbeat/poller.py` between lines
-289 and 294:
+(signal extraction):
 
 ```python
 # Phase 1.5: Scheduled actions
 try:
-    await asyncio.wait_for(
-        self.scheduler_kernel.tick(),
-        timeout=_PHASE15_TIMEOUT_SECS,
-    )
-except asyncio.TimeoutError:
-    logger.warning(
-        "Phase 1.5 timeout (%ds): scheduler tick exceeded limit",
-        _PHASE15_TIMEOUT_SECS,
-    )
+    self.scheduler_kernel.tick()
 except Exception as e:
-    logger.warning("Phase 1.5 error: %s", e, exc_info=True)
+    logger.warning("Scheduler kernel tick error: %s", e, exc_info=True)
 ```
 
 The kernel is constructed in `HeartbeatPoller.__init__` alongside the other
-subsystems. `_PHASE15_TIMEOUT_SECS = 60`. The kernel opens its own DB
-connection for the due-action SELECT; it does NOT share Phase 1's
-connection (which was already closed at line 288). This is deliberate —
-SQLite connection open is ~1ms and sharing a connection across phases
-invites threading/lifecycle bugs (see ‼️ TRR-H3).
+subsystems. It is bounded by `_PHASE15_TIMEOUT_SECS = 60` and wrapped in
+`asyncio.wait_for` like every other phase.
 
 **Why Phase 1.5 and not Phase 3:** scheduled actions should be able to
 *influence* the rest of the heartbeat — for example, an action that
@@ -538,13 +394,10 @@ it's already cost-heavy with observation/intelligence.
 
 ### 6. Migration
 
-Migration 21 (next available — 20 was consumed by `belief_summaries` in
-step-57) creates both `scheduled_actions` and `scheduled_action_runs`
-tables plus the two indexes above. Idempotent. No data backfill needed;
-existing `tasks` table is untouched and continues to work for one-shot
-text reminders. The migration registers as
-`(21, "scheduled actions kernel: actions and run history", self._migration_21)`
-in `xibi/db/migrations.py`.
+Migration 21 (next available — 19 and 20 are already taken; sessions table
+duplicates are a separate cleanup item) creates both tables and indexes.
+Idempotent. No data backfill needed; existing `tasks` table is untouched
+and continues to work for one-shot text reminders.
 
 ---
 
@@ -577,33 +430,23 @@ Unit tests (`tests/scheduling/`):
 - `test_kernel_tick.py`
   - Empty table → tick is a no-op
   - One due interval action → handler called, run row inserted, next_run_at advanced
-  - One due oneshot action → handler called, action auto-disabled (enabled=0) after success
-  - Oneshot action that fails → backoff applied, NOT auto-disabled on first failure
-  - Action targeting a RED tool → `CommandLayer` blocks, `status='skipped'`, no handler call
+  - One due oneshot action → handler called, action auto-disabled after success
+  - Action with `trust_tier='red'` and trust gradient denying → status='skipped', no handler call
   - Handler raises → status='error', `consecutive_failures` increments, no crash
   - 3 consecutive failures → backoff applied to `next_run_at`
   - 10 consecutive failures → action auto-disabled
   - `max_per_tick` cap respected when many actions due
-  - Per-action timeout fires via `asyncio.wait_for` → status='timeout', kernel continues
-  - Two ticks in same wall-clock second don't double-fire (tick_lock + atomic run insert)
+  - Per-action timeout fires → status='timeout', kernel continues to next action
+  - Two ticks in same wall-clock second don't double-fire (state machine atomicity)
 - `test_triggers.py`
   - Interval next_run is exactly `after + every_seconds`
-  - Oneshot next_run is `at` on first call; on failure returns `after` (normal backoff path)
+  - Oneshot next_run is `at` first, `datetime.max` after
   - Cron raises `NotImplementedError` with helpful message
 - `test_handlers.py`
   - `tool_call` dispatches through executor with correct args
   - `tool_call` propagates executor errors as HandlerResult.error
   - `internal_hook` calls registered Python function
-  - `internal_hook` sees `_active_trace` ContextVar set during its call
-    (via `router.set_trace_context`) and cleared afterward
-  - Unknown action_type raises `XibiError(ErrorCategory.VALIDATION,
-    component="scheduler")`
-  - A scheduled `tool_call` targeting a RED-tier tool is blocked by
-    `CommandLayer` with `status='skipped'`, `error=block_reason`
-  - Handler output serializes via `json.dumps(default=str)` and truncates
-    to 500 chars for `output_preview`
-  - `fire_now` does NOT advance `next_run_at` (manual fires are
-    transparent to the schedule)
+  - Unknown action_type raises `UnknownActionType`
 - `test_api.py`
   - Round-trip: register → list → fire_now → run history present
   - `register_action` rejects unknown trigger_type with helpful error
@@ -621,7 +464,7 @@ Integration test (`tests/integration/test_scheduled_actions_in_heartbeat.py`):
 
 ## Exit Criteria
 
-- [ ] Migration 21 lands cleanly on a fresh DB and on the production NucBox snapshot
+- [ ] Migration 20 lands cleanly on a fresh DB and on the production NucBox snapshot
 - [ ] All unit tests above pass
 - [ ] Integration test passes
 - [ ] `HeartbeatPoller` tick latency on an empty schedule table is within
@@ -630,14 +473,8 @@ Integration test (`tests/integration/test_scheduled_actions_in_heartbeat.py`):
       Python REPL using only `xibi.scheduling.api`
 - [ ] No new public tools, no new Telegram commands, no new dashboard
       surface — those are explicitly later steps
-- [ ] A scheduled `internal_hook` that calls an LLM produces joinable
-      rows in `scheduled_action_runs`, `inference_events`, and `spans`
-      under a single shared `trace_id`
-- [ ] A scheduled `tool_call` targeting a RED-tier tool is blocked by
-      `CommandLayer(interactive=False)` with `status='skipped'`
-- [ ] The two new tables are documented in-repo at
-      `docs/architecture/data-model.md` (create the file if absent). Dev
-      Docs sync is a separate manual step and not a merge blocker.
+- [ ] `scheduled_actions` and `scheduled_action_runs` tables are documented
+      in the dev docs (~/Documents/Dev Docs/Xibi/architecture/data-model.md)
 
 ---
 
@@ -647,17 +484,9 @@ Integration test (`tests/integration/test_scheduled_actions_in_heartbeat.py`):
   `per_action_timeout_secs`, and the Phase 1.5 wait_for cap. If a single
   action wedges, it gets timeout-killed and the rest of the tick proceeds.
 - **Risk: trust escalation.** Mitigated by routing every dispatch through
-  `CommandLayer.check()` with `interactive=False`. A scheduled action can
-  never run a tool the same operator couldn't run interactively — and
-  cannot run RED tools at all. The `created_by` field is immutable after
-  insert in step-59.
-- **Note on dedup (‼️ TRR-H2):** `CommandLayer._check_dedup` at
-  `xibi/command_layer.py:248–306` only applies to the `nudge` tool
-  (`if tool_name != "nudge": return False` at line 269). Non-nudge
-  scheduled actions are not subject to dedup. Nudge's own covered-refs
-  logic may actually be desirable for scheduled runs (prevents
-  re-alerting on data already delivered), so no kernel-level bypass is
-  needed.
+  the existing `TrustGradient`. A scheduled action can never run a tool the
+  same operator couldn't run interactively. The `created_by` and `trust_tier`
+  fields are immutable after insert in step-59.
 - **Risk: schema lock-in.** Mitigated by JSON config blobs for both trigger
   and action shapes. New trigger or action types are pure code additions
   with no migration.
@@ -671,40 +500,3 @@ Integration test (`tests/integration/test_scheduled_actions_in_heartbeat.py`):
 - **Note: the existing inert `SheetsExporter` (commit fb15e58) is not
   removed in this step.** It is dormant (`enabled: false` default) and will
   be deleted in a follow-up spec when the real Telegram document export lands.
-
----
-
-## Open Questions (from TRR pass 2026-04-08)
-
-These are design calls that the TRR grounding pass surfaced but that need
-human decision before Jules starts. Jules should not guess.
-
-- **Q1 — `internal_hook` trust boundary.** Hooks are Python functions
-  called by name, not tools dispatched through `executor.execute()`. The
-  kernel's `CommandLayer.check()` gate applies to `tool_call` actions
-  only. If a hook does raw work (file writes, direct DB mutation,
-  network calls), it bypasses the gate entirely. **Proposed position:**
-  hooks are "trusted code" — same trust boundary as the heartbeat phases
-  themselves — and hook authors are responsible for their own side
-  effects. This is an explicit commitment, not an accident. Confirm
-  before implementation.
-- **Q2 — `active_from` / `active_until` types at the Python API.**
-  SQLite stores both as TEXT. Does the Python API take `datetime` or
-  `str`? **Proposed position:** `datetime` at the API boundary, ISO-8601
-  strings at the SQLite boundary. Consistent with how
-  `scheduled_action_runs.started_at` will already be handled. Confirm.
-- **Q3 — Multi-user scheduling.** Current design has one
-  `scheduled_actions` table shared across all users of a single Xibi
-  instance. The tourism-chatbot reference deployment (where users are
-  consumers not owners, per project memory) might eventually want
-  per-user schedules. **Proposed position:** explicit non-goal for
-  step-59; a future spec adds a `user_id` column and filters the
-  selection query. Confirm this stays out of scope.
-- **Note: trust propagation through scheduled actions is simpler than
-  through result handles.** Step-61 left the question of how trust tiers
-  flow through an opaque handle reference open as a design item. Scheduled
-  actions don't have that problem because the action's own `trust_tier`
-  column is checked at dispatch time and the resulting tool call goes
-  through the normal `TrustGradient` — no handle indirection involved.
-  When the handle trust-propagation question is resolved in its own spec,
-  nothing in step-59 needs to change.

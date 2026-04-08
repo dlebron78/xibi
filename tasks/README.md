@@ -5,6 +5,28 @@ describes how a feature moves from idea → shipped code, and what quality gate
 each stage is responsible for. Jules (the pipeline driver) reads from this
 tree; humans and Opus write into it; Sonnet implements against it.
 
+## Division of labor: Opus thinks, Sonnet builds
+
+This is the hard rule of the pipeline:
+
+- **Opus owns all critical-thinking work on specs.** That means analysis,
+  measurement, specification authoring, TRR reviews, amendments, gap
+  analysis, scope decisions, parking calls, and anything that shapes
+  *what* should be built or *whether* it should be built. If the task
+  requires judgment about architecture, relevance, correctness, or
+  tradeoffs, it goes to Opus.
+- **Sonnet (and Jules) own implementation.** Reading the spec, writing
+  the code, running the tests, fixing the obvious bugs the spec
+  implies, wiring things up. Sonnet may surface findings and concerns,
+  but it does not get to write them into specs or mark a spec as
+  reviewed.
+- **Humans can do either.** Humans can draft specs, run reviews,
+  amend, park, or implement.
+
+When in doubt: if an action involves a spec file and requires thinking
+rather than typing, it is Opus's job. Sonnet's job is to make the
+already-thought-through thing real.
+
 ## Directory Layout
 
 ```
@@ -43,9 +65,15 @@ spec header showing the pass happened.
 **Who runs the TRR:** Opus, not Sonnet. Sonnet is the implementer; Opus is
 the reviewer. Opus's context and attention profile are better suited to
 comparing an abstract spec against a large existing codebase and surfacing
-things Sonnet (implementing under pressure) would miss. The only exception
-is when Opus is unavailable and work is blocked — then Sonnet can run a
-TRR and flag the pass as "Sonnet-conducted, re-review recommended."
+things Sonnet (implementing under pressure) would miss.
+
+**Amendments are Opus-only.** Sonnet must never edit a spec to add TRR
+findings, ‼️ callouts, or a TRR Record block — not even as a stopgap. If
+Opus is unavailable, Sonnet may draft review notes in a scratch file
+outside `tasks/` and hand them to Opus later; Opus is the only writer
+that touches the spec on the TRR path. This keeps the TRR record
+trustworthy: every amendment in a spec came from the reviewer tier, not
+the implementer tier.
 
 **What the TRR must answer, for every spec, before promotion:**
 
@@ -156,6 +184,9 @@ should get promoted from spec-level notes to feedback memory.
   code, or pipeline, PARK it. Don't grind through implementation of
   something that shouldn't ship.
 - **Sonnet marking Opus as the reviewer.** Pre-merge reviews must be
-  actually conducted by the model the commit attributes them to.
-  Anyone (Sonnet or Opus) can draft a review; only the actual
-  reviewer signs.
+  actually conducted by the model the commit attributes them to. If
+  Sonnet ran the analysis, the commit says Sonnet ran the analysis.
+- **Sonnet doing critical-thinking work on specs.** Analysis, TRR
+  passes, amendments, relevance calls, parking decisions, and spec
+  authorship are Opus-only. Sonnet catching itself mid-analysis and
+  escalating to Opus is the correct move, not an inconvenience.
