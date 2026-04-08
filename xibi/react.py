@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from xibi.errors import ErrorCategory, XibiError
+from xibi.handles import HandleStore, _is_large_collection
 from xibi.router import (
     Config,
     clear_trace_context,
@@ -30,6 +31,44 @@ if TYPE_CHECKING:
 from xibi.types import ReActResult, Step
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_handles_in_input(tool_input: dict, store: HandleStore | None) -> dict:
+    if store is None:
+        return tool_input
+    resolved = {}
+    for k, v in tool_input.items():
+        if isinstance(v, str) and re.match(r"^h_[a-f0-9]{4,6}$", v):
+            resolved[k] = store.get(v)  # raises XibiError on miss
+        else:
+            resolved[k] = v
+    return resolved
+
+
+def _maybe_wrap_in_handle(tool: str, output: Any, store: HandleStore | None) -> Any:
+    if store is None:
+        return output
+
+    # Only wrap dictionaries that aren't errors, suppressed, or already wrapped
+    if not isinstance(output, dict):
+        return output
+
+    status = output.get("status")
+    if status in ("error", "suppressed", "blocked") or "handle" in output:
+        return output
+
+    serialized = json.dumps(output, separators=(",", ":"), default=str)
+    if len(serialized) < 2048 and not _is_large_collection(output):
+        return output  # small enough to inline; no handle
+
+    handle = store.create(tool, output)
+    return {
+        "status": "ok",
+        "handle": handle.handle_id,
+        "schema": handle.schema,
+        "summary": handle.summary,
+        "item_count": handle.item_count,
+    }
 
 
 def _format_observation_for_user(output: Any) -> str:
@@ -80,7 +119,9 @@ def _render_list_for_user(items: list) -> str:
                 or item.get("name")
                 or item.get("subject")
                 or item.get("summary")
-                or str(list(item.values())[0])[:80] if item else ""
+                or str(list(item.values())[0])[:80]
+                if item
+                else ""
             )
             extra_bits: list[str] = []
             for k in ("company", "url", "link", "date", "from", "location"):
@@ -131,6 +172,7 @@ def _build_partial_answer(scratchpad: list[Any], reason: str) -> str | None:
         lines.append(formatted)
         lines.append("")
     return "\n".join(lines)
+
 
 _FINISH_TOOL = {
     "name": "finish",
@@ -330,8 +372,12 @@ def dispatch(
     executor: Executor | None = None,
     command_layer: CommandLayer | None = None,
     prev_step_source: str | None = None,
-) -> dict[str, Any]:
+    handle_store: HandleStore | None = None,
+) -> Any:
     """Invoke a tool from the registry."""
+    # 0. Resolve handles in input
+    resolved_input = _resolve_handles_in_input(tool_input, handle_store)
+
     if command_layer is not None:
         # Resolve the tool's manifest_schema from skill_registry
         # skill_registry is a list of skill manifests, each having a 'tools' list
@@ -346,7 +392,7 @@ def dispatch(
 
         manifest_schema = tool_manifest.get("inputSchema") if tool_manifest else None
 
-        result = command_layer.check(tool_name, tool_input, manifest_schema, prev_step_source=prev_step_source)
+        result = command_layer.check(tool_name, resolved_input, manifest_schema, prev_step_source=prev_step_source)
         if not result.allowed:
             if result.validation_errors:
                 return {"status": "error", "message": result.retry_hint, "retry": True}
@@ -356,22 +402,23 @@ def dispatch(
                 return {"status": "blocked", "message": result.block_reason}
 
         output = (
-            executor.execute(tool_name, tool_input) if executor is not None else {"status": "ok", "message": "stub"}
+            executor.execute(tool_name, resolved_input) if executor is not None else {"status": "ok", "message": "stub"}
         )
         if result.allowed and result.audit_required:
             command_layer.audit(
                 tool_name,
-                tool_input,
+                resolved_input,
                 output,
                 prev_step_source=prev_step_source,
                 source_bumped=result.source_bumped,
                 base_tier=str(resolve_tier(tool_name, command_layer.profile)),
                 effective_tier=str(result.tier),
             )
-        return output
+        return _maybe_wrap_in_handle(tool_name, output, handle_store)
 
     if executor is not None:
-        return executor.execute(tool_name, tool_input)
+        output = executor.execute(tool_name, resolved_input)
+        return _maybe_wrap_in_handle(tool_name, output, handle_store)
 
     # Fallback: stub path (retained for backward compat with Step 02 tests)
     tool_manifest = next((t for t in skill_registry if t.get("name") == tool_name), None)
@@ -544,6 +591,7 @@ async def _run_async(
     react_format: str = "json",
 ) -> ReActResult:
     start_time = time.time()
+    handle_store = HandleStore()  # per-run, lives until function returns
 
     _tracer = tracer  # May be None — all emit() calls are guarded
     _run_trace_id = trace_id or (_tracer.new_trace_id() if _tracer else None)
@@ -677,6 +725,18 @@ async def _run_async(
 
     _native_messages: list[dict[str, Any]] = []
     _native_tools: list[dict[str, Any]] = []
+    _handle_instructions = (
+        "\nHANDLES — large tool outputs\n"
+        "Some tools return outputs containing a `handle` field that looks like this:\n"
+        '  {"status": "ok", "handle": "h_a4f1", "schema": "list[dict] (25 items)", "summary": "...", "item_count": 25}\n'
+        "This means the full data is stored out-of-band and you have a reference to it. "
+        "To use the data, pass the handle string as a parameter to any tool that accepts it. Example:\n"
+        '  write_file(path="jobs.md", handle="h_a4f1")\n'
+        '  transform_data(handle="h_a4f1", operations=[{"op": "sort", "args": {"field": "salary", "order": "desc"}}])\n'
+        "Do NOT try to read the bytes of a handle directly. Do NOT include handle IDs in prose responses to the user — "
+        "they are internal references and will look like noise. The handle is valid only for the current run.\n"
+    )
+
     if react_format == "native":
         _native_messages = _init_native_messages(query, context)
         _native_tools = _build_native_tools(skill_registry)
@@ -703,7 +763,7 @@ async def _run_async(
             "   <thought>I already have this information from earlier.</thought>\n"
             "   <tool>finish</tool>\n"
             "   <answer>your answer</answer>\n"
-        )
+        ) + _handle_instructions
     elif react_format == "text":
         _format_instructions = (
             "Instructions:\n"
@@ -715,7 +775,7 @@ async def _run_async(
             '- Final answer: Action: finish, Action Input: {"final_answer": "your response"}\n'
             '- Ask user: Action: ask_user, Action Input: {"question": "..."}\n'
             "IMPORTANT: If answer is already in context, go directly to finish.\n"
-        )
+        ) + _handle_instructions
     else:
         _format_instructions = (
             "Instructions:\n"
@@ -723,10 +783,12 @@ async def _run_async(
             "2. Special tools:\n"
             '   - "finish": Use when you have the final answer. Input: {"answer": "..."}\n'
             '   - "ask_user": Use when you need more information. Input: {"question": "..."}\n'
-        )
+        ) + _handle_instructions
 
     if react_format == "native":
-        system_prompt = (f"{context_block}\n\n" if context_block else "") + ("\n".join(_identity_lines))
+        system_prompt = (
+            (f"{context_block}\n\n" if context_block else "") + ("\n".join(_identity_lines)) + _handle_instructions
+        )
     else:
         system_prompt = (f"{context_block}\n\n" if context_block else "") + (
             "\n".join(_identity_lines) + f"\n\n{_tools_block}\n\n{_format_instructions}"
@@ -893,6 +955,7 @@ async def _run_async(
                     executor=executor,
                     command_layer=command_layer,
                     prev_step_source=prev_step_source,
+                    handle_store=handle_store,
                 )
                 step.tool_output = tool_output
 
@@ -1039,7 +1102,7 @@ async def _run_async(
         steps=scratchpad,
         exit_reason="partial" if partial is not None else "max_steps",
         duration_ms=int((time.time() - start_time) * 1000),
-        degraded=True if partial is not None else False,
+        degraded=partial is not None,
     )
     res.error_summary = [s.error for s in scratchpad if s.error is not None]
     res.trace_id = _run_trace_id

@@ -114,7 +114,11 @@ class Executor:
         # registry entries (source="mcp", path="/dev/null") are not mistaken for real local
         # skills and do not falsely trigger the collision warning or the local-file loader.
         local_skill_name = self.registry.find_local_skill_for_tool(tool_name)
-        skill_name = tool_name if (tool_name in self.registry.skills and self.registry.skills[tool_name].source == "local") else local_skill_name
+        skill_name = (
+            tool_name
+            if (tool_name in self.registry.skills and self.registry.skills[tool_name].source == "local")
+            else local_skill_name
+        )
 
         # MCP check
         mcp_match = self.mcp_executor.can_handle(tool_name) if self.mcp_executor else False

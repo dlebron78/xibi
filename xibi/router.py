@@ -1202,9 +1202,7 @@ class BreakerWrappedClient:
             self._record_failure(e)
             raise
 
-    def generate_structured(
-        self, prompt: str, schema: dict, system: str | None = None, **kwargs: Any
-    ) -> dict:
+    def generate_structured(self, prompt: str, schema: dict, system: str | None = None, **kwargs: Any) -> dict:
         try:
             res = self.inner.generate_structured(prompt, schema, system, **kwargs)
             self.breaker.record_success()
@@ -1281,7 +1279,7 @@ class ChainedModelClient:
 
         for i, (role_name, client) in enumerate(self._chain):
             if i > 0:
-                time.sleep(min(0.1 * (2 ** i), 1.0))  # exponential backoff, capped at 1s
+                time.sleep(min(0.1 * (2**i), 1.0))  # exponential backoff, capped at 1s
             try:
                 return attempt_fn(client)
             except XibiError as e:
@@ -1313,9 +1311,7 @@ class ChainedModelClient:
     def generate(self, prompt: str, system: str | None = None, **kwargs: Any) -> str:
         return cast(str, self._walk(lambda c: c.generate(prompt, system, **kwargs)))
 
-    def generate_structured(
-        self, prompt: str, schema: dict, system: str | None = None, **kwargs: Any
-    ) -> dict:
+    def generate_structured(self, prompt: str, schema: dict, system: str | None = None, **kwargs: Any) -> dict:
         return cast(dict, self._walk(lambda c: c.generate_structured(prompt, schema, system, **kwargs)))
 
     def supports_tool_calling(self) -> bool:
@@ -1396,9 +1392,7 @@ def _build_role_client(
     return BreakerWrappedClient(raw, breaker, effort)
 
 
-def _resolve_role_chain(
-    config: Config, specialty: str, effort: str
-) -> list[tuple[str, RoleConfig]]:
+def _resolve_role_chain(config: Config, specialty: str, effort: str) -> list[tuple[str, RoleConfig]]:
     """Walk RoleConfig.fallback links and return [(role_name, role_cfg), ...].
     Pure: does not check health or breakers."""
     resolved_specialty = specialty if specialty in config["models"] else "text"
@@ -1466,5 +1460,3 @@ def get_model(
             chain=built_chain,
         ),
     )
-
-
