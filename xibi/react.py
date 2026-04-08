@@ -53,7 +53,8 @@ def _maybe_wrap_in_handle(tool: str, output: Any, store: HandleStore | None) -> 
     if not isinstance(output, dict):
         return output
 
-    if output.get("status") in ("error", "suppressed", "blocked") or "handle" in output:
+    status = output.get("status")
+    if status in ("error", "suppressed", "blocked") or "handle" in output:
         return output
 
     serialized = json.dumps(output, separators=(",", ":"), default=str)
@@ -1096,7 +1097,7 @@ async def _run_async(
         steps=scratchpad,
         exit_reason="partial" if partial is not None else "max_steps",
         duration_ms=int((time.time() - start_time) * 1000),
-        degraded=True if partial is not None else False,
+        degraded=partial is not None,
     )
     res.error_summary = [s.error for s in scratchpad if s.error is not None]
     res.trace_id = _run_trace_id

@@ -102,7 +102,7 @@ class HandleStore:
                 self._total_bytes -= handle.size_bytes
 
     def _generate_unique_id(self) -> str:
-        for attempt in range(8):
+        for _attempt in range(8):
             suffix = secrets.token_hex(2)
             hid = f"h_{suffix}"
             if hid not in self._handles:
