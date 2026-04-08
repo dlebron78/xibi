@@ -1,6 +1,20 @@
 # step-59 — Scheduled Actions: Universal Action Scheduler Foundation
 
-> **Depends on:** step-57 (Memory Compression — merged 2026-04, migration 19 landed)
+---
+## TRR Record
+
+| Field | Value |
+|---|---|
+| **Date** | 2026-04-08 |
+| **Reviewer** | Opus |
+| **Commit** | 0154645 |
+| **Verdict** | **AMEND** — Right architectural direction, but three critical corrections required: (1) permission gate is CommandLayer, not TrustGradient; (2) trust_tier values must match PermissionTier enum; (3) trace_id generation and ContextVar lifecycle need specification. After amendments, promote to pending. |
+| **Gap Types** | Corrections (2), Hazards (2), Specificity (3) |
+| **Summary** | The kernel foundation is sound: schema is tight, dispatcher pattern is clean, Phase 1.5 placement is correct, and migration numbering is right. The vision alignment is excellent (core scheduling, not external service, opposite-of-spaghetti approach). However, the implementation will fail at the permission gate if Jules tries to invoke TrustGradient.check() — that method doesn't exist. The kernel must use CommandLayer with interactive=False, exactly as the observation cycle does. Additionally, trust_tier storage needs to be pinned to the PermissionTier enum values, and trace_id generation (whether from ContextVar or UUID) must be explicit. These are tractable fixes; the design is solid underneath. |
+
+---
+
+> **Depends on:** step-57 (Memory Compression — merged 2026-04, migration 20 landed)
 > **Blocks:** Recurring exports, periodic summaries, autonomous polling cadences,
 > any future feature that needs "do X on a schedule"
 > **Scope:** Add a core scheduled-actions kernel: one new table, one heartbeat
@@ -91,7 +105,7 @@ CREATE TABLE scheduled_actions (
     -- Provenance & trust
     created_by      TEXT NOT NULL,              -- 'user' | 'observation' | 'system'
     created_via     TEXT,                       -- 'telegram' | 'cli' | 'internal' | 'react'
-    trust_tier      TEXT NOT NULL DEFAULT 'green', -- mirrors PermissionTier
+    trust_tier      TEXT NOT NULL DEFAULT 'green', -- ‼️ TRR-S1: must be a value from xibi.tools.PermissionTier: 'green' | 'yellow' | 'red'
 
     -- Bookkeeping
     created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -239,15 +253,12 @@ class ScheduledActionKernel:
    ```
 2. For each row, in order:
    - Insert a `scheduled_action_runs` row with `status='running'`,
-     `started_at=now`, `trace_id=<new uuid>`. Commit so concurrent ticks
-     can't double-fire.
+     `started_at=now`, `trace_id=<new uuid>`. ‼️ TRR-S2: trace_id must be generated as a UUID4 string (e.g. `str(uuid.uuid4())`), not from ContextVar. The kernel tick is sync-only and has no active trace context; trace_id is explicit audit ID for the run. Commit so concurrent ticks can't double-fire.
    - Look up the handler for `action_type`. If unknown → mark
      `status='error'`, error="unknown action_type", continue.
-   - **Trust check:** the kernel asks `trust_gradient` whether the action's
-     `trust_tier` is currently permitted. If not → `status='skipped'`,
-     `error='trust gate'`. This is the same gate that protects interactive
-     tool use, applied to scheduled use.
+   - **Trust check:** ‼️ TRR-C1 the kernel must invoke **CommandLayer**, not TrustGradient. Create a `CommandLayer(db_path=..., profile=..., interactive=False)` and call its `check(tool_name, action_config["args"], ...)` method. If result.allowed=False → `status='skipped'`, `error=result.block_reason`. This is exactly how the observation cycle gates tools (xibi/heartbeat/poller.py:400-404). TrustGradient is an audit-interval tracker (has `should_audit()` and `record_success/failure()` but no permission gate). The permission gate lives in CommandLayer's check() method which evaluates PermissionTier against the interactive flag.
    - Run the handler under a `Timeout(per_action_timeout_secs)` wrapper.
+     ‼️ TRR-H1 Specify the timeout implementation: either use `signal.alarm()` (Unix/Linux only, won't work on Windows/macOS) or use a threading approach with a sentinel thread that raises an exception into the handler's frame. The spec doesn't name the library or fallback. For robustness, recommend `signal-timeout` or a custom context-manager-based approach using threading.
      Catch all exceptions. Capture stdout/return value as `output_preview`.
    - Update the run row: `finished_at`, `duration_ms`, `status`, `output_preview`,
      `error`.
@@ -264,8 +275,7 @@ class ScheduledActionKernel:
      - **Auto-disable rule:** if `consecutive_failures >= 10`, set
        `enabled=0` and emit a critical log line. Operator must re-enable
        after fixing the action.
-   - Emit a tracing span (`operation="scheduled_action.run"`,
-     attributes include action_id, name, status, duration_ms).
+   - Emit a tracing span. ‼️ TRR-H2 Specify how to emit the span: does the kernel construct a xibi.tracing.Tracer instance via the ContextVar (xibi.router._active_tracer.get()) like react.py does, or does it instantiate Tracer directly? The spec mentions tracer as an optional ctor arg but doesn't clarify the emission mechanism. Recommend: pass tracer to ctor (as the spec does), and if tracer is not None, emit span via tracer.span(operation="scheduled_action.run", attributes={...}). If tracer is None, skip (no-op).
 3. Return a `KernelTickResult` summary (counts by status, total duration).
 
 **Why a single connection / single transaction per row:** the kernel must
@@ -394,10 +404,7 @@ it's already cost-heavy with observation/intelligence.
 
 ### 6. Migration
 
-Migration 21 (next available — 19 and 20 are already taken; sessions table
-duplicates are a separate cleanup item) creates both tables and indexes.
-Idempotent. No data backfill needed; existing `tasks` table is untouched
-and continues to work for one-shot text reminders.
+✓ TRR-C2 Migration 21 is correct. Current HEAD (0154645) has SCHEMA_VERSION = 20 (xibi/db/migrations.py:10), and migration_20 is "belief_summaries table for session compression". Migration 21 is next available (confirmed). Creates both tables and indexes. Idempotent. No data backfill needed; existing `tasks` table is untouched and continues to work for one-shot text reminders.
 
 ---
 
@@ -478,6 +485,26 @@ Integration test (`tests/integration/test_scheduled_actions_in_heartbeat.py`):
 
 ---
 
+## Relevance Check
+
+### Vision
+✓ TRR-V1 **Alignment with Xibi vision:** Step-59 is correctly positioned as a core scheduling layer (L1-L2 autonomy, T2 trust). Rejects external service dependency (opposite of OpenClaw's agent-as-library antipattern). Ownership of the scheduling loop is security-correct: Xibi controls when and how actions fire, permission gates are local (CommandLayer), and every run is auditable (scheduled_action_runs table + tracing). No LLM injection; schema and triggers are data-driven (JSON config blobs), not hardcoded Python.
+
+### Code
+✓ TRR-C0 **Codebase alignment verified:**
+- ✓ CommandLayer exists (xibi/command_layer.py:38) with `.check()` method that respects `interactive=False` 
+- ✓ PermissionTier enum exists (xibi/tools.py:7) with GREEN, YELLOW, RED values
+- ✓ HeartbeatPoller exists (xibi/heartbeat/poller.py:39) with async_tick() and phases 0/1/2/3
+- ✓ Migration numbering: last applied is 20 (belief_summaries), 21 is next 
+- ✓ TrustGradient exists (xibi/trust/gradient.py:57) but is NOT a permission gate (has `should_audit()`, `record_success()`, not `.check()`)
+- ✓ Executor.execute() exists (xibi/executor.py:99) and routes through tool registry
+- ✗ CORRECTION APPLIED: Spec incorrectly named TrustGradient as permission gate; see TRR-C1
+
+### Pipeline
+✓ TRR-P1 **Sequencing is correct.** step-59 is a blocker for step-65 (Checklists), which depends on the scheduled-actions kernel for deadline/recurrence plumbing (tasks/backlog/step-65-checklists.md:5). No later spec supersedes step-59; it's foundational. Dashboard punchlist is independent (tasks/backlog/dashboard-punchlist.md) and does not conflict. This is the right next step.
+
+---
+
 ## Risks and Notes
 
 - **Risk: scheduler steals heartbeat budget.** Mitigated by `max_per_tick`,
@@ -500,3 +527,25 @@ Integration test (`tests/integration/test_scheduled_actions_in_heartbeat.py`):
 - **Note: the existing inert `SheetsExporter` (commit fb15e58) is not
   removed in this step.** It is dormant (`enabled: false` default) and will
   be deleted in a follow-up spec when the real Telegram document export lands.
+
+---
+
+## Open Questions (For Implementation)
+
+**Q1: Timeout implementation strategy (TRR-H1)**  
+The spec says "run under Timeout wrapper" but doesn't name the library or fallback strategy. Options:
+- (a) Use `signal.alarm()` (Unix/Linux only; will fail on Windows/macOS)
+- (b) Use threading-based timeout (cross-platform, more complex)
+- (c) Rely on asyncio.wait_for() wrapper (but kernel.tick() is sync-only)
+
+**Proposed position:** Use a custom threading-based timeout context manager. If neither fires nor completes gracefully, log error and mark status='timeout'. Fallback: if threading not available, log warning and skip timeout (execute fully). Document that heartbeat must pre-allocate per_action_timeout_secs into the Phase 1.5 wall-clock budget.
+
+**Q2: Tracer emission mechanism (TRR-H2)**  
+The spec says pass tracer as optional ctor arg and "emit a tracing span" but doesn't show the code shape. Should the kernel call `tracer.span(...)`? Should it instantiate a span context manager? What fields?
+
+**Proposed position:** If tracer is provided, call `tracer.span(operation="scheduled_action.run", attributes={"action_id": ..., "name": ..., "status": ..., "duration_ms": ...})`. If tracer is None, skip (no-op). Pattern matches xibi.react usage.
+
+**Q3: Error categorization (Specificity only)**  
+The scheduled_action_runs.error column is TEXT. When status='error', what error formats? Do we store raw exception str()? JSON? A custom enum?
+
+**Proposed position:** Store error as a one-line string, max 500 chars (same as output_preview). If exception, store `type(e).__name__: str(e)`. If known gate (trust, unknown handler), store the gate name. Keep it readable but bounded.
