@@ -1,0 +1,108 @@
+{
+    "name": "filesystem",
+    "description": "Read, write, and append to files on the server. Useful for logging, tracking issues, or saving notes.",
+    "version": "0.2.0",
+    "tools": [
+        {
+            "name": "list_files",
+            "description": "List all files in the workspace directory. Use this first when the user refers to a file by approximate name.",
+            "output_type": "raw",
+            "risk": "safe",
+            "min_effort": 3,
+            "max_output_size": 1024,
+            "examples": [
+                "what files do you have",
+                "list the files",
+                "show me what's in the workspace",
+                "what documents are available"
+            ],
+            "inputSchema": {
+                "type": "object",
+                "properties": {}
+            }
+        },
+        {
+            "name": "read_file",
+            "description": "Read the contents of a file.",
+            "output_type": "raw",
+            "risk": "safe",
+            "min_effort": 3,
+            "max_output_size": 4096,
+            "examples": [
+                "read BUGS_AND_ISSUES.md",
+                "show me the contents of config.json",
+                "open README.md"
+            ],
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "filepath": {
+                        "type": "string",
+                        "description": "Absolute path or filename of the file to read."
+                    }
+                },
+                "required": ["filepath"]
+            }
+        },
+        {
+            "name": "write_file",
+            "description": "Create or overwrite a file with specific content.",
+            "output_type": "action",
+            "risk": "reversible",
+            "min_effort": 3,
+            "max_output_size": 256,
+            "examples": [
+                "write a note to notes.txt",
+                "save this to output.md"
+            ],
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "filepath": {
+                        "type": "string",
+                        "description": "Absolute path to the file."
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Content to write."
+                    },
+                    "handle": {
+                        "type": "string",
+                        "description": "Handle ID from a prior tool call. If provided, content of the handle will be written."
+                    }
+                },
+                "required": ["filepath"],
+                "oneOf": [
+                    {"required": ["content"]},
+                    {"required": ["handle"]}
+                ]
+            }
+        },
+        {
+            "name": "append_file",
+            "description": "Append content to an existing file.",
+            "output_type": "action",
+            "risk": "reversible",
+            "min_effort": 3,
+            "max_output_size": 256,
+            "examples": [
+                "add a note to BUGS_AND_ISSUES.md",
+                "append a log entry to activity.log"
+            ],
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "filepath": {
+                        "type": "string",
+                        "description": "Absolute path to the file."
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Content to append."
+                    }
+                },
+                "required": ["filepath", "content"]
+            }
+        }
+    ]
+}
