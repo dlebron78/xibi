@@ -1,5 +1,10 @@
-# Xibi Backlog — Prioritized
+# Dashboard / Polling Punch-List
 
+> **Status:** Punch-list, not a numbered step spec. Items are picked up
+> opportunistically or rolled into adjacent specs as relevant. Renamed
+> from `step-50-gaps.md` on 2026-04-07 to stop pretending it's a step.
+> Item 12 (Manager Pattern) is already implemented — kept in the file
+> as historical context for the rest of the items.
 > **Origin:** Post-step-50 review + dashboard audit (2026-04-06)
 > **Ordered by:** Impact / ROI
 
