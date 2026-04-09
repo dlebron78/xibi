@@ -43,6 +43,33 @@
 ## Contract
 [Exact function signatures, class interfaces, config schema — the "what" not the "how"]
 
+## Observability
+<!-- Required. Every new code path must be traceable and debuggable in
+     production. Xibi uses Tracer (xibi/tracing.py) with spans written
+     to the spans table, and structured logging via Python's logging
+     module. Answer each question or write "N/A — [reason]". -->
+
+1. **Trace integration:** Does this feature emit spans via `tracer.emit()`?
+   List each span operation name and what attributes it carries.
+   [e.g. "`scheduled_action.run` with action_id, name, status, duration_ms"]
+2. **Log coverage:** What gets logged at INFO/WARNING/ERROR? A user
+   debugging a production issue should be able to grep the logs and
+   reconstruct what happened without reading the code.
+   [e.g. "INFO on every kernel tick with action count; WARNING on
+   backoff; CRITICAL on auto-disable after 10 failures"]
+3. **Dashboard/query surface:** Can an operator see this feature's
+   state in the dashboard or via a query? If this adds a new table or
+   new rows to an existing table, is there a way to inspect them
+   without raw SQL?
+   [e.g. "Dashboard scheduled-actions panel shows all actions with
+   last_status and next_run_at; `list_actions()` API for programmatic
+   access"]
+4. **Failure visibility:** If this feature fails silently, how would
+   anyone know? What alerting, logging, or self-healing mechanism
+   surfaces the failure?
+   [e.g. "Kernel logs consecutive failure count; auto-disables at 10;
+   CRITICAL log line triggers operator attention"]
+
 ## Constraints
 - [Hard requirements: no hardcoded model names, must use get_model(), etc.]
 - [Dependencies: requires Step N-1 to be merged]

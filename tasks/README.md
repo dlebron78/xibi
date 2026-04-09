@@ -124,6 +124,19 @@ the implementer tier.
    ships in the same batch, or document it as an explicit dependency
    with a BLOCK verdict.
 
+4. **Observability.** Verify that the spec's Observability section
+   (required in every spec, see template) is complete and wired into
+   the existing tracing/logging infrastructure:
+   - **Spans:** Does every new code path emit `tracer.emit()` spans
+     with meaningful operation names and attributes? Check that
+     trace_id threading is correct (not orphaned spans).
+   - **Logging:** Are INFO/WARNING/ERROR log lines sufficient to
+     reconstruct failures from production logs without reading code?
+   - **Failure visibility:** If this feature breaks at 3 AM, how
+     does anyone find out? Silent failures are bugs. Every new code
+     path should either self-heal (with logging) or surface the
+     failure to an operator.
+
 **Possible TRR verdicts:**
 
 - **PASS** — the spec is ready. Apply all amendments inline to the
