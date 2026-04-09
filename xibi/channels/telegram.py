@@ -215,9 +215,11 @@ class TelegramAdapter:
             return {"ok": True, "result": []}
         return {"ok": True}
 
-    def send_message(self, chat_id: int, text: str) -> dict:
+    def send_message(self, chat_id: int, text: str, reply_markup: dict | None = None) -> dict:
         logger.info(f"Outgoing message to {chat_id}: {text}")
         params = {"chat_id": chat_id, "text": text}
+        if reply_markup:
+            params["reply_markup"] = reply_markup
         return self._api_call("sendMessage", params)
 
     def _typing_loop(self, chat_id: int, stop_event: threading.Event) -> None:
@@ -387,6 +389,58 @@ class TelegramAdapter:
             if is_new_or_stale:
                 review_text = self._get_decision_review()
 
+            # Checklist commands
+            if user_text.strip().startswith("/checklists"):
+                from xibi.checklists.api import list_checklists
+                res = list_checklists(str(self.db_path))
+                if not res["instances"]:
+                    self.send_message(chat_id, "No open checklists.")
+                else:
+                    lines = ["Open Checklists:"]
+                    for inst in res["instances"]:
+                        lines.append(f"- {inst['template_name']} ({inst['completed_count']}/{inst['item_count']}) `[task:{inst['instance_id']}]`")
+                    self.send_message(chat_id, "\n".join(lines))
+                # Do not use return here, it will cause the poll loop to exit
+                # Instead, set response = True to skip further processing
+                response = "CHECKLIST_HANDLED"
+
+            elif user_text.strip().startswith("/checklist"):
+                parts = user_text.strip().split()
+                if len(parts) < 2:
+                    self.send_message(chat_id, "Usage: /checklist <instance_id>")
+                else:
+                    instance_id = parts[1]
+                    from xibi.checklists.api import get_checklist
+                    try:
+                        res = get_checklist(str(self.db_path), instance_id)
+                        lines = [f"Checklist: {res['template_name']}", f"Status: {res['status']}", ""]
+                        for item in res["items"]:
+                            status = "✅" if item["completed_at"] else ("❌" if item["is_overdue"] else "⬜")
+                            lines.append(f"{item['position']}. {status} {item['label']}")
+                        self.send_message(chat_id, "\n".join(lines))
+                    except ValueError as e:
+                        self.send_message(chat_id, str(e))
+                response = "CHECKLIST_HANDLED"
+
+            elif user_text.strip().startswith("/check") or user_text.strip().startswith("/uncheck"):
+                cmd = user_text.strip().split()
+                if len(cmd) < 3:
+                    self.send_message(chat_id, f"Usage: {cmd[0]} <instance_id> <position>")
+                else:
+                    instance_id = cmd[1]
+                    try:
+                        position = int(cmd[2])
+                        status = "done" if cmd[0] == "/check" else "undone"
+                        from xibi.checklists.api import update_checklist_item
+                        res = update_checklist_item(str(self.db_path), instance_id, position=position, status=status)
+                        self.send_message(chat_id, f"Updated '{res['item_label']}' to {res['status']}.")
+                    except (ValueError, IndexError) as e:
+                        self.send_message(chat_id, f"Error: {e}")
+                response = "CHECKLIST_HANDLED"
+
+            if response == "CHECKLIST_HANDLED":
+                return
+
             # /resolve command: manual thread resolution
             if user_text.strip().startswith("/resolve"):
                 parts = user_text.strip().split(maxsplit=1)
@@ -527,6 +581,15 @@ class TelegramAdapter:
             if updates.get("ok"):
                 for update in updates.get("result", []):
                     self.offset = update["update_id"] + 1
+
+                    # 1. Handle Callback Queries (inline buttons)
+                    callback_query = update.get("callback_query")
+                    if callback_query:
+                        self._handle_callback(callback_query)
+                        self._save_offset(self.offset)
+                        continue
+
+                    # 2. Handle Messages
                     message = update.get("message")
                     if not message:
                         self._save_offset(self.offset)
@@ -537,8 +600,6 @@ class TelegramAdapter:
                     user_name = message.get("from", {}).get("first_name")
 
                     # --- Idempotency gate: skip already-processed messages ---
-                    # Deduplication by message_id rather than offset so that a
-                    # crash-restart cannot skip or re-deliver the same message.
                     try:
                         with open_db(self.db_path) as _idem_conn:
                             if self._is_already_processed(_idem_conn, message_id):
@@ -547,13 +608,11 @@ class TelegramAdapter:
                                 continue
                     except Exception as _idem_err:
                         logger.warning(f"Idempotency check failed for message_id={message_id}: {_idem_err}")
-                        # Fall through: process the message and try to mark it below
 
                     if not self._is_authorized(str(chat_id)):
                         logger.warning(f"Unauthorized access attempt from chat_id={chat_id}")
                         self._log_access_attempt(chat_id, authorized=False, user_name=user_name)
                         self.send_message(chat_id, "Sorry, I'm a personal assistant. I don't talk to strangers.")
-                        # Still mark as processed to avoid re-sending the rejection
                         try:
                             with open_db(self.db_path) as _conn, _conn:
                                 self._mark_processed(_conn, message_id)
@@ -618,5 +677,39 @@ class TelegramAdapter:
                     self._save_offset(self.offset)
 
             time.sleep(1)
+
+    def _handle_callback(self, callback_query: dict) -> None:
+        """Handle inline button clicks."""
+        data = callback_query.get("data", "")
+        chat_id = callback_query.get("message", {}).get("chat", {}).get("id")
+        callback_query_id = callback_query.get("id")
+
+        if not data or not chat_id:
+            return
+
+        # Acknowledge callback
+        self._api_call("answerCallbackQuery", {"callback_query_id": callback_query_id})
+
+        if data.startswith("checklist_rollover_"):
+            # Format: checklist_rollover_ACTION:ITEM_ID
+            try:
+                action_part = data[len("checklist_rollover_") :]
+                action, item_id = action_part.split(":", 1)
+
+                from xibi.checklists.lifecycle import handle_rollover_callback
+
+                reply = handle_rollover_callback(action, item_id, self.db_path)
+                self.send_message(chat_id, reply)
+
+                # Optionally edit the original message to remove buttons
+                message_id = callback_query.get("message", {}).get("message_id")
+                if message_id:
+                    self._api_call(
+                        "editMessageReplyMarkup",
+                        {"chat_id": chat_id, "message_id": message_id, "reply_markup": {"inline_keyboard": []}},
+                    )
+            except Exception as e:
+                logger.error(f"Error handling rollover callback: {e}", exc_info=True)
+                self.send_message(chat_id, "Sorry, I couldn't process that rollover action.")
 
         logger.info("TelegramAdapter poll loop exiting (shutdown requested)")

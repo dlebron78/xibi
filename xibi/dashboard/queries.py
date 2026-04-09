@@ -620,3 +620,45 @@ def get_observation_cycles(conn: sqlite3.Connection, limit: int = 10) -> list[di
             }
         )
     return results
+
+
+def get_checklists(conn: sqlite3.Connection) -> dict:
+    """Return all open checklist instances and templates."""
+    cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='checklist_instances'")
+    if not cursor.fetchone():
+        return {"instances": []}
+
+    cursor = conn.execute(
+        """
+        SELECT i.id, t.name, i.created_at, i.status
+        FROM checklist_instances i
+        JOIN checklist_templates t ON i.template_id = t.id
+        WHERE i.status = 'open'
+        ORDER BY i.created_at DESC
+        """
+    )
+    instances = []
+    for row in cursor.fetchall():
+        instance_id = row[0]
+        # Get counts for this instance
+        counts = conn.execute(
+            """
+            SELECT COUNT(*) as total, COUNT(completed_at) as completed
+            FROM checklist_instance_items
+            WHERE instance_id = ?
+            """,
+            (instance_id,),
+        ).fetchone()
+
+        instances.append(
+            {
+                "instance_id": instance_id,
+                "template_name": row[1],
+                "created_at": row[2],
+                "status": row[3],
+                "item_count": counts[0],
+                "completed_count": counts[1],
+            }
+        )
+
+    return {"instances": instances}

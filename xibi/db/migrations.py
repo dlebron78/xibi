@@ -52,6 +52,7 @@ class SchemaManager:
             (19, "manager review: thread priority + review tracking", self._migration_19),
             (20, "belief_summaries table for session compression", self._migration_20),
             (21, "universal action scheduler tables", self._migration_21),
+            (22, "checklist templates and instances", self._migration_22),
         ]
 
         for version, description, func in migrations:
@@ -560,6 +561,54 @@ class SchemaManager:
                     FOREIGN KEY (action_id) REFERENCES scheduled_actions(id) ON DELETE CASCADE
                 );
                 CREATE INDEX IF NOT EXISTS idx_scheduled_action_runs_action ON scheduled_action_runs(action_id, started_at DESC);
+            """)
+
+    def _migration_22(self, conn: sqlite3.Connection) -> None:
+        sql_path = Path(__file__).parent / "migrations" / "0022_checklists.sql"
+        if sql_path.exists():
+            conn.executescript(sql_path.read_text())
+        else:
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS checklist_templates (
+                    id                  TEXT PRIMARY KEY,
+                    name                TEXT NOT NULL,
+                    description         TEXT,
+                    recurrence          TEXT,
+                    rollover_policy     TEXT NOT NULL DEFAULT 'confirm',
+                    nudge_config        TEXT DEFAULT NULL,
+                    created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at          DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS checklist_template_items (
+                    id                  TEXT PRIMARY KEY,
+                    template_id         TEXT NOT NULL,
+                    position            INTEGER NOT NULL,
+                    label               TEXT NOT NULL,
+                    item_type           TEXT NOT NULL DEFAULT 'human',
+                    action_ref          TEXT,
+                    deadline_offset_seconds INTEGER,
+                    FOREIGN KEY (template_id) REFERENCES checklist_templates(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS checklist_instances (
+                    id                  TEXT PRIMARY KEY,
+                    template_id         TEXT NOT NULL,
+                    created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    closed_at           DATETIME,
+                    status              TEXT NOT NULL DEFAULT 'open',
+                    FOREIGN KEY (template_id) REFERENCES checklist_templates(id)
+                );
+                CREATE TABLE IF NOT EXISTS checklist_instance_items (
+                    id                  TEXT PRIMARY KEY,
+                    instance_id         TEXT NOT NULL,
+                    template_item_id    TEXT NOT NULL,
+                    label               TEXT NOT NULL,
+                    position            INTEGER NOT NULL,
+                    completed_at        DATETIME,
+                    deadline_at         DATETIME,
+                    deadline_action_ids TEXT DEFAULT '[]',
+                    rollover_prompted_at DATETIME,
+                    FOREIGN KEY (instance_id) REFERENCES checklist_instances(id) ON DELETE CASCADE
+                );
             """)
 
 

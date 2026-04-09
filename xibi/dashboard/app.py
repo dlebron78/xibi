@@ -233,6 +233,11 @@ def create_app(config: DashboardConfig) -> Flask:
         with get_db_conn() as conn:
             return jsonify(queries.get_observation_cycles(conn))
 
+    @app.route("/api/checklists")
+    def checklists() -> Any:
+        with get_db_conn() as conn:
+            return jsonify(queries.get_checklists(conn))
+
     @app.route("/api/config/models", methods=["GET"])
     def get_model_config() -> Any:
         """Return current model assignments for all effort levels."""

@@ -726,6 +726,9 @@ async def _run_async(
     _native_messages: list[dict[str, Any]] = []
     _native_tools: list[dict[str, Any]] = []
     _handle_instructions = (
+        "\nCHECKLISTS\n"
+        "Use checklist tools for recurring routines, weekly reports, or multi-step planning tasks.\n"
+        "You can mark items done via position or fuzzy label match.\n"
         "\nHANDLES — large tool outputs\n"
         "Some tools return outputs containing a `handle` field that looks like this:\n"
         '  {"status": "ok", "handle": "h_a4f1", "schema": "list[dict] (25 items)", "summary": "...", "item_count": 25}\n'

@@ -27,6 +27,8 @@ WRITE_TOOLS: set[str] = {
     "nudge",
     "send_document",
     "log_signal",
+    "update_checklist_item",
+    "create_checklist_template",
 }
 
 # Tier declarations for known tools.
@@ -45,6 +47,10 @@ TOOL_TIERS: dict[str, PermissionTier] = {
     "nudge": PermissionTier.YELLOW,
     "send_document": PermissionTier.YELLOW,
     "log_signal": PermissionTier.YELLOW,
+    "update_checklist_item": PermissionTier.YELLOW,
+    "create_checklist_template": PermissionTier.YELLOW,
+    "list_checklists": PermissionTier.GREEN,
+    "get_checklist": PermissionTier.GREEN,
     # Red — sends, deletes, financial, first-time destructive
     "send_email": PermissionTier.RED,
     "send_message": PermissionTier.RED,
