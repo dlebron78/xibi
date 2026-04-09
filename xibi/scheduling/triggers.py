@@ -1,12 +1,13 @@
 from __future__ import annotations
-from datetime import datetime, timezone, timedelta
-from typing import Callable
+
+from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
 
 TriggerCalculator = Callable[[dict, datetime], datetime]
 
 _REGISTRY: dict[str, TriggerCalculator] = {}
 
-def register_trigger(name: str):
+def register_trigger(name: str) -> Callable[[TriggerCalculator], TriggerCalculator]:
     def deco(fn: TriggerCalculator) -> TriggerCalculator:
         _REGISTRY[name] = fn
         return fn

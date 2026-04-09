@@ -5,7 +5,7 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from xibi.db import open_db
 from xibi.scheduling.triggers import compute_next_run
@@ -79,9 +79,11 @@ def list_actions(
     enabled_only: bool = False,
 ) -> list[dict]:
     with open_db(db_path) as conn:
-        conn.row_factory = lambda cursor, row: dict(zip([col[0] for col in cursor.description], row))
+        conn.row_factory = lambda cursor, row: dict(
+            zip([col[0] for col in cursor.description], row, strict=False)
+        )
         query = "SELECT * FROM scheduled_actions"
-        params = []
+        params: list = []
         if enabled_only:
             query += " WHERE enabled = 1"
         query += " ORDER BY created_at DESC"
@@ -93,7 +95,7 @@ def fire_now(
     executor: Executor,
 ) -> dict:
     """Manual fire — bypasses next_run_at gate but still records a run row."""
-    from xibi.scheduling.kernel import ScheduledActionKernel, KernelTickResult
+    from xibi.scheduling.kernel import KernelTickResult, ScheduledActionKernel
     from xibi.trust.gradient import TrustGradient
 
     # Try to get tracer from executor or router if possible, but for manual fire None is OK
@@ -124,7 +126,9 @@ def get_run_history(
     limit: int = 20,
 ) -> list[dict]:
     with open_db(db_path) as conn:
-        conn.row_factory = lambda cursor, row: dict(zip([col[0] for col in cursor.description], row))
+        conn.row_factory = lambda cursor, row: dict(
+            zip([col[0] for col in cursor.description], row, strict=False)
+        )
         return conn.execute("""
             SELECT * FROM scheduled_action_runs
             WHERE action_id = ?

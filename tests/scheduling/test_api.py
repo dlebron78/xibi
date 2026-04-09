@@ -1,13 +1,19 @@
-import pytest
 import sqlite3
-from pathlib import Path
-from xibi.scheduling.api import (
-    register_action, disable_action, enable_action, delete_action,
-    list_actions, fire_now, get_run_history
-)
-from xibi.db.migrations import migrate
-from xibi.db import open_db
 from unittest.mock import MagicMock
+
+import pytest
+
+from xibi.db import open_db
+from xibi.db.migrations import migrate
+from xibi.scheduling.api import (
+    disable_action,
+    enable_action,
+    fire_now,
+    get_run_history,
+    list_actions,
+    register_action,
+)
+
 
 @pytest.fixture
 def db_path(tmp_path):

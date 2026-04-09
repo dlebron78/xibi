@@ -7,20 +7,21 @@ import sqlite3
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
-from xibi.db import open_db
-from xibi.scheduling.triggers import compute_next_run
-from xibi.scheduling.handlers import get_handler, ExecutionContext, HandlerResult
 from xibi.command_layer import CommandLayer
+from xibi.db import open_db
+from xibi.scheduling.handlers import ExecutionContext, get_handler
+from xibi.scheduling.triggers import compute_next_run
 
 if TYPE_CHECKING:
     from xibi.executor import Executor
-    from xibi.trust.gradient import TrustGradient
     from xibi.tracing import Tracer
+    from xibi.trust.gradient import TrustGradient
 
 logger = logging.getLogger(__name__)
 
@@ -34,31 +35,32 @@ class KernelTickResult:
     duration_ms: int = 0
 
 class Timeout:
-    def __init__(self, seconds: int):
+    def __init__(self, seconds: int) -> None:
         self.seconds = seconds
-        self._timer = None
+        self._timer: threading.Timer | None = None
         self._target_ident = threading.get_ident()
 
-    def __enter__(self):
+    def __enter__(self) -> Timeout:
         if self.seconds <= 0:
             return self
 
-        def _interrupt():
+        def _interrupt() -> None:
             # Raise TimeoutError in the target thread
             ctypes.pythonapi.PyThreadState_SetAsyncExc(
                 ctypes.c_long(self._target_ident),
-                ctypes.py_object(TimeoutError)
+                ctypes.py_object(TimeoutError),
             )
 
         self._timer = threading.Timer(self.seconds, _interrupt)
         self._timer.start()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self, exc_type: object, exc_val: object, exc_tb: object
+    ) -> None:
         if self._timer:
             self._timer.cancel()
-        if exc_type is TimeoutError:
-            return False # let it propagate
+        # We never suppress exceptions; TimeoutError propagates naturally.
 
 class ScheduledActionKernel:
     def __init__(
@@ -247,7 +249,6 @@ class ScheduledActionKernel:
 
         # 4. Tracing
         if self.tracer:
-            from xibi.tracing import Span
             self.tracer.span(
                 operation="scheduled_action.run",
                 attributes={

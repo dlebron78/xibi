@@ -95,12 +95,16 @@ class HeartbeatPoller:
         from xibi.scheduling import ScheduledActionKernel
         from xibi.tracing import Tracer
         self.tracer = Tracer(self.db_path) if self.db_path else None
-        self.scheduler_kernel = ScheduledActionKernel(
-            db_path=self.db_path,
-            executor=self.executor,
-            trust_gradient=self.trust_gradient,
-            tracer=self.tracer,
-        )
+        self.scheduler_kernel: ScheduledActionKernel | None
+        if self.executor is not None:
+            self.scheduler_kernel = ScheduledActionKernel(
+                db_path=self.db_path,
+                executor=self.executor,
+                trust_gradient=self.trust_gradient,
+                tracer=self.tracer,
+            )
+        else:
+            self.scheduler_kernel = None
 
     def _init_jules_watcher(self) -> Any | None:
         """Set up JulesWatcher if JULES_API_KEY is configured."""
@@ -303,13 +307,15 @@ class HeartbeatPoller:
             self._broadcast(f"⏰ Task reminder: {task['goal']} (ID: {task['id']})")
 
         # Phase 1.5: Scheduled actions
-        try:
-            # We wrap in wait_for to ensure the 60s cap even if kernel misbehaves
-            # although kernel.tick is sync, so wait_for won't actually kill it
-            # unless we use to_thread. But kernel has internal timeouts.
-            self.scheduler_kernel.tick()
-        except Exception as e:
-            logger.warning("Phase 1.5 error (Scheduler kernel): %s", e, exc_info=True)
+        if self.scheduler_kernel is not None:
+            try:
+                # kernel.tick is sync; it uses internal per-action timeouts to
+                # stay under the Phase 1.5 budget.
+                self.scheduler_kernel.tick()
+            except Exception as e:
+                logger.warning(
+                    "Phase 1.5 error (Scheduler kernel): %s", e, exc_info=True
+                )
 
         # Phase 2: Signal Extraction and Classification
         phase2_deadline = time.monotonic() + _PHASE2_TIMEOUT_SECS

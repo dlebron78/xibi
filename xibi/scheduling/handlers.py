@@ -1,7 +1,9 @@
 from __future__ import annotations
+
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from xibi.executor import Executor
@@ -25,7 +27,7 @@ ActionHandler = Callable[[dict, ExecutionContext], HandlerResult]
 
 _REGISTRY: dict[str, ActionHandler] = {}
 
-def register_handler(name: str):
+def register_handler(name: str) -> Callable[[ActionHandler], ActionHandler]:
     def deco(fn: ActionHandler) -> ActionHandler:
         _REGISTRY[name] = fn
         return fn
@@ -62,7 +64,9 @@ def _tool_call(action_config: dict, ctx: ExecutionContext) -> HandlerResult:
 
 _INTERNAL_HOOKS: dict[str, Callable[[dict, ExecutionContext], HandlerResult]] = {}
 
-def register_internal_hook(name: str, fn: Callable[[dict, ExecutionContext], HandlerResult]):
+def register_internal_hook(
+    name: str, fn: Callable[[dict, ExecutionContext], HandlerResult]
+) -> None:
     _INTERNAL_HOOKS[name] = fn
 
 @register_handler("internal_hook")
