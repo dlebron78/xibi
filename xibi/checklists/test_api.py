@@ -1,11 +1,15 @@
+from __future__ import annotations
+
 import sqlite3
-import pytest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-from xibi.checklists.api import create_checklist_template, update_checklist_item, list_checklists, get_checklist
+
+import pytest
+
+from xibi.checklists.api import create_checklist_template, get_checklist, list_checklists, update_checklist_item
+
 
 @pytest.fixture
-def temp_db(tmp_path):
+def temp_db(tmp_path: Path) -> str:
     db_path = tmp_path / "test_checklists.db"
     conn = sqlite3.connect(db_path)
     conn.executescript("""
@@ -55,7 +59,7 @@ def temp_db(tmp_path):
     conn.close()
     return str(db_path)
 
-def test_create_checklist_template(temp_db):
+def test_create_checklist_template(temp_db: str) -> None:
     res = create_checklist_template(
         temp_db,
         name="Morning Routine",
@@ -71,7 +75,7 @@ def test_create_checklist_template(temp_db):
     assert count_items == 2
     conn.close()
 
-def test_update_checklist_item_position(temp_db):
+def test_update_checklist_item_position(temp_db: str) -> None:
     conn = sqlite3.connect(temp_db)
     conn.execute("INSERT INTO checklist_instances (id, template_id, status) VALUES ('inst1', 't1', 'open')")
     conn.execute("INSERT INTO checklist_instance_items (id, instance_id, label, position) VALUES ('item1', 'inst1', 'Email', 0)")
@@ -83,7 +87,7 @@ def test_update_checklist_item_position(temp_db):
     assert res["status"] == "done"
     assert res["instance_fully_closed"] is True
 
-def test_update_checklist_item_fuzzy(temp_db):
+def test_update_checklist_item_fuzzy(temp_db: str) -> None:
     conn = sqlite3.connect(temp_db)
     conn.execute("INSERT INTO checklist_instances (id, template_id, status) VALUES ('inst1', 't1', 'open')")
     conn.execute("INSERT INTO checklist_instance_items (id, instance_id, label, position) VALUES ('item1', 'inst1', 'Check Email', 0)")
@@ -94,7 +98,7 @@ def test_update_checklist_item_fuzzy(temp_db):
     assert res["item_label"] == "Check Email"
     assert res["status"] == "done"
 
-def test_list_checklists(temp_db):
+def test_list_checklists(temp_db: str) -> None:
     conn = sqlite3.connect(temp_db)
     conn.execute("INSERT INTO checklist_templates (id, name) VALUES ('t1', 'Daily')")
     conn.execute("INSERT INTO checklist_instances (id, template_id, created_at, status) VALUES ('inst1', 't1', '2026-01-01', 'open')")
@@ -107,7 +111,7 @@ def test_list_checklists(temp_db):
     assert res["instances"][0]["template_name"] == "Daily"
     assert res["instances"][0]["open_count"] == 1
 
-def test_get_checklist(temp_db):
+def test_get_checklist(temp_db: str) -> None:
     conn = sqlite3.connect(temp_db)
     conn.execute("INSERT INTO checklist_templates (id, name) VALUES ('t1', 'Daily')")
     conn.execute("INSERT INTO checklist_instances (id, template_id, created_at, status) VALUES ('inst1', 't1', '2026-01-01', 'open')")

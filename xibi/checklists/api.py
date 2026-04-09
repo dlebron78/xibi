@@ -5,10 +5,9 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 from xibi.checklists.fuzzy import fuzzy_match_item
-from xibi.scheduling.api import register_action, disable_action
+from xibi.scheduling.api import disable_action, register_action
 
 
 def create_checklist_template(
@@ -103,8 +102,11 @@ def update_checklist_item(
                 "SELECT * FROM checklist_instance_items WHERE instance_id = ? AND position = ?",
                 (instance_id, position),
             ).fetchone()
-        else:
+        elif label_hint is not None:
             item = fuzzy_match_item(db_path, instance_id, label_hint)
+        else:
+            # Should be unreachable due to check above, but satisfies mypy
+            raise ValueError("Provide exactly one of: position OR label_hint")
 
         if not item:
             raise ValueError(f"No item matched (position={position}, label_hint={label_hint})")

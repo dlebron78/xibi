@@ -4,12 +4,12 @@ import json
 import sqlite3
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any
 from pathlib import Path
 
-from xibi.scheduling.api import register_action, disable_action
-from xibi.scheduling.handlers import HandlerResult, ExecutionContext
-from xibi.telegram.api import send_nudge, send_message_with_buttons
+from xibi.scheduling.api import disable_action, register_action
+from xibi.scheduling.handlers import ExecutionContext, HandlerResult
+from xibi.telegram.api import send_message_with_buttons, send_nudge
+
 
 def _handle_fire_recurrence(action_config: dict, ctx: ExecutionContext) -> HandlerResult:
     """Internal hook: fire a new instance when template's recurrence triggers."""

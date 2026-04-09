@@ -63,7 +63,7 @@ def _api_call(token: str, method: str, params: dict) -> None:
     data = json.dumps(params).encode("utf-8")
     req = urllib.request.Request(api_url, data=data, headers={"Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=10) as response:
+        with urllib.request.urlopen(req, timeout=10):
             pass
     except Exception as e:
         logger.error(f"Telegram API call {method} failed: {e}")

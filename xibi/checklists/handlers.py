@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import sqlite3
 import logging
-from xibi.scheduling.handlers import HandlerResult, ExecutionContext
+import sqlite3
+
+from xibi.scheduling.handlers import ExecutionContext, HandlerResult
 from xibi.telegram.api import send_nudge
 
 logger = logging.getLogger(__name__)

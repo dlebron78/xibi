@@ -7,7 +7,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 21  # increment when adding new migrations
+SCHEMA_VERSION = 22  # increment when adding new migrations
 
 
 class SchemaManager:

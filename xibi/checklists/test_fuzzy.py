@@ -1,9 +1,15 @@
+from __future__ import annotations
+
 import sqlite3
+from pathlib import Path
+
 import pytest
+
 from xibi.checklists.fuzzy import fuzzy_match_item
 
+
 @pytest.fixture
-def temp_db(tmp_path):
+def temp_db(tmp_path: Path) -> str:
     db_path = tmp_path / "test_checklists.db"
     conn = sqlite3.connect(db_path)
     conn.execute("""
@@ -18,7 +24,7 @@ def temp_db(tmp_path):
     conn.close()
     return str(db_path)
 
-def test_fuzzy_match_token_overlap(temp_db):
+def test_fuzzy_match_token_overlap(temp_db: str) -> None:
     conn = sqlite3.connect(temp_db)
     conn.execute("INSERT INTO checklist_instance_items (id, instance_id, label, position) VALUES (?, ?, ?, ?)",
                  ("1", "inst1", "Check email", 0))
@@ -36,7 +42,7 @@ def test_fuzzy_match_token_overlap(temp_db):
     assert match is not None
     assert match["label"] == "Review metrics"
 
-def test_fuzzy_match_substring_bonus(temp_db):
+def test_fuzzy_match_substring_bonus(temp_db: str) -> None:
     conn = sqlite3.connect(temp_db)
     conn.execute("INSERT INTO checklist_instance_items (id, instance_id, label, position) VALUES (?, ?, ?, ?)",
                  ("1", "inst1", "Check email inbox", 0))
@@ -47,7 +53,7 @@ def test_fuzzy_match_substring_bonus(temp_db):
     assert match is not None
     assert match["label"] == "Check email inbox"
 
-def test_fuzzy_match_ambiguous(temp_db):
+def test_fuzzy_match_ambiguous(temp_db: str) -> None:
     conn = sqlite3.connect(temp_db)
     conn.execute("INSERT INTO checklist_instance_items (id, instance_id, label, position) VALUES (?, ?, ?, ?)",
                  ("1", "inst1", "Check email", 0))
@@ -60,7 +66,7 @@ def test_fuzzy_match_ambiguous(temp_db):
     match = fuzzy_match_item(temp_db, "inst1", "check")
     assert match is None
 
-def test_fuzzy_match_stopword_handling(temp_db):
+def test_fuzzy_match_stopword_handling(temp_db: str) -> None:
     conn = sqlite3.connect(temp_db)
     conn.execute("INSERT INTO checklist_instance_items (id, instance_id, label, position) VALUES (?, ?, ?, ?)",
                  ("1", "inst1", "The Morning Routine", 0))

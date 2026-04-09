@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from typing import Any
+
 from xibi.checklists import api
+
 
 def list_checklists(params: dict[str, Any]) -> dict[str, Any]:
     db_path = params.get("_db_path")

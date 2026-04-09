@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from xibi.scheduling.handlers import register_internal_hook
-from xibi.scheduling.api import register_action
-from xibi.checklists.handlers import _handle_warning_24h, _handle_deadline, _handle_nag_post_deadline
+
+from xibi.checklists.handlers import _handle_deadline, _handle_nag_post_deadline, _handle_warning_24h
 from xibi.checklists.lifecycle import _handle_fire_recurrence, _handle_rollover_timeout
+from xibi.scheduling.api import register_action
+from xibi.scheduling.handlers import register_internal_hook
 
 logger = logging.getLogger(__name__)
 
-def initialize_checklists(db_path: Path):
+def initialize_checklists(db_path: Path) -> None:
     """Register handlers and periodic actions."""
     register_internal_hook("checklist_warning_24h", _handle_warning_24h)
     register_internal_hook("checklist_deadline", _handle_deadline)
