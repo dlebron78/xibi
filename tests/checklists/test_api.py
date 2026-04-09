@@ -59,12 +59,9 @@ def temp_db(tmp_path: Path) -> str:
     conn.close()
     return str(db_path)
 
+
 def test_create_checklist_template(temp_db: str) -> None:
-    res = create_checklist_template(
-        temp_db,
-        name="Morning Routine",
-        items=[{"label": "Email"}, {"label": "Metrics"}]
-    )
+    res = create_checklist_template(temp_db, name="Morning Routine", items=[{"label": "Email"}, {"label": "Metrics"}])
     assert res["name"] == "Morning Routine"
     assert res["item_count"] == 2
 
@@ -75,10 +72,13 @@ def test_create_checklist_template(temp_db: str) -> None:
     assert count_items == 2
     conn.close()
 
+
 def test_update_checklist_item_position(temp_db: str) -> None:
     conn = sqlite3.connect(temp_db)
     conn.execute("INSERT INTO checklist_instances (id, template_id, status) VALUES ('inst1', 't1', 'open')")
-    conn.execute("INSERT INTO checklist_instance_items (id, instance_id, label, position) VALUES ('item1', 'inst1', 'Email', 0)")
+    conn.execute(
+        "INSERT INTO checklist_instance_items (id, instance_id, label, position) VALUES ('item1', 'inst1', 'Email', 0)"
+    )
     conn.commit()
     conn.close()
 
@@ -87,10 +87,13 @@ def test_update_checklist_item_position(temp_db: str) -> None:
     assert res["status"] == "done"
     assert res["instance_fully_closed"] is True
 
+
 def test_update_checklist_item_fuzzy(temp_db: str) -> None:
     conn = sqlite3.connect(temp_db)
     conn.execute("INSERT INTO checklist_instances (id, template_id, status) VALUES ('inst1', 't1', 'open')")
-    conn.execute("INSERT INTO checklist_instance_items (id, instance_id, label, position) VALUES ('item1', 'inst1', 'Check Email', 0)")
+    conn.execute(
+        "INSERT INTO checklist_instance_items (id, instance_id, label, position) VALUES ('item1', 'inst1', 'Check Email', 0)"
+    )
     conn.commit()
     conn.close()
 
@@ -98,11 +101,16 @@ def test_update_checklist_item_fuzzy(temp_db: str) -> None:
     assert res["item_label"] == "Check Email"
     assert res["status"] == "done"
 
+
 def test_list_checklists(temp_db: str) -> None:
     conn = sqlite3.connect(temp_db)
     conn.execute("INSERT INTO checklist_templates (id, name) VALUES ('t1', 'Daily')")
-    conn.execute("INSERT INTO checklist_instances (id, template_id, created_at, status) VALUES ('inst1', 't1', '2026-01-01', 'open')")
-    conn.execute("INSERT INTO checklist_instance_items (id, instance_id, label, position, completed_at) VALUES ('item1', 'inst1', 'Job1', 0, NULL)")
+    conn.execute(
+        "INSERT INTO checklist_instances (id, template_id, created_at, status) VALUES ('inst1', 't1', '2026-01-01', 'open')"
+    )
+    conn.execute(
+        "INSERT INTO checklist_instance_items (id, instance_id, label, position, completed_at) VALUES ('item1', 'inst1', 'Job1', 0, NULL)"
+    )
     conn.commit()
     conn.close()
 
@@ -111,11 +119,16 @@ def test_list_checklists(temp_db: str) -> None:
     assert res["instances"][0]["template_name"] == "Daily"
     assert res["instances"][0]["open_count"] == 1
 
+
 def test_get_checklist(temp_db: str) -> None:
     conn = sqlite3.connect(temp_db)
     conn.execute("INSERT INTO checklist_templates (id, name) VALUES ('t1', 'Daily')")
-    conn.execute("INSERT INTO checklist_instances (id, template_id, created_at, status) VALUES ('inst1', 't1', '2026-01-01', 'open')")
-    conn.execute("INSERT INTO checklist_instance_items (id, instance_id, label, position, completed_at) VALUES ('item1', 'inst1', 'Job1', 0, NULL)")
+    conn.execute(
+        "INSERT INTO checklist_instances (id, template_id, created_at, status) VALUES ('inst1', 't1', '2026-01-01', 'open')"
+    )
+    conn.execute(
+        "INSERT INTO checklist_instance_items (id, instance_id, label, position, completed_at) VALUES ('item1', 'inst1', 'Job1', 0, NULL)"
+    )
     conn.commit()
     conn.close()
 

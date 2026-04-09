@@ -16,6 +16,7 @@ def db_path(tmp_path):
     migrate(path)
     return path
 
+
 def test_kernel_tick_empty(db_path):
     executor = MagicMock()
     tg = MagicMock()
@@ -23,6 +24,7 @@ def test_kernel_tick_empty(db_path):
 
     res = kernel.tick()
     assert res.processed == 0
+
 
 def test_kernel_tick_one_due(db_path):
     executor = MagicMock()
@@ -38,7 +40,7 @@ def test_kernel_tick_one_due(db_path):
         trigger_config={"every_seconds": 60},
         action_type="tool_call",
         action_config={"tool": "list_emails"},
-        enabled=True
+        enabled=True,
     )
 
     # Manually backdate next_run_at to ensure it's due
@@ -64,6 +66,7 @@ def test_kernel_tick_one_due(db_path):
         assert run_row["status"] == "success"
         assert run_row["output_preview"] == "done"
 
+
 def test_kernel_backoff_and_autodisable(db_path):
     executor = MagicMock()
     # Mock execute to return error
@@ -77,7 +80,7 @@ def test_kernel_backoff_and_autodisable(db_path):
         trigger_type="interval",
         trigger_config={"every_seconds": 10},
         action_type="tool_call",
-        action_config={"tool": "fail_tool"}
+        action_config={"tool": "fail_tool"},
     )
 
     kernel = ScheduledActionKernel(db_path, executor, tg)
@@ -89,7 +92,9 @@ def test_kernel_backoff_and_autodisable(db_path):
         kernel.tick()
 
     with open_db(db_path) as conn:
-        row = conn.execute("SELECT consecutive_failures, next_run_at FROM scheduled_actions WHERE id = ?", (action_id,)).fetchone()
+        row = conn.execute(
+            "SELECT consecutive_failures, next_run_at FROM scheduled_actions WHERE id = ?", (action_id,)
+        ).fetchone()
         assert row[0] == 3
 
     # Run up to 10 times to trigger auto-disable
@@ -99,9 +104,12 @@ def test_kernel_backoff_and_autodisable(db_path):
         kernel.tick()
 
     with open_db(db_path) as conn:
-        row = conn.execute("SELECT enabled, consecutive_failures FROM scheduled_actions WHERE id = ?", (action_id,)).fetchone()
+        row = conn.execute(
+            "SELECT enabled, consecutive_failures FROM scheduled_actions WHERE id = ?", (action_id,)
+        ).fetchone()
         assert row[0] == 0
         assert row[1] == 10
+
 
 def test_timeout_mechanism():
     def slow_func():
@@ -118,6 +126,7 @@ def test_timeout_mechanism():
         pass
     duration = time.time() - start
     assert 1.0 <= duration < 1.5
+
 
 def test_kernel_tick_timeout(db_path):
     # We need a real handler that sleeps to test kernel timeout
@@ -151,7 +160,7 @@ def test_kernel_tick_timeout(db_path):
     res = kernel.tick()
     # On some systems, async exceptions might be delayed or caught differently.
     # But TimeoutError is what we raise.
-    assert res.timeout == 1 or res.error == 1 # If it was caught as a general exception
+    assert res.timeout == 1 or res.error == 1  # If it was caught as a general exception
 
     with open_db(db_path) as conn:
         row = conn.execute("SELECT last_status, last_error FROM scheduled_actions").fetchone()

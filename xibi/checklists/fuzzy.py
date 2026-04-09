@@ -12,9 +12,7 @@ def fuzzy_match_item(db_path: str, instance_id: str, label_hint: str) -> dict | 
     """
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
-        items = conn.execute(
-            "SELECT * FROM checklist_instance_items WHERE instance_id = ?", (instance_id,)
-        ).fetchall()
+        items = conn.execute("SELECT * FROM checklist_instance_items WHERE instance_id = ?", (instance_id,)).fetchall()
 
     if not items:
         return None

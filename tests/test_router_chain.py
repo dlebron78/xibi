@@ -1,5 +1,6 @@
 """Step-60 §3: Runtime fallback chain — ChainedModelClient walks the
 configured RoleConfig.fallback list on PROVIDER_DOWN/TIMEOUT/PARSE_FAILURE."""
+
 from __future__ import annotations
 
 import copy
@@ -88,7 +89,9 @@ def test_chain_does_not_walk_on_validation_error() -> None:
 def test_chain_exhausted_raises_enriched_error() -> None:
     fast = FakeBreakerWrapped("fast", lambda p: (_ for _ in ()).throw(_err(ErrorCategory.PROVIDER_DOWN, "fast-down")))
     think = FakeBreakerWrapped("think", lambda p: (_ for _ in ()).throw(_err(ErrorCategory.TIMEOUT, "think-slow")))
-    review = FakeBreakerWrapped("review", lambda p: (_ for _ in ()).throw(_err(ErrorCategory.PROVIDER_DOWN, "review-out")))
+    review = FakeBreakerWrapped(
+        "review", lambda p: (_ for _ in ()).throw(_err(ErrorCategory.PROVIDER_DOWN, "review-out"))
+    )
     chained = _make_chained(("fast", fast), ("think", think), ("review", review))
 
     with patch("xibi.router.time.sleep"):

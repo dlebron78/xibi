@@ -21,6 +21,7 @@ def db_path(tmp_path):
     migrate(path)
     return path
 
+
 def test_api_roundtrip(db_path):
     # Enable foreign keys
     with open_db(db_path) as conn:
@@ -32,7 +33,7 @@ def test_api_roundtrip(db_path):
         trigger_type="interval",
         trigger_config={"every_seconds": 100},
         action_type="internal_hook",
-        action_config={"hook": "test"}
+        action_config={"hook": "test"},
     )
 
     actions = list_actions(db_path)

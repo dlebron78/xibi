@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 from xibi.react import _run_async
 from xibi.types import Step
 
+
 @pytest.mark.asyncio
 async def test_model_uses_handle_when_present():
     mock_config = {"db_path": ":memory:", "models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}}}
@@ -27,7 +28,7 @@ async def test_model_uses_handle_when_present():
 
         assert "HANDLES — large tool outputs" in system_prompt
         assert "handle" in system_prompt
-        assert "write_file(filepath=\"jobs.md\", handle=\"h_a4f1\")" in system_prompt
+        assert 'write_file(filepath="jobs.md", handle="h_a4f1")' in system_prompt
 
     # Test #15 behavior: feed it a scratchpad with a handle and see if it uses it.
     # We'll mock the LLM to return a write_file call.
@@ -38,7 +39,7 @@ async def test_model_uses_handle_when_present():
         "handle": "h_a4f1",
         "schema": "list[dict] (25 items)",
         "summary": "Jobs summary",
-        "item_count": 25
+        "item_count": 25,
     }
 
     # We'll use a side effect to check the prompt and then return the desired action.
@@ -52,7 +53,7 @@ async def test_model_uses_handle_when_present():
     # Construct a state where there's already a handle in the scratchpad.
     # We can't easily pass a scratchpad to _run_async, but we can mock a tool call that returns it.
 
-    mock_executor.execute.return_value = {"data": [1]*30} # triggers handle wrap
+    mock_executor.execute.return_value = {"data": [1] * 30}  # triggers handle wrap
 
     # Query 1: get jobs (returns handle)
     # Query 2: save those (should use handle)

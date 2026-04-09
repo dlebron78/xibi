@@ -10,6 +10,7 @@ from xibi.scheduling.handlers import register_internal_hook
 
 logger = logging.getLogger(__name__)
 
+
 def initialize_checklists(db_path: Path) -> None:
     """Register handlers and periodic actions."""
     register_internal_hook("checklist_warning_24h", _handle_warning_24h)
@@ -20,6 +21,7 @@ def initialize_checklists(db_path: Path) -> None:
 
     # Register periodic rollover timeout cleanup (idempotent)
     from xibi.scheduling.api import list_actions
+
     existing = list_actions(db_path)
     if not any(a["name"] == "Checklist rollover timeout cleanup" for a in existing):
         register_action(

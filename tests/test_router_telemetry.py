@@ -1,4 +1,5 @@
 """Step-60 §1: Tracing gap fix — provider telemetry must fire on failure."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -50,9 +51,11 @@ def test_failure_emits_span_with_error_status(db: Path, trace_ctx: Tracer) -> No
         assert excinfo.value.category == ErrorCategory.PROVIDER_DOWN
 
     with open_db(db) as conn:
-        rows = list(conn.execute(
-            "SELECT status, attributes FROM spans WHERE trace_id = 't-test' AND operation = 'llm.generate'"
-        ))
+        rows = list(
+            conn.execute(
+                "SELECT status, attributes FROM spans WHERE trace_id = 't-test' AND operation = 'llm.generate'"
+            )
+        )
     assert len(rows) == 1
     status, attrs = rows[0]
     assert status == "error"
@@ -70,9 +73,7 @@ def test_failure_records_inference_event_with_degraded_flag(db: Path, trace_ctx:
             client.generate("hello", system=None)
 
     with open_db(db) as conn:
-        rows = list(conn.execute(
-            "SELECT degraded FROM inference_events WHERE trace_id = 't-test'"
-        ))
+        rows = list(conn.execute("SELECT degraded FROM inference_events WHERE trace_id = 't-test'"))
     assert len(rows) == 1
     assert rows[0][0] == 1
 
@@ -90,12 +91,12 @@ def test_success_path_unchanged(db: Path, trace_ctx: Tracer) -> None:
     assert out == "hi"
 
     with open_db(db) as conn:
-        spans = list(conn.execute(
-            "SELECT status, attributes FROM spans WHERE trace_id = 't-test' AND operation = 'llm.generate'"
-        ))
-        events = list(conn.execute(
-            "SELECT degraded FROM inference_events WHERE trace_id = 't-test'"
-        ))
+        spans = list(
+            conn.execute(
+                "SELECT status, attributes FROM spans WHERE trace_id = 't-test' AND operation = 'llm.generate'"
+            )
+        )
+        events = list(conn.execute("SELECT degraded FROM inference_events WHERE trace_id = 't-test'"))
     assert len(spans) == 1
     assert spans[0][0] == "ok"
     assert "error.category" not in spans[0][1]

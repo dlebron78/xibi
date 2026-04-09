@@ -24,12 +24,17 @@ def temp_db(tmp_path: Path) -> str:
     conn.close()
     return str(db_path)
 
+
 def test_fuzzy_match_token_overlap(temp_db: str) -> None:
     conn = sqlite3.connect(temp_db)
-    conn.execute("INSERT INTO checklist_instance_items (id, instance_id, label, position) VALUES (?, ?, ?, ?)",
-                 ("1", "inst1", "Check email", 0))
-    conn.execute("INSERT INTO checklist_instance_items (id, instance_id, label, position) VALUES (?, ?, ?, ?)",
-                 ("2", "inst1", "Review metrics", 1))
+    conn.execute(
+        "INSERT INTO checklist_instance_items (id, instance_id, label, position) VALUES (?, ?, ?, ?)",
+        ("1", "inst1", "Check email", 0),
+    )
+    conn.execute(
+        "INSERT INTO checklist_instance_items (id, instance_id, label, position) VALUES (?, ?, ?, ?)",
+        ("2", "inst1", "Review metrics", 1),
+    )
     conn.commit()
     conn.close()
 
@@ -42,10 +47,13 @@ def test_fuzzy_match_token_overlap(temp_db: str) -> None:
     assert match is not None
     assert match["label"] == "Review metrics"
 
+
 def test_fuzzy_match_substring_bonus(temp_db: str) -> None:
     conn = sqlite3.connect(temp_db)
-    conn.execute("INSERT INTO checklist_instance_items (id, instance_id, label, position) VALUES (?, ?, ?, ?)",
-                 ("1", "inst1", "Check email inbox", 0))
+    conn.execute(
+        "INSERT INTO checklist_instance_items (id, instance_id, label, position) VALUES (?, ?, ?, ?)",
+        ("1", "inst1", "Check email inbox", 0),
+    )
     conn.commit()
     conn.close()
 
@@ -53,12 +61,17 @@ def test_fuzzy_match_substring_bonus(temp_db: str) -> None:
     assert match is not None
     assert match["label"] == "Check email inbox"
 
+
 def test_fuzzy_match_ambiguous(temp_db: str) -> None:
     conn = sqlite3.connect(temp_db)
-    conn.execute("INSERT INTO checklist_instance_items (id, instance_id, label, position) VALUES (?, ?, ?, ?)",
-                 ("1", "inst1", "Check email", 0))
-    conn.execute("INSERT INTO checklist_instance_items (id, instance_id, label, position) VALUES (?, ?, ?, ?)",
-                 ("2", "inst1", "Check blockers", 1))
+    conn.execute(
+        "INSERT INTO checklist_instance_items (id, instance_id, label, position) VALUES (?, ?, ?, ?)",
+        ("1", "inst1", "Check email", 0),
+    )
+    conn.execute(
+        "INSERT INTO checklist_instance_items (id, instance_id, label, position) VALUES (?, ?, ?, ?)",
+        ("2", "inst1", "Check blockers", 1),
+    )
     conn.commit()
     conn.close()
 
@@ -66,10 +79,13 @@ def test_fuzzy_match_ambiguous(temp_db: str) -> None:
     match = fuzzy_match_item(temp_db, "inst1", "check")
     assert match is None
 
+
 def test_fuzzy_match_stopword_handling(temp_db: str) -> None:
     conn = sqlite3.connect(temp_db)
-    conn.execute("INSERT INTO checklist_instance_items (id, instance_id, label, position) VALUES (?, ?, ?, ?)",
-                 ("1", "inst1", "The Morning Routine", 0))
+    conn.execute(
+        "INSERT INTO checklist_instance_items (id, instance_id, label, position) VALUES (?, ?, ?, ?)",
+        ("1", "inst1", "The Morning Routine", 0),
+    )
     conn.commit()
     conn.close()
 
@@ -78,4 +94,4 @@ def test_fuzzy_match_stopword_handling(temp_db: str) -> None:
     assert match["label"] == "The Morning Routine"
 
     match = fuzzy_match_item(temp_db, "inst1", "the")
-    assert match is None # "the" is a stopword and should be filtered out
+    assert match is None  # "the" is a stopword and should be filtered out

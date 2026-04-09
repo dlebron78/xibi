@@ -392,13 +392,16 @@ class TelegramAdapter:
             # Checklist commands
             if user_text.strip().startswith("/checklists"):
                 from xibi.checklists.api import list_checklists
+
                 res = list_checklists(str(self.db_path))
                 if not res["instances"]:
                     self.send_message(chat_id, "No open checklists.")
                 else:
                     lines = ["Open Checklists:"]
                     for inst in res["instances"]:
-                        lines.append(f"- {inst['template_name']} ({inst['completed_count']}/{inst['item_count']}) `[task:{inst['instance_id']}]`")
+                        lines.append(
+                            f"- {inst['template_name']} ({inst['completed_count']}/{inst['item_count']}) `[task:{inst['instance_id']}]`"
+                        )
                     self.send_message(chat_id, "\n".join(lines))
                 # Do not use return here, it will cause the poll loop to exit
                 # Instead, set response = True to skip further processing
@@ -411,6 +414,7 @@ class TelegramAdapter:
                 else:
                     instance_id = parts[1]
                     from xibi.checklists.api import get_checklist
+
                     try:
                         res = get_checklist(str(self.db_path), instance_id)
                         lines = [f"Checklist: {res['template_name']}", f"Status: {res['status']}", ""]
@@ -432,6 +436,7 @@ class TelegramAdapter:
                         position = int(cmd[2])
                         status = "done" if cmd[0] == "/check" else "undone"
                         from xibi.checklists.api import update_checklist_item
+
                         res = update_checklist_item(str(self.db_path), instance_id, position=position, status=status)
                         self.send_message(chat_id, f"Updated '{res['item_label']}' to {res['status']}.")
                     except (ValueError, IndexError) as e:

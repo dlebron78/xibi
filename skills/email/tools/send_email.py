@@ -102,24 +102,19 @@ def _track_outbound(to: str, db_path: str):
             with open_db(Path(db_path)) as conn, conn:
                 conn.execute(
                     "UPDATE contacts SET outbound_count = outbound_count + 1, user_endorsed = 1 WHERE id = ?",
-                    (contact_id,)
+                    (contact_id,),
                 )
         except Exception:
             pass
     else:
         contact_id = create_contact(
-            display_name=to,
-            email=to,
-            discovered_via='email_outbound',
-            relationship='unknown',
-            db_path=db_path
+            display_name=to, email=to, discovered_via="email_outbound", relationship="unknown", db_path=db_path
         )
         if contact_id:
             try:
                 with open_db(Path(db_path)) as conn, conn:
                     conn.execute(
-                        "UPDATE contacts SET outbound_count = 1, user_endorsed = 1 WHERE id = ?",
-                        (contact_id,)
+                        "UPDATE contacts SET outbound_count = 1, user_endorsed = 1 WHERE id = ?", (contact_id,)
                     )
             except Exception:
                 pass

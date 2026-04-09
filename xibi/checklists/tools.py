@@ -9,12 +9,14 @@ def list_checklists(params: dict[str, Any]) -> dict[str, Any]:
     db_path = params.get("_db_path")
     return api.list_checklists(str(db_path))
 
+
 def get_checklist(params: dict[str, Any]) -> dict[str, Any]:
     db_path = params.get("_db_path")
     instance_id = params.get("instance_id")
     if not instance_id:
         return {"status": "error", "error": "instance_id is required"}
     return api.get_checklist(str(db_path), instance_id)
+
 
 def update_checklist_item(params: dict[str, Any]) -> dict[str, Any]:
     db_path = params.get("_db_path")
@@ -32,6 +34,7 @@ def update_checklist_item(params: dict[str, Any]) -> dict[str, Any]:
         )
     except ValueError as e:
         return {"status": "error", "error": str(e)}
+
 
 def create_checklist_template(params: dict[str, Any]) -> dict[str, Any]:
     db_path = params.get("_db_path")
