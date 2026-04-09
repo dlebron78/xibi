@@ -100,24 +100,24 @@ the implementer tier.
    mechanism, ContextVar lifecycle across asyncio boundaries,
    idempotency semantics, concurrent-access protection.
 
-3. **Deployment testability.** After this spec is implemented and
-   deployed, can the user actually exercise the new capability?
-   Three questions:
+3. **Deployment testability.** Verify that the spec's User Journey
+   section (required in every spec, see template) is complete and
+   that the technical design actually delivers it. Three questions:
    - **Surface check.** Is there a user-facing path to reach this
      feature? If this is backend machinery (a kernel, a store, a
      migration), does an existing tool/skill/UI expose it — or does
      the spec need to include one? An engine without a steering
-     wheel is not testable.
+     wheel is not shippable.
    - **Data check.** Does the feature require seed data, config
      changes, migration runs, or service restarts to become active
      after deploy? If so, are those steps documented in the spec's
      deployment section, or is there a risk the feature lands
      silently?
-   - **Verification check.** How does the user (or an operator)
-     confirm the feature is working? What does success look like in
-     Telegram, the dashboard, or the logs? If there is no observable
-     output, the feature is untestable and the spec should specify
-     one (even if it's just a log line or a status command).
+   - **Verification check.** Does the spec's User Journey §4
+     (Verification) describe a concrete way to confirm the feature
+     is working? What does success look like in Telegram, the
+     dashboard, or the logs? If there is no observable output, the
+     feature is untestable and the spec should specify one.
 
    If any answer is "no" or "not yet," the TRR must either add the
    missing piece to this spec, split it into a companion spec that

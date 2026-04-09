@@ -7,6 +7,27 @@
 ## Objective
 [One paragraph: what this step delivers and why it matters]
 
+## User Journey
+<!-- Required. Describe the end-to-end flow from the user's perspective BEFORE
+     getting into technical design. This section shapes the architecture, not
+     the other way around. If this is backend machinery, you must still answer:
+     how does the user reach it, and how do they know it's working? -->
+
+1. **Trigger:** [How does the user initiate this? e.g. "User says 'remind me
+   in 15 minutes' in Telegram"]
+2. **Interaction:** [What happens next? e.g. "Agent confirms the reminder was
+   set and shows when it will fire"]
+3. **Outcome:** [What does success look like to the user? e.g. "15 minutes
+   later, user receives a Telegram message with the reminder text"]
+4. **Verification:** [How does the user or operator confirm it's working?
+   e.g. "Dashboard shows the action in the scheduled actions list with
+   next_run_at; logs show the kernel tick that fired it"]
+
+<!-- If this spec builds infrastructure with no direct user surface, state
+     which existing or planned spec provides the surface, and whether that
+     spec ships in the same batch or is a dependency. An engine without a
+     steering wheel is not shippable. -->
+
 ## Files to Create/Modify
 - `xibi/[file].py` — [what it does]
 - `tests/test_[file].py` — [what it tests]
