@@ -30,6 +30,7 @@ _JulesWatcher = None
 # Timeout constants for async_tick phases
 _PHASE0_TIMEOUT_SECS = 90  # source polling (MCP + email + JobSpy)
 _PHASE1_TIMEOUT_SECS = 10  # DB read (tasks, seen_ids, triage_rules)
+_PHASE15_TIMEOUT_SECS = 60  # scheduled actions
 _PHASE2_TIMEOUT_SECS = 60  # signal extraction + classification loop
 _PHASE3_TIMEOUT_SECS = 180  # signal_intelligence + observation + Jules + Radiant
 
@@ -90,6 +91,21 @@ class HeartbeatPoller:
             mcp_registry=_mcp_exec.registry if _mcp_exec is not None else None,
         )
         self.sheets_exporter = SheetsExporter(self.config.get("sheets_export", {}))
+
+        from xibi.scheduling import ScheduledActionKernel
+        from xibi.tracing import Tracer
+
+        self.tracer = Tracer(self.db_path) if self.db_path else None
+        self.scheduler_kernel: ScheduledActionKernel | None
+        if self.executor is not None:
+            self.scheduler_kernel = ScheduledActionKernel(
+                db_path=self.db_path,
+                executor=self.executor,
+                trust_gradient=self.trust_gradient,
+                tracer=self.tracer,
+            )
+        else:
+            self.scheduler_kernel = None
 
     def _init_jules_watcher(self) -> Any | None:
         """Set up JulesWatcher if JULES_API_KEY is configured."""
@@ -290,6 +306,18 @@ class HeartbeatPoller:
 
         for task in due_tasks:
             self._broadcast(f"⏰ Task reminder: {task['goal']} (ID: {task['id']})")
+
+        # Phase 1.5: Scheduled actions
+        try:
+            # kernel.tick is sync; it uses internal per-action timeouts to
+            # stay under the Phase 1.5 budget. getattr is used so test fixtures
+            # that bypass __init__ (HeartbeatPoller.__new__) can run without
+            # needing to set scheduler_kernel.
+            kernel = getattr(self, "scheduler_kernel", None)
+            if kernel is not None:
+                kernel.tick()
+        except Exception as e:
+            logger.warning("Phase 1.5 error (Scheduler kernel): %s", e, exc_info=True)
 
         # Phase 2: Signal Extraction and Classification
         phase2_deadline = time.monotonic() + _PHASE2_TIMEOUT_SECS

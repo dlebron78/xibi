@@ -1,12 +1,12 @@
 import os
 
 
-def run(params):
+def run(params: dict) -> dict:
     """Append content to a file."""
     filepath = params.get("filepath")
     content = params.get("content")
 
-    workdir = params.get("_workdir") or os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.bregger"))
+    workdir = params.get("_workdir") or os.environ.get("XIBI_WORKDIR", os.path.expanduser("~/.xibi"))
 
     if not filepath or content is None:
         return {"status": "error", "message": "Missing filepath or content."}

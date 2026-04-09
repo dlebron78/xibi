@@ -164,6 +164,38 @@ class Tracer:
             indent=2,
         )
 
+    def span(
+        self,
+        operation: str,
+        attributes: dict[str, Any],
+        status: str = "ok",
+        duration_ms: int = 0,
+        trace_id: str | None = None,
+        parent_span_id: str | None = None,
+        component: str = "system",
+        start_ms: int | None = None,
+    ) -> None:
+        """Shorthand to emit a span. Useful for kernel/background tasks."""
+        import time
+
+        t_id = trace_id or self.new_trace_id()
+        s_id = self.new_span_id()
+        if start_ms is None:
+            start_ms = int(time.time() * 1000) - duration_ms
+        self.emit(
+            Span(
+                trace_id=t_id,
+                span_id=s_id,
+                parent_span_id=parent_span_id,
+                operation=operation,
+                component=component,
+                start_ms=start_ms,
+                duration_ms=duration_ms,
+                status=status,
+                attributes=attributes,
+            )
+        )
+
     def recent_traces(self, limit: int = 50) -> list[dict[str, Any]]:
         """Summary of recent trace root spans (react.run operations), newest first."""
         try:

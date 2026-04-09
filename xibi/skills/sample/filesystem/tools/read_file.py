@@ -1,11 +1,11 @@
 import os
 
 
-def run(params):
+def run(params: dict) -> dict:
     """Read specific file content."""
     filepath = params.get("filepath")
 
-    workdir = params.get("_workdir") or os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.bregger"))
+    workdir = params.get("_workdir") or os.environ.get("XIBI_WORKDIR", os.path.expanduser("~/.xibi"))
 
     if not filepath:
         return {"status": "error", "message": "Missing filepath."}
@@ -15,7 +15,7 @@ def run(params):
         # Deterministic search priority
         search_paths = []
 
-        # 1. workdir (~/.bregger or env)
+        # 1. workdir (~/.xibi or env)
         search_paths.append(workdir)
 
         # 2. workspace_path belief (if provided by core)
@@ -24,8 +24,14 @@ def run(params):
             search_paths.append(os.path.expanduser(workspace))
 
         # 3. Common deployment fallback (via environment variables)
-        data_dir = os.environ.get("XIBI_DATA_DIR", os.path.join(os.path.expanduser("~"), "bregger_remote"))
-        deploy_dir = os.environ.get("XIBI_DEPLOY_DIR", os.path.join(os.path.expanduser("~"), "bregger_deployment"))
+        data_dir = os.environ.get(
+            "XIBI_DATA_DIR",
+            os.path.join(os.path.expanduser("~"), "xibi_remote"),
+        )
+        deploy_dir = os.environ.get(
+            "XIBI_DEPLOY_DIR",
+            os.path.join(os.path.expanduser("~"), "xibi_deployment"),
+        )
         search_paths.append(data_dir)
         search_paths.append(deploy_dir)
 
@@ -42,7 +48,7 @@ def run(params):
         return {"status": "error", "message": f"File not found: {filepath}"}
 
     try:
-        with open(filepath, "r") as f:
+        with open(filepath) as f:
             content = f.read()
         return {"status": "success", "content": content}
     except Exception as e:

@@ -7,7 +7,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 20  # increment when adding new migrations
+SCHEMA_VERSION = 21  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -51,6 +51,7 @@ class SchemaManager:
             (18, "contacts extensions + contact_channels table", self._migration_18),
             (19, "manager review: thread priority + review tracking", self._migration_19),
             (20, "belief_summaries table for session compression", self._migration_20),
+            (21, "universal action scheduler tables", self._migration_21),
         ]
 
         for version, description, func in migrations:
@@ -514,6 +515,51 @@ class SchemaManager:
                     FOREIGN KEY(session_id) REFERENCES sessions(id)
                 );
                 CREATE INDEX IF NOT EXISTS idx_belief_summaries_session ON belief_summaries(session_id);
+            """)
+
+    def _migration_21(self, conn: sqlite3.Connection) -> None:
+        sql_path = Path(__file__).parent / "migrations" / "0021_scheduled_actions.sql"
+        if sql_path.exists():
+            conn.executescript(sql_path.read_text())
+        else:
+            # Fallback if file missing
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS scheduled_actions (
+                    id              TEXT PRIMARY KEY,
+                    name            TEXT NOT NULL,
+                    trigger_type    TEXT NOT NULL,
+                    trigger_config  TEXT NOT NULL,
+                    action_type     TEXT NOT NULL,
+                    action_config   TEXT NOT NULL,
+                    enabled         INTEGER NOT NULL DEFAULT 1,
+                    active_from     DATETIME,
+                    active_until    DATETIME,
+                    last_run_at     DATETIME,
+                    next_run_at     DATETIME NOT NULL,
+                    last_status     TEXT,
+                    last_error      TEXT,
+                    run_count       INTEGER NOT NULL DEFAULT 0,
+                    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                    created_by      TEXT NOT NULL,
+                    created_via     TEXT,
+                    trust_tier      TEXT NOT NULL DEFAULT 'green',
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_scheduled_actions_due ON scheduled_actions(enabled, next_run_at);
+                CREATE TABLE IF NOT EXISTS scheduled_action_runs (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    action_id       TEXT NOT NULL,
+                    started_at      DATETIME NOT NULL,
+                    finished_at     DATETIME,
+                    status          TEXT NOT NULL,
+                    duration_ms     INTEGER,
+                    output_preview  TEXT,
+                    error           TEXT,
+                    trace_id        TEXT,
+                    FOREIGN KEY (action_id) REFERENCES scheduled_actions(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_scheduled_action_runs_action ON scheduled_action_runs(action_id, started_at DESC);
             """)
 
 

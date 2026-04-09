@@ -1,15 +1,14 @@
+import json
 import os
 
 
-import json
-
-def run(params):
+def run(params: dict) -> dict:
     """Create or overwrite a file."""
     filepath = params.get("filepath")
     content = params.get("content")
-    handle_payload = params.get("handle") # Resolved payload from react.py
+    handle_payload = params.get("handle")  # Resolved payload from react.py
 
-    workdir = params.get("_workdir") or os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.bregger"))
+    workdir = params.get("_workdir") or os.environ.get("XIBI_WORKDIR", os.path.expanduser("~/.xibi"))
 
     if not filepath:
         return {"status": "error", "message": "Missing filepath."}
@@ -29,6 +28,9 @@ def run(params):
     if not os.path.isabs(filepath):
         filepath = os.path.join(workdir, filepath)
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
+
+    if content is None:
+        return {"status": "error", "message": "Content is empty after handle resolution."}
 
     try:
         with open(filepath, "w") as f:

@@ -3,12 +3,12 @@ from pathlib import Path
 
 
 def run(params: dict) -> dict:
-    """List files in the Bregger workspace directory.
+    """List files in the Xibi workspace directory.
 
     Returns a newline-separated list of filenames — the LLM can use this
     to identify the correct filename before calling read_file.
     """
-    workdir = params.get("_workdir") or os.environ.get("BREGGER_WORKDIR")
+    workdir = params.get("_workdir") or os.environ.get("XIBI_WORKDIR")
     if not workdir:
         return {"status": "error", "message": "No workspace path configured."}
 
