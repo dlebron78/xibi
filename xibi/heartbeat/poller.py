@@ -308,13 +308,16 @@ class HeartbeatPoller:
             self._broadcast(f"⏰ Task reminder: {task['goal']} (ID: {task['id']})")
 
         # Phase 1.5: Scheduled actions
-        if self.scheduler_kernel is not None:
-            try:
-                # kernel.tick is sync; it uses internal per-action timeouts to
-                # stay under the Phase 1.5 budget.
-                self.scheduler_kernel.tick()
-            except Exception as e:
-                logger.warning("Phase 1.5 error (Scheduler kernel): %s", e, exc_info=True)
+        try:
+            # kernel.tick is sync; it uses internal per-action timeouts to
+            # stay under the Phase 1.5 budget. getattr is used so test fixtures
+            # that bypass __init__ (HeartbeatPoller.__new__) can run without
+            # needing to set scheduler_kernel.
+            kernel = getattr(self, "scheduler_kernel", None)
+            if kernel is not None:
+                kernel.tick()
+        except Exception as e:
+            logger.warning("Phase 1.5 error (Scheduler kernel): %s", e, exc_info=True)
 
         # Phase 2: Signal Extraction and Classification
         phase2_deadline = time.monotonic() + _PHASE2_TIMEOUT_SECS
