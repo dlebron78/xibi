@@ -7,11 +7,14 @@ TriggerCalculator = Callable[[dict, datetime], datetime]
 
 _REGISTRY: dict[str, TriggerCalculator] = {}
 
+
 def register_trigger(name: str) -> Callable[[TriggerCalculator], TriggerCalculator]:
     def deco(fn: TriggerCalculator) -> TriggerCalculator:
         _REGISTRY[name] = fn
         return fn
+
     return deco
+
 
 def compute_next_run(trigger_type: str, config: dict, after: datetime) -> datetime:
     fn = _REGISTRY.get(trigger_type)
@@ -19,11 +22,13 @@ def compute_next_run(trigger_type: str, config: dict, after: datetime) -> dateti
         raise ValueError(f"Unknown trigger type: {trigger_type}")
     return fn(config, after)
 
+
 @register_trigger("interval")
 def _interval(config: dict, after: datetime) -> datetime:
     every_seconds = config.get("every_seconds", 86400)
     # Jitter is ignored for now per spec (Step 59 basic implementation)
     return after + timedelta(seconds=every_seconds)
+
 
 @register_trigger("oneshot")
 def _oneshot(config: dict, after: datetime) -> datetime:
@@ -47,8 +52,7 @@ def _oneshot(config: dict, after: datetime) -> datetime:
 
     return datetime.max
 
+
 @register_trigger("cron")
 def _cron(config: dict, after: datetime) -> datetime:
-    raise NotImplementedError(
-        "cron triggers ship in a follow-up spec. Use 'interval' for now."
-    )
+    raise NotImplementedError("cron triggers ship in a follow-up spec. Use 'interval' for now.")

@@ -13,6 +13,7 @@ from xibi.scheduling.triggers import compute_next_run
 if TYPE_CHECKING:
     from xibi.executor import Executor
 
+
 def register_action(
     *,
     db_path: Path,
@@ -37,41 +38,52 @@ def register_action(
     next_run_at = compute_next_run(trigger_type, trigger_config, now)
 
     with open_db(db_path) as conn, conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO scheduled_actions (
                 id, name, trigger_type, trigger_config, action_type, action_config,
                 enabled, active_from, active_until, next_run_at,
                 created_by, created_via, trust_tier
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            action_id,
-            name,
-            trigger_type,
-            json.dumps(trigger_config),
-            action_type,
-            json.dumps(action_config),
-            1 if enabled else 0,
-            active_from.strftime("%Y-%m-%d %H:%M:%S") if active_from else None,
-            active_until.strftime("%Y-%m-%d %H:%M:%S") if active_until else None,
-            next_run_at.strftime("%Y-%m-%d %H:%M:%S"),
-            created_by,
-            created_via,
-            trust_tier
-        ))
+        """,
+            (
+                action_id,
+                name,
+                trigger_type,
+                json.dumps(trigger_config),
+                action_type,
+                json.dumps(action_config),
+                1 if enabled else 0,
+                active_from.strftime("%Y-%m-%d %H:%M:%S") if active_from else None,
+                active_until.strftime("%Y-%m-%d %H:%M:%S") if active_until else None,
+                next_run_at.strftime("%Y-%m-%d %H:%M:%S"),
+                created_by,
+                created_via,
+                trust_tier,
+            ),
+        )
 
     return action_id
 
+
 def disable_action(db_path: Path, action_id: str) -> None:
     with open_db(db_path) as conn, conn:
-        conn.execute("UPDATE scheduled_actions SET enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (action_id,))
+        conn.execute(
+            "UPDATE scheduled_actions SET enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (action_id,)
+        )
+
 
 def enable_action(db_path: Path, action_id: str) -> None:
     with open_db(db_path) as conn, conn:
-        conn.execute("UPDATE scheduled_actions SET enabled = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (action_id,))
+        conn.execute(
+            "UPDATE scheduled_actions SET enabled = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (action_id,)
+        )
+
 
 def delete_action(db_path: Path, action_id: str) -> None:
     with open_db(db_path) as conn, conn:
         conn.execute("DELETE FROM scheduled_actions WHERE id = ?", (action_id,))
+
 
 def list_actions(
     db_path: Path,
@@ -79,15 +91,14 @@ def list_actions(
     enabled_only: bool = False,
 ) -> list[dict]:
     with open_db(db_path) as conn:
-        conn.row_factory = lambda cursor, row: dict(
-            zip([col[0] for col in cursor.description], row, strict=False)
-        )
+        conn.row_factory = lambda cursor, row: dict(zip([col[0] for col in cursor.description], row, strict=False))
         query = "SELECT * FROM scheduled_actions"
         params: list = []
         if enabled_only:
             query += " WHERE enabled = 1"
         query += " ORDER BY created_at DESC"
         return conn.execute(query, params).fetchall()
+
 
 def fire_now(
     db_path: Path,
@@ -117,8 +128,9 @@ def fire_now(
         "processed": res.processed,
         "success": res.success,
         "error": res.error,
-        "status": "success" if res.success else "error"
+        "status": "success" if res.success else "error",
     }
+
 
 def get_run_history(
     db_path: Path,
@@ -126,12 +138,13 @@ def get_run_history(
     limit: int = 20,
 ) -> list[dict]:
     with open_db(db_path) as conn:
-        conn.row_factory = lambda cursor, row: dict(
-            zip([col[0] for col in cursor.description], row, strict=False)
-        )
-        return conn.execute("""
+        conn.row_factory = lambda cursor, row: dict(zip([col[0] for col in cursor.description], row, strict=False))
+        return conn.execute(
+            """
             SELECT * FROM scheduled_action_runs
             WHERE action_id = ?
             ORDER BY started_at DESC
             LIMIT ?
-        """, (action_id, limit)).fetchall()
+        """,
+            (action_id, limit),
+        ).fetchall()

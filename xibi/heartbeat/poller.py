@@ -94,6 +94,7 @@ class HeartbeatPoller:
 
         from xibi.scheduling import ScheduledActionKernel
         from xibi.tracing import Tracer
+
         self.tracer = Tracer(self.db_path) if self.db_path else None
         self.scheduler_kernel: ScheduledActionKernel | None
         if self.executor is not None:
@@ -313,9 +314,7 @@ class HeartbeatPoller:
                 # stay under the Phase 1.5 budget.
                 self.scheduler_kernel.tick()
             except Exception as e:
-                logger.warning(
-                    "Phase 1.5 error (Scheduler kernel): %s", e, exc_info=True
-                )
+                logger.warning("Phase 1.5 error (Scheduler kernel): %s", e, exc_info=True)
 
         # Phase 2: Signal Extraction and Classification
         phase2_deadline = time.monotonic() + _PHASE2_TIMEOUT_SECS

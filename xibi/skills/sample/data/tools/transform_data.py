@@ -44,6 +44,8 @@ def run(params: dict) -> Any:
     try:
         for op_spec in operations:
             op = op_spec.get("op")
+            if not isinstance(op, str):
+                return {"status": "error", "message": "Missing or non-string 'op' in operation spec"}
             args = op_spec.get("args") or {}
             data = _apply_op(data, op, args)
     except Exception as e:

@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class KernelTickResult:
     processed: int = 0
@@ -33,6 +34,7 @@ class KernelTickResult:
     skipped: int = 0
     timeout: int = 0
     duration_ms: int = 0
+
 
 class Timeout:
     def __init__(self, seconds: int) -> None:
@@ -55,12 +57,11 @@ class Timeout:
         self._timer.start()
         return self
 
-    def __exit__(
-        self, exc_type: object, exc_val: object, exc_tb: object
-    ) -> None:
+    def __exit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
         if self._timer:
             self._timer.cancel()
         # We never suppress exceptions; TimeoutError propagates naturally.
+
 
 class ScheduledActionKernel:
     def __init__(
@@ -95,7 +96,8 @@ class ScheduledActionKernel:
         try:
             with open_db(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
-                rows = conn.execute("""
+                rows = conn.execute(
+                    """
                     SELECT * FROM scheduled_actions
                     WHERE enabled = 1
                       AND next_run_at <= ?
@@ -103,7 +105,9 @@ class ScheduledActionKernel:
                       AND (active_until IS NULL OR active_until > ?)
                     ORDER BY next_run_at ASC
                     LIMIT ?
-                """, (now_str, now_str, now_str, self.max_per_tick)).fetchall()
+                """,
+                    (now_str, now_str, now_str, self.max_per_tick),
+                ).fetchall()
         except Exception as e:
             logger.error("Kernel tick SELECT failed: %s", e)
             return result
@@ -132,10 +136,13 @@ class ScheduledActionKernel:
         run_id = None
         try:
             with open_db(self.db_path) as conn, conn:
-                cursor = conn.execute("""
+                cursor = conn.execute(
+                    """
                     INSERT INTO scheduled_action_runs (action_id, started_at, status, trace_id)
                     VALUES (?, ?, 'running', ?)
-                """, (action_id, started_at_str, trace_id))
+                """,
+                    (action_id, started_at_str, trace_id),
+                )
                 run_id = cursor.lastrowid
         except Exception as e:
             logger.error("Failed to insert run row for action %s: %s", action_id, e)
@@ -172,7 +179,7 @@ class ScheduledActionKernel:
                     trust_tier=trust_tier,
                     executor=self.executor,
                     db_path=self.db_path,
-                    trace_id=trace_id
+                    trace_id=trace_id,
                 )
 
                 try:
@@ -218,7 +225,7 @@ class ScheduledActionKernel:
                 logger.critical("Scheduled action '%s' (%s) auto-disabled after 10 failures.", name, action_id)
             elif consecutive_failures >= 3:
                 # push next_run_at out by min(2^failures, 24h)
-                backoff_seconds = min(2 ** consecutive_failures, 86400)
+                backoff_seconds = min(2**consecutive_failures, 86400)
                 next_run_at = started_at + timedelta(seconds=backoff_seconds)
                 logger.warning("Scheduled action '%s' (%s) backing off for %ds.", name, action_id, backoff_seconds)
         else:
@@ -231,19 +238,25 @@ class ScheduledActionKernel:
 
         try:
             with open_db(self.db_path) as conn, conn:
-                conn.execute("""
+                conn.execute(
+                    """
                     UPDATE scheduled_action_runs
                     SET status = ?, finished_at = ?, duration_ms = ?, output_preview = ?, error = ?
                     WHERE id = ?
-                """, (status, finished_at.strftime("%Y-%m-%d %H:%M:%S"), duration_ms, output_preview, error_msg, run_id))
+                """,
+                    (status, finished_at.strftime("%Y-%m-%d %H:%M:%S"), duration_ms, output_preview, error_msg, run_id),
+                )
 
-                conn.execute("""
+                conn.execute(
+                    """
                     UPDATE scheduled_actions
                     SET last_run_at = ?, last_status = ?, last_error = ?,
                         run_count = run_count + 1, consecutive_failures = ?,
                         next_run_at = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE id = ?
-                """, (started_at_str, status, error_msg, consecutive_failures, next_run_at_str, enabled, action_id))
+                """,
+                    (started_at_str, status, error_msg, consecutive_failures, next_run_at_str, enabled, action_id),
+                )
         except Exception as e:
             logger.error("Failed to update action/run state for %s: %s", action_id, e)
 
@@ -261,5 +274,5 @@ class ScheduledActionKernel:
                 duration_ms=duration_ms,
                 trace_id=trace_id,
                 component="scheduling",
-                start_ms=int(started_at.timestamp() * 1000)
+                start_ms=int(started_at.timestamp() * 1000),
             )

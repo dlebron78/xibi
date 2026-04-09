@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from xibi.executor import Executor
 
+
 @dataclass
 class ExecutionContext:
     action_id: str
@@ -17,24 +18,30 @@ class ExecutionContext:
     db_path: Path
     trace_id: str
 
+
 @dataclass
 class HandlerResult:
-    status: str          # 'success' | 'error'
+    status: str  # 'success' | 'error'
     output_preview: str  # truncated to 500 chars by kernel
     error: str | None = None
+
 
 ActionHandler = Callable[[dict, ExecutionContext], HandlerResult]
 
 _REGISTRY: dict[str, ActionHandler] = {}
 
+
 def register_handler(name: str) -> Callable[[ActionHandler], ActionHandler]:
     def deco(fn: ActionHandler) -> ActionHandler:
         _REGISTRY[name] = fn
         return fn
+
     return deco
+
 
 def get_handler(name: str) -> ActionHandler | None:
     return _REGISTRY.get(name)
+
 
 @register_handler("tool_call")
 def _tool_call(action_config: dict, ctx: ExecutionContext) -> HandlerResult:
@@ -46,11 +53,13 @@ def _tool_call(action_config: dict, ctx: ExecutionContext) -> HandlerResult:
     try:
         # Set trace context so tool calls are linked
         from xibi.router import set_trace_context
+
         set_trace_context(trace_id=ctx.trace_id, span_id=None, operation=f"scheduled_tool:{tool}")
 
         result = ctx.executor.execute(tool, args)
 
         from xibi.router import clear_trace_context
+
         clear_trace_context()
 
         if result.get("status") == "error":
@@ -62,12 +71,13 @@ def _tool_call(action_config: dict, ctx: ExecutionContext) -> HandlerResult:
     except Exception as e:
         return HandlerResult("error", "", f"{type(e).__name__}: {str(e)}")
 
+
 _INTERNAL_HOOKS: dict[str, Callable[[dict, ExecutionContext], HandlerResult]] = {}
 
-def register_internal_hook(
-    name: str, fn: Callable[[dict, ExecutionContext], HandlerResult]
-) -> None:
+
+def register_internal_hook(name: str, fn: Callable[[dict, ExecutionContext], HandlerResult]) -> None:
     _INTERNAL_HOOKS[name] = fn
+
 
 @register_handler("internal_hook")
 def _internal_hook(action_config: dict, ctx: ExecutionContext) -> HandlerResult:
