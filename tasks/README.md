@@ -100,6 +100,30 @@ the implementer tier.
    mechanism, ContextVar lifecycle across asyncio boundaries,
    idempotency semantics, concurrent-access protection.
 
+3. **Deployment testability.** After this spec is implemented and
+   deployed, can the user actually exercise the new capability?
+   Three questions:
+   - **Surface check.** Is there a user-facing path to reach this
+     feature? If this is backend machinery (a kernel, a store, a
+     migration), does an existing tool/skill/UI expose it — or does
+     the spec need to include one? An engine without a steering
+     wheel is not testable.
+   - **Data check.** Does the feature require seed data, config
+     changes, migration runs, or service restarts to become active
+     after deploy? If so, are those steps documented in the spec's
+     deployment section, or is there a risk the feature lands
+     silently?
+   - **Verification check.** How does the user (or an operator)
+     confirm the feature is working? What does success look like in
+     Telegram, the dashboard, or the logs? If there is no observable
+     output, the feature is untestable and the spec should specify
+     one (even if it's just a log line or a status command).
+
+   If any answer is "no" or "not yet," the TRR must either add the
+   missing piece to this spec, split it into a companion spec that
+   ships in the same batch, or document it as an explicit dependency
+   with a BLOCK verdict.
+
 **Possible TRR verdicts:**
 
 - **PASS** — the spec is ready. Apply all amendments inline to the
@@ -190,3 +214,10 @@ should get promoted from spec-level notes to feedback memory.
   passes, amendments, relevance calls, parking decisions, and spec
   authorship are Opus-only. Sonnet catching itself mid-analysis and
   escalating to Opus is the correct move, not an inconvenience.
+- **Shipping an engine without a steering wheel.** If the spec builds
+  backend machinery (a kernel, a store, a handler registry) but no
+  user-facing tool or skill exposes it, the feature lands silently
+  and the user can't test it. Step-59 (scheduled actions kernel)
+  shipped this way — the kernel worked, but no agent tool called
+  `register_action()`, so "remind me in 15 minutes" went nowhere.
+  The Deployment Testability gate (TRR §3) exists to catch this.
