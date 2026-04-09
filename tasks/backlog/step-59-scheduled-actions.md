@@ -5,12 +5,12 @@
 
 | Field | Value |
 |---|---|
-| **Date** | 2026-04-08 |
+| **Date** | 2026-04-09 |
 | **Reviewer** | Opus |
-| **Commit** | 0154645 |
-| **Verdict** | **AMEND** — Right architectural direction, but three critical corrections required: (1) permission gate is CommandLayer, not TrustGradient; (2) trust_tier values must match PermissionTier enum; (3) trace_id generation and ContextVar lifecycle need specification. After amendments, promote to pending. |
-| **Gap Types** | Corrections (2), Hazards (2), Specificity (3) |
-| **Summary** | The kernel foundation is sound: schema is tight, dispatcher pattern is clean, Phase 1.5 placement is correct, and migration numbering is right. The vision alignment is excellent (core scheduling, not external service, opposite-of-spaghetti approach). However, the implementation will fail at the permission gate if Jules tries to invoke TrustGradient.check() — that method doesn't exist. The kernel must use CommandLayer with interactive=False, exactly as the observation cycle does. Additionally, trust_tier storage needs to be pinned to the PermissionTier enum values, and trace_id generation (whether from ContextVar or UUID) must be explicit. These are tractable fixes; the design is solid underneath. |
+| **Commit** | 50d0ca2 (initial); amended per human decision on 2026-04-09 |
+| **Verdict** | **PASS** — Q1 (timeout strategy), Q2 (tracer emission), Q3 (error categorization) all resolved per human decision. Ready for promotion to pending/. |
+| **Gap Types** | Corrections (2), Hazards (2), Specificity (3) — all resolved |
+| **Summary** | Kernel foundation sound: schema tight, dispatcher clean, Phase 1.5 placement correct, migration numbered right. Three post-review decisions finalized: (1) Threading-based timeout context manager, cross-platform, fallback to skip if unavailable; heartbeat must pre-allocate per_action_timeout_secs. (2) Tracer emission via tracer.span(operation="scheduled_action.run", attributes={...}) if tracer provided; no-op if None. (3) Error stored as one-line string max 500 chars: `f"{type(e).__name__}: {str(e)}"` for exceptions, gate name for permission blocks. Spec ready for implementation. |
 
 ---
 
@@ -123,7 +123,7 @@ CREATE TABLE scheduled_action_runs (
     status          TEXT NOT NULL,              -- 'success' | 'error' | 'timeout' | 'skipped'
     duration_ms     INTEGER,
     output_preview  TEXT,                       -- truncated to 500 chars
-    error           TEXT,
+    error           TEXT,                       -- one-line string, max 500 chars. For exceptions: "ExceptionType: message". For gates (trust, command): "blocked: gate_name"
     trace_id        TEXT,
     FOREIGN KEY (action_id) REFERENCES scheduled_actions(id) ON DELETE CASCADE
 );
@@ -257,8 +257,8 @@ class ScheduledActionKernel:
    - Look up the handler for `action_type`. If unknown → mark
      `status='error'`, error="unknown action_type", continue.
    - **Trust check:** ‼️ TRR-C1 the kernel must invoke **CommandLayer**, not TrustGradient. Create a `CommandLayer(db_path=..., profile=..., interactive=False)` and call its `check(tool_name, action_config["args"], ...)` method. If result.allowed=False → `status='skipped'`, `error=result.block_reason`. This is exactly how the observation cycle gates tools (xibi/heartbeat/poller.py:400-404). TrustGradient is an audit-interval tracker (has `should_audit()` and `record_success/failure()` but no permission gate). The permission gate lives in CommandLayer's check() method which evaluates PermissionTier against the interactive flag.
-   - Run the handler under a `Timeout(per_action_timeout_secs)` wrapper.
-     ‼️ TRR-H1 Specify the timeout implementation: either use `signal.alarm()` (Unix/Linux only, won't work on Windows/macOS) or use a threading approach with a sentinel thread that raises an exception into the handler's frame. The spec doesn't name the library or fallback. For robustness, recommend `signal-timeout` or a custom context-manager-based approach using threading.
+   - Run the handler under a threading-based timeout context manager (`per_action_timeout_secs`).
+     Implementation: use a custom `Timeout` context manager that spawns a sentinel thread to track wall-clock time and raises an exception into the handler's frame if exceeded. Fallback: if threading unavailable on this platform, log warning and execute without timeout (no timeout coverage, but kernel continues). Heartbeat Phase 1.5 must pre-allocate `per_action_timeout_secs` into its wall-clock budget to ensure the timeout can fire.
      Catch all exceptions. Capture stdout/return value as `output_preview`.
    - Update the run row: `finished_at`, `duration_ms`, `status`, `output_preview`,
      `error`.
@@ -275,7 +275,19 @@ class ScheduledActionKernel:
      - **Auto-disable rule:** if `consecutive_failures >= 10`, set
        `enabled=0` and emit a critical log line. Operator must re-enable
        after fixing the action.
-   - Emit a tracing span. ‼️ TRR-H2 Specify how to emit the span: does the kernel construct a xibi.tracing.Tracer instance via the ContextVar (xibi.router._active_tracer.get()) like react.py does, or does it instantiate Tracer directly? The spec mentions tracer as an optional ctor arg but doesn't clarify the emission mechanism. Recommend: pass tracer to ctor (as the spec does), and if tracer is not None, emit span via tracer.span(operation="scheduled_action.run", attributes={...}). If tracer is None, skip (no-op).
+   - Emit a tracing span. If the kernel's `tracer` ctor arg is not None, call:
+     ```python
+     tracer.span(
+         operation="scheduled_action.run",
+         attributes={
+             "action_id": action_id,
+             "name": name,
+             "status": status,
+             "duration_ms": duration_ms,
+         }
+     )
+     ```
+     If `tracer is None`, skip (no-op). This pattern matches xibi.react usage.
 3. Return a `KernelTickResult` summary (counts by status, total duration).
 
 **Why a single connection / single transaction per row:** the kernel must
@@ -528,24 +540,3 @@ Integration test (`tests/integration/test_scheduled_actions_in_heartbeat.py`):
   removed in this step.** It is dormant (`enabled: false` default) and will
   be deleted in a follow-up spec when the real Telegram document export lands.
 
----
-
-## Open Questions (For Implementation)
-
-**Q1: Timeout implementation strategy (TRR-H1)**  
-The spec says "run under Timeout wrapper" but doesn't name the library or fallback strategy. Options:
-- (a) Use `signal.alarm()` (Unix/Linux only; will fail on Windows/macOS)
-- (b) Use threading-based timeout (cross-platform, more complex)
-- (c) Rely on asyncio.wait_for() wrapper (but kernel.tick() is sync-only)
-
-**Proposed position:** Use a custom threading-based timeout context manager. If neither fires nor completes gracefully, log error and mark status='timeout'. Fallback: if threading not available, log warning and skip timeout (execute fully). Document that heartbeat must pre-allocate per_action_timeout_secs into the Phase 1.5 wall-clock budget.
-
-**Q2: Tracer emission mechanism (TRR-H2)**  
-The spec says pass tracer as optional ctor arg and "emit a tracing span" but doesn't show the code shape. Should the kernel call `tracer.span(...)`? Should it instantiate a span context manager? What fields?
-
-**Proposed position:** If tracer is provided, call `tracer.span(operation="scheduled_action.run", attributes={"action_id": ..., "name": ..., "status": ..., "duration_ms": ...})`. If tracer is None, skip (no-op). Pattern matches xibi.react usage.
-
-**Q3: Error categorization (Specificity only)**  
-The scheduled_action_runs.error column is TEXT. When status='error', what error formats? Do we store raw exception str()? JSON? A custom enum?
-
-**Proposed position:** Store error as a one-line string, max 500 chars (same as output_preview). If exception, store `type(e).__name__: str(e)`. If known gate (trust, unknown handler), store the gate name. Keep it readable but bounded.
