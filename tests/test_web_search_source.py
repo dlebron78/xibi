@@ -185,6 +185,7 @@ async def test_source_metadata_propagated_to_extractor_context():
         poller = HeartbeatPoller.__new__(HeartbeatPoller)
         poller.db_path = db_path
         poller.profile = {"some": "profile"}
+        poller.scheduler_kernel = None
         poller.source_poller = MagicMock()
 
         # Mock poll_due_sources to return a web_search result with metadata

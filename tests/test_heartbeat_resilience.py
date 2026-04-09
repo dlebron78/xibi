@@ -44,6 +44,7 @@ def mock_poller(db_path):
     poller._last_reflection_date = None
     poller._audit_tick_counter = 0
     poller.executor = MagicMock()
+    poller.scheduler_kernel = MagicMock()
     poller.skills_dir = Path("/tmp/skills")
 
     # Mock methods that would otherwise run

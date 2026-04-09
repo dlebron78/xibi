@@ -11,7 +11,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from xibi.command_layer import CommandLayer
 from xibi.db import open_db
@@ -48,19 +48,17 @@ class Timeout:
 
         def _interrupt() -> None:
             # Raise TimeoutError in the target thread
-            ctypes.pythonapi.PyThreadState_SetAsyncExc(
-                ctypes.c_long(self._target_ident),
-                ctypes.py_object(TimeoutError),
-            )
+            ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_long(self._target_ident), ctypes.py_object(TimeoutError))
 
         self._timer = threading.Timer(self.seconds, _interrupt)
         self._timer.start()
         return self
 
-    def __exit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
         if self._timer:
             self._timer.cancel()
-        # We never suppress exceptions; TimeoutError propagates naturally.
+        if exc_type is TimeoutError:
+            return  # let it propagate
 
 
 class ScheduledActionKernel:

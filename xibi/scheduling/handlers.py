@@ -52,13 +52,11 @@ def _tool_call(action_config: dict, ctx: ExecutionContext) -> HandlerResult:
 
     try:
         # Set trace context so tool calls are linked
-        from xibi.router import set_trace_context
+        from xibi.router import clear_trace_context, set_trace_context
 
         set_trace_context(trace_id=ctx.trace_id, span_id=None, operation=f"scheduled_tool:{tool}")
 
         result = ctx.executor.execute(tool, args)
-
-        from xibi.router import clear_trace_context
 
         clear_trace_context()
 

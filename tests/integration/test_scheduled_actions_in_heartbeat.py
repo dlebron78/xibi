@@ -1,13 +1,14 @@
-import asyncio
-import sqlite3
-from unittest.mock import MagicMock
-
 import pytest
+import asyncio
+import time
+import sqlite3
+from pathlib import Path
+from unittest.mock import MagicMock
+from datetime import datetime, timedelta, timezone
 
-from xibi.db.migrations import migrate
 from xibi.heartbeat.poller import HeartbeatPoller
-from xibi.scheduling.api import get_run_history, register_action
-
+from xibi.scheduling.api import register_action, get_run_history
+from xibi.db.migrations import migrate
 
 @pytest.mark.asyncio
 async def test_scheduled_action_in_heartbeat(tmp_path):
@@ -51,6 +52,7 @@ async def test_scheduled_action_in_heartbeat(tmp_path):
     )
 
     # Backdate it
+    import sqlite3
     with sqlite3.connect(db_path) as conn:
         conn.execute("UPDATE scheduled_actions SET next_run_at = '2000-01-01 00:00:00'")
         conn.commit()

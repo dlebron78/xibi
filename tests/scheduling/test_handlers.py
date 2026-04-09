@@ -1,8 +1,8 @@
+import pytest
+import json
 from pathlib import Path
 from unittest.mock import MagicMock
-
-from xibi.scheduling.handlers import ExecutionContext, HandlerResult, get_handler, register_internal_hook
-
+from xibi.scheduling.handlers import get_handler, ExecutionContext, HandlerResult, register_internal_hook
 
 def test_tool_call_handler():
     handler = get_handler("tool_call")

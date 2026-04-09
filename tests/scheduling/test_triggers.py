@@ -1,9 +1,6 @@
-from datetime import datetime, timedelta, timezone
-
 import pytest
-
+from datetime import datetime, timezone, timedelta
 from xibi.scheduling.triggers import compute_next_run
-
 
 def test_interval_trigger():
     config = {"every_seconds": 3600}

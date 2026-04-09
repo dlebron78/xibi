@@ -1,14 +1,15 @@
+import pytest
 import sqlite3
+import json
 import time
+from pathlib import Path
+from datetime import datetime, timezone, timedelta
 from unittest.mock import MagicMock
 
-import pytest
-
 from xibi.db import open_db
-from xibi.db.migrations import migrate
-from xibi.scheduling.api import register_action
 from xibi.scheduling.kernel import ScheduledActionKernel, Timeout
-
+from xibi.scheduling.api import register_action
+from xibi.db.migrations import migrate
 
 @pytest.fixture
 def db_path(tmp_path):
@@ -121,7 +122,7 @@ def test_timeout_mechanism():
 
 def test_kernel_tick_timeout(db_path):
     # We need a real handler that sleeps to test kernel timeout
-    from xibi.scheduling.handlers import HandlerResult, register_internal_hook
+    from xibi.scheduling.handlers import register_internal_hook, HandlerResult
 
     def slow_hook(args, ctx):
         end = time.time() + 2

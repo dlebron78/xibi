@@ -68,16 +68,12 @@ def register_action(
 
 def disable_action(db_path: Path, action_id: str) -> None:
     with open_db(db_path) as conn, conn:
-        conn.execute(
-            "UPDATE scheduled_actions SET enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (action_id,)
-        )
+        conn.execute("UPDATE scheduled_actions SET enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (action_id,))
 
 
 def enable_action(db_path: Path, action_id: str) -> None:
     with open_db(db_path) as conn, conn:
-        conn.execute(
-            "UPDATE scheduled_actions SET enabled = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (action_id,)
-        )
+        conn.execute("UPDATE scheduled_actions SET enabled = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (action_id,))
 
 
 def delete_action(db_path: Path, action_id: str) -> None:

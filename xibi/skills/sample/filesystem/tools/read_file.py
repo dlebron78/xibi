@@ -24,14 +24,8 @@ def run(params: dict) -> dict:
             search_paths.append(os.path.expanduser(workspace))
 
         # 3. Common deployment fallback (via environment variables)
-        data_dir = os.environ.get(
-            "XIBI_DATA_DIR",
-            os.path.join(os.path.expanduser("~"), "xibi_remote"),
-        )
-        deploy_dir = os.environ.get(
-            "XIBI_DEPLOY_DIR",
-            os.path.join(os.path.expanduser("~"), "xibi_deployment"),
-        )
+        data_dir = os.environ.get("XIBI_DATA_DIR", os.path.join(os.path.expanduser("~"), "xibi_remote"))
+        deploy_dir = os.environ.get("XIBI_DEPLOY_DIR", os.path.join(os.path.expanduser("~"), "xibi_deployment"))
         search_paths.append(data_dir)
         search_paths.append(deploy_dir)
 

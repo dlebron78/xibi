@@ -33,6 +33,14 @@ def _interval(config: dict, after: datetime) -> datetime:
 @register_trigger("oneshot")
 def _oneshot(config: dict, after: datetime) -> datetime:
     """Returns 'at' on first call; returns datetime.max afterward."""
+    # This logic assumes 'after' is the start time of the current run.
+    # The kernel uses the result of this to set next_run_at.
+    # If we are computing NEXT run after it just ran, we should return datetime.max.
+
+    # Actually, the kernel calls this during registration too.
+    # We need a way to know if we are computing for the first time or after a run.
+    # Spec says: "Returns 'at' on first call; returns datetime.max afterward"
+
     at_str = config.get("at")
     if not at_str:
         return datetime.max
