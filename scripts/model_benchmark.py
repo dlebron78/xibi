@@ -392,10 +392,7 @@ def check_accuracy(response: str, test: dict) -> bool:
     # Strip reasoning model thinking traces first
     clean = strip_thinking(response)
     normalized = clean.lower().strip()
-    for hint in test["hints"]:
-        if hint.lower() in normalized:
-            return True
-    return False
+    return any(hint.lower() in normalized for hint in test["hints"])
 
 
 def compute_scores(results: list[dict], model_names: list[str]) -> dict:

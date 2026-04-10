@@ -2,8 +2,8 @@
 bregger_utils.py — Shared utilities for the Bregger framework.
 """
 
-import threading
 import sqlite3
+import threading
 from pathlib import Path
 
 # ── Inference Mutex (Rule 19) ────────────────────────────────────────
@@ -174,8 +174,8 @@ def parse_semantic_datetime(token: str, ref_tz: str = "America/New_York") -> __i
     Falls back to strict ISO 8601 parsing if no semantic pattern matches.
     """
     import re
-    from datetime import datetime, timedelta
     import zoneinfo
+    from datetime import datetime, timedelta
 
     try:
         tz = zoneinfo.ZoneInfo(ref_tz)

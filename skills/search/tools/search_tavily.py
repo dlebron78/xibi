@@ -1,7 +1,7 @@
-import os
 import json
-import urllib.request
+import os
 import urllib.error
+import urllib.request
 
 # Maximum characters per snippet when falling back to raw results
 _SNIPPET_CHARS = 300

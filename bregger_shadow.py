@@ -1,13 +1,11 @@
-import math
 import collections
-import re
-import os
 import json
+import math
+import re
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
 
 
-def tokenize(text: str) -> List[str]:
+def tokenize(text: str) -> list[str]:
     """Basic lowercased alphanumeric tokenizer."""
     return re.findall(r"\b\w+\b", text.lower())
 
@@ -21,12 +19,12 @@ class ShadowMatcher:
         self.threshold = threshold
 
         # Corpus state
-        self.documents: List[Tuple[str, str, str]] = []  # list of (skill, tool, original_phrase)
-        self.doc_lengths: List[int] = []
+        self.documents: list[tuple[str, str, str]] = []  # list of (skill, tool, original_phrase)
+        self.doc_lengths: list[int] = []
         self.avg_doc_length: float = 0.0
-        self.term_freqs: List[collections.Counter] = []  # term frequencies per document
-        self.idf: Dict[str, float] = {}
-        self.doc_max_scores: List[float] = []
+        self.term_freqs: list[collections.Counter] = []  # term frequencies per document
+        self.idf: dict[str, float] = {}
+        self.doc_max_scores: list[float] = []
 
     def load_manifests(self, skills_dir: str):
         """Build the corpus from all 'examples' arrays in skill manifests."""
@@ -38,7 +36,7 @@ class ShadowMatcher:
 
         for manifest_file in skills_path.glob("*/manifest.json"):
             try:
-                with open(manifest_file, "r") as f:
+                with open(manifest_file) as f:
                     manifest = json.load(f)
                     skill_name = manifest.get("name", manifest_file.parent.name)
                     for tool in manifest.get("tools", []):
@@ -53,7 +51,7 @@ class ShadowMatcher:
 
         self.build_corpus(corpus)
 
-    def build_corpus(self, documents: List[Tuple[str, str, str]]):
+    def build_corpus(self, documents: list[tuple[str, str, str]]):
         """Compute BM25 IDF and term frequency structures."""
         self.documents = documents
         self.doc_lengths = []
@@ -71,7 +69,7 @@ class ShadowMatcher:
             freq = collections.Counter(tokens)
             self.term_freqs.append(freq)
             # count documents containing term
-            for term in freq.keys():
+            for term in freq:
                 term_doc_counts[term] += 1
 
         self.avg_doc_length = sum(self.doc_lengths) / doc_count
@@ -95,7 +93,7 @@ class ShadowMatcher:
                 max_score += idf * (num / den)
             self.doc_max_scores.append(max_score)
 
-    def match(self, query: str) -> Optional[Dict]:
+    def match(self, query: str) -> dict | None:
         """Score the query against the corpus and return the top match above threshold."""
         if not self.documents:
             return None

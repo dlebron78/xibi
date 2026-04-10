@@ -23,7 +23,7 @@ def run(params: dict) -> dict:
             email_id = url.replace("mailto:", "").strip().strip("[]")
             return {
                 "status": "error",
-                "message": f"read_page only fetches web pages (http/https). To read email content, use summarize_email.",
+                "message": "read_page only fetches web pages (http/https). To read email content, use summarize_email.",
                 "correct_tool": "summarize_email",
                 "email_id": email_id if email_id.isdigit() else None,
             }

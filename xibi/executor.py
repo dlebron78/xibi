@@ -359,6 +359,13 @@ class LocalHandlerExecutor(Executor):
         sys.path.insert(0, skill_dir)
 
         try:
+            # Prepare params
+            params = tool_input.copy()
+            if self.workdir:
+                params["_workdir"] = str(self.workdir)
+            params["_db_path"] = str(self.db_path)
+            params["_config"] = self.config
+
             # Dynamic import and invoke
             spec = importlib.util.spec_from_file_location(f"xibi.skills.{skill_info.name}.handler", handler_file)
             if spec is None or spec.loader is None:
@@ -371,11 +378,6 @@ class LocalHandlerExecutor(Executor):
                 return {"status": "error", "message": f"Unknown tool: {tool_name}"}
 
             handler_func = getattr(module, tool_name)
-
-            # Prepare params
-            params = tool_input.copy()
-            if self.workdir:
-                params["_workdir"] = str(self.workdir)
 
             result = handler_func(params)
             if isinstance(result, dict):

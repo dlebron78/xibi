@@ -1,13 +1,12 @@
+import json
 import os
 
-
-import json
 
 def run(params):
     """Create or overwrite a file."""
     filepath = params.get("filepath")
     content = params.get("content")
-    handle_payload = params.get("handle") # Resolved payload from react.py
+    handle_payload = params.get("handle")  # Resolved payload from react.py
 
     workdir = params.get("_workdir") or os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.bregger"))
 

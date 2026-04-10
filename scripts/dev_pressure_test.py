@@ -34,6 +34,8 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+import contextlib
+
 from xibi.db import migrate
 from xibi.executor import LocalHandlerExecutor
 from xibi.react import run as react_run
@@ -85,11 +87,26 @@ SKILL_TO_TOOLS: dict[str, list[str]] = {
     "filesystem": ["list_files", "read_file", "write_file"],
     # Suite 10 noise tools — registered in registry but have no handler
     "noise": [
-        "fetch_crm_contact", "search_documents", "get_slack_thread", "query_database",
-        "get_github_pr", "send_notification", "lookup_employee", "create_jira_ticket",
-        "get_weather", "translate_text", "summarize_document", "fetch_analytics",
-        "get_zoom_recording", "search_confluence", "get_oncall_schedule", "send_sms",
-        "lookup_invoice", "get_git_blame", "fetch_linkedin_profile", "generate_report",
+        "fetch_crm_contact",
+        "search_documents",
+        "get_slack_thread",
+        "query_database",
+        "get_github_pr",
+        "send_notification",
+        "lookup_employee",
+        "create_jira_ticket",
+        "get_weather",
+        "translate_text",
+        "summarize_document",
+        "fetch_analytics",
+        "get_zoom_recording",
+        "search_confluence",
+        "get_oncall_schedule",
+        "send_sms",
+        "lookup_invoice",
+        "get_git_blame",
+        "fetch_linkedin_profile",
+        "generate_report",
     ],
 }
 
@@ -102,26 +119,134 @@ NOISE_MANIFEST: dict[str, Any] = {
     "name": "noise",
     "description": "Business integrations: CRM, documents, comms, engineering, analytics",
     "tools": [
-        {"name": "fetch_crm_contact", "description": "Fetch a contact record from the CRM by name or email address", "input_schema": {"name": {"type": "string"}}, "output_type": "raw"},
-        {"name": "search_documents", "description": "Search the document repository for files or pages matching a query", "input_schema": {"query": {"type": "string"}}, "output_type": "raw"},
-        {"name": "get_slack_thread", "description": "Get all messages in a Slack thread by channel name and thread timestamp", "input_schema": {"channel": {"type": "string"}, "ts": {"type": "string"}}, "output_type": "raw"},
-        {"name": "query_database", "description": "Run a read-only SQL query against the company data warehouse", "input_schema": {"sql": {"type": "string"}}, "output_type": "raw"},
-        {"name": "get_github_pr", "description": "Get details of a GitHub pull request including diff, reviews, and status checks", "input_schema": {"repo": {"type": "string"}, "pr_number": {"type": "integer"}}, "output_type": "raw"},
-        {"name": "send_notification", "description": "Send a push notification to a registered mobile device by user ID", "input_schema": {"user_id": {"type": "string"}, "message": {"type": "string"}}, "output_type": "action"},
-        {"name": "lookup_employee", "description": "Look up an employee profile, title, team, and manager by name or employee ID", "input_schema": {"name": {"type": "string"}}, "output_type": "raw"},
-        {"name": "create_jira_ticket", "description": "Create a new Jira issue, bug ticket, or task in the specified project", "input_schema": {"project": {"type": "string"}, "title": {"type": "string"}, "description": {"type": "string"}}, "output_type": "action"},
-        {"name": "get_weather", "description": "Get current weather conditions or multi-day forecast for a city or zip code", "input_schema": {"location": {"type": "string"}}, "output_type": "raw"},
-        {"name": "translate_text", "description": "Translate text from one language to another using the preferred translation service", "input_schema": {"text": {"type": "string"}, "target_language": {"type": "string"}}, "output_type": "raw"},
-        {"name": "summarize_document", "description": "Summarize a long document, PDF, or web page given a URL or file path", "input_schema": {"url": {"type": "string"}}, "output_type": "synthesis"},
-        {"name": "fetch_analytics", "description": "Fetch KPIs, metrics, or event counts from the analytics dashboard for a time range", "input_schema": {"metric": {"type": "string"}, "start_date": {"type": "string"}, "end_date": {"type": "string"}}, "output_type": "raw"},
-        {"name": "get_zoom_recording", "description": "Get a recording URL or auto-transcript from a past Zoom meeting by meeting ID", "input_schema": {"meeting_id": {"type": "string"}}, "output_type": "raw"},
-        {"name": "search_confluence", "description": "Search Confluence wiki pages, runbooks, and technical documentation", "input_schema": {"query": {"type": "string"}}, "output_type": "raw"},
-        {"name": "get_oncall_schedule", "description": "Get the current and upcoming on-call rotation schedule for a team", "input_schema": {"team": {"type": "string", "default": "engineering"}}, "output_type": "raw"},
-        {"name": "send_sms", "description": "Send an SMS text message to a phone number", "input_schema": {"to": {"type": "string"}, "message": {"type": "string"}}, "output_type": "action"},
-        {"name": "lookup_invoice", "description": "Look up an invoice by invoice number, customer name, or date range", "input_schema": {"query": {"type": "string"}}, "output_type": "raw"},
-        {"name": "get_git_blame", "description": "Get git blame information for a file showing who last modified each line", "input_schema": {"file_path": {"type": "string"}}, "output_type": "raw"},
-        {"name": "fetch_linkedin_profile", "description": "Fetch a person's public LinkedIn profile summary by name or profile URL", "input_schema": {"name": {"type": "string"}}, "output_type": "raw"},
-        {"name": "generate_report", "description": "Generate a business intelligence or analytics report from a named data source", "input_schema": {"report_type": {"type": "string"}, "filters": {"type": "object"}}, "output_type": "synthesis"},
+        {
+            "name": "fetch_crm_contact",
+            "description": "Fetch a contact record from the CRM by name or email address",
+            "input_schema": {"name": {"type": "string"}},
+            "output_type": "raw",
+        },
+        {
+            "name": "search_documents",
+            "description": "Search the document repository for files or pages matching a query",
+            "input_schema": {"query": {"type": "string"}},
+            "output_type": "raw",
+        },
+        {
+            "name": "get_slack_thread",
+            "description": "Get all messages in a Slack thread by channel name and thread timestamp",
+            "input_schema": {"channel": {"type": "string"}, "ts": {"type": "string"}},
+            "output_type": "raw",
+        },
+        {
+            "name": "query_database",
+            "description": "Run a read-only SQL query against the company data warehouse",
+            "input_schema": {"sql": {"type": "string"}},
+            "output_type": "raw",
+        },
+        {
+            "name": "get_github_pr",
+            "description": "Get details of a GitHub pull request including diff, reviews, and status checks",
+            "input_schema": {"repo": {"type": "string"}, "pr_number": {"type": "integer"}},
+            "output_type": "raw",
+        },
+        {
+            "name": "send_notification",
+            "description": "Send a push notification to a registered mobile device by user ID",
+            "input_schema": {"user_id": {"type": "string"}, "message": {"type": "string"}},
+            "output_type": "action",
+        },
+        {
+            "name": "lookup_employee",
+            "description": "Look up an employee profile, title, team, and manager by name or employee ID",
+            "input_schema": {"name": {"type": "string"}},
+            "output_type": "raw",
+        },
+        {
+            "name": "create_jira_ticket",
+            "description": "Create a new Jira issue, bug ticket, or task in the specified project",
+            "input_schema": {
+                "project": {"type": "string"},
+                "title": {"type": "string"},
+                "description": {"type": "string"},
+            },
+            "output_type": "action",
+        },
+        {
+            "name": "get_weather",
+            "description": "Get current weather conditions or multi-day forecast for a city or zip code",
+            "input_schema": {"location": {"type": "string"}},
+            "output_type": "raw",
+        },
+        {
+            "name": "translate_text",
+            "description": "Translate text from one language to another using the preferred translation service",
+            "input_schema": {"text": {"type": "string"}, "target_language": {"type": "string"}},
+            "output_type": "raw",
+        },
+        {
+            "name": "summarize_document",
+            "description": "Summarize a long document, PDF, or web page given a URL or file path",
+            "input_schema": {"url": {"type": "string"}},
+            "output_type": "synthesis",
+        },
+        {
+            "name": "fetch_analytics",
+            "description": "Fetch KPIs, metrics, or event counts from the analytics dashboard for a time range",
+            "input_schema": {
+                "metric": {"type": "string"},
+                "start_date": {"type": "string"},
+                "end_date": {"type": "string"},
+            },
+            "output_type": "raw",
+        },
+        {
+            "name": "get_zoom_recording",
+            "description": "Get a recording URL or auto-transcript from a past Zoom meeting by meeting ID",
+            "input_schema": {"meeting_id": {"type": "string"}},
+            "output_type": "raw",
+        },
+        {
+            "name": "search_confluence",
+            "description": "Search Confluence wiki pages, runbooks, and technical documentation",
+            "input_schema": {"query": {"type": "string"}},
+            "output_type": "raw",
+        },
+        {
+            "name": "get_oncall_schedule",
+            "description": "Get the current and upcoming on-call rotation schedule for a team",
+            "input_schema": {"team": {"type": "string", "default": "engineering"}},
+            "output_type": "raw",
+        },
+        {
+            "name": "send_sms",
+            "description": "Send an SMS text message to a phone number",
+            "input_schema": {"to": {"type": "string"}, "message": {"type": "string"}},
+            "output_type": "action",
+        },
+        {
+            "name": "lookup_invoice",
+            "description": "Look up an invoice by invoice number, customer name, or date range",
+            "input_schema": {"query": {"type": "string"}},
+            "output_type": "raw",
+        },
+        {
+            "name": "get_git_blame",
+            "description": "Get git blame information for a file showing who last modified each line",
+            "input_schema": {"file_path": {"type": "string"}},
+            "output_type": "raw",
+        },
+        {
+            "name": "fetch_linkedin_profile",
+            "description": "Fetch a person's public LinkedIn profile summary by name or profile URL",
+            "input_schema": {"name": {"type": "string"}},
+            "output_type": "raw",
+        },
+        {
+            "name": "generate_report",
+            "description": "Generate a business intelligence or analytics report from a named data source",
+            "input_schema": {"report_type": {"type": "string"}, "filters": {"type": "object"}},
+            "output_type": "synthesis",
+        },
     ],
 }
 
@@ -299,14 +424,13 @@ SUITES: dict[int, dict[str, Any]] = {
                     ["budget", "approval"],
                 ],
                 "expect_ordered_keywords": [
-                    "P1",       # production incident — first
-                    "budget",   # EOD today deadline
+                    "P1",  # production incident — first
+                    "budget",  # EOD today deadline
                 ],
                 "note": "P1 incident should rank above budget sign-off. Core prioritisation test.",
             },
         ],
     },
-
     # ── Suite 8: Cross-source intelligence ──────────────────────────────────
     # Tests whether the model can connect signals across email, calendar, and
     # chat to form a coherent picture and make real decisions. This is the
@@ -373,7 +497,6 @@ SUITES: dict[int, dict[str, Any]] = {
             },
         ],
     },
-
     # ── Suite 9: Signal Intelligence ────────────────────────────────────────
     # Tests proactive reasoning — the model as briefing layer, not Q&A system.
     # Five distinct capabilities:
@@ -427,8 +550,20 @@ SUITES: dict[int, dict[str, Any]] = {
                 "input": "the P1 alert said customers were affected — is that actually true based on everything you've seen?",
                 "expect_tool": "chat",
                 "expect_any_keywords": [
-                    ["rachel", "cs team", "no customer", "batch", "no impact", "auto-populated",
-                     "conflict", "contradicts", "however", "but", "actually", "clarified"],
+                    [
+                        "rachel",
+                        "cs team",
+                        "no customer",
+                        "batch",
+                        "no impact",
+                        "auto-populated",
+                        "conflict",
+                        "contradicts",
+                        "however",
+                        "but",
+                        "actually",
+                        "clarified",
+                    ],
                 ],
                 "note": "Should find Rachel's 10:15 engineering message and flag the conflict with the Jira email",
             },
@@ -440,13 +575,26 @@ SUITES: dict[int, dict[str, Any]] = {
             {
                 "input": "what did legal say about the compliance training — is there an exemption process for engineers?",
                 "expect_no_keywords": [
-                    "legal said", "exemption process", "waiver", "engineers are exempt",
-                    "legal team confirmed", "according to legal",
+                    "legal said",
+                    "exemption process",
+                    "waiver",
+                    "engineers are exempt",
+                    "legal team confirmed",
+                    "according to legal",
                 ],
                 "expect_any_keywords": [
-                    ["don't have", "no information", "nothing", "can't find",
-                     "not mentioned", "no details", "not in", "unable to find",
-                     "didn't find", "no mention"],
+                    [
+                        "don't have",
+                        "no information",
+                        "nothing",
+                        "can't find",
+                        "not mentioned",
+                        "no details",
+                        "not in",
+                        "unable to find",
+                        "didn't find",
+                        "no mention",
+                    ],
                 ],
                 "note": "Should admit it has no data on this — not fabricate a legal exemption process",
             },
@@ -470,7 +618,6 @@ SUITES: dict[int, dict[str, Any]] = {
             },
         ],
     },
-
     # ── Suite 10: Tool Proliferation + Chained Execution ─────────────────────
     # Two orthogonal real-world stresses tested together:
     #
@@ -577,6 +724,7 @@ SUITES: dict[int, dict[str, Any]] = {
 
 # ── Evaluation ─────────────────────────────────────────────────────────────────
 
+
 def _tool_used(step_tool: str, skill_or_tool: str) -> bool:
     """Check if a step's tool matches the given skill name or tool function name."""
     if step_tool == skill_or_tool:
@@ -593,20 +741,17 @@ def evaluate_turn(
     all_tools_called = [s.tool for s in result.steps if s.tool not in ("finish", "ask_user", "error")]
 
     # Check expected tool was called
-    if expect_tool := turn.get("expect_tool"):
-        if not any(_tool_used(t, expect_tool) for t in all_tools_called):
-            actual = ", ".join(all_tools_called) or "none"
-            issues.append(f"expected tool '{expect_tool}' — actual tools: {actual}")
+    if (expect_tool := turn.get("expect_tool")) and not any(_tool_used(t, expect_tool) for t in all_tools_called):
+        actual = ", ".join(all_tools_called) or "none"
+        issues.append(f"expected tool '{expect_tool}' — actual tools: {actual}")
 
     # Check tool was NOT called (re-fetch detection)
-    if no_tool := turn.get("expect_no_tool"):
-        if any(_tool_used(t, no_tool) for t in all_tools_called):
-            issues.append(f"unexpected re-call of '{no_tool}' (should have used context)")
+    if (no_tool := turn.get("expect_no_tool")) and any(_tool_used(t, no_tool) for t in all_tools_called):
+        issues.append(f"unexpected re-call of '{no_tool}' (should have used context)")
 
     # Check exit reason
-    if expect_exit := turn.get("expect_exit"):
-        if result.exit_reason != expect_exit:
-            issues.append(f"expected exit '{expect_exit}' — got '{result.exit_reason}'")
+    if (expect_exit := turn.get("expect_exit")) and result.exit_reason != expect_exit:
+        issues.append(f"expected exit '{expect_exit}' — got '{result.exit_reason}'")
 
     # Check expected keywords in answer
     for kw in turn.get("expect_keywords", []):
@@ -632,9 +777,7 @@ def evaluate_turn(
         if len(positions) == len(ordered):
             for i in range(1, len(positions)):
                 if positions[i][0] < positions[i - 1][0]:
-                    issues.append(
-                        f"wrong order: '{positions[i][1]}' appeared before '{positions[i-1][1]}'"
-                    )
+                    issues.append(f"wrong order: '{positions[i][1]}' appeared before '{positions[i - 1][1]}'")
 
     # Check chained execution — tools must all appear in order
     # e.g. ["email", "schedule"] means email tool called before schedule tool
@@ -654,7 +797,7 @@ def evaluate_turn(
             for i in range(1, len(found_positions)):
                 if found_positions[i][0] <= found_positions[i - 1][0]:
                     issues.append(
-                        f"wrong chain order: '{found_positions[i][1]}' should come after '{found_positions[i-1][1]}'"
+                        f"wrong chain order: '{found_positions[i][1]}' should come after '{found_positions[i - 1][1]}'"
                     )
 
     # Check hallucination guard
@@ -685,6 +828,7 @@ def evaluate_turn(
 
 # ── Suite runner ───────────────────────────────────────────────────────────────
 
+
 def run_suite(
     suite_id: int,
     config: dict[str, Any],
@@ -698,10 +842,10 @@ def run_suite(
     # Toggle realistic inbox for suites that request it (env var survives dynamic reimport)
     os.environ["XIBI_TEST_REALISTIC_INBOX"] = "1" if suite.get("realistic_inbox") else "0"
 
-    print(f"\n{'─'*60}")
+    print(f"\n{'─' * 60}")
     print(f"Suite {suite_id}: {suite['name']}")
     print(f"Goal: {suite['goal']}")
-    print(f"{'─'*60}")
+    print(f"{'─' * 60}")
 
     registry = SkillRegistry(str(skills_dir))
 
@@ -709,7 +853,9 @@ def run_suite(
     # calls will return errors, which is intentional: tests selection, not execution)
     if suite.get("padded_tools"):
         registry.register(NOISE_MANIFEST)
-        print(f"  [noise] +{len(NOISE_MANIFEST['tools'])} red-herring tools injected ({len(registry.skills)} total skills)")
+        print(
+            f"  [noise] +{len(NOISE_MANIFEST['tools'])} red-herring tools injected ({len(registry.skills)} total skills)"
+        )
 
     executor = LocalHandlerExecutor(registry, config=config, mcp_registry=None)
     skill_manifests = registry.get_skill_manifests()
@@ -722,7 +868,7 @@ def run_suite(
         query = turn["input"]
         note = turn.get("note", "")
 
-        print(f"  [{i+1}/{len(suite['turns'])}] > {query}")
+        print(f"  [{i + 1}/{len(suite['turns'])}] > {query}")
         if note and verbose:
             print(f"         ({note})")
 
@@ -746,6 +892,7 @@ def run_suite(
         except Exception as e:
             # Create a synthetic error result
             from xibi.types import ReActResult
+
             result = ReActResult(
                 answer="",
                 steps=[],
@@ -762,7 +909,9 @@ def run_suite(
 
         icon = "✅" if eval_result["passed"] else "❌"
         tools_str = ", ".join(eval_result["tools_called"]) or "—"
-        print(f"         {icon} {eval_result['verdict']} | tools={tools_str} | exit={eval_result['exit_reason']} | {eval_result['duration_ms']}ms")
+        print(
+            f"         {icon} {eval_result['verdict']} | tools={tools_str} | exit={eval_result['exit_reason']} | {eval_result['duration_ms']}ms"
+        )
         if verbose and eval_result["answer_preview"]:
             print(f"         answer: {eval_result['answer_preview'][:150]}")
 
@@ -782,6 +931,7 @@ def run_suite(
 
 # ── Report ─────────────────────────────────────────────────────────────────────
 
+
 def write_report(suite_results: list[dict[str, Any]], report_dir: Path) -> Path:
     ts = datetime.now().strftime("%Y-%m-%d-%H%M")
     report_dir.mkdir(parents=True, exist_ok=True)
@@ -794,7 +944,7 @@ def write_report(suite_results: list[dict[str, Any]], report_dir: Path) -> Path:
     lines = [
         f"# Xibi Dev Pressure Test — {ts}",
         f"\n**Overall: {total_passed}/{total_turns} turns passed | {suites_clean}/{len(suite_results)} suites fully green**",
-        f"\n_Environment: mock skill data (sample handlers) + local Ollama (qwen3.5:9b)_\n",
+        "\n_Environment: mock skill data (sample handlers) + local Ollama (qwen3.5:9b)_\n",
     ]
 
     for suite in suite_results:
@@ -805,7 +955,7 @@ def write_report(suite_results: list[dict[str, Any]], report_dir: Path) -> Path:
 
         for i, turn in enumerate(suite["turns"]):
             t_icon = "✅" if turn["passed"] else "❌"
-            lines.append(f"**Turn {i+1}:** `{turn['input']}`")
+            lines.append(f"**Turn {i + 1}:** `{turn['input']}`")
             if turn.get("note"):
                 lines.append(f"> _{turn['note']}_")
             lines.append(f"{t_icon} {turn['verdict']}")
@@ -821,6 +971,7 @@ def write_report(suite_results: list[dict[str, Any]], report_dir: Path) -> Path:
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Xibi dev pressure test runner")
     parser.add_argument("--suite", type=int, nargs="+", help="Suite IDs to run (default: all)")
@@ -830,7 +981,7 @@ def main() -> int:
     parser.add_argument(
         "--model",
         help="Override model (e.g. gemini-2.5-flash, gemini-3.1-pro-preview). "
-             "Prefix with 'gemini-' to auto-select Gemini provider.",
+        "Prefix with 'gemini-' to auto-select Gemini provider.",
     )
     parser.add_argument(
         "--format",
@@ -859,7 +1010,7 @@ def main() -> int:
         db_path = Path(f.name)
 
     try:
-        print(f"\n🧪 Xibi Dev Pressure Test")
+        print("\n🧪 Xibi Dev Pressure Test")
         print(f"   Skills:  {skills_dir}")
         print(f"   DB:      {db_path} (temp, isolated)")
         print(f"   Suites:  {suites_to_run}")
@@ -872,7 +1023,12 @@ def main() -> int:
         if args.model:
             if args.model.startswith("gemini-"):
                 provider = "gemini"
-            elif args.model.startswith("gpt-") or args.model.startswith("o1") or args.model.startswith("o3") or args.model.startswith("o4"):
+            elif (
+                args.model.startswith("gpt-")
+                or args.model.startswith("o1")
+                or args.model.startswith("o3")
+                or args.model.startswith("o4")
+            ):
                 provider = "openai"
             elif args.model.startswith("claude-"):
                 provider = "anthropic"
@@ -915,17 +1071,15 @@ def main() -> int:
 
         total_passed = sum(r["passed"] for r in all_results)
         total_turns = sum(r["total"] for r in all_results)
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"TOTAL: {total_passed}/{total_turns} turns passed")
         print(f"Report: {report_path}")
 
         return 0 if total_passed == total_turns else 1
 
     finally:
-        try:
+        with contextlib.suppress(Exception):
             db_path.unlink(missing_ok=True)
-        except Exception:
-            pass
 
 
 if __name__ == "__main__":

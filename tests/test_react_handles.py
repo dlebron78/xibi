@@ -1,16 +1,18 @@
-import pytest
-from xibi.react import _run_async, dispatch
-from xibi.handles import HandleStore
-from xibi.errors import XibiError
-from xibi.types import Step
-from xibi.router import Config
-from unittest.mock import MagicMock, patch
 import asyncio
-import json
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from xibi.errors import XibiError
+from xibi.handles import HandleStore
+from xibi.react import _run_async, dispatch
+from xibi.types import Step
+
 
 @pytest.fixture
 def mock_config():
     return {"db_path": ":memory:", "models": {"text": {"fast": {"provider": "ollama", "model": "llama3"}}}}
+
 
 @pytest.fixture
 def mock_executor():
@@ -19,23 +21,19 @@ def mock_executor():
     executor.mcp_executor = None
     return executor
 
+
 @pytest.mark.asyncio
 async def test_large_output_wrapped_in_handle(mock_config, mock_executor):
     store = HandleStore()
     large_payload = {"data": [i for i in range(100)]}
     mock_executor.execute.return_value = large_payload
 
-    result = dispatch(
-        "test_tool",
-        {},
-        [],
-        executor=mock_executor,
-        handle_store=store
-    )
+    result = dispatch("test_tool", {}, [], executor=mock_executor, handle_store=store)
 
     assert "handle" in result
     assert result["handle"].startswith("h_")
     assert store.get(result["handle"]) == large_payload
+
 
 @pytest.mark.asyncio
 async def test_small_output_inlined(mock_config, mock_executor):
@@ -43,16 +41,11 @@ async def test_small_output_inlined(mock_config, mock_executor):
     small_payload = {"foo": "bar"}
     mock_executor.execute.return_value = small_payload
 
-    result = dispatch(
-        "test_tool",
-        {},
-        [],
-        executor=mock_executor,
-        handle_store=store
-    )
+    result = dispatch("test_tool", {}, [], executor=mock_executor, handle_store=store)
 
     assert result == small_payload
     assert "handle" not in result
+
 
 @pytest.mark.asyncio
 async def test_per_run_isolation(mock_config, mock_executor):
@@ -65,15 +58,17 @@ async def test_per_run_isolation(mock_config, mock_executor):
         '{"thought": "call", "tool": "tool1", "tool_input": {}}',
         '{"thought": "done", "tool": "finish", "tool_input": {"answer": "ok"}}',
         '{"thought": "call", "tool": "tool2", "tool_input": {}}',
-        '{"thought": "done", "tool": "finish", "tool_input": {"answer": "ok"}}'
+        '{"thought": "done", "tool": "finish", "tool_input": {"answer": "ok"}}',
     ]
 
     large_payload1 = {"data": [1] * 30}
     large_payload2 = {"data": [2] * 30}
 
     def mock_execute(tool_name, tool_input):
-        if tool_name == "tool1": return large_payload1
-        if tool_name == "tool2": return large_payload2
+        if tool_name == "tool1":
+            return large_payload1
+        if tool_name == "tool2":
+            return large_payload2
         return {}
 
     mock_executor.execute.side_effect = mock_execute
@@ -81,17 +76,19 @@ async def test_per_run_isolation(mock_config, mock_executor):
     # Capture stores created during _run_async
     captured_stores = []
     original_init = HandleStore.__init__
+
     def patched_init(self_obj, *args, **kwargs):
         original_init(self_obj, *args, **kwargs)
         captured_stores.append(self_obj)
 
-    with patch("xibi.react.get_model", return_value=mock_llm), \
-         patch.object(HandleStore, "__init__", autospec=True, side_effect=patched_init):
-
+    with (
+        patch("xibi.react.get_model", return_value=mock_llm),
+        patch.object(HandleStore, "__init__", autospec=True, side_effect=patched_init),
+    ):
         # Run two concurrent tasks
         res1, res2 = await asyncio.gather(
             _run_async("q1", mock_config, [], executor=mock_executor),
-            _run_async("q2", mock_config, [], executor=mock_executor)
+            _run_async("q2", mock_config, [], executor=mock_executor),
         )
 
         assert len(captured_stores) == 2
@@ -111,20 +108,17 @@ async def test_per_run_isolation(mock_config, mock_executor):
         with pytest.raises(XibiError):
             s2.get(h1)
 
+
 def test_handle_survives_into_next_step_full_text():
     handle_output = {
         "status": "ok",
         "handle": "h_a4f1",
         "schema": "list[dict] (25 items)",
         "summary": "This is a summary",
-        "item_count": 25
+        "item_count": 25,
     }
     step = Step(
-        step_num=1,
-        thought="searching",
-        tool="search",
-        tool_input={"query": "remote jobs"},
-        tool_output=handle_output
+        step_num=1, thought="searching", tool="search", tool_input={"query": "remote jobs"}, tool_output=handle_output
     )
 
     text = step.full_text()

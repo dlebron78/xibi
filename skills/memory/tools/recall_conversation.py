@@ -1,6 +1,7 @@
 import os
-from pathlib import Path
 from datetime import datetime, timezone
+from pathlib import Path
+
 from xibi.db import open_db
 
 
@@ -41,7 +42,7 @@ def run(params):
         with open_db(db_path) as conn:
             # We want to match query in user_message or bot_response
             sql = """
-                SELECT user_message, bot_response, created_at 
+                SELECT user_message, bot_response, created_at
                 FROM conversation_history
                 WHERE user_message LIKE ? OR bot_response LIKE ?
                 ORDER BY created_at DESC

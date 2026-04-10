@@ -95,6 +95,11 @@ class HeartbeatPoller:
         from xibi.scheduling import ScheduledActionKernel
         from xibi.tracing import Tracer
 
+        if self.db_path:
+            from xibi.checklists import initialize_checklists
+
+            initialize_checklists(self.db_path)
+
         self.tracer = Tracer(self.db_path) if self.db_path else None
         self.scheduler_kernel: ScheduledActionKernel | None
         if self.executor is not None:

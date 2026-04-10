@@ -1,9 +1,6 @@
 """Step-60 §4: Run-level graceful degradation in react.py."""
+
 from __future__ import annotations
-
-from typing import Any
-
-import pytest
 
 from xibi.errors import ErrorCategory, XibiError
 from xibi.react import _build_partial_answer, _format_observation_for_user

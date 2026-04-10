@@ -32,12 +32,7 @@ async def test_scheduled_action_in_heartbeat(tmp_path):
     skills_dir.mkdir()
 
     poller = HeartbeatPoller(
-        skills_dir=skills_dir,
-        db_path=db_path,
-        adapter=adapter,
-        rules=rules,
-        allowed_chat_ids=[123],
-        executor=executor
+        skills_dir=skills_dir, db_path=db_path, adapter=adapter, rules=rules, allowed_chat_ids=[123], executor=executor
     )
 
     # Register an action due now
@@ -47,7 +42,7 @@ async def test_scheduled_action_in_heartbeat(tmp_path):
         trigger_type="interval",
         trigger_config={"every_seconds": 60},
         action_type="tool_call",
-        action_config={"tool": "hb_tool"}
+        action_config={"tool": "hb_tool"},
     )
 
     # Backdate it

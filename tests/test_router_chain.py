@@ -1,5 +1,6 @@
 """Step-60 §3: Runtime fallback chain — ChainedModelClient walks the
 configured RoleConfig.fallback list on PROVIDER_DOWN/TIMEOUT/PARSE_FAILURE."""
+
 from __future__ import annotations
 
 import copy
@@ -14,7 +15,6 @@ from xibi.router import (
     ChainedModelClient,
     OllamaClient,
     _resolve_role_chain,
-    get_model,
 )
 
 
@@ -88,12 +88,13 @@ def test_chain_does_not_walk_on_validation_error() -> None:
 def test_chain_exhausted_raises_enriched_error() -> None:
     fast = FakeBreakerWrapped("fast", lambda p: (_ for _ in ()).throw(_err(ErrorCategory.PROVIDER_DOWN, "fast-down")))
     think = FakeBreakerWrapped("think", lambda p: (_ for _ in ()).throw(_err(ErrorCategory.TIMEOUT, "think-slow")))
-    review = FakeBreakerWrapped("review", lambda p: (_ for _ in ()).throw(_err(ErrorCategory.PROVIDER_DOWN, "review-out")))
+    review = FakeBreakerWrapped(
+        "review", lambda p: (_ for _ in ()).throw(_err(ErrorCategory.PROVIDER_DOWN, "review-out"))
+    )
     chained = _make_chained(("fast", fast), ("think", think), ("review", review))
 
-    with patch("xibi.router.time.sleep"):
-        with pytest.raises(XibiError) as excinfo:
-            chained.generate("hi")
+    with patch("xibi.router.time.sleep"), pytest.raises(XibiError) as excinfo:
+        chained.generate("hi")
 
     err = excinfo.value
     assert "All 3 roles" in err.message
@@ -157,9 +158,8 @@ def test_structured_parse_failure_raises_xibi_error_not_runtime() -> None:
     fake_response.json.return_value = {"response": "not json {{", "prompt_eval_count": 0, "eval_count": 0}
     fake_response.raise_for_status = MagicMock()
 
-    with patch("xibi.router.requests.post", return_value=fake_response):
-        with pytest.raises(XibiError) as excinfo:
-            client.generate_structured("hello", {"type": "object"}, system=None)
+    with patch("xibi.router.requests.post", return_value=fake_response), pytest.raises(XibiError) as excinfo:
+        client.generate_structured("hello", {"type": "object"}, system=None)
 
     assert excinfo.value.category == ErrorCategory.PARSE_FAILURE
     assert excinfo.value.component == "ollama"

@@ -1,12 +1,10 @@
+import mimetypes
 import os
 import smtplib
-import mimetypes
-import hashlib
-import sqlite3
+from email import encoders
+from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.mime.base import MIMEBase
-from email import encoders
 
 # ── SMTP config (pulled from env, falls back to Gmail defaults) ──────────────
 SMTP_HOST = os.environ.get("BREGGER_SMTP_HOST", "smtp.gmail.com")
@@ -102,24 +100,19 @@ def _track_outbound(to: str, db_path: str):
             with open_db(Path(db_path)) as conn, conn:
                 conn.execute(
                     "UPDATE contacts SET outbound_count = outbound_count + 1, user_endorsed = 1 WHERE id = ?",
-                    (contact_id,)
+                    (contact_id,),
                 )
         except Exception:
             pass
     else:
         contact_id = create_contact(
-            display_name=to,
-            email=to,
-            discovered_via='email_outbound',
-            relationship='unknown',
-            db_path=db_path
+            display_name=to, email=to, discovered_via="email_outbound", relationship="unknown", db_path=db_path
         )
         if contact_id:
             try:
                 with open_db(Path(db_path)) as conn, conn:
                     conn.execute(
-                        "UPDATE contacts SET outbound_count = 1, user_endorsed = 1 WHERE id = ?",
-                        (contact_id,)
+                        "UPDATE contacts SET outbound_count = 1, user_endorsed = 1 WHERE id = ?", (contact_id,)
                     )
             except Exception:
                 pass

@@ -4,13 +4,13 @@ Exchanges the long-lived refresh token for a short-lived access token.
 Caches the access token in-memory until it expires.
 """
 
-from datetime import datetime
 import json
 import os
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime
 
 _TOKEN_CACHE = {"access_token": None, "expires_at": 0}
 

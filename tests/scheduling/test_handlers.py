@@ -15,7 +15,7 @@ def test_tool_call_handler():
         trust_tier="green",
         executor=executor,
         db_path=Path("/tmp/fake.db"),
-        trace_id="trace-1"
+        trace_id="trace-1",
     )
 
     config = {"tool": "test_tool", "args": {"a": 1}}
@@ -24,6 +24,7 @@ def test_tool_call_handler():
     assert res.status == "success"
     assert res.output_preview == "success-result"
     executor.execute.assert_called_once_with("test_tool", {"a": 1})
+
 
 def test_tool_call_handler_error():
     handler = get_handler("tool_call")
@@ -36,7 +37,7 @@ def test_tool_call_handler_error():
         trust_tier="green",
         executor=executor,
         db_path=Path("/tmp/fake.db"),
-        trace_id="trace-1"
+        trace_id="trace-1",
     )
 
     config = {"tool": "test_tool"}
@@ -44,6 +45,7 @@ def test_tool_call_handler_error():
 
     assert res.status == "error"
     assert "failed-msg" in res.error
+
 
 def test_internal_hook_handler():
     hook_fn = MagicMock(return_value=HandlerResult("success", "hook-ok"))
@@ -56,7 +58,7 @@ def test_internal_hook_handler():
         trust_tier="green",
         executor=MagicMock(),
         db_path=Path("/tmp/fake.db"),
-        trace_id="trace-1"
+        trace_id="trace-1",
     )
 
     config = {"hook": "test_hook", "args": {"x": 10}}

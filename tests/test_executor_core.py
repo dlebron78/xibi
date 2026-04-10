@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from xibi.executor import Executor
-from xibi.skills.registry import SkillInfo, SkillRegistry
+from xibi.skills.registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +137,7 @@ def test_core_registration_is_idempotent(temp_skills_dir):
 
 # ── MCP collision fix tests (step-58) ─────────────────────────────────────────
 
+
 def test_mcp_only_tool_routes_through_mcp_executor(temp_skills_dir):
     """An MCP-injected tool with no real local skill must dispatch through
     mcp_executor.execute — NOT through the local-file loader.
@@ -148,11 +149,13 @@ def test_mcp_only_tool_routes_through_mcp_executor(temp_skills_dir):
     registry = SkillRegistry(temp_skills_dir)
 
     # Simulate what MCPServerRegistry does: inject a synthetic manifest entry
-    registry.register({
-        "name": "mcp_jobspy",
-        "description": "Job search via MCP",
-        "tools": [{"name": "search_jobs", "description": "Search jobs", "output_type": "synthesis"}],
-    })
+    registry.register(
+        {
+            "name": "mcp_jobspy",
+            "description": "Job search via MCP",
+            "tools": [{"name": "search_jobs", "description": "Search jobs", "output_type": "synthesis"}],
+        }
+    )
 
     # Confirm the synthetic entry is marked as MCP source
     assert registry.skills["mcp_jobspy"].source == "mcp"
@@ -193,18 +196,18 @@ def test_real_local_skill_still_wins_over_mcp(tmp_path):
         "tools": [{"name": "do_stuff", "description": "Does stuff", "output_type": "synthesis"}],
     }
     (skill_dir / "manifest.json").write_text(json.dumps(manifest))
-    (tools_dir / "do_stuff.py").write_text(
-        "def run(params):\n    return {'status': 'ok', 'source': 'local'}\n"
-    )
+    (tools_dir / "do_stuff.py").write_text("def run(params):\n    return {'status': 'ok', 'source': 'local'}\n")
 
     registry = SkillRegistry(tmp_path / "skills")
 
     # Also inject a synthetic MCP entry claiming do_stuff
-    registry.register({
-        "name": "mcp_remote",
-        "description": "Remote MCP",
-        "tools": [{"name": "do_stuff", "description": "Remote do_stuff", "output_type": "synthesis"}],
-    })
+    registry.register(
+        {
+            "name": "mcp_remote",
+            "description": "Remote MCP",
+            "tools": [{"name": "do_stuff", "description": "Remote do_stuff", "output_type": "synthesis"}],
+        }
+    )
 
     mock_mcp_executor = MagicMock()
     mock_mcp_executor.can_handle.return_value = True
@@ -218,6 +221,7 @@ def test_real_local_skill_still_wins_over_mcp(tmp_path):
     executor.mcp_executor = mock_mcp_executor
 
     import logging
+
     with patch.object(logging.getLogger("xibi.executor"), "warning") as mock_warn:
         result = executor.execute("do_stuff", {})
 
@@ -236,11 +240,13 @@ def test_mcp_tools_remain_visible_to_planner(temp_skills_dir):
     exclude them.
     """
     registry = SkillRegistry(temp_skills_dir)
-    registry.register({
-        "name": "mcp_jobspy",
-        "description": "Job search via MCP",
-        "tools": [{"name": "search_jobs", "description": "Search jobs", "output_type": "synthesis"}],
-    })
+    registry.register(
+        {
+            "name": "mcp_jobspy",
+            "description": "Job search via MCP",
+            "tools": [{"name": "search_jobs", "description": "Search jobs", "output_type": "synthesis"}],
+        }
+    )
 
     # Planner visibility: tool appears in flattened manifests
     manifests = registry.get_skill_manifests()
