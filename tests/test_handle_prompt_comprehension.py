@@ -35,7 +35,6 @@ async def test_model_uses_handle_when_present():
     # We'll mock the LLM to return a write_file call.
     # This part is more about verifying our test can simulate this.
 
-
     # We'll use a side effect to check the prompt and then return the desired action.
     def llm_generate(prompt, system=None, **kwargs):
         if "h_a4f1" in prompt:

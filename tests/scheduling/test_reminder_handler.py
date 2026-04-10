@@ -1,6 +1,7 @@
-import pytest
-from unittest.mock import patch, MagicMock
-from xibi.scheduling.handlers import _handle_send_reminder, ExecutionContext
+from unittest.mock import MagicMock, patch
+
+from xibi.scheduling.handlers import ExecutionContext, _handle_send_reminder
+
 
 def test_send_reminder_handler_success():
     ctx = MagicMock(spec=ExecutionContext)
@@ -12,6 +13,7 @@ def test_send_reminder_handler_success():
         assert res.status == "success"
         assert "Hello Test" in res.output_preview
         mock_nudge.assert_called_once_with("⏰ Reminder: Hello Test", category="reminder")
+
 
 def test_send_reminder_handler_failure():
     ctx = MagicMock(spec=ExecutionContext)

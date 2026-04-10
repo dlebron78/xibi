@@ -4,6 +4,7 @@ import json
 # Actually dispatch will handle it if we provide a registry.
 # But for unit testing the run function directly:
 import xibi.skills.sample.data.tools.transform_data as transform_data
+import xibi.skills.sample.filesystem.tools.write_file as write_file
 
 
 def test_filter_then_sort_then_slice():
@@ -108,9 +109,6 @@ def test_sort_with_heterogeneous_types():
     # No assertion on cross-type order, just that it doesn't crash and
     # preserves all items.
     assert len(result) == 4
-
-
-import skills.filesystem.tools.write_file as write_file
 
 
 def test_write_file_resolves_handle(tmp_path):

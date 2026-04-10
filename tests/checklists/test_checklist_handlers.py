@@ -25,16 +25,13 @@ def temp_db(tmp_path):
     conn.close()
     return db_path
 
+
 @pytest.fixture
 def ctx(temp_db):
     return ExecutionContext(
-        action_id="act1",
-        name="test",
-        trust_tier="green",
-        executor=MagicMock(),
-        db_path=temp_db,
-        trace_id="trace1"
+        action_id="act1", name="test", trust_tier="green", executor=MagicMock(), db_path=temp_db, trace_id="trace1"
     )
+
 
 @patch("xibi.checklists.handlers.send_nudge")
 def test_handle_warning_open(mock_nudge, temp_db, ctx):
@@ -48,16 +45,20 @@ def test_handle_warning_open(mock_nudge, temp_db, ctx):
     mock_nudge.assert_called_once()
     assert "Item 1" in mock_nudge.call_args[0][0]
 
+
 @patch("xibi.checklists.handlers.send_nudge")
 def test_handle_warning_completed(mock_nudge, temp_db, ctx):
     conn = sqlite3.connect(temp_db)
-    conn.execute("INSERT INTO checklist_instance_items (id, label, completed_at) VALUES ('i1', 'Item 1', '2026-01-01 00:00:00')")
+    conn.execute(
+        "INSERT INTO checklist_instance_items (id, label, completed_at) VALUES ('i1', 'Item 1', '2026-01-01 00:00:00')"
+    )
     conn.commit()
     conn.close()
 
     res = _handle_warning_24h({"item_id": "i1"}, ctx)
     assert res.status == "success"
     mock_nudge.assert_not_called()
+
 
 @patch("xibi.checklists.handlers.send_nudge")
 def test_handle_deadline_open(mock_nudge: MagicMock, temp_db: str, ctx: ExecutionContext) -> None:
@@ -111,6 +112,7 @@ def test_handle_nag_completed(mock_nudge: MagicMock, temp_db: str, ctx: Executio
     res = _handle_nag_post_deadline({"item_id": "i1"}, ctx)
     assert res.status == "success"
     mock_nudge.assert_not_called()
+
 
 @patch("xibi.checklists.handlers.send_nudge")
 def test_handle_nudge_failure(mock_nudge, temp_db, ctx):

@@ -83,6 +83,7 @@ def _handle_send_reminder(action_config: dict, ctx: ExecutionContext) -> Handler
     """Internal hook: send a reminder message via Telegram."""
     text = action_config.get("text", "Reminder")
     from xibi.telegram.api import send_nudge
+
     try:
         # Step 66: Added reminder category
         send_nudge(f"⏰ Reminder: {text}", category="reminder")

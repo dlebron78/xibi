@@ -6,9 +6,33 @@ import sqlite3
 def normalize_text(text: str) -> set[str]:
     """Lowercase, tokenize, drop stopwords, return token set."""
     stopwords = {
-        "the", "a", "an", "is", "are", "was", "were", "be", "have", "has", "had",
-        "do", "does", "did", "and", "or", "but", "if", "to", "of", "in", "on",
-        "at", "by", "for", "with", "from",
+        "the",
+        "a",
+        "an",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "and",
+        "or",
+        "but",
+        "if",
+        "to",
+        "of",
+        "in",
+        "on",
+        "at",
+        "by",
+        "for",
+        "with",
+        "from",
     }
     tokens = text.lower().split()
     return {t.strip(",.!?;:") for t in tokens if t.lower() not in stopwords and len(t) > 0}
@@ -49,7 +73,12 @@ def fuzzy_match_item(db_path: str, instance_id: str, label_hint: str) -> dict | 
     """
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
-        items = [dict(r) for r in conn.execute("SELECT * FROM checklist_instance_items WHERE instance_id = ?", (instance_id,)).fetchall()]
+        items = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT * FROM checklist_instance_items WHERE instance_id = ?", (instance_id,)
+            ).fetchall()
+        ]
 
     if not items:
         return None

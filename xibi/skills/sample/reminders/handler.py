@@ -158,10 +158,7 @@ def list_reminders(params: dict[str, Any]) -> dict[str, Any]:
     actions = list_actions(db_path, enabled_only=not include_disabled)
 
     # Filter to reminders only
-    reminders = [
-        a for a in actions
-        if a.get("created_via") == "reminders_skill" or a["name"].startswith("Reminder:")
-    ]
+    reminders = [a for a in actions if a.get("created_via") == "reminders_skill" or a["name"].startswith("Reminder:")]
 
     return {"status": "ok", "reminders": reminders}
 
