@@ -1,11 +1,13 @@
-import os
+import contextlib
 import json
-import time
-import urllib.request
-import urllib.parse
-import urllib.error
+import os
 import re
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
+
 from bregger_core import BreggerCore
 
 # Temporary store: chat_id -> local file path of the most recently uploaded file.
@@ -77,10 +79,8 @@ class BreggerTelegramAdapter:
         return 0
 
     def _save_offset(self, offset: int):
-        try:
+        with contextlib.suppress(BaseException):
             self.offset_file.write_text(str(offset))
-        except:
-            pass
 
     def _api_call(self, method: str, params: dict = None) -> dict:
         """Make a call to the Telegram Bot API (or mock it)."""

@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 import json
 import time
-import urllib.request
 import urllib.error
-import os
+import urllib.request
 from datetime import datetime
 
 # Targeting the CPU-only Ollama container on port 11435
@@ -33,7 +32,7 @@ SAMPLES = [
         "id": "4",
         "from": "Chase Online <alerts@chase.com>",
         "subject": "Large transaction alert on your account",
-        "body": "A transaction of \$1,200.00 was authorized at Apple Store on March 08. If this was not you, call us immediately.",
+        "body": r"A transaction of \$1,200.00 was authorized at Apple Store on March 08. If this was not you, call us immediately.",
     },
 ]
 

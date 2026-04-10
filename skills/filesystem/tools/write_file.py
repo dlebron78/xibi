@@ -1,7 +1,5 @@
-import os
-
-
 import json
+import os
 
 
 def run(params):

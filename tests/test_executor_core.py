@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from xibi.executor import Executor
-from xibi.skills.registry import SkillInfo, SkillRegistry
+from xibi.skills.registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
 

@@ -42,7 +42,7 @@ def run(params):
         return {"status": "error", "message": f"File not found: {filepath}"}
 
     try:
-        with open(filepath, "r") as f:
+        with open(filepath) as f:
             content = f.read()
         return {"status": "success", "content": content}
     except Exception as e:

@@ -1,9 +1,8 @@
-import sys
-import os
-import subprocess
 import json
+import os
 import shutil
-from typing import Any, Dict, List
+import subprocess
+from typing import Any
 
 
 def _find_himalaya():
@@ -55,7 +54,7 @@ def _score_keyword(kw: str) -> float:
     return score
 
 
-def _rank_keywords(keywords: List[str], max_count: int = 3) -> List[str]:
+def _rank_keywords(keywords: list[str], max_count: int = 3) -> list[str]:
     """Score, sort descending, return top max_count."""
     if not keywords:
         return []
@@ -69,7 +68,7 @@ def _rank_keywords(keywords: List[str], max_count: int = 3) -> List[str]:
 MAX_PROBES = 3
 
 
-def _build_probes(params: Dict) -> List[str]:
+def _build_probes(params: dict) -> list[str]:
     """Convert intent slots into himalaya query strings.
 
     Strategy:
@@ -138,7 +137,7 @@ def _build_probes(params: Dict) -> List[str]:
 # ---------------------------------------------------------------------------
 
 
-def _run_himalaya_query(himalaya_bin: str, query_str: str) -> List[Dict]:
+def _run_himalaya_query(himalaya_bin: str, query_str: str) -> list[dict]:
     """Execute a single himalaya envelope query, return parsed results."""
     try:
         cmd = [himalaya_bin, "--quiet", "--output", "json", "envelope", "list", query_str]
@@ -180,7 +179,7 @@ def _run_himalaya_query(himalaya_bin: str, query_str: str) -> List[Dict]:
         return []
 
 
-def _execute_probes(himalaya_bin: str, probes: List[str], limit: int) -> tuple:
+def _execute_probes(himalaya_bin: str, probes: list[str], limit: int) -> tuple:
     """Run probes sequentially, merge results, dedup by envelope ID.
 
     Returns (results_list, probes_executed_list).
@@ -208,7 +207,7 @@ def _execute_probes(himalaya_bin: str, probes: List[str], limit: int) -> tuple:
 # ---------------------------------------------------------------------------
 
 
-def run(params: Dict) -> Dict[str, Any]:
+def run(params: dict) -> dict[str, Any]:
     """Search emails using intent slots.
 
     New schema (preferred):

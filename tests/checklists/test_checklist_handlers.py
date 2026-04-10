@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import sqlite3
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
+
+from xibi.checklists.handlers import _handle_deadline, _handle_nag_post_deadline, _handle_warning_24h
 from xibi.scheduling.handlers import ExecutionContext
-from xibi.checklists.handlers import _handle_warning_24h, _handle_deadline, _handle_nag_post_deadline
+
 
 @pytest.fixture
 def temp_db(tmp_path):
@@ -57,7 +60,7 @@ def test_handle_warning_completed(mock_nudge, temp_db, ctx):
     mock_nudge.assert_not_called()
 
 @patch("xibi.checklists.handlers.send_nudge")
-def test_handle_deadline_open(mock_nudge, temp_db, ctx):
+def test_handle_deadline_open(mock_nudge: MagicMock, temp_db: str, ctx: ExecutionContext) -> None:
     conn = sqlite3.connect(temp_db)
     conn.execute("INSERT INTO checklist_instance_items (id, label, completed_at) VALUES ('i1', 'Item 1', NULL)")
     conn.commit()
@@ -68,8 +71,23 @@ def test_handle_deadline_open(mock_nudge, temp_db, ctx):
     mock_nudge.assert_called_once()
     assert "Deadline NOW" in mock_nudge.call_args[0][0]
 
+
 @patch("xibi.checklists.handlers.send_nudge")
-def test_handle_nag_open(mock_nudge, temp_db, ctx):
+def test_handle_deadline_completed(mock_nudge: MagicMock, temp_db: str, ctx: ExecutionContext) -> None:
+    conn = sqlite3.connect(temp_db)
+    conn.execute(
+        "INSERT INTO checklist_instance_items (id, label, completed_at) VALUES ('i1', 'Item 1', '2026-01-01 00:00:00')"
+    )
+    conn.commit()
+    conn.close()
+
+    res = _handle_deadline({"item_id": "i1"}, ctx)
+    assert res.status == "success"
+    mock_nudge.assert_not_called()
+
+
+@patch("xibi.checklists.handlers.send_nudge")
+def test_handle_nag_open(mock_nudge: MagicMock, temp_db: str, ctx: ExecutionContext) -> None:
     conn = sqlite3.connect(temp_db)
     conn.execute("INSERT INTO checklist_instance_items (id, label, completed_at) VALUES ('i1', 'Item 1', NULL)")
     conn.commit()
@@ -79,6 +97,20 @@ def test_handle_nag_open(mock_nudge, temp_db, ctx):
     assert res.status == "success"
     mock_nudge.assert_called_once()
     assert "OVERDUE" in mock_nudge.call_args[0][0]
+
+
+@patch("xibi.checklists.handlers.send_nudge")
+def test_handle_nag_completed(mock_nudge: MagicMock, temp_db: str, ctx: ExecutionContext) -> None:
+    conn = sqlite3.connect(temp_db)
+    conn.execute(
+        "INSERT INTO checklist_instance_items (id, label, completed_at) VALUES ('i1', 'Item 1', '2026-01-01 00:00:00')"
+    )
+    conn.commit()
+    conn.close()
+
+    res = _handle_nag_post_deadline({"item_id": "i1"}, ctx)
+    assert res.status == "success"
+    mock_nudge.assert_not_called()
 
 @patch("xibi.checklists.handlers.send_nudge")
 def test_handle_nudge_failure(mock_nudge, temp_db, ctx):

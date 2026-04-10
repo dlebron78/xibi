@@ -3,11 +3,12 @@ manage_goal — Pin or unpin conversational topics for proactive tracking.
 """
 
 import os
-from pathlib import Path
-from xibi.db import open_db
 
 # Add project root to sys.path to allow importing from the root
 import sys
+from pathlib import Path
+
+from xibi.db import open_db
 
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))

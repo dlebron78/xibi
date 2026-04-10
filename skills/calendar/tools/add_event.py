@@ -3,12 +3,10 @@ add_event — Create a new event on Google Calendar.
 Tagged irreversible in manifest — confirmation gate fires automatically.
 """
 
-import json
-import re
-from datetime import datetime, timedelta
-import zoneinfo
+from datetime import timedelta
 
 from _google_auth import gcal_request
+
 from bregger_utils import parse_semantic_datetime
 
 

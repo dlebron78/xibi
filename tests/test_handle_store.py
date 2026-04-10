@@ -1,6 +1,7 @@
 import pytest
-from xibi.handles import HandleStore, ToolHandle, _is_large_collection
-from xibi.errors import XibiError, ErrorCategory
+
+from xibi.errors import ErrorCategory, XibiError
+from xibi.handles import HandleStore, _is_large_collection
 
 
 def test_create_returns_short_id():

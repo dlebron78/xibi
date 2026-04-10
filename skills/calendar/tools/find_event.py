@@ -3,9 +3,9 @@ find_event — Search Google Calendar events by keyword across multiple calendar
 """
 
 import urllib.parse
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 
-from _google_auth import gcal_request, format_date_label, format_event_time, DEFAULT_CALENDARS
+from _google_auth import DEFAULT_CALENDARS, format_date_label, format_event_time, gcal_request
 
 
 def run(params: dict) -> dict:

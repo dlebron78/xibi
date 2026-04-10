@@ -12,27 +12,34 @@ Run:
   python3 bregger_heartbeat.py ~/.bregger/config.json
 """
 
+import importlib.util
+import json
 import os
 import re
-import sys
-import json
-import time
 import sqlite3
-import importlib.util
-import urllib.request
+import sys
+import time
 import urllib.error
+import urllib.request
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 # Add project root to sys.path to allow importing from the root
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__))))
+import contextlib
+
+from bregger_utils import (
+    ensure_signals_schema,
+    inference_lock,
+)
+from bregger_utils import (
+    get_active_threads as _get_active_threads,
+)
+from bregger_utils import (
+    get_pinned_topics as _get_pinned_topics,
+)
 from bregger_utils import (
     normalize_topic as _normalize_topic,
-    inference_lock,
-    get_active_threads as _get_active_threads,
-    get_pinned_topics as _get_pinned_topics,
-    ensure_signals_schema,
 )
 
 # ---------------------------------------------------------------------------
@@ -65,7 +72,7 @@ class TelegramNotifier:
                     data=payload,
                     headers={"Content-Type": "application/json"},
                 )
-                with urllib.request.urlopen(req, timeout=10) as r:
+                with urllib.request.urlopen(req, timeout=10):
                     pass
             except Exception as e:
                 print(f"⚠️ Heartbeat: failed to notify chat {chat_id}: {e}", flush=True)
@@ -186,7 +193,7 @@ class RuleEngine:
                 # Query triage_log (excluding URGENT as they were alerted immediately)
                 cursor = conn.execute(
                     """
-                    SELECT sender, subject, verdict, timestamp FROM triage_log 
+                    SELECT sender, subject, verdict, timestamp FROM triage_log
                     WHERE timestamp > ? AND verdict != 'URGENT'
                     ORDER BY timestamp ASC
                 """,
@@ -414,10 +421,9 @@ def _batch_extract_topics(emails: list[dict], model: str = "llama3.2:latest") ->
         req = urllib.request.Request(
             "http://localhost:11434/api/generate", data=payload, headers={"Content-Type": "application/json"}
         )
-        with inference_lock:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                resp = json.loads(r.read())
-                raw = resp.get("response", "").strip()
+        with inference_lock, urllib.request.urlopen(req, timeout=30) as r:
+            resp = json.loads(r.read())
+            raw = resp.get("response", "").strip()
 
         # Parse JSON — handle markdown fences
         if raw.startswith("```"):
@@ -504,15 +510,14 @@ def classify_email(email: dict, model: str = "llama3.2:latest") -> str:
         req = urllib.request.Request(
             "http://localhost:11434/api/generate", data=payload, headers={"Content-Type": "application/json"}
         )
-        with inference_lock:
-            with urllib.request.urlopen(req, timeout=15) as r:
-                resp = json.loads(r.read())
-                verdict = resp.get("response", "").strip().upper()
-                if "URGENT" in verdict:
-                    return "URGENT"
-                if "NOISE" in verdict:
-                    return "NOISE"
-                return "DIGEST"
+        with inference_lock, urllib.request.urlopen(req, timeout=15) as r:
+            resp = json.loads(r.read())
+            verdict = resp.get("response", "").strip().upper()
+            if "URGENT" in verdict:
+                return "URGENT"
+            if "NOISE" in verdict:
+                return "NOISE"
+            return "DIGEST"
     except Exception as e:
         print(f"⚠️ Classification error: {e}", flush=True)
         return "DIGEST"  # Default to digest on error
@@ -586,13 +591,12 @@ def _synthesize_digest(items: list[dict], model: str = "llama3.2:latest") -> str
         req = urllib.request.Request(
             "http://localhost:11434/api/generate", data=payload, headers={"Content-Type": "application/json"}
         )
-        with inference_lock:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                resp = json.loads(r.read())
-                summary = resp.get("response", "").strip()
-                if summary:
-                    return f"📥 **Inbox Recap**\n\n{summary}"
-                return ""
+        with inference_lock, urllib.request.urlopen(req, timeout=30) as r:
+            resp = json.loads(r.read())
+            summary = resp.get("response", "").strip()
+            if summary:
+                return f"📥 **Inbox Recap**\n\n{summary}"
+            return ""
     except Exception as e:
         print(f"⚠️ [synthesize_digest] LLM synthesis failed: {e}", flush=True)
         return ""  # Fallback
@@ -796,7 +800,7 @@ _DEADLINE_WORDS = {
 }
 
 
-def should_propose(entity: str, topic: str, freq: int) -> Optional[dict]:
+def should_propose(entity: str, topic: str, freq: int) -> dict | None:
     """Deterministic rule engine for V1 proposals."""
     if freq >= 5:
         return {"goal": f"Follow up with {entity} about {topic}", "urgency": "normal"}
@@ -805,7 +809,7 @@ def should_propose(entity: str, topic: str, freq: int) -> Optional[dict]:
     return None
 
 
-def _synthesize_reflection(patterns: list[dict], beliefs: list[dict], model: str = "llama3.2:latest") -> Optional[dict]:
+def _synthesize_reflection(patterns: list[dict], beliefs: list[dict], model: str = "llama3.2:latest") -> dict | None:
     """
     LLM-based reflection synthesis (Phase 1.75 Fix 3).
     Given signal frequency patterns and user beliefs, ask the model what's
@@ -850,13 +854,12 @@ def _synthesize_reflection(patterns: list[dict], beliefs: list[dict], model: str
         req = urllib.request.Request(
             "http://localhost:11434/api/generate", data=payload, headers={"Content-Type": "application/json"}
         )
-        with inference_lock:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                resp = json.loads(r.read())
-                raw = resp.get("response", "").strip()
+        with inference_lock, urllib.request.urlopen(req, timeout=30) as r:
+            resp = json.loads(r.read())
+            raw = resp.get("response", "").strip()
 
         if "NONE" in raw.upper() and len(raw) < 20:
-            print(f"🧠 [reflect] LLM says nothing worth surfacing", flush=True)
+            print("🧠 [reflect] LLM says nothing worth surfacing", flush=True)
             return None
 
         # Parse JSON
@@ -877,7 +880,9 @@ def _synthesize_reflection(patterns: list[dict], beliefs: list[dict], model: str
 
 def reflect(notifier: TelegramNotifier, db_path: Path, model: str = "llama3.2:latest"):
     """Reflection loop: detect signal patterns → LLM synthesis → propose tasks (gated by user)."""
-    import time, uuid, json
+    import json
+    import time
+    import uuid
 
     t0 = time.time()
     trace_id = f"reflect_{uuid.uuid4().hex[:8]}"
@@ -912,15 +917,13 @@ def reflect(notifier: TelegramNotifier, db_path: Path, model: str = "llama3.2:la
 
             # Step 2: Load beliefs for context
             beliefs = []
-            try:
+            with contextlib.suppress(Exception):
                 beliefs = [
                     dict(r)
                     for r in conn.execute(
                         "SELECT key, value FROM beliefs WHERE valid_until IS NULL LIMIT 10"
                     ).fetchall()
                 ]
-            except Exception:
-                pass
 
             # Step 3: LLM synthesis (Phase 1.75 Fix 3)
             # Feed patterns + beliefs to the model. Falls back to frequency rules on failure.
@@ -1043,7 +1046,7 @@ def tick(
     skills_dir: Path, db_path: Path, notifier: TelegramNotifier, rules: RuleEngine, model: str = "llama3.2:latest"
 ):
     if is_quiet_hours():
-        print(f"🌙 Quiet hours — skipping heartbeat tick", flush=True)
+        print("🌙 Quiet hours — skipping heartbeat tick", flush=True)
         return
 
     print(f"💓 Heartbeat tick at {datetime.now().strftime('%H:%M')}", flush=True)
@@ -1227,7 +1230,7 @@ def _run_memory_decay(db_path: Path):
     try:
         with sqlite3.connect(db_path) as conn:
             cursor = conn.execute("""
-                UPDATE ledger 
+                UPDATE ledger
                 SET status = 'expired'
                 WHERE decay_days IS NOT NULL
                   AND (status IS NULL OR status != 'expired')
@@ -1305,13 +1308,12 @@ def _synthesize_threads(threads: list, model: str) -> str:
         req = urllib.request.Request(
             "http://localhost:11434/api/generate", data=payload, headers={"Content-Type": "application/json"}
         )
-        with inference_lock:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                resp = json.loads(r.read())
-                summary = resp.get("response", "").strip()
-                if summary:
-                    return f"🧠 **Active Threads**\n\n{summary}"
-                return ""
+        with inference_lock, urllib.request.urlopen(req, timeout=30) as r:
+            resp = json.loads(r.read())
+            summary = resp.get("response", "").strip()
+            if summary:
+                return f"🧠 **Active Threads**\n\n{summary}"
+            return ""
     except Exception as e:
         print(f"⚠️ [synthesize_threads] LLM synthesis failed: {e}", flush=True)
         return ""

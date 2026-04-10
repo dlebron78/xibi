@@ -1,12 +1,10 @@
+import mimetypes
 import os
 import smtplib
-import mimetypes
-import hashlib
-import sqlite3
+from email import encoders
+from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.mime.base import MIMEBase
-from email import encoders
 
 # ── SMTP config (pulled from env, falls back to Gmail defaults) ──────────────
 SMTP_HOST = os.environ.get("BREGGER_SMTP_HOST", "smtp.gmail.com")

@@ -112,9 +112,15 @@ def _handle_fire_recurrence(action_config: dict, ctx: ExecutionContext) -> Handl
                                 created_via="checklists_module",
                             )
                         )
-                    logger.info("checklist_fire_recurrence: Registered %d deadline actions for item %s", len(action_ids), item_id)
+                    logger.info(
+                        "checklist_fire_recurrence: Registered %d deadline actions for item %s", len(action_ids), item_id
+                    )
                 except Exception as e:
-                    logger.error("checklist_fire_recurrence: Failed to register deadline actions for item %s: %s", item_id, e)
+                    # Rationale: partial success is better than failing the entire recurrence firing.
+                    # We log at error so it appears in the logs, but we continue with the instance creation.
+                    logger.error(
+                        "checklist_fire_recurrence: Failed to register deadline actions for item %s: %s", item_id, e
+                    )
 
                 conn.execute(
                     "UPDATE checklist_instance_items SET deadline_action_ids = ? WHERE id = ?",

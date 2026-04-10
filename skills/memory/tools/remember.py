@@ -1,6 +1,7 @@
-import uuid
 import os
+import uuid
 from pathlib import Path
+
 from xibi.db import open_db
 
 
@@ -25,8 +26,8 @@ def run(params):
                 # Invalidate any existing current record for this key before inserting the new one
                 conn.execute(
                     """
-                    UPDATE beliefs 
-                    SET valid_until = CURRENT_TIMESTAMP 
+                    UPDATE beliefs
+                    SET valid_until = CURRENT_TIMESTAMP
                     WHERE key = ? AND valid_until IS NULL
                 """,
                     (key,),

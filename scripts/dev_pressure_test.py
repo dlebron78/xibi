@@ -34,6 +34,8 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+import contextlib
+
 from xibi.db import migrate
 from xibi.executor import LocalHandlerExecutor
 from xibi.react import run as react_run
@@ -739,20 +741,17 @@ def evaluate_turn(
     all_tools_called = [s.tool for s in result.steps if s.tool not in ("finish", "ask_user", "error")]
 
     # Check expected tool was called
-    if expect_tool := turn.get("expect_tool"):
-        if not any(_tool_used(t, expect_tool) for t in all_tools_called):
-            actual = ", ".join(all_tools_called) or "none"
-            issues.append(f"expected tool '{expect_tool}' — actual tools: {actual}")
+    if (expect_tool := turn.get("expect_tool")) and not any(_tool_used(t, expect_tool) for t in all_tools_called):
+        actual = ", ".join(all_tools_called) or "none"
+        issues.append(f"expected tool '{expect_tool}' — actual tools: {actual}")
 
     # Check tool was NOT called (re-fetch detection)
-    if no_tool := turn.get("expect_no_tool"):
-        if any(_tool_used(t, no_tool) for t in all_tools_called):
-            issues.append(f"unexpected re-call of '{no_tool}' (should have used context)")
+    if (no_tool := turn.get("expect_no_tool")) and any(_tool_used(t, no_tool) for t in all_tools_called):
+        issues.append(f"unexpected re-call of '{no_tool}' (should have used context)")
 
     # Check exit reason
-    if expect_exit := turn.get("expect_exit"):
-        if result.exit_reason != expect_exit:
-            issues.append(f"expected exit '{expect_exit}' — got '{result.exit_reason}'")
+    if (expect_exit := turn.get("expect_exit")) and result.exit_reason != expect_exit:
+        issues.append(f"expected exit '{expect_exit}' — got '{result.exit_reason}'")
 
     # Check expected keywords in answer
     for kw in turn.get("expect_keywords", []):
@@ -945,7 +944,7 @@ def write_report(suite_results: list[dict[str, Any]], report_dir: Path) -> Path:
     lines = [
         f"# Xibi Dev Pressure Test — {ts}",
         f"\n**Overall: {total_passed}/{total_turns} turns passed | {suites_clean}/{len(suite_results)} suites fully green**",
-        f"\n_Environment: mock skill data (sample handlers) + local Ollama (qwen3.5:9b)_\n",
+        "\n_Environment: mock skill data (sample handlers) + local Ollama (qwen3.5:9b)_\n",
     ]
 
     for suite in suite_results:
@@ -1011,7 +1010,7 @@ def main() -> int:
         db_path = Path(f.name)
 
     try:
-        print(f"\n🧪 Xibi Dev Pressure Test")
+        print("\n🧪 Xibi Dev Pressure Test")
         print(f"   Skills:  {skills_dir}")
         print(f"   DB:      {db_path} (temp, isolated)")
         print(f"   Suites:  {suites_to_run}")
@@ -1079,10 +1078,8 @@ def main() -> int:
         return 0 if total_passed == total_turns else 1
 
     finally:
-        try:
+        with contextlib.suppress(Exception):
             db_path.unlink(missing_ok=True)
-        except Exception:
-            pass
 
 
 if __name__ == "__main__":

@@ -1,12 +1,12 @@
-import pytest
-from xibi.react import _run_async, dispatch
-from xibi.handles import HandleStore
-from xibi.errors import XibiError
-from xibi.types import Step
-from xibi.router import Config
-from unittest.mock import MagicMock, patch
 import asyncio
-import json
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from xibi.errors import XibiError
+from xibi.handles import HandleStore
+from xibi.react import _run_async, dispatch
+from xibi.types import Step
 
 
 @pytest.fixture

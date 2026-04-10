@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-import os
-import sys
-import json
-import sqlite3
 import argparse
+import json
+import os
 import shutil
-import uuid
-import urllib.request
+import sqlite3
+import sys
 import urllib.error
+import urllib.request
 from pathlib import Path
 
 __version__ = "0.1.0"
@@ -126,7 +125,7 @@ def cmd_doctor(args):
     config = {}
     if config_path.exists():
         try:
-            with open(config_path, "r") as f:
+            with open(config_path) as f:
                 config = json.load(f)
             print("✅ config.json is valid.")
         except Exception as e:

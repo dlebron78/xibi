@@ -13,11 +13,10 @@ from xibi.errors import ErrorCategory, XibiError
 from xibi.router import (
     OllamaClient,
     _active_db_path,
-    _active_trace,
     _active_tracer,
+    clear_trace_context,
     init_telemetry,
     set_trace_context,
-    clear_trace_context,
 )
 from xibi.tracing import Tracer
 

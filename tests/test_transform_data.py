@@ -1,10 +1,4 @@
-import pytest
-import sys
-import os
 import json
-from pathlib import Path
-from xibi.handles import HandleStore
-from xibi.react import dispatch
 
 # Add skills/data/tools to sys.path so we can import transform_data
 # Actually dispatch will handle it if we provide a registry.
@@ -129,6 +123,6 @@ def test_write_file_resolves_handle(tmp_path):
     result = write_file.run(params)
     assert result["status"] == "success"
 
-    with open(filepath, "r") as f:
+    with open(filepath) as f:
         written = json.load(f)
     assert written == payload
