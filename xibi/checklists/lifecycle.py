@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -9,6 +10,8 @@ from pathlib import Path
 from xibi.scheduling.api import disable_action, register_action
 from xibi.scheduling.handlers import ExecutionContext, HandlerResult
 from xibi.telegram.api import send_message_with_buttons, send_nudge
+
+logger = logging.getLogger(__name__)
 
 
 def _handle_fire_recurrence(action_config: dict, ctx: ExecutionContext) -> HandlerResult:
@@ -63,51 +66,55 @@ def _handle_fire_recurrence(action_config: dict, ctx: ExecutionContext) -> Handl
                 nudge_config = json.loads(template["nudge_config"] or "{}")
                 action_ids = []
 
-                if not nudge_config.get("disable_warning_24h"):
-                    action_ids.append(
-                        register_action(
-                            db_path=ctx.db_path,
-                            name=f"Checklist deadline warning: {template['name']} / {t_item['label']}",
-                            trigger_type="oneshot",
-                            trigger_config={
-                                "fire_at": (deadline_at - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S")
-                            },
-                            action_type="internal_hook",
-                            action_config={"hook": "checklist_warning_24h", "args": {"item_id": item_id}},
-                            trust_tier="green",
-                            created_via="checklists_module",
+                try:
+                    if not nudge_config.get("disable_warning_24h"):
+                        action_ids.append(
+                            register_action(
+                                db_path=ctx.db_path,
+                                name=f"Checklist deadline warning: {template['name']} / {t_item['label']}",
+                                trigger_type="oneshot",
+                                trigger_config={
+                                    "fire_at": (deadline_at - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S")
+                                },
+                                action_type="internal_hook",
+                                action_config={"hook": "checklist_warning_24h", "args": {"item_id": item_id}},
+                                trust_tier="green",
+                                created_via="checklists_module",
+                            )
                         )
-                    )
 
-                if not nudge_config.get("disable_deadline"):
-                    action_ids.append(
-                        register_action(
-                            db_path=ctx.db_path,
-                            name=f"Checklist deadline: {template['name']} / {t_item['label']}",
-                            trigger_type="oneshot",
-                            trigger_config={"fire_at": deadline_at.strftime("%Y-%m-%dT%H:%M:%S")},
-                            action_type="internal_hook",
-                            action_config={"hook": "checklist_deadline", "args": {"item_id": item_id}},
-                            trust_tier="green",
-                            created_via="checklists_module",
+                    if not nudge_config.get("disable_deadline"):
+                        action_ids.append(
+                            register_action(
+                                db_path=ctx.db_path,
+                                name=f"Checklist deadline: {template['name']} / {t_item['label']}",
+                                trigger_type="oneshot",
+                                trigger_config={"fire_at": deadline_at.strftime("%Y-%m-%dT%H:%M:%S")},
+                                action_type="internal_hook",
+                                action_config={"hook": "checklist_deadline", "args": {"item_id": item_id}},
+                                trust_tier="green",
+                                created_via="checklists_module",
+                            )
                         )
-                    )
 
-                if not nudge_config.get("disable_nag_post_deadline"):
-                    action_ids.append(
-                        register_action(
-                            db_path=ctx.db_path,
-                            name=f"Checklist overdue nag: {template['name']} / {t_item['label']}",
-                            trigger_type="oneshot",
-                            trigger_config={
-                                "fire_at": (deadline_at + timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S")
-                            },
-                            action_type="internal_hook",
-                            action_config={"hook": "checklist_nag_post_deadline", "args": {"item_id": item_id}},
-                            trust_tier="green",
-                            created_via="checklists_module",
+                    if not nudge_config.get("disable_nag_post_deadline"):
+                        action_ids.append(
+                            register_action(
+                                db_path=ctx.db_path,
+                                name=f"Checklist overdue nag: {template['name']} / {t_item['label']}",
+                                trigger_type="oneshot",
+                                trigger_config={
+                                    "fire_at": (deadline_at + timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S")
+                                },
+                                action_type="internal_hook",
+                                action_config={"hook": "checklist_nag_post_deadline", "args": {"item_id": item_id}},
+                                trust_tier="green",
+                                created_via="checklists_module",
+                            )
                         )
-                    )
+                    logger.info("checklist_fire_recurrence: Registered %d deadline actions for item %s", len(action_ids), item_id)
+                except Exception as e:
+                    logger.error("checklist_fire_recurrence: Failed to register deadline actions for item %s: %s", item_id, e)
 
                 conn.execute(
                     "UPDATE checklist_instance_items SET deadline_action_ids = ? WHERE id = ?",
@@ -117,6 +124,7 @@ def _handle_fire_recurrence(action_config: dict, ctx: ExecutionContext) -> Handl
     # 4. Handle rollover from previous instance (if one exists)
     _handle_rollover(template_id, instance_id, db_path)
 
+    logger.info("checklist_fire_recurrence: Instance %s created for template %s", instance_id, template_id)
     return HandlerResult("success", f"Instance {instance_id} created with {len(template_items)} items")
 
 
@@ -246,7 +254,10 @@ def handle_rollover_callback(action: str, item_id: str, db_path: Path) -> str:
             # If item is marked DONE, cancel any pending deadline actions
             action_ids = json.loads(item["deadline_action_ids"] or "[]")
             for aid in action_ids:
-                disable_action(db_path, aid)
+                try:
+                    disable_action(db_path, aid)
+                except Exception as e:
+                    logger.error("handle_rollover_callback: Failed to disable action %s: %s", aid, e)
 
             # Check if all items in old instance are now done/expired
             remaining = conn.execute(

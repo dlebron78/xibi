@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -8,6 +9,8 @@ from pathlib import Path
 
 from xibi.checklists.fuzzy import fuzzy_match_item
 from xibi.scheduling.api import disable_action, register_action
+
+logger = logging.getLogger(__name__)
 
 
 def create_checklist_template(
@@ -74,6 +77,7 @@ def create_checklist_template(
             enabled=True,
         )
 
+    logger.info("create_checklist_template: Created template %s (%s)", template_id, name)
     return {
         "template_id": template_id,
         "name": name,
@@ -121,7 +125,10 @@ def update_checklist_item(
         if status == "done":
             action_ids = json.loads(item["deadline_action_ids"] or "[]")
             for action_id in action_ids:
-                disable_action(Path(db_path), action_id)
+                try:
+                    disable_action(Path(db_path), action_id)
+                except Exception as e:
+                    logger.error("update_checklist_item: Failed to disable action %s: %s", action_id, e)
 
         # Check if instance is fully closed
         remaining = conn.execute(

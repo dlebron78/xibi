@@ -27,39 +27,57 @@ def _handle_warning_24h(action_config: dict, ctx: ExecutionContext) -> HandlerRe
     """Fire 24h before an item deadline. Dumb handler: posts a nudge if item is still open."""
     item_id = action_config.get("item_id")
     if not item_id:
+        logger.error("checklist_warning_24h: Missing item_id in action_config")
         return HandlerResult("error", "", "Missing item_id in action_config")
 
-    if _is_item_open(str(ctx.db_path), item_id):
-        label = _get_item_label(str(ctx.db_path), item_id)
-        send_nudge(f"Reminder: {label} is due in 24h", category="info")
-        return HandlerResult("success", f"24h warning nudge posted for {item_id}")
-    else:
-        return HandlerResult("success", f"item {item_id} already completed, skipped nudge")
+    try:
+        if _is_item_open(str(ctx.db_path), item_id):
+            label = _get_item_label(str(ctx.db_path), item_id)
+            send_nudge(f"Reminder: {label} is due in 24h", category="info")
+            logger.info("checklist_warning_24h: Nudge sent for item %s", item_id)
+            return HandlerResult("success", f"24h warning nudge posted for {item_id}")
+        else:
+            return HandlerResult("success", f"item {item_id} already completed, skipped nudge")
+    except Exception as e:
+        logger.error("checklist_warning_24h: Failed for item %s: %s", item_id, e)
+        return HandlerResult("error", "", str(e))
 
 
 def _handle_deadline(action_config: dict, ctx: ExecutionContext) -> HandlerResult:
     """Fire at item deadline. Posts a stronger nudge."""
     item_id = action_config.get("item_id")
     if not item_id:
+        logger.error("checklist_deadline: Missing item_id in action_config")
         return HandlerResult("error", "", "Missing item_id in action_config")
 
-    if _is_item_open(str(ctx.db_path), item_id):
-        label = _get_item_label(str(ctx.db_path), item_id)
-        send_nudge(f"Deadline NOW: {label}", category="alert")
-        return HandlerResult("success", f"deadline nudge posted for {item_id}")
-    else:
-        return HandlerResult("success", f"item {item_id} already completed, skipped nudge")
+    try:
+        if _is_item_open(str(ctx.db_path), item_id):
+            label = _get_item_label(str(ctx.db_path), item_id)
+            send_nudge(f"Deadline NOW: {label}", category="alert")
+            logger.info("checklist_deadline: Nudge sent for item %s", item_id)
+            return HandlerResult("success", f"deadline nudge posted for {item_id}")
+        else:
+            return HandlerResult("success", f"item {item_id} already completed, skipped nudge")
+    except Exception as e:
+        logger.error("checklist_deadline: Failed for item %s: %s", item_id, e)
+        return HandlerResult("error", "", str(e))
 
 
 def _handle_nag_post_deadline(action_config: dict, ctx: ExecutionContext) -> HandlerResult:
     """Fire 24h after item deadline. Posts a nag if item is still open."""
     item_id = action_config.get("item_id")
     if not item_id:
+        logger.error("checklist_nag_post_deadline: Missing item_id in action_config")
         return HandlerResult("error", "", "Missing item_id in action_config")
 
-    if _is_item_open(str(ctx.db_path), item_id):
-        label = _get_item_label(str(ctx.db_path), item_id)
-        send_nudge(f"OVERDUE: {label}", category="urgent")
-        return HandlerResult("success", f"overdue nag posted for {item_id}")
-    else:
-        return HandlerResult("success", f"item {item_id} already completed, skipped nudge")
+    try:
+        if _is_item_open(str(ctx.db_path), item_id):
+            label = _get_item_label(str(ctx.db_path), item_id)
+            send_nudge(f"OVERDUE: {label}", category="urgent")
+            logger.info("checklist_nag_post_deadline: Nudge sent for item %s", item_id)
+            return HandlerResult("success", f"overdue nag posted for {item_id}")
+        else:
+            return HandlerResult("success", f"item {item_id} already completed, skipped nudge")
+    except Exception as e:
+        logger.error("checklist_nag_post_deadline: Failed for item %s: %s", item_id, e)
+        return HandlerResult("error", "", str(e))
