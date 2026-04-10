@@ -29,6 +29,9 @@ WRITE_TOOLS: set[str] = {
     "log_signal",
     "update_checklist_item",
     "create_checklist_template",
+    "create_reminder",
+    "cancel_reminder",
+    "delete_reminder",
 }
 
 # Tier declarations for known tools.
@@ -51,6 +54,11 @@ TOOL_TIERS: dict[str, PermissionTier] = {
     "create_checklist_template": PermissionTier.YELLOW,
     "list_checklists": PermissionTier.GREEN,
     "get_checklist": PermissionTier.GREEN,
+    # Reminders Skill
+    "list_reminders": PermissionTier.GREEN,
+    "create_reminder": PermissionTier.YELLOW,
+    "cancel_reminder": PermissionTier.YELLOW,
+    "delete_reminder": PermissionTier.RED,
     # Red — sends, deletes, financial, first-time destructive
     "send_email": PermissionTier.RED,
     "send_message": PermissionTier.RED,

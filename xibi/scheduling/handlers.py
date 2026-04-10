@@ -79,6 +79,21 @@ def register_internal_hook(name: str, fn: Callable[[dict, ExecutionContext], Han
     _INTERNAL_HOOKS[name] = fn
 
 
+def _handle_send_reminder(action_config: dict, ctx: ExecutionContext) -> HandlerResult:
+    """Internal hook: send a reminder message via Telegram."""
+    text = action_config.get("text", "Reminder")
+    from xibi.telegram.api import send_nudge
+    try:
+        # Step 66: Added reminder category
+        send_nudge(f"⏰ Reminder: {text}", category="reminder")
+        return HandlerResult("success", f"Reminder sent: {text}")
+    except Exception as e:
+        return HandlerResult("error", "", f"Failed to send reminder: {e}")
+
+
+register_internal_hook("send_reminder", _handle_send_reminder)
+
+
 @register_handler("internal_hook")
 def _internal_hook(action_config: dict, ctx: ExecutionContext) -> HandlerResult:
     hook_name = action_config.get("hook")
