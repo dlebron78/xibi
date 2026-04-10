@@ -41,7 +41,7 @@ def parse_when(when_str: str) -> datetime:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(timezone.utc)
     except ValueError:
-        raise ValueError(f"Unparseable 'when' expression: {when_str}")
+        raise ValueError(f"Unparseable 'when' expression: {when_str}") from None
 
 
 def parse_interval(recurring_str: str) -> int:
@@ -99,7 +99,7 @@ def resolve_identifier(db_path: Path, identifier: str) -> str:
             candidates = [s[1]["name"] for s in scores[:3]]
             raise ValueError(f"Ambiguous match for '{identifier}'. Candidates: {', '.join(candidates)}")
 
-    return top_action["id"]
+    return str(top_action["id"])
 
 
 def create_reminder(params: dict[str, Any]) -> dict[str, Any]:

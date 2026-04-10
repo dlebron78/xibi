@@ -1,4 +1,5 @@
 import sqlite3
+import uuid
 import pytest
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -56,9 +57,61 @@ def test_parse_when():
     dt = handler.parse_when(iso_str)
     assert dt == datetime(2026, 4, 10, 15, 45, tzinfo=timezone.utc)
 
+    # ISO 8601 without TZ
+    iso_str_no_tz = "2026-04-10T15:45:00"
+    dt_no_tz = handler.parse_when(iso_str_no_tz)
+    assert dt_no_tz == datetime(2026, 4, 10, 15, 45, tzinfo=timezone.utc)
+
     # Invalid
     with pytest.raises(ValueError):
         handler.parse_when("invalid")
+
+def test_parse_interval():
+    assert handler.parse_interval("60") == 60
+    assert handler.parse_interval("15m") == 900
+    assert handler.parse_interval("2h") == 7200
+    assert handler.parse_interval("1d") == 86400
+    with pytest.raises(ValueError):
+        handler.parse_interval("invalid")
+
+def test_resolve_identifier_uuid(db_path):
+    uid = str(uuid.uuid4())
+    assert handler.resolve_identifier(db_path, uid) == uid
+
+def test_resolve_identifier_not_found(db_path):
+    with pytest.raises(ValueError, match="No active reminders found"):
+        handler.resolve_identifier(db_path, "nothing")
+
+    # Create non-reminder
+    from xibi.scheduling.api import register_action
+    register_action(db_path=db_path, name="Other", trigger_type="oneshot", trigger_config={}, action_type="test", action_config={}, created_via="other")
+    with pytest.raises(ValueError, match="No active reminders found"):
+        handler.resolve_identifier(db_path, "nothing")
+
+def test_resolve_identifier_no_match(db_path):
+    handler.create_reminder({"_db_path": db_path, "text": "Something", "when": "1h"})
+    with pytest.raises(ValueError, match="Could not find a reminder matching"):
+        handler.resolve_identifier(db_path, "unrelated")
+
+def test_create_reminder_register_error(db_path, mocker):
+    mocker.patch("xibi.skills.sample.reminders.handler.register_action", side_effect=Exception("Register fail"))
+    res = handler.create_reminder({"_db_path": db_path, "text": "Fail", "when": "1h"})
+    assert res["status"] == "error"
+    assert "Failed to register action" in res["error"]
+
+def test_cancel_reminder_error(db_path, mocker):
+    res = handler.create_reminder({"_db_path": db_path, "text": "Cancel Error", "when": "1h"})
+    mocker.patch("xibi.skills.sample.reminders.handler.disable_action", side_effect=Exception("Disable fail"))
+    res_cancel = handler.cancel_reminder({"_db_path": db_path, "identifier": res["action_id"]})
+    assert res_cancel["status"] == "error"
+    assert "Disable fail" in res_cancel["error"]
+
+def test_delete_reminder_error(db_path, mocker):
+    res = handler.create_reminder({"_db_path": db_path, "text": "Delete Error", "when": "1h"})
+    mocker.patch("xibi.skills.sample.reminders.handler.delete_action", side_effect=Exception("Delete fail"))
+    res_del = handler.delete_reminder({"_db_path": db_path, "identifier": res["action_id"]})
+    assert res_del["status"] == "error"
+    assert "Delete fail" in res_del["error"]
 
 def test_create_reminder_oneshot(db_path):
     params = {
@@ -156,3 +209,23 @@ def test_delete_reminder(db_path):
     with open_db(db_path) as conn:
         row = conn.execute("SELECT * FROM scheduled_actions WHERE id = ?", (action_id,)).fetchone()
         assert row is None
+
+def test_create_reminder_invalid_when(db_path):
+    res = handler.create_reminder({"_db_path": db_path, "text": "Fail", "when": "invalid"})
+    assert res["status"] == "error"
+    assert "Unparseable" in res["error"]
+
+def test_delete_reminder_invalid_id(db_path):
+    res = handler.delete_reminder({"_db_path": db_path, "identifier": "not-a-uuid-and-no-match"})
+    assert res["status"] == "error"
+    assert "No active reminders found" in res["error"]
+
+def test_resolve_identifier_no_reminders(db_path):
+    with pytest.raises(ValueError, match="No active reminders found"):
+        handler.resolve_identifier(db_path, "test")
+
+def test_resolve_identifier_ambiguous(db_path):
+    handler.create_reminder({"_db_path": db_path, "text": "Reminder A", "when": "1h"})
+    handler.create_reminder({"_db_path": db_path, "text": "Reminder B", "when": "1h"})
+    with pytest.raises(ValueError, match="Ambiguous match"):
+        handler.resolve_identifier(db_path, "Reminder")
