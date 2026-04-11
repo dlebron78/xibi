@@ -30,7 +30,7 @@ def find_himalaya() -> str:
             if path.exists():
                 himalaya_bin = str(path)
                 break
-    return himalaya_bin or "himalaya"
+    return str(himalaya_bin or "himalaya")
 
 def _discover_sent_folder(himalaya_bin: str, db_path: Path) -> str | None:
     """Try candidate folder names, return the first that works. Cache in DB."""
@@ -39,7 +39,7 @@ def _discover_sent_folder(himalaya_bin: str, db_path: Path) -> str | None:
             cursor = conn.execute("SELECT value FROM heartbeat_state WHERE key = 'sent_folder_name'")
             row = cursor.fetchone()
             if row:
-                return row[0]
+                return str(row[0])
     except Exception:
         pass
 
@@ -63,7 +63,7 @@ def _discover_sent_folder(himalaya_bin: str, db_path: Path) -> str | None:
     logger.warning("Could not discover sent folder.")
     return None
 
-def _cache_sent_folder(folder: str, db_path: Path):
+def _cache_sent_folder(folder: str, db_path: Path) -> None:
     try:
         with open_db(db_path) as conn, conn:
             conn.execute(
@@ -78,7 +78,7 @@ def _list_envelopes(
     folder: str | None = None,
     page_size: int = 50,
     page: int = 1,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """List envelopes from a specific folder (or inbox if None)."""
     cmd = [himalaya_bin, "--output", "json", "envelope", "list", "--page-size", str(page_size), "--page", str(page)]
     if folder:
@@ -89,14 +89,15 @@ def _list_envelopes(
         if res.returncode != 0:
             logger.error(f"Himalaya list failed: {res.stderr}")
             return []
-        return json.loads(res.stdout)
+        data = json.loads(res.stdout)
+        return list(data) if isinstance(data, list) else []
     except Exception as e:
         logger.error(f"Error listing envelopes: {e}")
         return []
 
-def _extract_recipients(himalaya_bin: str, envelope: dict) -> list[dict]:
+def _extract_recipients(himalaya_bin: str, envelope: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract all recipients from an envelope."""
-    recipients = []
+    recipients: list[dict[str, Any]] = []
 
     to_field = envelope.get("to", [])
     cc_field = envelope.get("cc", [])
@@ -105,7 +106,7 @@ def _extract_recipients(himalaya_bin: str, envelope: dict) -> list[dict]:
     if not to_field and not cc_field:
         return _fetch_recipients_full(himalaya_bin, envelope["id"])
 
-    def parse_addr(raw: Any, role: str):
+    def parse_addr(raw: Any, role: str) -> dict[str, str] | None:
         if isinstance(raw, dict):
             return {"name": raw.get("name", ""), "addr": raw.get("addr", ""), "role": role}
         elif isinstance(raw, str):
@@ -115,19 +116,25 @@ def _extract_recipients(himalaya_bin: str, envelope: dict) -> list[dict]:
             return {"name": "", "addr": raw.strip(), "role": role}
         return None
 
-    if isinstance(to_field, (str, dict)): to_field = [to_field]
-    if isinstance(cc_field, (str, dict)): cc_field = [cc_field]
-    if isinstance(bcc_field, (str, dict)): bcc_field = [bcc_field]
+    if isinstance(to_field, (str, dict)):
+        to_field = [to_field]
+    if isinstance(cc_field, (str, dict)):
+        cc_field = [cc_field]
+    if isinstance(bcc_field, (str, dict)):
+        bcc_field = [bcc_field]
 
     for r in to_field:
         item = parse_addr(r, "to")
-        if item: recipients.append(item)
+        if item:
+            recipients.append(item)
     for r in cc_field:
         item = parse_addr(r, "cc")
-        if item: recipients.append(item)
+        if item:
+            recipients.append(item)
     for r in bcc_field:
         item = parse_addr(r, "bcc")
-        if item: recipients.append(item)
+        if item:
+            recipients.append(item)
 
     return recipients
 
@@ -311,8 +318,8 @@ def backfill_contacts(
 
                 if addr:
                     _upsert_contact_core(
-                        email=addr,
-                        display_name=name,
+                        email=str(addr),
+                        display_name=str(name),
                         organization=None,
                         db_path=db_path,
                         direction="inbound"

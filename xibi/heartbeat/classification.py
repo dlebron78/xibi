@@ -82,10 +82,7 @@ def build_fallback_prompt(email: dict) -> str:
     """Original sender+subject-only prompt. Used when context assembly fails."""
     addr = _extract_sender_addr(email)
     name = _extract_sender_name(email)
-    if name and addr:
-        sender = f"{name} <{addr}>"
-    else:
-        sender = name or addr or "Unknown"
+    sender = f"{name} <{addr}>" if name and addr else name or addr or "Unknown"
 
     subject = email.get("subject", "No Subject")
     return f"""From: {sender}
