@@ -7,7 +7,10 @@ import sqlite3
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from xibi.heartbeat.sender_trust import TrustAssessment
 
 from xibi.db import open_db
 
@@ -104,7 +107,12 @@ class RuleEngine:
     def load_rules(self, rule_type: str) -> list[dict[str, Any]]:
         return [r for r in self._rule_cache if r["type"] == rule_type]
 
-    def evaluate_email(self, email: dict[str, Any], rules: list[dict[str, Any]]) -> str | None:
+    def evaluate_email(
+        self,
+        email: dict[str, Any],
+        rules: list[dict[str, Any]],
+        sender_trust: TrustAssessment | None = None,
+    ) -> str | None:
         for rule in rules:
             cond = rule["condition"]
             field = cond.get("field", "subject")
@@ -126,6 +134,21 @@ class RuleEngine:
                     sender = sender.get("name") or sender.get("addr", "unknown")
                 subject = email.get("subject", "No Subject")
                 res = msg.replace("{from}", str(sender)).replace("{subject}", str(subject))
+
+                if sender_trust:
+                    trust_line = ""
+                    if sender_trust.tier == "ESTABLISHED":
+                        trust_line = f"✅ Known contact ({sender_trust.detail})"
+                    elif sender_trust.tier == "RECOGNIZED":
+                        trust_line = f"📨 Seen before ({sender_trust.detail})"
+                    elif sender_trust.tier == "UNKNOWN":
+                        trust_line = f"⚠️ First-time sender ({sender_trust.detail})"
+                    elif sender_trust.tier == "NAME_MISMATCH":
+                        trust_line = f"🔶 Name mismatch ({sender_trust.detail})"
+
+                    if trust_line:
+                        res = f"{trust_line}\n{res}"
+
                 return str(res)
         return None
 

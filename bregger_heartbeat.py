@@ -41,6 +41,11 @@ from bregger_utils import (
 from bregger_utils import (
     normalize_topic as _normalize_topic,
 )
+from xibi.heartbeat.sender_trust import (
+    assess_sender_trust,
+    _extract_sender_addr,
+    _extract_sender_name,
+)
 
 # ---------------------------------------------------------------------------
 # Config
@@ -334,7 +339,7 @@ class RuleEngine:
 
         return topic, entity_text, entity_type
 
-    def evaluate_email(self, email: dict, rules: list[dict]) -> str | None:
+    def evaluate_email(self, email: dict, rules: list[dict], sender_trust=None) -> str | None:
         """
         Returns the alert message if any rule matches, else None.
         email is a dict with keys: from, subject, date, id
@@ -356,6 +361,21 @@ class RuleEngine:
                     if isinstance(v, dict):
                         v = v.get("name") or v.get("addr", str(v))
                     msg = msg.replace(f"{{{k}}}", str(v))
+
+                if sender_trust:
+                    trust_line = ""
+                    if sender_trust.tier == "ESTABLISHED":
+                        trust_line = f"✅ Known contact ({sender_trust.detail})"
+                    elif sender_trust.tier == "RECOGNIZED":
+                        trust_line = f"📨 Seen before ({sender_trust.detail})"
+                    elif sender_trust.tier == "UNKNOWN":
+                        trust_line = f"⚠️ First-time sender ({sender_trust.detail})"
+                    elif sender_trust.tier == "NAME_MISMATCH":
+                        trust_line = f"🔶 Name mismatch ({sender_trust.detail})"
+
+                    if trust_line:
+                        msg = f"{trust_line}\n{msg}"
+
                 return msg
         return None
 
@@ -1183,6 +1203,11 @@ def tick(
         summary_data = body_summaries.get(email_id, {})
         summary_text = summary_data.get("summary")
 
+        # Sender trust assessment
+        sender_addr = _extract_sender_addr(email)
+        sender_name = _extract_sender_name(email)
+        trust = assess_sender_trust(sender_addr, sender_name, db_path)
+
         rules.log_signal(
             source="email",
             topic_hint=topic,
@@ -1194,6 +1219,8 @@ def tick(
             summary=summary_text,
             summary_model=summary_data.get("model"),
             summary_ms=summary_data.get("duration_ms"),
+            sender_trust=trust.tier,
+            sender_contact_id=trust.contact_id,
         )
 
         if not email_id or email_id in seen:
@@ -1233,7 +1260,7 @@ def tick(
             continue  # Try again next tick (we won't mark as seen)
 
         if verdict == "URGENT":
-            alert = rules.evaluate_email(email, email_rules)
+            alert = rules.evaluate_email(email, email_rules, sender_trust=trust)
             if alert:
                 notifier.send(alert)
                 print(f"📬 URGENT: Alert sent for email {email_id}", flush=True)
