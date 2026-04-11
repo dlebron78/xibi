@@ -7,7 +7,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 22  # increment when adding new migrations
+SCHEMA_VERSION = 23  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -53,6 +53,7 @@ class SchemaManager:
             (20, "belief_summaries table for session compression", self._migration_20),
             (21, "universal action scheduler tables", self._migration_21),
             (22, "checklist templates and instances", self._migration_22),
+            (23, "chief of staff: summaries, contacts, trust (catch-up)", self._migration_23),
         ]
 
         for version, description, func in migrations:
@@ -486,7 +487,7 @@ class SchemaManager:
                 created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
                 first_seen   DATETIME DEFAULT CURRENT_TIMESTAMP,
                 last_seen    DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(contact_id, channel_type, handle)
+                UNIQUE(channel_type, handle)
             );
         """)
         with contextlib.suppress(sqlite3.OperationalError):
@@ -585,6 +586,10 @@ class SchemaManager:
                 );
                 CREATE INDEX IF NOT EXISTS idx_scheduled_action_runs_action ON scheduled_action_runs(action_id, started_at DESC);
             """)
+
+    def _migration_23(self, conn: sqlite3.Connection) -> None:
+        """Chief of Staff pipeline: signal summaries, contact extensions, sender trust (catch-up)."""
+        self._migration_18(conn)
 
     def _migration_22(self, conn: sqlite3.Connection) -> None:
         sql_path = Path(__file__).parent / "migrations" / "0022_checklists.sql"

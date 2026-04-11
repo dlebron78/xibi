@@ -1,9 +1,10 @@
 import pytest
 from unittest.mock import MagicMock, patch
 from xibi.heartbeat.email_body import (
-    parse_email_body,
     compact_body,
-    summarize_email_body
+    fetch_raw_email,
+    parse_email_body,
+    summarize_email_body,
 )
 
 # --- Unit Tests ---
@@ -95,7 +96,60 @@ def test_summarize_ollama_down(mock_urlopen):
     mock_urlopen.side_effect = Exception("Connection refused")
 
     # Body must be >= 20 chars to trigger Ollama call
-    result = summarize_email_body("This is a sufficiently long email body to trigger summarization.", "Alice", "Meeting")
+    result = summarize_email_body(
+        "This is a sufficiently long email body to trigger summarization.", "Alice", "Meeting"
+    )
     assert result["status"] == "error"
     assert result["summary"] == "[summary unavailable]"
     assert "error" in result
+    assert result["duration_ms"] >= 0
+
+
+def test_compact_body_short():
+    assert compact_body("") == ""
+    assert compact_body("short") == "short"
+
+
+def test_parse_email_body_empty():
+    assert parse_email_body("") == ""
+
+
+@patch("subprocess.run")
+def test_fetch_raw_email_fail(mock_run):
+    mock_run.return_value = MagicMock(returncode=1, stderr="Error")
+    raw, err = fetch_raw_email("himalaya", "123")
+    assert raw is None
+    assert err == "Error"
+
+
+@patch("subprocess.run")
+def test_fetch_raw_email_exception(mock_run):
+    mock_run.side_effect = Exception("Crash")
+    raw, err = fetch_raw_email("himalaya", "123")
+    assert raw is None
+    assert err == "Crash"
+
+
+def test_parse_email_body_walk_logic():
+    # Test manual walk for text/plain
+    raw = """MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="boundary"
+
+--boundary
+Content-Type: text/plain
+
+Hello Walk
+--boundary--"""
+    # Force manual walk by making get_body return None (hard to do with real Message object without mocking)
+    # But message_from_string with policy.default should just work.
+    assert parse_email_body(raw) == "Hello Walk"
+
+
+def test_parse_email_body_html_strip():
+    raw = "Content-Type: text/html\n\n<html><body><b>Bold</b> text</body></html>"
+    assert parse_email_body(raw) == "Bold text"
+
+
+def test_summarize_email_body_too_short():
+    result = summarize_email_body("too short", "Alice", "Subject")
+    assert result["status"] == "empty"

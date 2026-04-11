@@ -17,7 +17,7 @@ def upsert_contact_channel(
     if not db_path:
         return False
     try:
-        with open_db(Path(db_path)) as conn:
+        with open_db(Path(db_path)) as conn, conn:
             conn.execute(
                 """
                 INSERT INTO contact_channels (contact_id, channel_type, handle, verified)
@@ -54,7 +54,7 @@ def create_contact(
         # Write contact row and commit before opening a second connection for the channel.
         # Both operations write to the same WAL db; nesting open_db calls deadlocks SQLite
         # (second connection waits 30 s for the first's implicit transaction to commit).
-        with open_db(Path(db_path)) as conn:
+        with open_db(Path(db_path)) as conn, conn:
             conn.execute(
                 """
                 INSERT INTO contacts (id, display_name, email, organization, relationship, discovered_via, signal_count)
