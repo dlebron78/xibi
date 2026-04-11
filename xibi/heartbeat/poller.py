@@ -12,6 +12,11 @@ import xibi.db
 import xibi.signal_intelligence as sig_intel
 from xibi.alerting.rules import RuleEngine
 from xibi.heartbeat.contact_poller import backfill_contacts, find_himalaya, poll_sent_folder
+from xibi.heartbeat.sender_trust import (
+    assess_sender_trust,
+    _extract_sender_addr,
+    _extract_sender_name,
+)
 from xibi.channels.sheets import SheetsExporter
 from xibi.channels.telegram import TelegramAdapter
 from xibi.command_layer import CommandLayer
@@ -605,6 +610,11 @@ class HeartbeatPoller:
             if verdict == "DIGEST":
                 verdict, subject = self._should_escalate(verdict, subject, subject, [])
 
+            # Sender trust assessment
+            sender_addr = _extract_sender_addr(email)
+            sender_name = _extract_sender_name(email)
+            trust = assess_sender_trust(sender_addr, sender_name, self.db_path)
+
             processed.append(
                 {
                     "email": email,
@@ -615,6 +625,7 @@ class HeartbeatPoller:
                     "is_new": email_id not in seen_ids,
                     "sig": sig,
                     "summary_data": summary_data,
+                    "trust_assessment": trust,
                 }
             )
 
@@ -624,6 +635,7 @@ class HeartbeatPoller:
                 for item in processed:
                     sig = item["sig"]
                     summary_data = item.get("summary_data", {})
+                    trust = item["trust_assessment"]
                     self.rules.log_signal_with_conn(
                         conn,
                         source=sig["source"],
@@ -636,6 +648,8 @@ class HeartbeatPoller:
                         summary=summary_data.get("summary"),
                         summary_model=summary_data.get("model"),
                         summary_ms=summary_data.get("duration_ms"),
+                        sender_trust=trust.tier,
+                        sender_contact_id=trust.contact_id,
                     )
 
                     if not item["is_new"] or item["verdict"] == "DEFER":
@@ -647,7 +661,7 @@ class HeartbeatPoller:
                     self.rules.mark_seen_with_conn(conn, item["email_id"])
 
                     if item["verdict"] == "URGENT":
-                        alert_msg = self.rules.evaluate_email(item["email"], email_rules)
+                        alert_msg = self.rules.evaluate_email(item["email"], email_rules, sender_trust=trust)
                         if alert_msg:
                             self._broadcast(alert_msg)
         except Exception as e:

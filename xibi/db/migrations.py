@@ -7,7 +7,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 22  # increment when adding new migrations
+SCHEMA_VERSION = 23  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -53,6 +53,7 @@ class SchemaManager:
             (20, "belief_summaries table for session compression", self._migration_20),
             (21, "universal action scheduler tables", self._migration_21),
             (22, "checklist templates and instances", self._migration_22),
+            (23, "signals: add sender_trust and sender_contact_id", self._migration_23),
         ]
 
         for version, description, func in migrations:
@@ -633,6 +634,16 @@ class SchemaManager:
                     FOREIGN KEY (instance_id) REFERENCES checklist_instances(id) ON DELETE CASCADE
                 );
             """)
+
+    def _migration_23(self, conn: sqlite3.Connection) -> None:
+        """Add sender_trust and sender_contact_id to signals."""
+        new_cols = [
+            ("sender_trust", "TEXT"),
+            ("sender_contact_id", "TEXT"),
+        ]
+        for col_name, col_type in new_cols:
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute(f"ALTER TABLE signals ADD COLUMN {col_name} {col_type}")
 
 
 def migrate(db_path: Path) -> list[int]:

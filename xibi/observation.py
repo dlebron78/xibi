@@ -604,6 +604,39 @@ class ObservationCycle:
                 lines.append(f"SIGNAL DISTRIBUTION: {dist_str}")
                 lines.append("")
 
+            # Sender Trust Distribution
+            with open_db(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute(
+                    """
+                    SELECT sender_trust, COUNT(*) as cnt
+                    FROM signals
+                    WHERE timestamp > datetime('now', '-8 hours') AND sender_trust IS NOT NULL
+                    GROUP BY sender_trust
+                    """
+                )
+                trust_dist = {row["sender_trust"]: row["cnt"] for row in cursor.fetchall()}
+
+                if trust_dist:
+                    lines.append("SENDER TRUST DISTRIBUTION (last 8h):")
+                    for tier in ["ESTABLISHED", "RECOGNIZED", "NAME_MISMATCH", "UNKNOWN"]:
+                        if tier in trust_dist:
+                            lines.append(f"  {tier}: {trust_dist[tier]} signals")
+
+                    # One-line example of NAME_MISMATCH if any
+                    if trust_dist.get("NAME_MISMATCH"):
+                        example = conn.execute(
+                            """
+                            SELECT entity_text, content_preview
+                            FROM signals
+                            WHERE sender_trust = 'NAME_MISMATCH' AND timestamp > datetime('now', '-8 hours')
+                            LIMIT 1
+                            """
+                        ).fetchone()
+                        if example:
+                            lines.append(f"  Example mismatch: \"{example['entity_text']}\" — {example['content_preview'][:60]}...")
+                    lines.append("")
+
             # Active tasks for context
             lines.append("ACTIVE TASKS:")
             with open_db(self.db_path) as conn:

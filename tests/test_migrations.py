@@ -182,6 +182,16 @@ def test_signals_has_intel_columns(tmp_path: Path):
         assert "intel_tier" in columns
 
 
+def test_signals_has_trust_columns(tmp_path: Path):
+    db_path = tmp_path / "xibi.db"
+    migrate(db_path)
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.execute("PRAGMA table_info(signals)")
+        columns = {row[1] for row in cursor.fetchall()}
+        assert "sender_trust" in columns
+        assert "sender_contact_id" in columns
+
+
 def test_schema_version_13_table(tmp_path: Path):
     db_path = tmp_path / "xibi.db"
     migrate(db_path)
