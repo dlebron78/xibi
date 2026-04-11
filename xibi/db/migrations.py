@@ -441,7 +441,21 @@ class SchemaManager:
                 conn.execute(f"ALTER TABLE access_log ADD COLUMN {col_name} {col_type}")
 
     def _migration_18(self, conn: sqlite3.Connection) -> None:
-        # Extend contacts table
+        """Chief of Staff pipeline: signal summaries, contact extensions, sender trust."""
+
+        # --- Step 67 & 69: Signal summaries & Sender trust ---
+        signal_cols = [
+            ("summary", "TEXT"),  # LLM-generated body summary
+            ("summary_model", "TEXT"),  # e.g. "gemma4:e4b"
+            ("summary_ms", "INTEGER"),  # summarization latency in ms
+            ("sender_trust", "TEXT"),  # 'ESTABLISHED' | 'RECOGNIZED' | 'UNKNOWN' | 'NAME_MISMATCH'
+            ("sender_contact_id", "TEXT"),  # FK to contacts(id)
+        ]
+        for col_name, col_type in signal_cols:
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute(f"ALTER TABLE signals ADD COLUMN {col_name} {col_type}")
+
+        # --- Step 68: Extend contacts for outbound tracking ---
         contact_cols = [
             ("phone", "TEXT"),
             ("title", "TEXT"),
@@ -460,20 +474,29 @@ class SchemaManager:
                 logger.error(f"Migration 18 failed to add column {col_name}: {e}")
                 raise
 
-        # Multi-channel identity table
+        # --- Step 68: Multi-channel identity ---
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS contact_channels (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                contact_id TEXT NOT NULL REFERENCES contacts(id),
-                channel_type TEXT NOT NULL,  -- 'email' | 'slack' | 'github' | 'telegram' | 'whatsapp'
-                handle TEXT NOT NULL,        -- 'alice@acme.com', '@athompson', 'alice-t'
-                verified INTEGER NOT NULL DEFAULT 0,  -- 1 if system has seen this handle in use
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(channel_type, handle)
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                contact_id   TEXT NOT NULL REFERENCES contacts(id),
+                channel_type TEXT NOT NULL,
+                handle       TEXT NOT NULL,
+                display_name TEXT,
+                verified     INTEGER NOT NULL DEFAULT 0,
+                created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                first_seen   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_seen    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(contact_id, channel_type, handle)
             );
-            CREATE INDEX IF NOT EXISTS idx_contact_channels_lookup ON contact_channels(channel_type, handle);
-            CREATE INDEX IF NOT EXISTS idx_contact_channels_contact ON contact_channels(contact_id);
         """)
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_cc_handle ON contact_channels(channel_type, handle);")
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_cc_contact ON contact_channels(contact_id);")
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_contact_channels_lookup ON contact_channels(channel_type, handle);"
+            )
 
         # Extend session_entities table
         try:

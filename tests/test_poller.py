@@ -65,10 +65,14 @@ def _null_db_ctx(db_path):
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
             source TEXT, topic TEXT, topic_hint TEXT,
             entity_text TEXT, entity_type TEXT, content_preview TEXT,
-            ref_id TEXT, ref_source TEXT
+            ref_id TEXT, ref_source TEXT,
+            summary TEXT, summary_model TEXT, summary_ms INTEGER
         );
         CREATE TABLE IF NOT EXISTS tasks (
             id TEXT PRIMARY KEY, goal TEXT, status TEXT, due DATETIME, trace_id TEXT DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS threads (
+            id TEXT PRIMARY KEY, name TEXT, status TEXT DEFAULT 'active'
         );
         CREATE TABLE IF NOT EXISTS processed_messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT, processed_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -275,6 +279,8 @@ def test_tick_marks_seen_email(tmp_path):
         patch.object(hp, "_classify_email", return_value="DIGEST"),
         patch("xibi.heartbeat.poller.enrich_signals", return_value=0, create=True),
         patch("xibi.signal_intelligence.enrich_signals", return_value=0),
+        patch("xibi.heartbeat.email_body.find_himalaya", return_value="himalaya"),
+        patch("xibi.heartbeat.email_body.fetch_raw_email", return_value=(None, None)),
     ):
         hp.tick()
         hp.rules.mark_seen_with_conn.assert_called()
@@ -302,6 +308,8 @@ def test_tick_urgent_broadcasts(tmp_path):
         patch.object(hp, "_classify_email", return_value="URGENT"),
         patch("xibi.signal_intelligence.enrich_signals", return_value=0),
         patch.object(hp, "_broadcast") as mock_broadcast,
+        patch("xibi.heartbeat.email_body.find_himalaya", return_value="himalaya"),
+        patch("xibi.heartbeat.email_body.fetch_raw_email", return_value=(None, None)),
     ):
         hp.tick()
         mock_broadcast.assert_called()

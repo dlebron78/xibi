@@ -269,7 +269,21 @@ class RuleEngine:
             print(f"⚠️ Failed to load triage rules: {e}", flush=True)
         return rules
 
-    def log_signal(self, source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source):
+    def log_signal(
+        self,
+        source,
+        topic_hint,
+        entity_text,
+        entity_type,
+        content_preview,
+        ref_id,
+        ref_source,
+        summary=None,
+        summary_model=None,
+        summary_ms=None,
+        sender_trust=None,
+        sender_contact_id=None,
+    ):
         """Insert a signal into the signals table."""
         try:
             preview = (content_preview[:277] + "...") if len(content_preview) > 280 else content_preview
@@ -287,10 +301,10 @@ class RuleEngine:
 
                 conn.execute(
                     """
-                    INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, env)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'production')
+                    INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id, env)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'production')
                 """,
-                    (source, topic_hint, entity_text, entity_type, preview, str(ref_id), ref_source),
+                    (source, topic_hint, entity_text, entity_type, preview, str(ref_id), ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id),
                 )
         except Exception as e:
             print(f"⚠️ Heartbeat: Failed to log signal: {e}", flush=True)
@@ -482,6 +496,29 @@ def _extract_sender(email: dict) -> str:
             return f"{name} <{addr}>"
         return name or addr or "Unknown"
     return str(raw) if raw else "Unknown"
+
+
+def _extract_sender_addr(email: dict) -> str:
+    """Extract just the email address from a himalaya envelope sender field."""
+    sender = email.get("from", {})
+    if isinstance(sender, dict):
+        return (sender.get("addr") or "").strip().lower()
+    # Fall back to parsing "Name <addr>" format
+    raw = str(sender)
+    if "<" in raw and ">" in raw:
+        return raw.split("<")[1].split(">")[0].strip().lower()
+    return raw.strip().lower()
+
+
+def _extract_sender_name(email: dict) -> str:
+    """Extract just the display name from a himalaya envelope sender field."""
+    sender = email.get("from", {})
+    if isinstance(sender, dict):
+        return (sender.get("name") or "").strip()
+    raw = str(sender)
+    if "<" in raw:
+        return raw.split("<")[0].strip().strip('"')
+    return ""
 
 
 def classify_email(email: dict, model: str = "llama3.2:latest") -> str:
@@ -1065,6 +1102,56 @@ def tick(
     # Falls back to regex if LLM fails (Rule 16 — graceful degradation).
     batch_topics = _batch_extract_topics(emails, model=model)
 
+    # ── Batch Email Body Summarization ──────────────────────────
+    # Fetch bodies and generate LLM summaries for all emails in this tick.
+    # Runs BEFORE the per-email loop so summaries are available when logging signals.
+    from xibi.heartbeat.email_body import (
+        find_himalaya, fetch_raw_email, parse_email_body,
+        compact_body, summarize_email_body
+    )
+
+    try:
+        himalaya_bin = find_himalaya()
+    except FileNotFoundError as e:
+        print(f"⚠️ {e} Skipping body summarization for this tick.", flush=True)
+        himalaya_bin = None
+
+    body_summaries = {}  # email_id -> {status, summary, model, duration_ms}
+    _summary_start = time.time()
+
+    if himalaya_bin:
+        for email in emails:
+            eid = str(email.get("id", ""))
+            if not eid:
+                continue
+
+            # 1. Fetch raw RFC 5322
+            raw, err = fetch_raw_email(himalaya_bin, eid)
+            if err or not raw:
+                body_summaries[eid] = {"status": "fetch_error", "summary": "[no body content]", "error": err}
+                continue
+
+            # 2. Parse MIME → text body
+            body = parse_email_body(raw)
+            if not body or len(body.strip()) < 20:
+                body_summaries[eid] = {"status": "empty", "summary": "[no body content]"}
+                continue
+
+            # 3. Compact (strip signatures, disclaimers, truncate)
+            compacted = compact_body(body)
+
+            # 4. LLM summarize
+            sender = _extract_sender(email)
+            subject = email.get("subject", "No Subject")
+            result = summarize_email_body(compacted, sender, subject, model=model)
+            body_summaries[eid] = result
+
+        _summary_elapsed = int((time.time() - _summary_start) * 1000)
+        if emails:
+            print(f"📝 Summarized {len([v for v in body_summaries.values() if v.get('status') == 'success'])}/{len(emails)} emails in {_summary_elapsed}ms", flush=True)
+            if _summary_elapsed > 45000:
+                print(f"⚠️ Summarization budget exceeded: {_summary_elapsed}ms for {len(emails)} emails", flush=True)
+
     # ── Pre-load cross-channel data (Phase 2.2 — hoisted above loop) ────
     # Fetched once per tick, not per DIGEST email. Prevents N×2 SQL queries
     # inside the loop when multiple emails are DIGEST in the same tick.
@@ -1093,6 +1180,9 @@ def tick(
             topic, entity_text, entity_type = rules.extract_topic_from_subject(subject)
             _regex_fallback += 1
 
+        summary_data = body_summaries.get(email_id, {})
+        summary_text = summary_data.get("summary")
+
         rules.log_signal(
             source="email",
             topic_hint=topic,
@@ -1101,6 +1191,9 @@ def tick(
             content_preview=f"{sender}: {subject}",
             ref_id=email_id,
             ref_source="email",
+            summary=summary_text,
+            summary_model=summary_data.get("model"),
+            summary_ms=summary_data.get("duration_ms"),
         )
 
         if not email_id or email_id in seen:

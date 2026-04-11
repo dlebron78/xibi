@@ -59,14 +59,14 @@ def test_yellow_tool_allowed_sets_audit_required():
 
 def test_red_tool_blocked_non_interactive():
     layer = CommandLayer(interactive=False)
-    result = layer.check("send_email", {"recipient": "a@b.com", "subject": "hi"})
+    result = layer.check("send_email", {"recipient": "user@example.com", "subject": "hi"})
     assert result.allowed is False
     assert result.block_reason != ""
 
 
 def test_red_tool_allowed_interactive():
     layer = CommandLayer(interactive=True)
-    result = layer.check("send_email", {"recipient": "a@b.com", "subject": "hi"})
+    result = layer.check("send_email", {"recipient": "user@example.com", "subject": "hi"})
     assert result.allowed is True
 
 
@@ -163,7 +163,7 @@ def test_dispatch_with_command_layer_blocks_red_non_interactive():
     layer = CommandLayer(interactive=False)
 
     # Red tool, non-interactive
-    tool_input = {"recipient": "a@b.com", "subject": "hi"}
+    tool_input = {"recipient": "user@example.com", "subject": "hi"}
     response = dispatch("send_email", tool_input, skill_registry, executor=mock_executor, command_layer=layer)
 
     assert response["status"] == "blocked"
