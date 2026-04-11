@@ -80,8 +80,8 @@ def resolve_identifier(db_path: Path, identifier: str) -> str:
 
     # Fuzzy name match
     actions = list_actions(db_path, enabled_only=True)
-    # Filter to reminders
-    reminders = [a for a in actions if a.get("created_via") == "reminders_skill" or a["name"].startswith("Reminder:")]
+    # Filter to reminders (created via reminders skill only)
+    reminders = [a for a in actions if a.get("created_via") == "reminders_skill"]
 
     if not reminders:
         raise ValueError(f"No active reminders found to match '{identifier}'")
@@ -157,8 +157,8 @@ def list_reminders(params: dict[str, Any]) -> dict[str, Any]:
     include_disabled = params.get("include_disabled", False)
     actions = list_actions(db_path, enabled_only=not include_disabled)
 
-    # Filter to reminders only
-    reminders = [a for a in actions if a.get("created_via") == "reminders_skill" or a["name"].startswith("Reminder:")]
+    # Filter to reminders only (created via reminders skill)
+    reminders = [a for a in actions if a.get("created_via") == "reminders_skill"]
 
     return {"status": "ok", "reminders": reminders}
 
