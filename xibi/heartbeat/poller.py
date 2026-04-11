@@ -11,16 +11,16 @@ from typing import TYPE_CHECKING, Any
 import xibi.db
 import xibi.signal_intelligence as sig_intel
 from xibi.alerting.rules import RuleEngine
-from xibi.heartbeat.contact_poller import backfill_contacts, find_himalaya, poll_sent_folder
-from xibi.heartbeat.sender_trust import (
-    assess_sender_trust,
-    _extract_sender_addr,
-    _extract_sender_name,
-)
 from xibi.channels.sheets import SheetsExporter
 from xibi.channels.telegram import TelegramAdapter
 from xibi.command_layer import CommandLayer
+from xibi.heartbeat.contact_poller import backfill_contacts, find_himalaya, poll_sent_folder
 from xibi.heartbeat.extractors import SignalExtractorRegistry
+from xibi.heartbeat.sender_trust import (
+    _extract_sender_addr,
+    _extract_sender_name,
+    assess_sender_trust,
+)
 from xibi.heartbeat.source_poller import SourcePoller
 from xibi.observation import ObservationCycle
 from xibi.radiant import Radiant
@@ -613,7 +613,8 @@ class HeartbeatPoller:
             # Sender trust assessment
             sender_addr = _extract_sender_addr(email)
             sender_name = _extract_sender_name(email)
-            trust = assess_sender_trust(sender_addr, sender_name, self.db_path)
+            owner_email = self.config.get("email_from")
+            trust = assess_sender_trust(sender_addr, sender_name, self.db_path, owner_email=owner_email)
 
             processed.append(
                 {

@@ -487,7 +487,7 @@ class SchemaManager:
                 created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
                 first_seen   DATETIME DEFAULT CURRENT_TIMESTAMP,
                 last_seen    DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(contact_id, channel_type, handle)
+                UNIQUE(channel_type, handle)
             );
         """)
         with contextlib.suppress(sqlite3.OperationalError):

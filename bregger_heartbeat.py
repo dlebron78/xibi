@@ -363,16 +363,7 @@ class RuleEngine:
                     msg = msg.replace(f"{{{k}}}", str(v))
 
                 if sender_trust:
-                    trust_line = ""
-                    if sender_trust.tier == "ESTABLISHED":
-                        trust_line = f"✅ Known contact ({sender_trust.detail})"
-                    elif sender_trust.tier == "RECOGNIZED":
-                        trust_line = f"📨 Seen before ({sender_trust.detail})"
-                    elif sender_trust.tier == "UNKNOWN":
-                        trust_line = f"⚠️ First-time sender ({sender_trust.detail})"
-                    elif sender_trust.tier == "NAME_MISMATCH":
-                        trust_line = f"🔶 Name mismatch ({sender_trust.detail})"
-
+                    trust_line = sender_trust.format_nudge_line()
                     if trust_line:
                         msg = f"{trust_line}\n{msg}"
 
@@ -1206,6 +1197,10 @@ def tick(
         # Sender trust assessment
         sender_addr = _extract_sender_addr(email)
         sender_name = _extract_sender_name(email)
+        # Use owner's email for self-detection if available in RuleEngine or config
+        owner_email = None
+        # In this script, RuleEngine is instantiated with db_path and config can be retrieved
+        # but let's keep it simple and just use the contact graph for now as initially planned.
         trust = assess_sender_trust(sender_addr, sender_name, db_path)
 
         rules.log_signal(

@@ -49,7 +49,7 @@ def db_path(tmp_path):
 
 def test_tokenize_name():
     assert _tokenize_name("Sarah Chen") == {"sarah", "chen"}
-    assert _tokenize_name("S. Chen") == {"s", "chen"}
+    assert _tokenize_name("S. Chen") == {"chen"}  # 's' filtered out because 'chen' >= 2
     assert _tokenize_name("sarah.chen@acme.com") == set()
     assert _tokenize_name("Sarah-Jane") == {"sarah", "jane"}
 

@@ -10,12 +10,12 @@ These are FLAGS — they inform classification and are surfaced to the user.
 They NEVER auto-block or silently discard signals.
 """
 
-import hashlib
-import sqlite3
-import re
 import logging
+import re
+import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+
 from xibi.db import open_db
 
 logger = logging.getLogger(__name__)
@@ -28,15 +28,29 @@ class TrustAssessment:
     confidence: float       # 0.0-1.0, for NAME_MISMATCH fuzzy match quality
     detail: str             # human-readable explanation for nudges
 
+    def format_nudge_line(self) -> str:
+        """Return a formatted line for nudges with emoji and detail."""
+        emoji = {
+            "ESTABLISHED": "✅ Known contact",
+            "RECOGNIZED": "📨 Seen before",
+            "UNKNOWN": "⚠️ First-time sender",
+            "NAME_MISMATCH": "🔶 Name mismatch",
+        }.get(self.tier, "")
+        if not emoji:
+            return ""
+        return f"{emoji} ({self.detail})"
+
 
 def assess_sender_trust(
     sender_addr: str,
     sender_display_name: str,
     db_path: Path,
+    owner_email: str | None = None,
 ) -> TrustAssessment:
     """Assess trust tier for a sender against the contact graph.
 
     Evaluation order (first match wins):
+    0. Match owner_email → ESTABLISHED
     1. Exact email match with outbound_count > 0 → ESTABLISHED
     2. Exact email match with outbound_count = 0 → RECOGNIZED
     3. Display name fuzzy-match with different email → NAME_MISMATCH
@@ -48,8 +62,13 @@ def assess_sender_trust(
     sender_addr_lower = sender_addr.strip().lower()
 
     # Self-email detection
-    # Note: In a real deployment, we'd check the user's configured email.
-    # For now, we'll focus on the contact graph.
+    if owner_email and sender_addr_lower == owner_email.strip().lower():
+        return TrustAssessment(
+            tier="ESTABLISHED",
+            contact_id="self",
+            confidence=1.0,
+            detail="This is your own address"
+        )
 
     try:
         with open_db(db_path) as conn:
@@ -210,6 +229,9 @@ def _tokenize_name(name: str) -> set[str]:
         return set()  # Don't match email addresses as names
 
     tokens = re.findall(r'[a-zA-Z]+', name.lower())
+    # Filter out single-char tokens unless it's a lone initial
+    if any(len(t) >= 2 for t in tokens):
+        return {t for t in tokens if len(t) >= 2}
     return set(tokens)
 
 

@@ -7,7 +7,7 @@ import sqlite3
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from xibi.heartbeat.sender_trust import TrustAssessment
@@ -136,16 +136,7 @@ class RuleEngine:
                 res = msg.replace("{from}", str(sender)).replace("{subject}", str(subject))
 
                 if sender_trust:
-                    trust_line = ""
-                    if sender_trust.tier == "ESTABLISHED":
-                        trust_line = f"✅ Known contact ({sender_trust.detail})"
-                    elif sender_trust.tier == "RECOGNIZED":
-                        trust_line = f"📨 Seen before ({sender_trust.detail})"
-                    elif sender_trust.tier == "UNKNOWN":
-                        trust_line = f"⚠️ First-time sender ({sender_trust.detail})"
-                    elif sender_trust.tier == "NAME_MISMATCH":
-                        trust_line = f"🔶 Name mismatch ({sender_trust.detail})"
-
+                    trust_line = sender_trust.format_nudge_line()
                     if trust_line:
                         res = f"{trust_line}\n{res}"
 
