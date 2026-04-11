@@ -2,7 +2,7 @@
 
 > **Owner:** Daniel LeBron
 > **Created:** 2026-04-10
-> **Status:** Planning
+> **Status:** In Progress — All 7 blocks specced, Blocks 1-3 merged, Block 4 in progress
 > **Canonical doc:** `xibi-chief-of-staff-epic.docx` (repo root)
 
 ---
@@ -30,13 +30,13 @@ Two layers running in parallel:
 
 | Block | Title | Depends on | Status |
 |-------|-------|-----------|--------|
-| 1 | Email Body Fetch + Summarize | — | NOT STARTED |
-| 2 | Sent Mail Polling + Contact Population | — | NOT STARTED |
-| 3 | Sender Trust Assessment | Block 2 | NOT STARTED |
-| 4 | Context-Aware Classification | Blocks 1, 3 | NOT STARTED |
-| 5 | Manager Review Enrichment | Blocks 1, 2, 3 | NOT STARTED |
-| 6 | CRITICAL Signal → Rich Nudge | Blocks 4, 5 | NOT STARTED |
-| 7 | Structured Action from Nudge | Block 6 | NOT STARTED |
+| 1 | Email Body Fetch + Summarize | — | DONE (step-67) |
+| 2 | Sent Mail Polling + Contact Population | — | DONE (step-68) |
+| 3 | Sender Trust Assessment | Block 2 | DONE (step-69) |
+| 4 | Context-Aware Classification | Blocks 1, 3 | IN PROGRESS (step-70 pending TRR, step-71 in Jules) |
+| 5 | Manager Review Enrichment | Blocks 1, 2, 3 | SPECCED (step-72 pending TRR) |
+| 6 | CRITICAL Signal → Rich Nudge | Blocks 4, 5 | SPECCED (step-73 pending TRR) |
+| 7 | Structured Action from Nudge | Block 6 | SPECCED (step-74 pending TRR) |
 
 ## Phases
 
