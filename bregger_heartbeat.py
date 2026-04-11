@@ -1183,6 +1183,8 @@ def tick(
     _llm_extracted = 0
     _regex_fallback = 0
 
+    email_contexts = {}  # email_id -> EmailContext
+
     for email in emails:
         email_id = str(email.get("id", ""))
         sender = _extract_sender(email)
@@ -1207,6 +1209,21 @@ def tick(
         sender_addr = _extract_sender_addr(email)
         sender_name = _extract_sender_name(email)
         trust = assess_sender_trust(sender_addr, sender_name, db_path)
+
+        # ── Context Assembly (Step 70) ─────────────────────────────
+        from xibi.heartbeat.context_assembly import assemble_email_context
+
+        ctx = assemble_email_context(
+            email=email,
+            db_path=db_path,
+            topic=topic,
+            entity_text=entity_text,
+            entity_type=entity_type,
+            summary=summary_text,
+            sender_trust=trust.tier,
+            sender_contact_id=trust.contact_id,
+        )
+        email_contexts[email_id] = ctx
 
         rules.log_signal(
             source="email",
