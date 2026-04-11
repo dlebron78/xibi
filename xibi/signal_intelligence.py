@@ -327,6 +327,7 @@ def _upsert_contact_core(
         contact_id = contact.id
         try:
             with open_db(db_path) as conn, conn:
+                # NOTE: count_col is derived from direction mapping, safe from injection
                 count_col = "signal_count" if direction == "inbound" else "outbound_count"
                 if contact.organization is None and organization:
                     conn.execute(
@@ -367,9 +368,10 @@ def _upsert_contact_core(
                 except Exception:
                     pass
 
-        discovered_via = "email_inbound" if direction == "inbound" else "email_outbound"
+        # Discovered via mapping
+        discovered_via = "inbound_email" if direction == "inbound" else "outbound_email"
 
-        contact_id = create_contact(
+        contact_id_res = create_contact(
             display_name=display_name,
             email=email if channel_type == "email" else None,
             organization=organization,
@@ -378,8 +380,7 @@ def _upsert_contact_core(
             db_path=db_str,
         )
 
-        if not contact_id:
-            contact_id = f"contact-{hashlib.md5(email.lower().encode()).hexdigest()[:8]}"
+        contact_id = str(contact_id_res) if contact_id_res else f"contact-{hashlib.md5(email.lower().encode()).hexdigest()[:8]}"
 
         # Fix counts if outbound (create_contact defaults to signal_count=1, outbound_count=0)
         if direction == "outbound":

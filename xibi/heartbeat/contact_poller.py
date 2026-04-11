@@ -6,7 +6,7 @@ import shutil
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from xibi.db import open_db
 from xibi.signal_intelligence import _upsert_contact_core
@@ -39,7 +39,7 @@ def _discover_sent_folder(himalaya_bin: str, db_path: Path) -> str | None:
             cursor = conn.execute("SELECT value FROM heartbeat_state WHERE key = 'sent_folder_name'")
             row = cursor.fetchone()
             if row:
-                return row[0]
+                return cast(str, row[0])
     except Exception:
         pass
 
@@ -63,7 +63,7 @@ def _discover_sent_folder(himalaya_bin: str, db_path: Path) -> str | None:
     logger.warning("Could not discover sent folder.")
     return None
 
-def _cache_sent_folder(folder: str, db_path: Path):
+def _cache_sent_folder(folder: str, db_path: Path) -> None:
     try:
         with open_db(db_path) as conn, conn:
             conn.execute(
@@ -78,7 +78,7 @@ def _list_envelopes(
     folder: str | None = None,
     page_size: int = 50,
     page: int = 1,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """List envelopes from a specific folder (or inbox if None)."""
     cmd = [himalaya_bin, "--output", "json", "envelope", "list", "--page-size", str(page_size), "--page", str(page)]
     if folder:
@@ -89,25 +89,28 @@ def _list_envelopes(
         if res.returncode != 0:
             logger.error(f"Himalaya list failed: {res.stderr}")
             return []
-        return json.loads(res.stdout)
+        data = json.loads(res.stdout)
+        if isinstance(data, list):
+            return cast(list[dict[str, Any]], data)
+        return []
     except Exception as e:
         logger.error(f"Error listing envelopes: {e}")
         return []
 
-def _extract_recipients(himalaya_bin: str, envelope: dict) -> list[dict]:
+def _extract_recipients(himalaya_bin: str, envelope: dict[str, Any]) -> list[dict[str, str]]:
     """Extract all recipients from an envelope."""
-    recipients = []
+    recipients: list[dict[str, str]] = []
 
     to_field = envelope.get("to", [])
     cc_field = envelope.get("cc", [])
     bcc_field = envelope.get("bcc", [])
 
     if not to_field and not cc_field:
-        return _fetch_recipients_full(himalaya_bin, envelope["id"])
+        return _fetch_recipients_full(himalaya_bin, str(envelope["id"]))
 
-    def parse_addr(raw: Any, role: str):
+    def parse_addr(raw: Any, role: str) -> dict[str, str] | None:
         if isinstance(raw, dict):
-            return {"name": raw.get("name", ""), "addr": raw.get("addr", ""), "role": role}
+            return {"name": str(raw.get("name", "")), "addr": str(raw.get("addr", "")), "role": role}
         elif isinstance(raw, str):
             if "<" in raw and ">" in raw:
                 name, addr = raw.split("<", 1)
@@ -115,23 +118,26 @@ def _extract_recipients(himalaya_bin: str, envelope: dict) -> list[dict]:
             return {"name": "", "addr": raw.strip(), "role": role}
         return None
 
-    if isinstance(to_field, (str, dict)): to_field = [to_field]
-    if isinstance(cc_field, (str, dict)): cc_field = [cc_field]
-    if isinstance(bcc_field, (str, dict)): bcc_field = [bcc_field]
+    to_list = [to_field] if isinstance(to_field, (str, dict)) else list(to_field)
+    cc_list = [cc_field] if isinstance(cc_field, (str, dict)) else list(cc_field)
+    bcc_list = [bcc_field] if isinstance(bcc_field, (str, dict)) else list(bcc_field)
 
-    for r in to_field:
+    for r in to_list:
         item = parse_addr(r, "to")
-        if item: recipients.append(item)
-    for r in cc_field:
+        if item:
+            recipients.append(item)
+    for r in cc_list:
         item = parse_addr(r, "cc")
-        if item: recipients.append(item)
-    for r in bcc_field:
+        if item:
+            recipients.append(item)
+    for r in bcc_list:
         item = parse_addr(r, "bcc")
-        if item: recipients.append(item)
+        if item:
+            recipients.append(item)
 
     return recipients
 
-def _fetch_recipients_full(himalaya_bin: str, email_id: str) -> list[dict]:
+def _fetch_recipients_full(himalaya_bin: str, email_id: str) -> list[dict[str, str]]:
     """Fetch full RFC 5322 headers and parse To/CC/BCC."""
     try:
         cmd = [himalaya_bin, "message", "export", "--full", str(email_id)]
@@ -303,8 +309,8 @@ def backfill_contacts(
 
                 sender = env.get("from", {})
                 if isinstance(sender, dict):
-                    addr = sender.get("addr")
-                    name = sender.get("name") or addr
+                    addr = str(sender.get("addr", ""))
+                    name = str(sender.get("name") or addr)
                 else:
                     addr = str(sender)
                     name = addr

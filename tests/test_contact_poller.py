@@ -33,7 +33,7 @@ def test_upsert_contact_inbound(db_path):
         assert row["display_name"] == name
         assert row["signal_count"] == 1
         assert row["outbound_count"] == 0
-        assert row["discovered_via"] == "email_inbound"
+        assert row["discovered_via"] == "inbound_email"
 
         # Check channel
         channel = conn.execute("SELECT * FROM contact_channels WHERE contact_id = ?", (row["id"],)).fetchone()
@@ -54,7 +54,7 @@ def test_upsert_contact_outbound(db_path):
         assert row["display_name"] == name
         assert row["signal_count"] == 0
         assert row["outbound_count"] == 1
-        assert row["discovered_via"] == "email_outbound"
+        assert row["discovered_via"] == "outbound_email"
 
 def test_upsert_contact_existing_inbound_then_outbound(db_path):
     email = "mixed@example.com"

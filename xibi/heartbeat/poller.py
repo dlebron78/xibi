@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import logging
 import sqlite3
@@ -11,10 +12,10 @@ from typing import TYPE_CHECKING, Any
 import xibi.db
 import xibi.signal_intelligence as sig_intel
 from xibi.alerting.rules import RuleEngine
-from xibi.heartbeat.contact_poller import backfill_contacts, find_himalaya, poll_sent_folder
 from xibi.channels.sheets import SheetsExporter
 from xibi.channels.telegram import TelegramAdapter
 from xibi.command_layer import CommandLayer
+from xibi.heartbeat.contact_poller import backfill_contacts, find_himalaya, poll_sent_folder
 from xibi.heartbeat.extractors import SignalExtractorRegistry
 from xibi.heartbeat.source_poller import SourcePoller
 from xibi.observation import ObservationCycle
@@ -267,7 +268,6 @@ class HeartbeatPoller:
     async def _check_contact_backfill(self) -> None:
         """Perform one-time contact backfill if needed."""
         try:
-            import asyncio
             with xibi.db.open_db(self.db_path) as conn:
                 cursor = conn.execute("SELECT COUNT(*) FROM contacts")
                 contact_count = cursor.fetchone()[0]
@@ -294,7 +294,6 @@ class HeartbeatPoller:
     async def _check_sent_mail_poll(self) -> None:
         """Poll sent mail hourly to update contact graph."""
         try:
-            import asyncio
             now = datetime.now()
             run_poll = False
             with xibi.db.open_db(self.db_path) as conn:
