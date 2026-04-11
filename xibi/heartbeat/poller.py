@@ -629,6 +629,21 @@ class HeartbeatPoller:
                 }
             )
 
+        # ── Context Assembly (Step 70) ─────────────────────────────
+        from xibi.heartbeat.context_assembly import assemble_batch_context
+
+        trust_results = {item["email_id"]: item["trust_assessment"] for item in processed}
+        email_contexts = assemble_batch_context(
+            emails=[item["email"] for item in processed],
+            db_path=self.db_path,
+            batch_topics={item["email_id"]: item["sig"] for item in processed},
+            body_summaries={item["email_id"]: item.get("summary_data", {}) for item in processed},
+            trust_results=trust_results,
+        )
+
+        for item in processed:
+            item["context"] = email_contexts.get(item["email_id"])
+
         try:
             with xibi.db.open_db(self.db_path) as conn, conn:
                 conn.row_factory = sqlite3.Row
