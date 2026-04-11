@@ -295,7 +295,20 @@ class RuleEngine:
                         INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                        (source, topic_hint, entity_text, entity_type, preview, str(ref_id), ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id),
+                        (
+                            source,
+                            topic_hint,
+                            entity_text,
+                            entity_type,
+                            preview,
+                            str(ref_id),
+                            ref_source,
+                            summary,
+                            summary_model,
+                            summary_ms,
+                            sender_trust,
+                            sender_contact_id,
+                        ),
                     )
         except Exception as e:
             logger.warning(f"Failed to log signal: {e}", exc_info=True)
@@ -364,7 +377,20 @@ class RuleEngine:
                 INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (source, topic_hint, entity_text, entity_type, preview, str(ref_id), ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id),
+                (
+                    source,
+                    topic_hint,
+                    entity_text,
+                    entity_type,
+                    preview,
+                    str(ref_id),
+                    ref_source,
+                    summary,
+                    summary_model,
+                    summary_ms,
+                    sender_trust,
+                    sender_contact_id,
+                ),
             )
         except Exception as e:
             logger.warning(f"Failed to log signal: {e}", exc_info=True)

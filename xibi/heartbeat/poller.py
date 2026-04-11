@@ -521,7 +521,13 @@ class HeartbeatPoller:
                         # Use effort="fast" model if available
                         model = self.config.get("models", {}).get("text", {}).get("fast", {}).get("model", "gemma4:e4b")
                         summary_data = await loop.run_in_executor(
-                            None, summarize_email_body, compacted, str(sender), str(subject), "http://localhost:11434", model
+                            None,
+                            summarize_email_body,
+                            compacted,
+                            str(sender),
+                            str(subject),
+                            "http://localhost:11434",
+                            model,
                         )
 
             verdict = ""

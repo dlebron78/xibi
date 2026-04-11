@@ -446,11 +446,11 @@ class SchemaManager:
 
         # --- Step 67 & 69: Signal summaries & Sender trust ---
         signal_cols = [
-            ("summary", "TEXT"),              # LLM-generated body summary
-            ("summary_model", "TEXT"),         # e.g. "gemma4:e4b"
-            ("summary_ms", "INTEGER"),         # summarization latency in ms
-            ("sender_trust", "TEXT"),          # 'ESTABLISHED' | 'RECOGNIZED' | 'UNKNOWN' | 'NAME_MISMATCH'
-            ("sender_contact_id", "TEXT"),     # FK to contacts(id)
+            ("summary", "TEXT"),  # LLM-generated body summary
+            ("summary_model", "TEXT"),  # e.g. "gemma4:e4b"
+            ("summary_ms", "INTEGER"),  # summarization latency in ms
+            ("sender_trust", "TEXT"),  # 'ESTABLISHED' | 'RECOGNIZED' | 'UNKNOWN' | 'NAME_MISMATCH'
+            ("sender_contact_id", "TEXT"),  # FK to contacts(id)
         ]
         for col_name, col_type in signal_cols:
             with contextlib.suppress(sqlite3.OperationalError):
@@ -495,7 +495,9 @@ class SchemaManager:
         with contextlib.suppress(sqlite3.OperationalError):
             conn.execute("CREATE INDEX IF NOT EXISTS idx_cc_contact ON contact_channels(contact_id);")
         with contextlib.suppress(sqlite3.OperationalError):
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_contact_channels_lookup ON contact_channels(channel_type, handle);")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_contact_channels_lookup ON contact_channels(channel_type, handle);"
+            )
 
         # Extend session_entities table
         try:

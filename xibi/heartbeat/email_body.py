@@ -12,6 +12,7 @@ from xibi.router import inference_lock
 
 logger = logging.getLogger(__name__)
 
+
 def find_himalaya() -> str:
     """Locate himalaya binary. Checks PATH, ~/.local/bin, ~/.cargo/bin."""
     himalaya_bin = shutil.which("himalaya")
@@ -29,6 +30,7 @@ def find_himalaya() -> str:
 
     raise FileNotFoundError("himalaya binary not found in PATH or standard locations.")
 
+
 def fetch_raw_email(himalaya_bin: str, email_id: str, timeout: int = 20) -> tuple[str | None, str | None]:
     """Fetch raw RFC 5322 via himalaya. Returns (raw_content, error)."""
     try:
@@ -43,6 +45,7 @@ def fetch_raw_email(himalaya_bin: str, email_id: str, timeout: int = 20) -> tupl
         return result.stdout, None
     except Exception as e:
         return None, str(e)
+
 
 def parse_email_body(raw_rfc5322: str) -> str:
     """Extract text body from RFC 5322. Prefers text/plain, falls back to text/html with tag stripping."""
@@ -64,7 +67,7 @@ def parse_email_body(raw_rfc5322: str) -> str:
             if html_part:
                 html = html_part.get_content()
                 # Simple regex tag stripping
-                body = re.sub(r'<[^>]+>', '', html).strip()
+                body = re.sub(r"<[^>]+>", "", html).strip()
 
         # 3. Final manual walk if still nothing
         if not body:
@@ -87,6 +90,7 @@ def parse_email_body(raw_rfc5322: str) -> str:
         logger.warning(f"Error parsing email body: {e}")
         return ""
 
+
 def compact_body(body: str, max_chars: int = 2000) -> str:
     """Strip signatures, forwarded chains, disclaimers, excessive whitespace.
     Truncate to max_chars.
@@ -96,10 +100,10 @@ def compact_body(body: str, max_chars: int = 2000) -> str:
 
     # Strip signatures and forwarded chains
     sig_markers = [
-        r'--\s*\n',
-        r'Sent from my',
-        r'-+ Forwarded message -+',
-        r'From:.*Sent:.*To:.*Subject:', # Outlook style
+        r"--\s*\n",
+        r"Sent from my",
+        r"-+ Forwarded message -+",
+        r"From:.*Sent:.*To:.*Subject:",  # Outlook style
     ]
     for marker in sig_markers:
         parts = re.split(marker, body, flags=re.IGNORECASE)
@@ -108,29 +112,26 @@ def compact_body(body: str, max_chars: int = 2000) -> str:
 
     # Strip disclaimer blocks
     disclaimers = [
-        r'CONFIDENTIALITY NOTICE:.*',
-        r'This email is intended.*',
-        r'This message contains confidential information.*',
+        r"CONFIDENTIALITY NOTICE:.*",
+        r"This email is intended.*",
+        r"This message contains confidential information.*",
     ]
     for disc in disclaimers:
-        body = re.sub(disc, '', body, flags=re.IGNORECASE | re.DOTALL)
+        body = re.sub(disc, "", body, flags=re.IGNORECASE | re.DOTALL)
 
     # Collapse whitespace
-    body = re.sub(r'\n\s*\n', '\n', body)
-    body = re.sub(r'[ \t]+', ' ', body)
+    body = re.sub(r"\n\s*\n", "\n", body)
+    body = re.sub(r"[ \t]+", " ", body)
     body = body.strip()
 
     # Truncate to max_chars at sentence boundary if possible
     if len(body) > max_chars:
         truncated = body[:max_chars]
         last_dot = truncated.rfind(". ")
-        body = (
-            truncated[: last_dot + 1]
-            if last_dot > max_chars * 0.8
-            else truncated + "..."
-        )
+        body = truncated[: last_dot + 1] if last_dot > max_chars * 0.8 else truncated + "..."
 
     return body
+
 
 def summarize_email_body(
     body: str,
@@ -160,11 +161,8 @@ Summary:"""
         "model": model,
         "prompt": prompt,
         "stream": False,
-        "think": False, # CRITICAL: top level
-        "options": {
-            "num_predict": 100,
-            "temperature": 0
-        }
+        "think": False,  # CRITICAL: top level
+        "options": {"num_predict": 100, "temperature": 0},
     }
 
     start_time = time.time()
@@ -177,19 +175,14 @@ Summary:"""
             req = urllib.request.Request(
                 f"{ollama_url}/api/generate",
                 data=json.dumps(payload).encode(),
-                headers={"Content-Type": "application/json"}
+                headers={"Content-Type": "application/json"},
             )
             with inference_lock, urllib.request.urlopen(req, timeout=timeout) as r:
                 resp = json.loads(r.read())
                 summary = resp.get("response", "").strip()
                 duration_ms = int((time.time() - start_time) * 1000)
                 if summary:
-                    return {
-                        "status": "success",
-                        "summary": summary,
-                        "model": model,
-                        "duration_ms": duration_ms
-                    }
+                    return {"status": "success", "summary": summary, "model": model, "duration_ms": duration_ms}
                 else:
                     last_err = "Empty response from Ollama"
         except Exception as e:
@@ -203,5 +196,5 @@ Summary:"""
         "summary": "[summary unavailable]",
         "model": model,
         "duration_ms": duration_ms,
-        "error": last_err
+        "error": last_err,
     }
