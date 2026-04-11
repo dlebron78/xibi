@@ -113,7 +113,9 @@ def _handle_fire_recurrence(action_config: dict, ctx: ExecutionContext) -> Handl
                             )
                         )
                     logger.info(
-                        "checklist_fire_recurrence: Registered %d deadline actions for item %s", len(action_ids), item_id
+                        "checklist_fire_recurrence: Registered %d deadline actions for item %s",
+                        len(action_ids),
+                        item_id,
                     )
                 except Exception as e:
                     # Rationale: partial success is better than failing the entire recurrence firing.
