@@ -4,13 +4,14 @@ import importlib.util
 import logging
 import sqlite3
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import xibi.db
 import xibi.signal_intelligence as sig_intel
 from xibi.alerting.rules import RuleEngine
+from xibi.heartbeat.contact_poller import backfill_contacts, find_himalaya, poll_sent_folder
 from xibi.channels.sheets import SheetsExporter
 from xibi.channels.telegram import TelegramAdapter
 from xibi.command_layer import CommandLayer
@@ -263,6 +264,61 @@ class HeartbeatPoller:
         except Exception as e:
             logger.warning(f"Thread lifecycle sweep failed: {e}", exc_info=True)
 
+    async def _check_contact_backfill(self) -> None:
+        """Perform one-time contact backfill if needed."""
+        try:
+            import asyncio
+            with xibi.db.open_db(self.db_path) as conn:
+                cursor = conn.execute("SELECT COUNT(*) FROM contacts")
+                contact_count = cursor.fetchone()[0]
+                cursor = conn.execute("SELECT value FROM heartbeat_state WHERE key = 'contacts_backfilled'")
+                backfill_done = cursor.fetchone()
+
+            if contact_count == 0 and not backfill_done:
+                logger.info("📇 First run: backfilling contacts from last 90 days of mail...")
+                himalaya_bin = find_himalaya()
+                # Run sync backfill in a thread
+                result = await asyncio.to_thread(backfill_contacts, himalaya_bin, self.db_path, days_back=90)
+                logger.info(
+                    f"📇 Backfill complete: {result.get('sent_scanned', 0)} sent + "
+                    f"{result.get('received_scanned', 0)} received scanned"
+                )
+                with xibi.db.open_db(self.db_path) as conn, conn:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('contacts_backfilled', ?)",
+                        (datetime.now().isoformat(),),
+                    )
+        except Exception as e:
+            logger.warning(f"Contact backfill check failed: {e}", exc_info=True)
+
+    async def _check_sent_mail_poll(self) -> None:
+        """Poll sent mail hourly to update contact graph."""
+        try:
+            import asyncio
+            now = datetime.now()
+            run_poll = False
+            with xibi.db.open_db(self.db_path) as conn:
+                cursor = conn.execute("SELECT value FROM heartbeat_state WHERE key = 'last_sent_poll_at'")
+                row = cursor.fetchone()
+                if not row:
+                    run_poll = True
+                else:
+                    last_poll = datetime.fromisoformat(row[0])
+                    if now - last_poll > timedelta(hours=1):
+                        run_poll = True
+
+            if run_poll:
+                logger.info("📇 Polling sent mail for new contacts...")
+                himalaya_bin = find_himalaya()
+                await asyncio.to_thread(poll_sent_folder, himalaya_bin, self.db_path)
+                with xibi.db.open_db(self.db_path) as conn, conn:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('last_sent_poll_at', ?)",
+                        (now.isoformat(),),
+                    )
+        except Exception as e:
+            logger.warning(f"Sent mail poll check failed: {e}", exc_info=True)
+
     async def async_tick(self) -> None:
         """Tick: poll sources → extract signals → intel → observation → digest."""
         import asyncio
@@ -272,6 +328,8 @@ class HeartbeatPoller:
             return
 
         self._sweep_thread_lifecycle()
+        await self._check_contact_backfill()
+        await self._check_sent_mail_poll()
 
         # Phase 0: Multi-source polling
         poll_results: list = []
