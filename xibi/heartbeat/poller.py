@@ -477,14 +477,26 @@ class HeartbeatPoller:
                 logger.warning("Radiant audit error: %s", e, exc_info=True)
 
     async def _process_email_signals(
-        self, raw_signals: list[dict], seen_ids: set[str], triage_rules: dict, email_rules: list
+        self,
+        raw_signals: list[dict],
+        seen_ids: set[str],
+        triage_rules: dict,
+        email_rules: list,
     ) -> None:
         from xibi.heartbeat.email_body import (
-            find_himalaya, fetch_raw_email, parse_email_body,
-            compact_body, summarize_email_body
+            compact_body,
+            fetch_raw_email,
+            find_himalaya,
+            parse_email_body,
+            summarize_email_body,
         )
 
-        himalaya_bin = find_himalaya()
+        try:
+            himalaya_bin = find_himalaya()
+        except FileNotFoundError:
+            logger.warning("himalaya binary not found. Skipping email body summarization.")
+            himalaya_bin = None
+
         processed: list[dict] = []
         for sig in raw_signals:
             email = sig["metadata"]["email"]
@@ -495,15 +507,22 @@ class HeartbeatPoller:
 
             # Body fetching and summarization for new emails
             summary_data = {}
-            if email_id not in seen_ids:
-                raw, err = fetch_raw_email(himalaya_bin, email_id)
+            if himalaya_bin and email_id not in seen_ids:
+                import asyncio
+
+                # Use run_in_executor to avoid blocking the event loop for sync LLM calls
+                loop = asyncio.get_running_loop()
+
+                raw, err = await loop.run_in_executor(None, fetch_raw_email, himalaya_bin, email_id)
                 if raw and not err:
                     body = parse_email_body(raw)
                     if body and len(body.strip()) >= 20:
                         compacted = compact_body(body)
                         # Use effort="fast" model if available
                         model = self.config.get("models", {}).get("text", {}).get("fast", {}).get("model", "gemma4:e4b")
-                        summary_data = summarize_email_body(compacted, str(sender), str(subject), model=model)
+                        summary_data = await loop.run_in_executor(
+                            None, summarize_email_body, compacted, str(sender), str(subject), "http://localhost:11434", model
+                        )
 
             verdict = ""
             auto_noise = ["noreply@", "no-reply@", "notifications@", "newsletter@", "automated@", "mailer-daemon@"]

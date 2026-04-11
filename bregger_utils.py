@@ -3,17 +3,10 @@ bregger_utils.py — Shared utilities for the Bregger framework.
 """
 
 import sqlite3
-import threading
+from datetime import datetime
 from pathlib import Path
 
-# ── Inference Mutex (Rule 19) ────────────────────────────────────────
-# Shared lock ensuring only one LLM call runs at a time across all
-# threads (chat, heartbeat, passive memory). Background threads queue
-# behind active chat inference.  Import and use:
-#   from bregger_utils import inference_lock
-#   with inference_lock:
-#       provider.generate(...)
-inference_lock = threading.RLock()
+from xibi.router import inference_lock
 
 
 def normalize_topic(topic: str | None) -> str | None:
@@ -124,7 +117,7 @@ def get_pinned_topics(db_path: Path) -> list:
         return []
 
 
-def ensure_signals_schema(db_path) -> None:
+def ensure_signals_schema(db_path: Path | str) -> None:
     """Single source of truth for the signals table schema.
 
     Called by both bregger_core._ensure_signals_table() and bregger_heartbeat.log_signal()
@@ -175,7 +168,7 @@ def ensure_signals_schema(db_path) -> None:
         print(f"⚠️ [ensure_signals_schema] Failed: {e}", flush=True)
 
 
-def parse_semantic_datetime(token: str, ref_tz: str = "America/New_York") -> __import__("datetime").datetime:
+def parse_semantic_datetime(token: str, ref_tz: str = "America/New_York") -> datetime:
     """
     Parses semantic temporal tokens like 'tomorrow_1400' or 'friday_0930'.
     Falls back to strict ISO 8601 parsing if no semantic pattern matches.

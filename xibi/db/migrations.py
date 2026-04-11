@@ -479,20 +479,23 @@ class SchemaManager:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS contact_channels (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                contact_id   TEXT NOT NULL,
+                contact_id   TEXT NOT NULL REFERENCES contacts(id),
                 channel_type TEXT NOT NULL,
                 handle       TEXT NOT NULL,
                 display_name TEXT,
                 verified     INTEGER NOT NULL DEFAULT 0,
+                created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
                 first_seen   DATETIME DEFAULT CURRENT_TIMESTAMP,
                 last_seen    DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(contact_id, channel_type, handle)
+                UNIQUE(channel_type, handle)
             );
         """)
         with contextlib.suppress(sqlite3.OperationalError):
             conn.execute("CREATE INDEX IF NOT EXISTS idx_cc_handle ON contact_channels(channel_type, handle);")
         with contextlib.suppress(sqlite3.OperationalError):
             conn.execute("CREATE INDEX IF NOT EXISTS idx_cc_contact ON contact_channels(contact_id);")
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_contact_channels_lookup ON contact_channels(channel_type, handle);")
 
         # Extend session_entities table
         try:

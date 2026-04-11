@@ -2,6 +2,7 @@ import contextvars
 import json
 import logging
 import os
+import threading
 import time
 import uuid
 from datetime import datetime
@@ -21,6 +22,12 @@ from xibi.circuit_breaker import CircuitBreaker, CircuitBreakerConfig, FailureTy
 from xibi.errors import ErrorCategory, XibiError
 
 logger = logging.getLogger(__name__)
+
+# ── Inference Mutex (Rule 19) ────────────────────────────────────────
+# Shared lock ensuring only one LLM call runs at a time across all
+# threads (chat, heartbeat, passive memory). Background threads queue
+# behind active chat inference.
+inference_lock = threading.RLock()
 
 # Process-scoped cache — one CircuitBreaker per provider, reset on restart
 _circuit_breaker_cache: dict[str, CircuitBreaker] = {}

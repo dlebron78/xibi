@@ -6,9 +6,9 @@ import shutil
 import subprocess
 import time
 import urllib.request
-from email import policy
-from email import message_from_string
-from bregger_utils import inference_lock
+from email import message_from_string, policy
+
+from xibi.router import inference_lock
 
 logger = logging.getLogger(__name__)
 
@@ -72,15 +72,15 @@ def parse_email_body(raw_rfc5322: str) -> str:
                 content_type = part.get_content_type()
                 if content_type == "text/plain" and not body:
                     payload = part.get_payload(decode=True)
-                    if payload:
+                    if isinstance(payload, bytes):
                         text = payload.decode(part.get_content_charset("utf-8") or "utf-8", errors="replace").strip()
                         if text.lower() not in ("textual email", "text email"):
                             body = text
                 elif content_type == "text/html" and not body:
                     payload = part.get_payload(decode=True)
-                    if payload:
+                    if isinstance(payload, bytes):
                         html = payload.decode(part.get_content_charset("utf-8") or "utf-8", errors="replace")
-                        body = re.sub(r'<[^>]+>', '', html).strip()
+                        body = re.sub(r"<[^>]+>", "", html).strip()
 
         return body
     except Exception as e:
@@ -123,11 +123,12 @@ def compact_body(body: str, max_chars: int = 2000) -> str:
     # Truncate to max_chars at sentence boundary if possible
     if len(body) > max_chars:
         truncated = body[:max_chars]
-        last_dot = truncated.rfind('. ')
-        if last_dot > max_chars * 0.8:
-            body = truncated[:last_dot + 1]
-        else:
-            body = truncated + "..."
+        last_dot = truncated.rfind(". ")
+        body = (
+            truncated[: last_dot + 1]
+            if last_dot > max_chars * 0.8
+            else truncated + "..."
+        )
 
     return body
 
