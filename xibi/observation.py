@@ -44,7 +44,9 @@ class ObservationConfig:
     cost_ceiling_daily: float = 5.0  # not enforced this step — stored for future
     # Manager review settings
     manager_interval_hours: int = 8  # how often the manager reviews all accumulated work
-    manager_max_threads: int = 200  # max threads to include in manager review dump
+    manager_max_threads: int = 50  # max threads to include in manager review dump
+    manager_max_signals: int = 200  # max signals to include in manager review dump
+    manager_lookback_multiplier: float = 1.5  # lookback = interval * multiplier
 
 
 @dataclass
@@ -136,6 +138,21 @@ class ObservationCycle:
                 with suppress(ValueError, TypeError):
                     config.manager_max_threads = int(obs_profile["manager_max_threads"])
 
+            # Nested manager_review block support
+            manager_review = obs_profile.get("manager_review", {})
+            if "interval_hours" in manager_review:
+                with suppress(ValueError, TypeError):
+                    config.manager_interval_hours = int(manager_review["interval_hours"])
+            if "max_threads" in manager_review:
+                with suppress(ValueError, TypeError):
+                    config.manager_max_threads = int(manager_review["max_threads"])
+            if "max_signals" in manager_review:
+                with suppress(ValueError, TypeError):
+                    config.manager_max_signals = int(manager_review["max_signals"])
+            if "lookback_multiplier" in manager_review:
+                with suppress(ValueError, TypeError):
+                    config.manager_lookback_multiplier = float(manager_review["lookback_multiplier"])
+
             return config
         except Exception as e:
             logger.warning(f"Error loading observation config: {e}", exc_info=True)
@@ -218,6 +235,8 @@ class ObservationCycle:
         Returns (should_run, reason).
         """
         try:
+            interval_hours = self.config.manager_interval_hours
+
             with open_db(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 # Look for the last completed manager review specifically
@@ -229,7 +248,7 @@ class ObservationCycle:
                 last_manager = cursor.fetchone()
 
             now = datetime.now(timezone.utc)
-            interval_minutes = self.config.manager_interval_hours * 60
+            interval_minutes = interval_hours * 60
 
             if not last_manager:
                 # Never run a manager review — check if we have threads to review
@@ -518,14 +537,15 @@ class ObservationCycle:
         The manager sees the big picture — not the latest inbox slice.
         """
         try:
+            max_threads = self.config.manager_max_threads
+            max_signals = self.config.manager_max_signals
+
             now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
             lines = [
                 f"MANAGER REVIEW DUMP — {now_str} UTC",
                 "You are reviewing ALL accumulated threads and signals as the manager.",
                 "",
             ]
-
-            max_threads = self.config.manager_max_threads
 
             with open_db(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
@@ -574,23 +594,121 @@ class ObservationCycle:
             # Signals with gaps (null urgency or action_type) — up to 30
             with open_db(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
+
+                # 1. Fetch current pinned topics
+                pinned = conn.execute("SELECT topic FROM pinned_topics").fetchall()
+                current_pinned = [row["topic"] for row in pinned]
+
+                # 2. Find lookback window for recent signals
+                last_review = conn.execute(
+                    "SELECT completed_at FROM observation_cycles "
+                    "WHERE review_mode = 'manager' AND completed_at IS NOT NULL "
+                    "ORDER BY completed_at DESC LIMIT 1"
+                ).fetchone()
+
+                interval_hours = self.config.manager_interval_hours
+                lookback_multiplier = self.config.manager_lookback_multiplier
+                lookback_hours = interval_hours * lookback_multiplier
+
+                since = last_review["completed_at"] if last_review else None
+                if not since:
+                    # Fallback to lookback hours
+                    since_row = conn.execute("SELECT datetime('now', ?)", (f"-{lookback_hours} hours",)).fetchone()
+                    since = since_row[0]
+
+                # 3. Gap signals (urgency or action_type is NULL)
                 cursor = conn.execute(
-                    "SELECT id, timestamp, source, topic_hint, content_preview, urgency, action_type, thread_id "
-                    "FROM signals WHERE urgency IS NULL OR action_type IS NULL "
-                    "ORDER BY id DESC LIMIT 30"
+                    """
+                    SELECT id, timestamp, source, topic_hint, entity_text, content_preview,
+                           urgency, action_type, thread_id, summary, sender_trust, sender_contact_id
+                    FROM signals
+                    WHERE (urgency IS NULL OR action_type IS NULL)
+                      AND env = 'production'
+                    ORDER BY id DESC LIMIT 30
+                    """
                 )
                 gap_signals = [dict(row) for row in cursor.fetchall()]
+
+                # 4. Recent signals (all since last review)
+                cursor = conn.execute(
+                    """
+                    SELECT id, timestamp, source, topic_hint, entity_text, content_preview,
+                           urgency, action_type, thread_id, summary, sender_trust, sender_contact_id,
+                           direction, ref_id
+                    FROM signals
+                    WHERE timestamp > ?
+                      AND env = 'production'
+                    ORDER BY timestamp ASC
+                    LIMIT ?
+                    """,
+                    (since, max_signals),
+                )
+                recent_signals = [dict(row) for row in cursor.fetchall()]
+
+                # 5. Batch-fetch contact profiles
+                contact_ids = set()
+                for sig in recent_signals + gap_signals:
+                    if sig.get("sender_contact_id"):
+                        contact_ids.add(sig["sender_contact_id"])
+
+                contacts = {}
+                if contact_ids:
+                    placeholders = ",".join("?" * len(contact_ids))
+                    rows = conn.execute(
+                        f"""
+                        SELECT id, display_name, email, organization, relationship,
+                               signal_count, outbound_count, user_endorsed
+                        FROM contacts
+                        WHERE id IN ({placeholders})
+                        """,
+                        list(contact_ids),
+                    ).fetchall()
+                    for row in rows:
+                        contacts[row["id"]] = dict(row)
 
             if gap_signals:
                 lines.append(f"SIGNALS WITH GAPS ({len(gap_signals)} shown, urgency or action_type is NULL):")
                 for s in gap_signals:
                     preview = (s.get("content_preview") or "")[:120]
-                    lines.append(
+                    line = (
                         f"  [id={s['id']}] {s['timestamp']} | {s['source']} | "
                         f"urgency={s.get('urgency') or 'NULL'} | action={s.get('action_type') or 'NULL'} | "
                         f"thread={s.get('thread_id') or 'none'}"
                     )
-                    lines.append(f"    {preview}")
+                    lines.append(line)
+                    if s.get("summary"):
+                        lines.append(f"    Summary: {s['summary'][:100]}")
+                    else:
+                        lines.append(f"    Preview: {preview}")
+                lines.append("")
+
+            if recent_signals:
+                lines.append(f"RECENT SIGNALS (since {since}):")
+                for s in recent_signals:
+                    verdict = s.get("urgency") or "unclassified"
+                    line = f"- [{s['timestamp']}] {s['source']}: {s['topic_hint'] or 'no topic'} | verdict: {verdict}"
+                    lines.append(line)
+                    if s.get("summary") and s["summary"] not in ("[no body content]", "[summary unavailable]"):
+                        lines.append(f"  Body: {s['summary'][:100]}")
+                    if s.get("sender_trust"):
+                        lines.append(f"  Sender trust: {s['sender_trust']}")
+                    if s.get("sender_contact_id") and s["sender_contact_id"] in contacts:
+                        c = contacts[s["sender_contact_id"]]
+                        parts = []
+                        if c.get("display_name"):
+                            parts.append(c["display_name"])
+                        if c.get("organization"):
+                            parts.append(f"org: {c['organization']}")
+                        if c.get("relationship") and c["relationship"] != "unknown":
+                            parts.append(c["relationship"])
+                        if c.get("outbound_count", 0) > 0:
+                            parts.append(f"you've emailed them {c['outbound_count']}x")
+                        if parts:
+                            lines.append(f"  Contact: {', '.join(parts)}")
+                lines.append("")
+
+            if current_pinned:
+                lines.append(f"CURRENTLY PINNED TOPICS: {', '.join(current_pinned)}")
                 lines.append("")
 
             # Recent signal distribution for context
@@ -634,7 +752,9 @@ class ObservationCycle:
                             """
                         ).fetchone()
                         if example:
-                            lines.append(f"  Example mismatch: \"{example['entity_text']}\" — {example['content_preview'][:60]}...")
+                            lines.append(
+                                f'  Example mismatch: "{example["entity_text"]}" — {example["content_preview"][:60]}...'
+                            )
                     lines.append("")
 
             # Active tasks for context
@@ -658,38 +778,87 @@ class ObservationCycle:
         System prompt for the manager review role. This is fundamentally different from
         the triage prompt — the manager reviews accumulated state, not new signals.
         """
-        return (
-            "You are the MANAGER review cycle for Xibi — a periodic senior review of all "
-            "accumulated work done by the fast triage layer.\n\n"
-            "Your job:\n"
-            "1. Review all active threads and assign/update PRIORITY for each: "
-            "'critical', 'high', 'medium', or 'low'.\n"
-            "2. Write or update SUMMARY for threads that are missing one or have stale summaries.\n"
-            "3. Identify the TOP 3-5 items that need the user's attention and compose a DIGEST nudge.\n"
-            "4. Flag any signals with NULL urgency/action_type that need classification.\n\n"
-            "You MUST respond with a single JSON object with this exact schema:\n"
-            "{\n"
-            '  "thread_updates": [\n'
-            '    {"thread_id": "...", "priority": "high|medium|low|critical", '
-            '"summary": "updated summary text or null to keep existing"}\n'
-            "  ],\n"
-            '  "digest": "A 3-5 bullet markdown summary of the most important items for the user",\n'
-            '  "signal_flags": [{"signal_id": 123, "suggested_urgency": "high", '
-            '"suggested_action_type": "request"}]\n'
-            "}\n\n"
-            "Rules:\n"
-            "- Prioritize threads with deadlines, high signal counts, or unanswered requests.\n"
-            "- 'critical' = needs action today. 'high' = this week. 'medium' = track. 'low' = noise.\n"
-            "- CALIBRATION: use the full priority range realistically. Across all threads, expect roughly: "
-            "5-10% critical, 20-30% high, 40-50% medium, 20-30% low. "
-            "If everything feels urgent, nothing is. Most threads are medium or low.\n"
-            "- The digest should be actionable — tell the user WHAT to do, not just what exists.\n"
-            "- If a thread already has a good summary and correct priority, omit it from thread_updates.\n"
-            "- Keep summaries under 150 characters.\n"
-            "- Do NOT call tools. Return only the JSON object above.\n"
-            "- CRITICAL: output RAW JSON only. No markdown, no code fences, no explanation. "
-            "Start your response with { and end with }. Nothing else."
-        )
+        return """You are the manager reviewer for Xibi, a personal AI assistant.
+You are reviewing all signals received since the last review period.
+
+Your job is to look at the FULL PICTURE and take actions that improve future classification:
+
+## Thread Management
+For each active thread, assess priority:
+- critical = needs attention TODAY
+- high = needs attention THIS WEEK
+- medium = worth tracking
+- low = noise thread, consider resolving
+
+Update summaries for threads that are stale or missing summaries.
+Set owner (me = user needs to act, them = waiting on others, unclear = ambiguous).
+Set deadline if one is mentioned or implied in signal summaries.
+
+## Signal Review
+Look at all recent signals, especially those the real-time classifier may have gotten wrong:
+- ESTABLISHED sender with a direct request classified as DIGEST → should be URGENT
+- Pattern of escalating emails from same sender → last one should be URGENT
+- Signal mentioning a thread with a deadline → should be URGENT if deadline is soon
+- Unknown sender with no thread context classified as DIGEST → probably NOISE
+
+For signals that should be reclassified to URGENT, set reclassify_urgent=true.
+The system will send a late nudge to the user for these.
+
+## Topic Pinning
+If you notice a topic heating up (multiple senders, increasing urgency, approaching deadline), PIN it.
+Pinned topics cause the real-time classifier to auto-escalate matching emails to URGENT.
+If a previously hot topic has cooled down, UNPIN it.
+
+## Contact Enrichment
+If signal context reveals a sender's organization or relationship that isn't in their contact profile, update it.
+Only set relationship if you're confident: vendor, client, recruiter, colleague.
+
+## Digest
+Write a 3-5 bullet briefing of the most important things the user should know.
+Focus on: what needs action, what's heating up, what changed since last review.
+
+Respond with ONLY valid JSON matching this schema (no markdown, no explanation):
+{
+  "thread_updates": [
+    {
+      "thread_id": "...",
+      "priority": "critical|high|medium|low",
+      "summary": "updated summary text or null",
+      "owner": "me|them|unclear or null",
+      "deadline": "ISO date or null"
+    }
+  ],
+  "signal_flags": [
+    {
+      "signal_id": 123,
+      "suggested_urgency": "high|medium|low",
+      "suggested_action_type": "request|reply|fyi|confirmation",
+      "reclassify_urgent": false,
+      "reason": "why this was reclassified"
+    }
+  ],
+  "topic_pins": [
+    {
+      "topic": "normalized topic name",
+      "action": "pin|unpin",
+      "reason": "why this topic is hot/cold"
+    }
+  ],
+  "contact_updates": [
+    {
+      "contact_id": "...",
+      "relationship": "vendor|client|recruiter|colleague|unknown or null",
+      "organization": "str or null"
+    }
+  ],
+  "digest": "markdown bullets"
+}
+
+Rules:
+- CALIBRATION: use the full priority range realistically. Across all threads, expect roughly: 5-10% critical, 20-30% high, 40-50% medium, 20-30% low.
+- Keep summaries under 150 characters.
+- CRITICAL: output RAW JSON only. No markdown, no code fences, no explanation. Start your response with { and end with }. Nothing else.
+"""
 
     def _get_all_active_threads(self) -> list[dict[str, Any]]:
         """Fetch all active threads ordered by priority (nulls last) then signal_count."""
@@ -763,61 +932,62 @@ class ObservationCycle:
             system_prompt = self._build_review_system_prompt()
             llm = get_model(specialty="text", effort="review", config=self.profile)  # type: ignore[arg-type]
 
-            # Batch through threads in chunks of 20. Each thread produces ~100 output tokens
-            # (thread_id + priority + summary). 20 threads ≈ 2000 tokens, well within 8192.
-            batch_size = 20
+            # Build the enriched review dump
+            review_dump = self._build_review_dump()
+
+            # For now, we use a single large prompt. Sonnet can handle it.
+            # If token counts become an issue, we can implement truncation/batching.
             all_thread_updates: list[dict[str, Any]] = []
             all_signal_flags: list[dict[str, Any]] = []
-            all_digests: list[str] = []
-            batch_errors: list[str] = []
+            all_topic_pins: list[dict[str, Any]] = []
+            all_contact_updates: list[dict[str, Any]] = []
+            digest = ""
+            review_errors: list[str] = []
 
-            threads = self._get_all_active_threads()
-            batches = [threads[i : i + batch_size] for i in range(0, len(threads), batch_size)]
-            logger.info(f"Manager review: {len(threads)} threads in {len(batches)} batches")
+            try:
+                prompt = f"system: {system_prompt}\n\nuser: {review_dump}"
+                response_text = llm.generate(prompt, max_tokens=16000)
 
-            for batch_num, batch in enumerate(batches, 1):
                 try:
-                    batch_dump = self._build_batch_dump(batch, batch_num, len(batches))
-                    prompt = f"system: {system_prompt}\n\nuser: {batch_dump}"
-                    response_text = llm.generate(prompt, max_tokens=16000)
+                    review_data = json.loads(response_text)
+                except json.JSONDecodeError:
+                    # Strip markdown code fences if present
+                    cleaned = re.sub(r"```(?:json)?\s*|\s*```", "", response_text).strip()
+                    # Extract outermost JSON object: first { to last }
+                    start = cleaned.find("{")
+                    end = cleaned.rfind("}")
+                    if start != -1 and end != -1 and end > start:
+                        try:
+                            review_data = json.loads(cleaned[start : end + 1])
+                        except json.JSONDecodeError as je:
+                            review_errors.append(f"JSON parse failed — {je} — {cleaned[start : start + 120]}")
+                            review_data = {}
+                    else:
+                        review_errors.append(f"No JSON object found — {response_text[:120]}")
+                        review_data = {}
 
-                    try:
-                        review_data = json.loads(response_text)
-                    except json.JSONDecodeError:
-                        # Strip markdown code fences if present
-                        cleaned = re.sub(r"```(?:json)?\s*|\s*```", "", response_text).strip()
-                        # Extract outermost JSON object: first { to last }
-                        start = cleaned.find("{")
-                        end = cleaned.rfind("}")
-                        if start != -1 and end != -1 and end > start:
-                            try:
-                                review_data = json.loads(cleaned[start : end + 1])
-                            except json.JSONDecodeError as je:
-                                batch_errors.append(
-                                    f"Batch {batch_num}: JSON parse failed — {je} — {cleaned[start : start + 120]}"
-                                )
-                                continue
-                        else:
-                            batch_errors.append(f"Batch {batch_num}: no JSON object found — {response_text[:120]}")
-                            continue
+                all_thread_updates = review_data.get("thread_updates", [])
+                all_signal_flags = review_data.get("signal_flags", [])
+                all_topic_pins = review_data.get("topic_pins", [])
+                all_contact_updates = review_data.get("contact_updates", [])
+                digest = review_data.get("digest", "")
 
-                    all_thread_updates.extend(review_data.get("thread_updates", []))
-                    all_signal_flags.extend(review_data.get("signal_flags", []))
-                    if review_data.get("digest"):
-                        all_digests.append(review_data["digest"])
-
-                except Exception as e:
-                    batch_errors.append(f"Batch {batch_num}: {e}")
-                    logger.warning(f"Manager review batch {batch_num} failed: {e}")
+            except Exception as e:
+                review_errors.append(f"LLM generate failed: {e}")
+                logger.warning(f"Manager review LLM call failed: {e}")
 
             # Apply all updates
-            merged = {"thread_updates": all_thread_updates, "signal_flags": all_signal_flags}
+            merged = {
+                "thread_updates": all_thread_updates,
+                "signal_flags": all_signal_flags,
+                "topic_pins": all_topic_pins,
+                "contact_updates": all_contact_updates,
+            }
             updates_applied = self._apply_manager_updates(merged)
             result.actions_taken = updates_applied
-            result.errors.extend(batch_errors)
+            result.errors.extend(review_errors)
 
-            # Compose and fire single digest nudge from all batches
-            digest = "\n".join(all_digests) if all_digests else ""
+            # Compose and fire single digest nudge
             if digest and executor is not None:
                 try:
                     nudge_output = dispatch(
@@ -844,16 +1014,53 @@ class ObservationCycle:
                     logger.warning(f"Manager review: failed to send digest nudge: {e}")
                     result.errors.append(f"Digest nudge failed: {e}")
 
+            # Send late nudges for reclassified signals
+            late_nudges = [a["input"] for a in result.actions_taken if a["tool"] == "late_nudge_queued"]
+            if late_nudges and executor is not None:
+                try:
+                    nudge_lines = ["⚠️ *Manager Review — Late Alerts*\n"]
+                    for n in late_nudges:
+                        line = f"• {n.get('topic') or 'Email'}: {n['preview'][:100]}"
+                        if n.get("reason"):
+                            line += f"\n  _{n['reason']}_"
+                        nudge_lines.append(line)
+
+                    nudge_text = "\n".join(nudge_lines)
+
+                    nudge_output = dispatch(
+                        "nudge",
+                        {
+                            "message": nudge_text,
+                            "thread_id": "manager-review-late",
+                            "refs": [f"signal:{n['signal_id']}" for n in late_nudges],
+                            "category": "urgent",
+                        },
+                        self.skill_registry,
+                        executor=executor,
+                        command_layer=command_layer,
+                    )
+                    result.actions_taken.append(
+                        {
+                            "tool": "nudge",
+                            "input": {"category": "late_urgent"},
+                            "output": nudge_output,
+                            "allowed": nudge_output.get("status") not in ("blocked", "suppressed"),
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"Manager review: failed to send late nudges: {e}")
+                    result.errors.append(f"Late nudge failed: {e}")
+
             result.ran = True
             result.role_used = "review"
-            result.degraded = len(batch_errors) > 0
+            result.degraded = len(review_errors) > 0
             result.new_watermark = watermark
             if cycle_id is not None:
                 self._persist_cycle(cycle_id, result)
 
             logger.info(
                 f"Manager review complete: {len(all_thread_updates)} thread updates, "
-                f"{len(all_signal_flags)} signal flags, {len(batch_errors)} batch errors"
+                f"{len(all_signal_flags)} signal flags, {len(review_errors)} review errors"
             )
             return result
 
@@ -887,6 +1094,8 @@ class ObservationCycle:
 
                         priority = update.get("priority")
                         summary = update.get("summary")
+                        owner = update.get("owner")
+                        deadline = update.get("deadline")
 
                         # Build SET clause dynamically
                         sets = ["last_reviewed_at = ?"]
@@ -898,6 +1107,12 @@ class ObservationCycle:
                         if summary:
                             sets.append("summary = ?")
                             params.append(summary)
+                        if owner:
+                            sets.append("owner = ?")
+                            params.append(owner)
+                        if deadline:
+                            sets.append("current_deadline = ?")
+                            params.append(deadline)
 
                         sets.append("updated_at = ?")
                         params.append(now_str)
@@ -915,6 +1130,8 @@ class ObservationCycle:
                                     "thread_id": thread_id,
                                     "priority": priority,
                                     "summary_updated": bool(summary),
+                                    "owner": owner,
+                                    "deadline": deadline,
                                 },
                                 "output": {"status": "ok"},
                                 "allowed": True,
@@ -957,6 +1174,46 @@ class ObservationCycle:
                                 f"UPDATE signals SET {', '.join(sets)} WHERE id = ?",
                                 params_s,
                             )
+
+                            # NEW: retroactive URGENT reclassification
+                            if flag.get("reclassify_urgent"):
+                                # Fetch signal details for the nudge
+                                conn.row_factory = sqlite3.Row
+                                sig_row = conn.execute(
+                                    """
+                                    SELECT content_preview, summary, topic_hint, ref_id
+                                    FROM signals WHERE id = ?
+                                """,
+                                    (signal_id,),
+                                ).fetchone()
+
+                                if sig_row:
+                                    # Update triage_log verdict
+                                    conn.execute(
+                                        """
+                                        UPDATE triage_log SET verdict = "URGENT"
+                                        WHERE email_id = ?
+                                        AND timestamp = (
+                                            SELECT MAX(timestamp) FROM triage_log WHERE email_id = ?
+                                        )
+                                    """,
+                                        (sig_row["ref_id"], sig_row["ref_id"]),
+                                    )
+                                    # Signal that we need to send a late nudge
+                                    actions.append(
+                                        {
+                                            "tool": "late_nudge_queued",
+                                            "input": {
+                                                "signal_id": signal_id,
+                                                "preview": sig_row["summary"] or sig_row["content_preview"],
+                                                "topic": sig_row["topic_hint"],
+                                                "reason": flag.get("reason", "Manager review reclassified as urgent"),
+                                            },
+                                            "output": {"status": "ok"},
+                                            "allowed": True,
+                                        }
+                                    )
+
                             actions.append(
                                 {
                                     "tool": "manager_signal_flag",
@@ -967,6 +1224,66 @@ class ObservationCycle:
                             )
             except Exception as e:
                 logger.error(f"Manager review: failed to apply signal flags: {e}", exc_info=True)
+
+        # Topic pins
+        topic_pins = review_data.get("topic_pins", [])
+        if topic_pins:
+            try:
+                with open_db(self.db_path) as conn, conn:
+                    for pin in topic_pins:
+                        topic = pin.get("topic")
+                        if not topic:
+                            continue
+
+                        # Use simple normalization
+                        topic = topic.lower().strip()
+
+                        action = pin.get("action")
+                        if action == "pin":
+                            conn.execute("INSERT OR IGNORE INTO pinned_topics (topic) VALUES (?)", (topic,))
+                            logger.info(f"Manager pinned topic: {topic} — {pin.get('reason', '')}")
+                        elif action == "unpin":
+                            conn.execute("DELETE FROM pinned_topics WHERE topic = ?", (topic,))
+                            logger.info(f"Manager unpinned topic: {topic} — {pin.get('reason', '')}")
+
+                        actions.append(
+                            {"tool": "manager_topic_pin", "input": pin, "output": {"status": "ok"}, "allowed": True}
+                        )
+            except Exception as e:
+                logger.error(f"Manager review: failed to apply topic pins: {e}", exc_info=True)
+
+        # Contact updates
+        contact_updates = review_data.get("contact_updates", [])
+        if contact_updates:
+            try:
+                with open_db(self.db_path) as conn, conn:
+                    for update in contact_updates:
+                        contact_id = update.get("contact_id")
+                        if not contact_id:
+                            continue
+
+                        sets = []
+                        params_c = []
+                        if update.get("relationship"):
+                            sets.append("relationship = ?")
+                            params_c.append(update["relationship"])
+                        if update.get("organization"):
+                            sets.append("organization = ?")
+                            params_c.append(update["organization"])
+
+                        if sets:
+                            params_c.append(contact_id)
+                            conn.execute(f"UPDATE contacts SET {', '.join(sets)} WHERE id = ?", params_c)
+                            actions.append(
+                                {
+                                    "tool": "manager_contact_enrichment",
+                                    "input": update,
+                                    "output": {"status": "ok"},
+                                    "allowed": True,
+                                }
+                            )
+            except Exception as e:
+                logger.error(f"Manager review: failed to apply contact updates: {e}", exc_info=True)
 
         return actions
 
