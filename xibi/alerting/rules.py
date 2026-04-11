@@ -72,6 +72,11 @@ class RuleEngine:
                         content_preview TEXT,
                         ref_id         TEXT,
                         ref_source     TEXT,
+                        summary        TEXT,
+                        summary_model  TEXT,
+                        summary_ms     INTEGER,
+                        sender_trust   TEXT,
+                        sender_contact_id TEXT,
                         timestamp      DATETIME DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
@@ -267,6 +272,11 @@ class RuleEngine:
         content_preview: str,
         ref_id: str | None,
         ref_source: str | None,
+        summary: str | None = None,
+        summary_model: str | None = None,
+        summary_ms: int | None = None,
+        sender_trust: str | None = None,
+        sender_contact_id: str | None = None,
     ) -> None:
         try:
             preview = (content_preview[:277] + "...") if len(content_preview) > 280 else content_preview
@@ -282,10 +292,10 @@ class RuleEngine:
                 with conn:
                     conn.execute(
                         """
-                        INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                        (source, topic_hint, entity_text, entity_type, preview, str(ref_id), ref_source),
+                        (source, topic_hint, entity_text, entity_type, preview, str(ref_id), ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id),
                     )
         except Exception as e:
             logger.warning(f"Failed to log signal: {e}", exc_info=True)
@@ -334,6 +344,11 @@ class RuleEngine:
         content_preview: str,
         ref_id: str | None,
         ref_source: str | None,
+        summary: str | None = None,
+        summary_model: str | None = None,
+        summary_ms: int | None = None,
+        sender_trust: str | None = None,
+        sender_contact_id: str | None = None,
     ) -> None:
         try:
             preview = (content_preview[:277] + "...") if len(content_preview) > 280 else content_preview
@@ -346,10 +361,10 @@ class RuleEngine:
                     return
             conn.execute(
                 """
-                INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (source, topic_hint, entity_text, entity_type, preview, str(ref_id), ref_source),
+                (source, topic_hint, entity_text, entity_type, preview, str(ref_id), ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id),
             )
         except Exception as e:
             logger.warning(f"Failed to log signal: {e}", exc_info=True)

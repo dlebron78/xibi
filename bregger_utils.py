@@ -152,13 +152,20 @@ def ensure_signals_schema(db_path) -> None:
 
             # Migration: reflection lifecycle columns (added 2026-03-22)
             # Migration: env column for test-data isolation (added 2026-03-23)
-            for col_sql in [
-                "ALTER TABLE signals ADD COLUMN proposal_status TEXT DEFAULT 'active'",
-                "ALTER TABLE signals ADD COLUMN dismissed_at DATETIME",
-                "ALTER TABLE signals ADD COLUMN env TEXT DEFAULT 'production'",
-            ]:
+            # Migration: CoS summaries and trust (added 2026-04-05)
+            new_cols = [
+                ("proposal_status", "TEXT DEFAULT 'active'"),
+                ("dismissed_at", "DATETIME"),
+                ("env", "TEXT DEFAULT 'production'"),
+                ("summary", "TEXT"),
+                ("summary_model", "TEXT"),
+                ("summary_ms", "INTEGER"),
+                ("sender_trust", "TEXT"),
+                ("sender_contact_id", "TEXT"),
+            ]
+            for col_name, col_def in new_cols:
                 try:
-                    conn.execute(col_sql)
+                    conn.execute(f"ALTER TABLE signals ADD COLUMN {col_name} {col_def}")
                 except sqlite3.OperationalError:
                     pass  # Column already exists
 

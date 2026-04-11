@@ -7,7 +7,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 22  # increment when adding new migrations
+SCHEMA_VERSION = 23  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -53,6 +53,7 @@ class SchemaManager:
             (20, "belief_summaries table for session compression", self._migration_20),
             (21, "universal action scheduler tables", self._migration_21),
             (22, "checklist templates and instances", self._migration_22),
+            (23, "chief of staff: summaries, contacts, trust (catch-up)", self._migration_23),
         ]
 
         for version, description, func in migrations:
@@ -441,7 +442,21 @@ class SchemaManager:
                 conn.execute(f"ALTER TABLE access_log ADD COLUMN {col_name} {col_type}")
 
     def _migration_18(self, conn: sqlite3.Connection) -> None:
-        # Extend contacts table
+        """Chief of Staff pipeline: signal summaries, contact extensions, sender trust."""
+
+        # --- Step 67 & 69: Signal summaries & Sender trust ---
+        signal_cols = [
+            ("summary", "TEXT"),              # LLM-generated body summary
+            ("summary_model", "TEXT"),         # e.g. "gemma4:e4b"
+            ("summary_ms", "INTEGER"),         # summarization latency in ms
+            ("sender_trust", "TEXT"),          # 'ESTABLISHED' | 'RECOGNIZED' | 'UNKNOWN' | 'NAME_MISMATCH'
+            ("sender_contact_id", "TEXT"),     # FK to contacts(id)
+        ]
+        for col_name, col_type in signal_cols:
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute(f"ALTER TABLE signals ADD COLUMN {col_name} {col_type}")
+
+        # --- Step 68: Extend contacts for outbound tracking ---
         contact_cols = [
             ("phone", "TEXT"),
             ("title", "TEXT"),
@@ -460,20 +475,24 @@ class SchemaManager:
                 logger.error(f"Migration 18 failed to add column {col_name}: {e}")
                 raise
 
-        # Multi-channel identity table
+        # --- Step 68: Multi-channel identity ---
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS contact_channels (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                contact_id TEXT NOT NULL REFERENCES contacts(id),
-                channel_type TEXT NOT NULL,  -- 'email' | 'slack' | 'github' | 'telegram' | 'whatsapp'
-                handle TEXT NOT NULL,        -- 'alice@acme.com', '@athompson', 'alice-t'
-                verified INTEGER NOT NULL DEFAULT 0,  -- 1 if system has seen this handle in use
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(channel_type, handle)
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                contact_id   TEXT NOT NULL,
+                channel_type TEXT NOT NULL,
+                handle       TEXT NOT NULL,
+                display_name TEXT,
+                verified     INTEGER NOT NULL DEFAULT 0,
+                first_seen   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_seen    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(contact_id, channel_type, handle)
             );
-            CREATE INDEX IF NOT EXISTS idx_contact_channels_lookup ON contact_channels(channel_type, handle);
-            CREATE INDEX IF NOT EXISTS idx_contact_channels_contact ON contact_channels(contact_id);
         """)
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_cc_handle ON contact_channels(channel_type, handle);")
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_cc_contact ON contact_channels(contact_id);")
 
         # Extend session_entities table
         try:
@@ -562,6 +581,10 @@ class SchemaManager:
                 );
                 CREATE INDEX IF NOT EXISTS idx_scheduled_action_runs_action ON scheduled_action_runs(action_id, started_at DESC);
             """)
+
+    def _migration_23(self, conn: sqlite3.Connection) -> None:
+        """Chief of Staff pipeline: signal summaries, contact extensions, sender trust (catch-up)."""
+        self._migration_18(conn)
 
     def _migration_22(self, conn: sqlite3.Connection) -> None:
         sql_path = Path(__file__).parent / "migrations" / "0022_checklists.sql"

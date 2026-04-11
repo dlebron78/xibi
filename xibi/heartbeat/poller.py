@@ -479,6 +479,12 @@ class HeartbeatPoller:
     async def _process_email_signals(
         self, raw_signals: list[dict], seen_ids: set[str], triage_rules: dict, email_rules: list
     ) -> None:
+        from xibi.heartbeat.email_body import (
+            find_himalaya, fetch_raw_email, parse_email_body,
+            compact_body, summarize_email_body
+        )
+
+        himalaya_bin = find_himalaya()
         processed: list[dict] = []
         for sig in raw_signals:
             email = sig["metadata"]["email"]
@@ -486,6 +492,18 @@ class HeartbeatPoller:
             sender = sig["entity_text"]
             subject = sig["topic_hint"]
             sender_str = str(sender).lower()
+
+            # Body fetching and summarization for new emails
+            summary_data = {}
+            if email_id not in seen_ids:
+                raw, err = fetch_raw_email(himalaya_bin, email_id)
+                if raw and not err:
+                    body = parse_email_body(raw)
+                    if body and len(body.strip()) >= 20:
+                        compacted = compact_body(body)
+                        # Use effort="fast" model if available
+                        model = self.config.get("models", {}).get("text", {}).get("fast", {}).get("model", "gemma4:e4b")
+                        summary_data = summarize_email_body(compacted, str(sender), str(subject), model=model)
 
             verdict = ""
             auto_noise = ["noreply@", "no-reply@", "notifications@", "newsletter@", "automated@", "mailer-daemon@"]
@@ -513,6 +531,7 @@ class HeartbeatPoller:
                     "verdict": verdict,
                     "is_new": email_id not in seen_ids,
                     "sig": sig,
+                    "summary_data": summary_data,
                 }
             )
 
@@ -521,6 +540,7 @@ class HeartbeatPoller:
                 conn.row_factory = sqlite3.Row
                 for item in processed:
                     sig = item["sig"]
+                    summary_data = item.get("summary_data", {})
                     self.rules.log_signal_with_conn(
                         conn,
                         source=sig["source"],
@@ -530,6 +550,9 @@ class HeartbeatPoller:
                         content_preview=sig.get("content_preview"),
                         ref_id=sig.get("ref_id"),
                         ref_source=sig.get("ref_source"),
+                        summary=summary_data.get("summary"),
+                        summary_model=summary_data.get("model"),
+                        summary_ms=summary_data.get("duration_ms"),
                     )
 
                     if not item["is_new"] or item["verdict"] == "DEFER":
