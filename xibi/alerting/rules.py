@@ -7,7 +7,7 @@ import sqlite3
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from xibi.heartbeat.sender_trust import TrustAssessment

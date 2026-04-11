@@ -1,6 +1,10 @@
+import pytest
 from unittest.mock import MagicMock, patch
-
-from xibi.heartbeat.email_body import compact_body, parse_email_body, summarize_email_body
+from xibi.heartbeat.email_body import (
+    parse_email_body,
+    compact_body,
+    summarize_email_body
+)
 
 # --- Unit Tests ---
 

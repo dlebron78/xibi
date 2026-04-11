@@ -752,7 +752,9 @@ class ObservationCycle:
                             """
                         ).fetchone()
                         if example:
-                            lines.append(f"  Example mismatch: \"{example['entity_text']}\" — {example['content_preview'][:60]}...")
+                            lines.append(
+                                f'  Example mismatch: "{example["entity_text"]}" — {example["content_preview"][:60]}...'
+                            )
                     lines.append("")
 
             # Active tasks for context
@@ -1177,30 +1179,40 @@ Rules:
                             if flag.get("reclassify_urgent"):
                                 # Fetch signal details for the nudge
                                 conn.row_factory = sqlite3.Row
-                                sig_row = conn.execute("""
+                                sig_row = conn.execute(
+                                    """
                                     SELECT content_preview, summary, topic_hint, ref_id
                                     FROM signals WHERE id = ?
-                                """, (signal_id,)).fetchone()
+                                """,
+                                    (signal_id,),
+                                ).fetchone()
 
                                 if sig_row:
                                     # Update triage_log verdict
-                                    conn.execute("""
-                                        UPDATE triage_log SET verdict = 'URGENT'
+                                    conn.execute(
+                                        """
+                                        UPDATE triage_log SET verdict = "URGENT"
                                         WHERE email_id = ?
-                                    """, (sig_row["ref_id"],))
-
+                                        AND timestamp = (
+                                            SELECT MAX(timestamp) FROM triage_log WHERE email_id = ?
+                                        )
+                                    """,
+                                        (sig_row["ref_id"], sig_row["ref_id"]),
+                                    )
                                     # Signal that we need to send a late nudge
-                                    actions.append({
-                                        "tool": "late_nudge_queued",
-                                        "input": {
-                                            "signal_id": signal_id,
-                                            "preview": sig_row["summary"] or sig_row["content_preview"],
-                                            "topic": sig_row["topic_hint"],
-                                            "reason": flag.get("reason", "Manager review reclassified as urgent"),
-                                        },
-                                        "output": {"status": "ok"},
-                                        "allowed": True
-                                    })
+                                    actions.append(
+                                        {
+                                            "tool": "late_nudge_queued",
+                                            "input": {
+                                                "signal_id": signal_id,
+                                                "preview": sig_row["summary"] or sig_row["content_preview"],
+                                                "topic": sig_row["topic_hint"],
+                                                "reason": flag.get("reason", "Manager review reclassified as urgent"),
+                                            },
+                                            "output": {"status": "ok"},
+                                            "allowed": True,
+                                        }
+                                    )
 
                             actions.append(
                                 {
@@ -1234,12 +1246,9 @@ Rules:
                             conn.execute("DELETE FROM pinned_topics WHERE topic = ?", (topic,))
                             logger.info(f"Manager unpinned topic: {topic} — {pin.get('reason', '')}")
 
-                        actions.append({
-                            "tool": "manager_topic_pin",
-                            "input": pin,
-                            "output": {"status": "ok"},
-                            "allowed": True
-                        })
+                        actions.append(
+                            {"tool": "manager_topic_pin", "input": pin, "output": {"status": "ok"}, "allowed": True}
+                        )
             except Exception as e:
                 logger.error(f"Manager review: failed to apply topic pins: {e}", exc_info=True)
 
@@ -1265,12 +1274,14 @@ Rules:
                         if sets:
                             params_c.append(contact_id)
                             conn.execute(f"UPDATE contacts SET {', '.join(sets)} WHERE id = ?", params_c)
-                            actions.append({
-                                "tool": "manager_contact_enrichment",
-                                "input": update,
-                                "output": {"status": "ok"},
-                                "allowed": True
-                            })
+                            actions.append(
+                                {
+                                    "tool": "manager_contact_enrichment",
+                                    "input": update,
+                                    "output": {"status": "ok"},
+                                    "allowed": True,
+                                }
+                            )
             except Exception as e:
                 logger.error(f"Manager review: failed to apply contact updates: {e}", exc_info=True)
 

@@ -10,12 +10,12 @@ These are FLAGS — they inform classification and are surfaced to the user.
 They NEVER auto-block or silently discard signals.
 """
 
-import logging
-import re
+import hashlib
 import sqlite3
+import re
+import logging
 from dataclasses import dataclass
 from pathlib import Path
-
 from xibi.db import open_db
 
 logger = logging.getLogger(__name__)

@@ -376,7 +376,10 @@ def _upsert_contact_core(
             discovered_via=discovered_via,
             relationship=relationship,
             db_path=db_str,
-        ) or f"contact-{hashlib.md5(email.lower().encode()).hexdigest()[:8]}"
+        )
+
+        if not contact_id:
+            contact_id = f"contact-{hashlib.md5(email.lower().encode()).hexdigest()[:8]}"
 
         # Fix counts if outbound (create_contact defaults to signal_count=1, outbound_count=0)
         if direction == "outbound":
