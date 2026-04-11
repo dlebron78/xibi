@@ -19,6 +19,7 @@ import re
 import sqlite3
 import sys
 import time
+from xibi.heartbeat.classification import build_classification_prompt, build_fallback_prompt
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -541,26 +542,30 @@ def _extract_sender_name(email: dict) -> str:
     return ""
 
 
-def classify_email(email: dict, model: str = "llama3.2:latest") -> str:
+def classify_email(
+    email: dict,
+    model: str = "gemma4:e4b",
+    context: "EmailContext | None" = None,
+) -> str:
     """Ask Ollama to classify email as URGENT, DIGEST, or NOISE."""
     # Note: We removed the is_ollama_busy guard here to ensure we don't
     # fall back to DIGEST/dumps. Ollama will queue these internally.
 
-    sender = _extract_sender(email)
-    prompt = (
-        f"From: {sender}\n"
-        f"Subject: {email.get('subject', 'No Subject')}\n\n"
-        "Classify this email for a personal assistant triage. Answer with exactly one word:\n"
-        "URGENT - High priority. Human-to-human messages, travel, security, fraud, or direct replies.\n"
-        "DIGEST - Medium priority. Newsletters you actively read, job alerts, or meaningful updates you care about.\n"
-        "NOISE - Low priority. Automated marketing, coupons, social media notifications, bulk receipts, or junk.\n\n"
-        "Strict Rule: If it looks like a mass-email or automated notification, it is NOISE unless it's clearly an update you requested.\n\n"
-        "Verdict:"
-    )
+    if context:
+        prompt = build_classification_prompt(email, context)
+    else:
+        prompt = build_fallback_prompt(email)
 
-    payload = json.dumps(
-        {"model": model, "prompt": prompt, "stream": False, "options": {"num_predict": 10, "temperature": 0}}
-    ).encode()
+    payload = json.dumps({
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "think": False,          # TOP LEVEL — critical for gemma4
+        "options": {
+            "num_predict": 10,   # one word answer
+            "temperature": 0     # deterministic
+        }
+    }).encode()
 
     try:
         # 15s timeout for classification
@@ -1264,7 +1269,11 @@ def tick(
                     break
 
         # Determine if we should ping or digest — skip LLM if rule or pre-filter matched
-        verdict = rule_verdict if rule_verdict else classify_email(email, model=model)
+        ctx = email_contexts.get(email_id)  # from step-70 (populated at line 1226)
+        verdict = rule_verdict if rule_verdict else classify_email(email, model=model, context=ctx)
+
+        if ctx:
+            print(f"📋 {email_id}: {verdict} | trust={ctx.sender_trust} thread={ctx.matching_thread_name or 'none'} signals_7d={ctx.sender_signals_7d}", flush=True)
 
         # ── Cross-Channel Escalation Check ──
         if verdict == "DIGEST" and topic:
