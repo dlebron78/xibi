@@ -17,6 +17,7 @@ from xibi.heartbeat.sender_trust import (
     _extract_sender_addr,
     _extract_sender_name,
 )
+from xibi.heartbeat.classification import build_classification_prompt, build_fallback_prompt
 from xibi.channels.sheets import SheetsExporter
 from xibi.channels.telegram import TelegramAdapter
 from xibi.command_layer import CommandLayer
@@ -194,13 +195,8 @@ class HeartbeatPoller:
         emails = result.get("emails", [])
         return list(emails)
 
-    def _classify_email(self, email: dict[str, Any]) -> str:
+    def _classify_email(self, email: dict[str, Any], context: "EmailContext | None" = None) -> str:
         from xibi.condensation import condense
-
-        sender = email.get("from", email.get("sender", "unknown"))
-        if isinstance(sender, dict):
-            sender = sender.get("name") or sender.get("addr", "unknown")
-        subject = email.get("subject", "No Subject")
 
         body = email.get("body", email.get("text", ""))
         body_preview = ""
@@ -211,14 +207,22 @@ class HeartbeatPoller:
                 return "NOISE"
             body_preview = cc.condensed[:500]
 
-        prompt = (
-            "Classify this email. Reply with exactly one word: URGENT, DIGEST, or NOISE.\n"
-            "URGENT = needs immediate attention.\n"
-            "DIGEST = worth a summary later.\n"
-            "NOISE = automated/newsletters/irrelevant.\n\n"
-            f"From: {sender}\n"
-            f"Subject: {subject}" + (f"\nBody preview:\n{body_preview}" if body_preview else "")
-        )
+        if context:
+            prompt = build_classification_prompt(email, context)
+        else:
+            # Fallback to current sender+subject+body_preview prompt
+            sender = email.get("from", email.get("sender", "unknown"))
+            if isinstance(sender, dict):
+                sender = sender.get("name") or sender.get("addr", "unknown")
+            subject = email.get("subject", "No Subject")
+            prompt = (
+                "Classify this email. Reply with exactly one word: URGENT, DIGEST, or NOISE.\n"
+                "URGENT = needs immediate attention.\n"
+                "DIGEST = worth a summary later.\n"
+                "NOISE = automated/newsletters/irrelevant.\n\n"
+                f"From: {sender}\n"
+                f"Subject: {subject}" + (f"\nBody preview:\n{body_preview}" if body_preview else "")
+            )
 
         try:
             from xibi.router import set_trace_context
@@ -594,21 +598,6 @@ class HeartbeatPoller:
                         )
 
             verdict = ""
-            auto_noise = ["noreply@", "no-reply@", "notifications@", "newsletter@", "automated@", "mailer-daemon@"]
-            if any(p in sender_str for p in auto_noise):
-                verdict = "NOISE"
-
-            if not verdict:
-                for entity, status in triage_rules.items():
-                    if entity.lower() in sender_str:
-                        verdict = status.upper()
-                        break
-
-            if not verdict and email_id not in seen_ids:
-                verdict = self._classify_email(email)
-
-            if verdict == "DIGEST":
-                verdict, subject = self._should_escalate(verdict, subject, subject, [])
 
             # Sender trust assessment
             sender_addr = _extract_sender_addr(email)
@@ -642,7 +631,31 @@ class HeartbeatPoller:
         )
 
         for item in processed:
-            item["context"] = email_contexts.get(item["email_id"])
+            email_id = item["email_id"]
+            sender_str = str(item["sender"]).lower()
+            subject = item["subject"]
+            ctx = email_contexts.get(email_id)
+            item["context"] = ctx
+
+            verdict = ""
+            auto_noise = ["noreply@", "no-reply@", "notifications@", "newsletter@", "automated@", "mailer-daemon@"]
+            if any(p in sender_str for p in auto_noise):
+                verdict = "NOISE"
+
+            if not verdict:
+                for entity, status in triage_rules.items():
+                    if entity.lower() in sender_str:
+                        verdict = status.upper()
+                        break
+
+            if not verdict and item["is_new"]:
+                verdict = self._classify_email(item["email"], context=ctx)
+
+            if verdict == "DIGEST":
+                verdict, subject = self._should_escalate(verdict, subject, subject, [])
+
+            item["verdict"] = verdict
+            item["subject"] = subject
 
         try:
             with xibi.db.open_db(self.db_path) as conn, conn:
