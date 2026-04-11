@@ -546,6 +546,7 @@ class HeartbeatPoller:
         triage_rules: dict,
         email_rules: list,
     ) -> None:
+        from xibi.heartbeat.context_assembly import assemble_batch_context
         from xibi.heartbeat.email_body import (
             compact_body,
             fetch_raw_email,
@@ -630,8 +631,6 @@ class HeartbeatPoller:
             )
 
         # ── Context Assembly (Step 70) ─────────────────────────────
-        from xibi.heartbeat.context_assembly import assemble_batch_context
-
         trust_results = {item["email_id"]: item["trust_assessment"] for item in processed}
         email_contexts = assemble_batch_context(
             emails=[item["email"] for item in processed],

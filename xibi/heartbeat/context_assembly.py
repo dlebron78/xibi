@@ -7,6 +7,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from collections import Counter
 
 from xibi.heartbeat.sender_trust import _extract_sender_addr
 
@@ -164,7 +165,6 @@ def assemble_email_context(
             # sender_avg_urgency
             urgencies = [r["urgency"] for r in recent_signals if r["urgency"]]
             if urgencies:
-                from collections import Counter
                 ctx.sender_avg_urgency = Counter(urgencies).most_common(1)[0][0]
 
         # c) Thread matching
@@ -224,60 +224,127 @@ def assemble_batch_context(
 ) -> dict[str, EmailContext]:
     """Assemble context for all emails in a tick batch.
 
-    Opens ONE read-only connection, runs all queries, returns
+    Opens ONE read-only connection, runs batch queries, returns
     dict keyed by email_id.
     """
     if not emails:
         return {}
 
-    contexts = {}
+    from xibi.heartbeat.sender_trust import _extract_sender_name
+
+    contexts: dict[str, EmailContext] = {}
+    email_to_contact_id: dict[str, str] = {}
+    contact_ids: set[str] = set()
+
+    # Pre-compute contact IDs
+    for email in emails:
+        email_id = str(email.get("id", ""))
+        trust = trust_results.get(email_id)
+        if trust and trust.contact_id:
+            cid = trust.contact_id
+        else:
+            sender_addr = _extract_sender_addr(email)
+            cid = "contact-" + hashlib.md5(sender_addr.encode()).hexdigest()[:8]
+
+        email_to_contact_id[email_id] = cid
+        contact_ids.add(cid)
+
+        # Initialize minimal context
+        bt = batch_topics.get(email_id, {})
+        bs = body_summaries.get(email_id, {})
+
+        contexts[email_id] = EmailContext(
+            email_id=email_id,
+            sender_addr=_extract_sender_addr(email),
+            sender_name=_extract_sender_name(email),
+            subject=email.get("subject", ""),
+            summary=bs.get("summary") if isinstance(bs, dict) else None,
+            sender_trust=trust.tier if trust else None,
+            contact_id=cid,
+            topic=bt.get("topic"),
+            entity_text=bt.get("entity_text"),
+            entity_type=bt.get("entity_type"),
+        )
+
+    if not contact_ids:
+        return contexts
+
     try:
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
 
-        for email in emails:
-            email_id = str(email.get("id", ""))
-            bt = batch_topics.get(email_id, {})
-            bs = body_summaries.get(email_id, {})
-            trust = trust_results.get(email_id)
+        # 1. Batch fetch contacts
+        cid_list = list(contact_ids)
+        placeholders = ",".join(["?"] * len(cid_list))
+        contact_rows = conn.execute(f"""
+            SELECT id, organization, relationship, first_seen, last_seen,
+                   signal_count, outbound_count, user_endorsed
+            FROM contacts WHERE id IN ({placeholders})
+        """, cid_list).fetchall()
 
-            # Re-use the logic from assemble_email_context but within the shared connection
-            # For brevity and consistency, we'll implement a slightly optimized version here
-            # that could be further refactored if needed.
+        contacts_map = {row["id"]: row for row in contact_rows}
 
-            # Since assemble_email_context currently opens its own connection,
-            # we'll implement the logic here using the existing connection 'conn'.
+        # 2. Batch fetch signal counts
+        count_rows = conn.execute(f"""
+            SELECT sender_contact_id, COUNT(*) as cnt
+            FROM signals
+            WHERE sender_contact_id IN ({placeholders})
+              AND timestamp > datetime('now', '-7 days')
+            GROUP BY sender_contact_id
+        """, cid_list).fetchall()
+        counts_map = {row["sender_contact_id"]: row["cnt"] for row in count_rows}
 
-            from xibi.heartbeat.sender_trust import _extract_sender_name
-            sender_addr = _extract_sender_addr(email)
-            sender_name = _extract_sender_name(email)
-            subject = email.get("subject", "")
+        # 3. Batch fetch recent signals (top 20 per sender)
+        recent_signals_rows = conn.execute(f"""
+            SELECT * FROM (
+                SELECT topic_hint, urgency, timestamp, sender_contact_id,
+                       julianday(timestamp) as ts_julian,
+                       ROW_NUMBER() OVER (PARTITION BY sender_contact_id ORDER BY timestamp DESC) as rn
+                FROM signals
+                WHERE sender_contact_id IN ({placeholders})
+                  AND timestamp > datetime('now', '-7 days')
+            ) WHERE rn <= 20
+        """, cid_list).fetchall()
 
-            sender_contact_id = trust.contact_id if trust else None
-            if not sender_contact_id:
-                sender_contact_id = "contact-" + hashlib.md5(sender_addr.encode()).hexdigest()[:8]
+        signals_by_sender: dict[str, list[sqlite3.Row]] = {}
+        for row in recent_signals_rows:
+            cid = row["sender_contact_id"]
+            if cid not in signals_by_sender:
+                signals_by_sender[cid] = []
+            signals_by_sender[cid].append(row)
 
-            ctx = EmailContext(
-                email_id=email_id,
-                sender_addr=sender_addr,
-                sender_name=sender_name,
-                subject=subject,
-                summary=bs.get("summary") if isinstance(bs, dict) else None,
-                sender_trust=trust.tier if trust else None,
-                contact_id=sender_contact_id,
-                topic=bt.get("topic"),
-                entity_text=bt.get("entity_text"),
-                entity_type=bt.get("entity_type"),
-            )
+        # 4. Batch fetch active threads
+        thread_rows = conn.execute("""
+            SELECT id, name, status, priority, current_deadline, owner, summary, signal_count, key_entities
+            FROM threads
+            WHERE status = 'active'
+            ORDER BY updated_at DESC
+        """).fetchall()
+
+        # Build a mapping of contact_id -> threads for O(1) lookup in open thread check
+        contact_to_threads: dict[str, list[sqlite3.Row]] = {}
+        for tr in thread_rows:
+            if tr["key_entities"]:
+                try:
+                    entities = json.loads(tr["key_entities"])
+                    if isinstance(entities, list):
+                        for cid in entities:
+                            if cid not in contact_to_threads:
+                                contact_to_threads[cid] = []
+                            contact_to_threads[cid].append(tr)
+                except Exception:
+                    # Fallback for plain string if not JSON
+                    pass
+
+        # 5. Populate contexts
+        now_julian = conn.execute("SELECT julianday('now')").fetchone()[0]
+
+        for ctx in contexts.values():
+            cid = ctx.contact_id
 
             # Contact profile
-            row = conn.execute("""
-                SELECT organization, relationship, first_seen, last_seen,
-                       signal_count, outbound_count, user_endorsed
-                FROM contacts WHERE id = ?
-            """, (sender_contact_id,)).fetchone()
-
-            if row:
+            if cid in contacts_map:
+                row = contacts_map[cid]
                 ctx.contact_org = row["organization"]
                 ctx.contact_relationship = row["relationship"]
                 ctx.contact_first_seen = row["first_seen"]
@@ -286,36 +353,19 @@ def assemble_batch_context(
                 ctx.contact_outbound_count = row["outbound_count"] or 0
                 ctx.contact_user_endorsed = bool(row["user_endorsed"])
 
-            # Recent signals
-            count_row = conn.execute("""
-                SELECT COUNT(*) FROM signals
-                WHERE sender_contact_id = ?
-                  AND timestamp > datetime('now', '-7 days')
-            """, (sender_contact_id,)).fetchone()
-            ctx.sender_signals_7d = count_row[0] if count_row else 0
+            # Signal history
+            ctx.sender_signals_7d = counts_map.get(cid, 0)
 
-            recent_signals = conn.execute("""
-                SELECT topic_hint, urgency, timestamp
-                FROM signals
-                WHERE sender_contact_id = ?
-                  AND timestamp > datetime('now', '-7 days')
-                ORDER BY timestamp DESC
-                LIMIT 20
-            """, (sender_contact_id,)).fetchall()
+            sender_recent = signals_by_sender.get(cid, [])
+            if sender_recent:
+                # Age
+                ts_julian = sender_recent[0]["ts_julian"]
+                if ts_julian:
+                    ctx.sender_last_signal_age_hours = (now_julian - ts_julian) * 24
 
-            if recent_signals:
-                most_recent_ts = recent_signals[0]["timestamp"]
-                try:
-                    age_row = conn.execute(
-                        "SELECT (julianday('now') - julianday(?)) * 24", (most_recent_ts,)
-                    ).fetchone()
-                    if age_row:
-                        ctx.sender_last_signal_age_hours = float(age_row[0])
-                except Exception:
-                    pass
-
+                # Topics
                 topics = []
-                for r in recent_signals:
+                for r in sender_recent:
                     t = r["topic_hint"]
                     if t and t not in topics:
                         topics.append(t)
@@ -323,69 +373,43 @@ def assemble_batch_context(
                         break
                 ctx.sender_recent_topics = topics
 
-                urgencies = [r["urgency"] for r in recent_signals if r["urgency"]]
+                # Urgency
+                urgencies = [r["urgency"] for r in sender_recent if r["urgency"]]
                 if urgencies:
-                    from collections import Counter
                     ctx.sender_avg_urgency = Counter(urgencies).most_common(1)[0][0]
 
-            # Thread matching
-            thread = None
+            # Thread matching (Python side)
+            matched_thread = None
             if ctx.entity_text:
-                thread = conn.execute("""
-                    SELECT id, name, status, priority, current_deadline, owner, summary, signal_count
-                    FROM threads
-                    WHERE status = 'active'
-                      AND name LIKE ?
-                    ORDER BY updated_at DESC
-                    LIMIT 1
-                """, (f'%{ctx.entity_text}%',)).fetchone()
+                et_lower = ctx.entity_text.lower()
+                for tr in thread_rows:
+                    if tr["name"] and et_lower in tr["name"].lower():
+                        matched_thread = tr
+                        break
 
-            if not thread and ctx.topic:
-                thread = conn.execute("""
-                    SELECT id, name, status, priority, current_deadline, owner, summary, signal_count
-                    FROM threads
-                    WHERE status = 'active'
-                      AND name LIKE ?
-                    ORDER BY updated_at DESC
-                    LIMIT 1
-                """, (f'%{ctx.topic}%',)).fetchone()
+            if not matched_thread and ctx.topic:
+                topic_lower = ctx.topic.lower()
+                for tr in thread_rows:
+                    if tr["name"] and topic_lower in tr["name"].lower():
+                        matched_thread = tr
+                        break
 
-            if thread:
-                ctx.matching_thread_id = thread["id"]
-                ctx.matching_thread_name = thread["name"]
-                ctx.matching_thread_status = thread["status"]
-                ctx.matching_thread_priority = thread["priority"]
-                ctx.matching_thread_deadline = thread["current_deadline"]
-                ctx.matching_thread_owner = thread["owner"]
-                ctx.matching_thread_summary = thread["summary"]
-                ctx.matching_thread_signal_count = thread["signal_count"] or 0
+            if matched_thread:
+                ctx.matching_thread_id = matched_thread["id"]
+                ctx.matching_thread_name = matched_thread["name"]
+                ctx.matching_thread_status = matched_thread["status"]
+                ctx.matching_thread_priority = matched_thread["priority"]
+                ctx.matching_thread_deadline = matched_thread["current_deadline"]
+                ctx.matching_thread_owner = matched_thread["owner"]
+                ctx.matching_thread_summary = matched_thread["summary"]
+                ctx.matching_thread_signal_count = matched_thread["signal_count"] or 0
 
             # Open thread check
-            has_open = conn.execute("""
-                SELECT 1 FROM threads
-                WHERE status = 'active'
-                  AND key_entities LIKE ?
-                LIMIT 1
-            """, (f'%{sender_contact_id}%',)).fetchone()
-            ctx.sender_has_open_thread = bool(has_open)
-
-            contexts[email_id] = ctx
+            if cid in contact_to_threads:
+                ctx.sender_has_open_thread = True
 
         conn.close()
     except Exception as e:
-        logger.warning(f"Error assembling batch email context: {e}")
-        # Return what we have or empty contexts for those that failed
-        for email in emails:
-            eid = str(email.get("id", ""))
-            if eid not in contexts:
-                # Minimal context
-                from xibi.heartbeat.sender_trust import _extract_sender_name
-                sender_addr = _extract_sender_addr(email)
-                contexts[eid] = EmailContext(
-                    email_id=eid,
-                    sender_addr=sender_addr,
-                    sender_name=_extract_sender_name(email),
-                    subject=email.get("subject", "")
-                )
+        logger.warning(f"Error assembling batch email context: {e}", exc_info=True)
 
     return contexts
