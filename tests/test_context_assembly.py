@@ -1,9 +1,11 @@
 import sqlite3
-import hashlib
 from pathlib import Path
+
 import pytest
-from xibi.heartbeat.context_assembly import EmailContext, assemble_email_context, assemble_batch_context
+
+from xibi.heartbeat.context_assembly import EmailContext, assemble_batch_context, assemble_email_context
 from xibi.heartbeat.sender_trust import TrustAssessment
+
 
 @pytest.fixture
 def db_path(tmp_path):

@@ -1,11 +1,13 @@
 import hashlib
 import sqlite3
-from pathlib import Path
 from datetime import datetime, timedelta, timezone
+
 import pytest
-from xibi.db import open_db, migrate
-from xibi.heartbeat.contact_poller import _extract_recipients, poll_sent_folder, backfill_contacts
+
+from xibi.db import migrate, open_db
+from xibi.heartbeat.contact_poller import _extract_recipients, poll_sent_folder
 from xibi.signal_intelligence import _upsert_contact_core
+
 
 @pytest.fixture
 def db_path(tmp_path):

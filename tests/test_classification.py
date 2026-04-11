@@ -1,9 +1,11 @@
 import json
 import unittest
 from unittest.mock import MagicMock, patch
+
+from bregger_heartbeat import classify_email
 from xibi.heartbeat.classification import build_classification_prompt, build_fallback_prompt
 from xibi.heartbeat.context_assembly import EmailContext
-from bregger_heartbeat import classify_email
+
 
 class TestClassification(unittest.TestCase):
 
@@ -225,7 +227,6 @@ class TestClassification(unittest.TestCase):
     @patch("bregger_heartbeat.open")
     def test_tick_passes_context_to_classifier(self, mock_open, mock_db, mock_run_tool, mock_classify):
         """Test 15: tick passes context to classify_email"""
-        import bregger_heartbeat
 
         # Mock dependencies for a minimal tick run
         mock_run_tool.return_value = {"emails": [{"id": "e1", "from": "A <a@b.com>", "subject": "S"}]}

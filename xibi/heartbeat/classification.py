@@ -1,9 +1,12 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from xibi.heartbeat.context_assembly import EmailContext
 
 from xibi.heartbeat.sender_trust import _extract_sender_addr, _extract_sender_name
+
 
 def build_classification_prompt(email: dict, context: EmailContext) -> str:
     """Build a context-rich classification prompt from EmailContext."""

@@ -861,8 +861,6 @@ Rules:
     def _get_all_active_threads(self) -> list[dict[str, Any]]:
         """Fetch all active threads ordered by priority (nulls last) then signal_count."""
         try:
-            max_threads = self.config.manager_max_threads
-
             with open_db(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.execute(
