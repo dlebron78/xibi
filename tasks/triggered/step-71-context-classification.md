@@ -1,398 +1,353 @@
-# step-70 — Context Assembly for Email Classification
+# step-71 — Context-Aware Email Classification
 
 > **Epic:** Chief of Staff Pipeline (`tasks/EPIC-chief-of-staff.md`)
-> **Block:** 4a of 7 — Context Assembly
-> **Phase:** 3 — depends on Blocks 1 (step-67), 2 (step-68), 3 (step-69)
+> **Block:** 4b of 7 — Classification Prompt
+> **Phase:** 3 — depends on Block 4a (step-70 context assembly)
 > **Acceptance criteria:** see epic Block 4
 
 > **TRR Record**
-> Date: 2026-04-11 | HEAD: 7e299805 | Reviewer: Cowork Pipeline (Opus)
-> Verdict: AMEND | Findings: C1-C6, H1, S1-S3
+> Date: 2026-04-11 | HEAD: 318a78b5 | Reviewer: Cowork Pipeline (Opus)
+> Verdict: AMEND | Findings: C1-C5, H1, S1-S2
 > Open Questions: None
 
 ---
 
 ## Context
 
-Right now `classify_email()` in `bregger_heartbeat.py` (line 544 ‼️ TRR-C1 — was 481) receives an email dict and classifies it using **only the sender name and subject line**. The prompt is:
+After step-70, every email in the tick has an `EmailContext` object sitting next to it — sender profile, trust tier, body summary, thread history, recent signals. But the classifier still ignores all of it. The current prompt in `bregger_heartbeat.py` line 544 ‼️ TRR-C1 — was 487; `classify_email()` starts at line 544 with prompt built at lines 550-558:
 
 ```
 From: {sender}
 Subject: {subject}
-Classify this email...
+
+Classify this email for a personal assistant triage. Answer with exactly one word:
+URGENT - ...
+DIGEST - ...
+NOISE - ...
 ```
 
-After steps 67-69, the database contains far richer information for every email:
-- **Body summary** (step-67) — what the email actually says
-- **Contact profile** (step-68) — how many times you've emailed this person, their organization, relationship type, outbound history
-- **Sender trust tier** (step-69) — ESTABLISHED / RECOGNIZED / UNKNOWN / NAME_MISMATCH
+That's it. Two lines of input, three possible outputs. The classifier can't distinguish between your colleague asking about a Friday deadline and a random newsletter — because it doesn't know who your colleague is, what the email says, or that Friday is a deadline.
 
-Plus pre-existing data:
-- **Active threads** — ongoing conversations grouped by topic, with summaries and priorities
-- **Recent signals** from the same sender — pattern of communication
-- **Thread deadlines and ownership** — is this thread waiting on you or them?
+Step-71 replaces this prompt with one that feeds the assembled context to the LLM, enabling dramatically better classification. Same model (Gemma4:e4b), same speed budget, just richer input.
 
-None of this reaches the classifier. Step-70 builds the bridge: a function that assembles all available context into a structured object, ready for step-71's upgraded classification prompt.
-
-**What this unlocks:** Steps 71, 72, and all downstream blocks depend on having assembled context. This is pure data gathering — no LLM calls, no new tables, no migrations. Just queries.
+**What changes:** The classification prompt. Nothing else. Same three tiers (URGENT/DIGEST/NOISE), same pre-filters, same alert evaluation, same downstream handling. We're upgrading the brain, not the body.
 
 ---
 
 ## Goal
 
-Create an `assemble_email_context()` function that, given an email and its pre-computed data (topic, summary, sender trust), queries the database and returns a structured `EmailContext` dict containing everything the classifier needs to make an informed decision.
+Replace the classification prompt in both `bregger_heartbeat.py` and `xibi/heartbeat/poller.py` with a context-aware version that uses `EmailContext` from step-70 to make informed triage decisions.
 
 ---
 
 ## What Already Exists
 
-### Classification path
-- `bregger_heartbeat.py` → `classify_email()` at line 544 ‼️ TRR-C1: takes `email: dict, model: str`, builds a minimal prompt from sender + subject, returns URGENT/DIGEST/NOISE/DEFER
-- `bregger_heartbeat.py` → `tick()` at line 1102 ‼️ TRR-C2 — was 1076: the main polling loop; calls `classify_email(email, model=model)` at line 1250 ‼️ TRR-C2 — was 1127 only when no pre-filter or triage rule matched
-- `xibi/heartbeat/poller.py` → `_classify_email()` at line 197 ‼️ TRR-C5 — was 116: async version, includes body preview but no structured context
-- `xibi/heartbeat/poller.py` → `_process_email_signals()` at line 542: builds `processed` list then writes to DB in a batch
+### Current classification — bregger path
+- `classify_email(email, model)` at line 544 ‼️ TRR-C1 of `bregger_heartbeat.py`
+- Prompt: sender + subject only (5 lines)
+- HTTP POST to `localhost:11434/api/generate`, `inference_lock`, 15s timeout
+- Payload: `stream: False, options: {num_predict: 10, temperature: 0}`
+- Response parsing: looks for "URGENT", "NOISE" in response text, defaults to "DIGEST"
+- Error fallback: returns "DIGEST"
 
-### Data available at classification time in tick()
-- `email` dict: `id`, `from` (dict with `name`/`addr`), `subject`
-- `batch_topics[email_id]`: `topic`, `entity_text`, `entity_type` (computed at line 1123)
-- `body_summaries[email_id]`: `summary`, `model`, `duration_ms`, `status` (computed at lines 1139-1171)
-- `trust` assessment (from step-69, computed per-email at lines 1206-1209 inside the per-email loop)
-- `tick_active_threads`: list of `{topic, count, sources, last_seen}` (computed at line 1178)
-- `tick_pinned_topics`: list of `{topic, count, pinned: True}` (computed at line 1179)
+### Current classification — poller path
+- `_classify_email()` at line 197 ‼️ TRR-C2 — was 116 of `xibi/heartbeat/poller.py`
+- Prompt: sender + subject + condensed body preview (up to 500 chars)
+- Uses xibi router abstraction (`get_model(effort="fast")`)
+- ‼️ TRR-C3: Also runs phishing detection via `condense()` before classification (line 208-211) — returns "NOISE" immediately if phishing detected. Step-71's shared prompt builder must NOT break this existing phishing gate. The phishing check runs BEFORE prompt construction, so the shared prompt builder does not need to handle it — but the poller's `_classify_email()` wrapper must preserve the phishing check before calling the shared prompt.
+- Error fallback: returns "DEFER" (retries next tick)
 
-### Database tables with context data
-- **contacts**: `id, display_name, email, organization, relationship, first_seen, last_seen, signal_count, outbound_count, user_endorsed, discovered_via, phone, title, tags, notes`
-- **contact_channels**: `contact_id, channel_type, handle, display_name, verified, first_seen, last_seen`
-- **signals**: `source, topic_hint, entity_text, content_preview, summary, sender_trust, sender_contact_id, ref_id, timestamp, action_type, urgency, direction, thread_id`
-- **threads**: `id, name, status, current_deadline, owner, key_entities, summary, priority, signal_count, source_channels, last_reviewed_at`
+### Pre-filter rules (unchanged by this spec)
+- Auto-noise patterns: `noreply@`, `no-reply@`, `notifications@`, `newsletter@`, `automated@`, `mailer-daemon@`
+- User-declared triage rules from ledger table (entity → verdict mapping)
+- Cross-channel escalation: DIGEST → URGENT if topic matches active thread or pinned topic
 
-### Existing query patterns
-- `get_active_threads(db_path, window_days=7)` in `bregger_utils.py` line 49 ‼️ TRR-C4 — was 56: groups signals by topic, returns frequency-sorted list
-- `upsert_contact()` in `signal_intelligence.py` line 272 ‼️ TRR-C3 — was 249: creates contact_id as `"contact-" + MD5(email.lower())[:8]`
-- `enrich_signals()` in `signal_intelligence.py` line 420 ‼️ TRR-C3 — was 312
-- Signal dedup query in `rules.py` line 341: `SELECT 1 FROM signals WHERE source = ? AND ref_id = ? AND date(timestamp) = date('now')`
+### Classification tiers (unchanged by this spec)
+| Tier | Meaning | Action |
+|------|---------|--------|
+| URGENT | Needs immediate attention | Alert evaluation → Telegram broadcast |
+| DIGEST | Worth including in summary | Logged to triage_log → hourly digest |
+| NOISE | Automated/irrelevant | Logged but filtered from digest |
+| DEFER | LLM failed (poller only) | Skip, retry next tick |
 
 ---
 
 ## Implementation
 
-### 1. Create context assembly module
+### 1. Upgrade classify_email() signature
 
-New file: `xibi/heartbeat/context_assembly.py`
-
-This module has ONE public function and a return type:
+In `bregger_heartbeat.py`, change:
 
 ```python
-from dataclasses import dataclass, field
-from typing import Any
+# BEFORE (line 544)
+def classify_email(email: dict, model: str = "llama3.2:latest") -> str:
 
-@dataclass
-class EmailContext:
-    """All available context for a single email, assembled for classification."""
-    
-    # Core email data (passed in, not queried)
-    email_id: str
-    sender_addr: str
-    sender_name: str
-    subject: str
-    
-    # Step-67: Body summary
-    summary: str | None = None              # LLM-generated body summary
-    
-    # Step-69: Trust assessment
-    sender_trust: str | None = None         # ESTABLISHED | RECOGNIZED | UNKNOWN | NAME_MISMATCH
-    
-    # Step-68: Contact profile (queried from contacts table)
-    contact_id: str | None = None
-    contact_org: str | None = None          # organization field
-    contact_relationship: str | None = None # vendor | client | recruiter | colleague | unknown
-    contact_signal_count: int = 0           # total inbound signals from this sender
-    contact_outbound_count: int = 0         # total emails YOU sent TO this sender
-    contact_first_seen: str | None = None   # ISO datetime
-    contact_last_seen: str | None = None    # ISO datetime
-    contact_user_endorsed: bool = False     # manually endorsed by user
-    
-    # Topic extraction (passed in from batch_topics)
-    topic: str | None = None
-    entity_text: str | None = None          # person/company/project name
-    entity_type: str | None = None          # person | company | project
-    
-    # Thread context (queried from threads table)
-    matching_thread_id: str | None = None
-    matching_thread_name: str | None = None
-    matching_thread_status: str | None = None    # active | resolved | stale
-    matching_thread_priority: str | None = None  # critical | high | medium | low
-    matching_thread_deadline: str | None = None  # ISO date or None
-    matching_thread_owner: str | None = None     # me | them | unclear
-    matching_thread_summary: str | None = None
-    matching_thread_signal_count: int = 0
-    
-    # Recent sender history (queried from signals table)
-    sender_signals_7d: int = 0              # signals from this sender in last 7 days
-    sender_last_signal_age_hours: float | None = None  # hours since last signal from sender
-    sender_recent_topics: list[str] = field(default_factory=list)  # last 3 distinct topics
-    
-    # Conversation pattern
-    sender_avg_urgency: str | None = None   # most common urgency from recent signals
-    sender_has_open_thread: bool = False     # any active thread involving this sender
-
-
-def assemble_email_context(
+# AFTER
+def classify_email(
     email: dict,
-    db_path: str | Path,
-    topic: str | None = None,
-    entity_text: str | None = None,
-    entity_type: str | None = None,
-    summary: str | None = None,
-    sender_trust: str | None = None,
-    sender_contact_id: str | None = None,
-) -> EmailContext:
-    """Assemble all available context for a single email.
+    model: str = "gemma4:e4b",
+    context: "EmailContext | None" = None,
+) -> str:
+```
+
+The `context` parameter is optional — if None, falls back to the current sender+subject-only prompt. This ensures backward compatibility during rollout and testing.
+
+### 2. Build context-aware prompt
+
+New prompt when `context` is provided:
+
+```python
+def _build_classification_prompt(email: dict, context: "EmailContext") -> str:
+    """Build a context-rich classification prompt from EmailContext."""
     
-    This is a PURE QUERY function — no LLM calls, no side effects, no writes.
-    All data comes from the database or from the arguments passed in.
+    sections = []
     
-    Called once per email in the tick loop, BEFORE classification.
-    """
-```
-
-### 2. Query implementation
-
-Inside `assemble_email_context()`, open a single read-only connection and run these queries:
-
-**a) Contact profile lookup:**
-```python
-# Use sender_contact_id if provided (from step-69), otherwise compute it
-# ‼️ TRR-C6: _extract_sender_addr lives in xibi/heartbeat/sender_trust.py (step-69), not bregger_heartbeat.py
-from xibi.heartbeat.sender_trust import _extract_sender_addr
-if not sender_contact_id:
-    sender_addr = _extract_sender_addr(email)
-    sender_contact_id = "contact-" + hashlib.md5(sender_addr.encode()).hexdigest()[:8]
-
-row = conn.execute("""
-    SELECT display_name, organization, relationship, first_seen, last_seen,
-           signal_count, outbound_count, user_endorsed
-    FROM contacts WHERE id = ?
-""", (sender_contact_id,)).fetchone()
-```
-
-**b) Recent signals from sender (last 7 days):**
-```python
-# Use COUNT(*) for the true count, then fetch limited rows for topic extraction
-sender_signal_count = conn.execute("""
-    SELECT COUNT(*) FROM signals
-    WHERE sender_contact_id = ?
-      AND timestamp > datetime('now', '-7 days')
-""", (sender_contact_id,)).fetchone()[0]
-
-sender_signals = conn.execute("""
-    SELECT topic_hint, urgency, timestamp
-    FROM signals
-    WHERE sender_contact_id = ?
-      AND timestamp > datetime('now', '-7 days')
-    ORDER BY timestamp DESC
-    LIMIT 20
-""", (sender_contact_id,)).fetchall()
-```
-
-From this, compute:
-- `sender_signals_7d` = sender_signal_count (from COUNT query, not len of limited results)
-- `sender_last_signal_age_hours` = hours between now and most recent signal
-- `sender_recent_topics` = distinct topic_hints from the results (limit 3)
-- `sender_avg_urgency` = most common urgency value
-
-**c) Thread matching:**
-
-Try to match the email to an existing thread. Two strategies, in order:
-
-‼️ TRR-H1: The `key_entities` column stores **contact IDs** (e.g., `["contact-abc123"]`), NOT entity names like "Sarah Chen" or "Acme Corp". Searching `key_entities LIKE '%Acme%'` would never match. Strategy 1 must use the thread `name` column (which contains human-readable labels like "Job search — Acme Corp") for entity matching. The `key_entities LIKE` branch has been removed.
-
-```python
-# Strategy 1: entity + name match
-thread = None
-if entity_text:
-    thread = conn.execute("""
-        SELECT id, name, status, priority, current_deadline, owner, summary, signal_count
-        FROM threads
-        WHERE status = 'active'
-          AND name LIKE ?
-        ORDER BY updated_at DESC
-        LIMIT 1
-    """, (f'%{entity_text}%',)).fetchone()
-
-# Strategy 2: topic match (fallback)
-if not thread and topic:
-    thread = conn.execute("""
-        SELECT id, name, status, priority, current_deadline, owner, summary, signal_count
-        FROM threads
-        WHERE status = 'active'
-          AND name LIKE ?
-        ORDER BY updated_at DESC
-        LIMIT 1
-    """, (f'%{topic}%',)).fetchone()
-```
-
-**d) Open thread check:**
-```python
-# Does this sender have ANY active thread?
-# key_entities stores contact IDs, so matching sender_contact_id here is correct
-has_open = conn.execute("""
-    SELECT 1 FROM threads
-    WHERE status = 'active'
-      AND key_entities LIKE ?
-    LIMIT 1
-""", (f'%{sender_contact_id}%',)).fetchone()
-```
-
-### 3. Batch assembly function
-
-For efficiency, also provide a batch version that reuses one DB connection across all emails in a tick:
-
-```python
-def assemble_batch_context(
-    emails: list[dict],
-    db_path: str | Path,
-    batch_topics: dict,        # email_id -> {topic, entity_text, entity_type}
-    body_summaries: dict,      # email_id -> {summary, ...}
-    trust_results: dict,       # email_id -> TrustAssessment (from step-69)
-) -> dict[str, EmailContext]:
-    """Assemble context for all emails in a tick batch.
+    # Header: who sent this
+    sender_line = f"From: {context.sender_name or 'Unknown'}"
+    if context.sender_addr:
+        sender_line += f" <{context.sender_addr}>"
+    sections.append(sender_line)
+    sections.append(f"Subject: {context.subject}")
     
-    Opens ONE read-only connection, runs all queries, returns
-    dict keyed by email_id.
-    """
+    # Trust & relationship
+    trust_parts = []
+    if context.sender_trust:
+        trust_parts.append(f"Trust: {context.sender_trust}")
+    if context.contact_relationship and context.contact_relationship != "unknown":
+        trust_parts.append(f"Relationship: {context.contact_relationship}")
+    if context.contact_org:
+        trust_parts.append(f"Org: {context.contact_org}")
+    if context.contact_outbound_count and context.contact_outbound_count > 0:
+        trust_parts.append(f"You've emailed them {context.contact_outbound_count} times")
+    elif context.contact_signal_count == 0:
+        trust_parts.append("First contact — never seen before")
+    if context.contact_user_endorsed:
+        trust_parts.append("User-endorsed contact")
+    if trust_parts:
+        sections.append("Sender: " + ". ".join(trust_parts) + ".")
+    
+    # Body summary
+    if context.summary and context.summary not in ("[no body content]", "[summary unavailable]"):
+        sections.append(f"Email says: {context.summary}")
+    
+    # Thread context
+    if context.matching_thread_name:
+        thread_line = f"Active thread: \"{context.matching_thread_name}\""
+        if context.matching_thread_priority:
+            thread_line += f" (priority: {context.matching_thread_priority})"
+        if context.matching_thread_deadline:
+            thread_line += f" (deadline: {context.matching_thread_deadline})"
+        if context.matching_thread_owner:
+            thread_line += f" (ball in: {context.matching_thread_owner}'s court)"
+        sections.append(thread_line)
+    
+    # Recent pattern
+    if context.sender_signals_7d > 2:
+        sections.append(f"Recent activity: {context.sender_signals_7d} emails from this sender in last 7 days")
+    
+    # Build final prompt
+    context_block = "\n".join(sections)
+    
+    prompt = f"""{context_block}
+
+Classify this email. Answer with exactly one word.
+
+URGENT — Needs attention now. Signals: human-to-human from a trusted sender, active thread with a deadline, direct request or reply, security/fraud alert, travel disruption.
+DIGEST — Worth reading later. Signals: meaningful update from a known sender, job alert, newsletter you subscribe to, FYI from a colleague.
+NOISE — Ignore. Signals: automated marketing, bulk notification, social media alert, unknown sender with no thread context, coupon/promotion.
+
+Rules:
+- ESTABLISHED or RECOGNIZED sender with a direct request → lean URGENT
+- Unknown sender with no thread context → lean NOISE unless the content is clearly important
+- Active thread with a deadline → lean URGENT regardless of sender
+- If unsure between URGENT and DIGEST → choose DIGEST
+- If unsure between DIGEST and NOISE → choose DIGEST
+
+Verdict:"""
+    
+    return prompt
 ```
 
-This is the function that `tick()` will actually call. It:
-1. Opens a single `sqlite3.connect(db_path)` with `isolation_level=None` (autocommit, read-only)
-2. Pre-fetches all unique contact_ids in one query
-3. Pre-fetches recent signals for all senders in one query
-4. Iterates emails and assembles `EmailContext` for each
-5. Returns `dict[str, EmailContext]`
+### 3. Fallback prompt (no context)
 
-**Why batch:** With 15 emails per tick, individual queries would mean 15×4 = 60 DB round trips. Batch pre-fetching reduces this to ~4 queries total.
-
-### 4. Wire into tick()
-
-‼️ TRR-S1, TRR-S3: Currently, sender trust is computed **per-email inside the per-email loop** (lines 1206-1209). The batch assembly function needs trust results for ALL emails upfront. To bridge this without restructuring the entire loop, use the **single-email** `assemble_email_context()` function inside the existing per-email loop rather than the batch version. The batch version is available for `poller.py` which already collects all data before processing.
-
-In `bregger_heartbeat.py` → `tick()`, inside the per-email loop (after trust assessment at line 1209, before the classify_email call at line 1250):
+When `context` is None, use the existing prompt unchanged. This is the backward-compatible path:
 
 ```python
-from xibi.heartbeat.context_assembly import assemble_email_context
+def _build_fallback_prompt(email: dict) -> str:
+    """Original sender+subject-only prompt. Used when context assembly fails."""
+    sender = _extract_sender(email)
+    subject = email.get("subject", "No Subject")
+    return f"""From: {sender}
+Subject: {subject}
 
-# After: trust = assess_sender_trust(sender_addr, sender_name, db_path)
-# Before: verdict = ... classify_email(...)
+Classify this email for a personal assistant triage. Answer with exactly one word:
+URGENT - High priority. Human-to-human messages, travel, security, fraud, or direct replies.
+DIGEST - Medium priority. Newsletters you actively read, job alerts, or meaningful updates you care about.
+NOISE - Low priority. Automated marketing, coupons, social media notifications, bulk receipts, or junk.
 
-ctx = assemble_email_context(
-    email=email,
-    db_path=db_path,
-    topic=topic,
-    entity_text=entity_text,
-    entity_type=entity_type,
-    summary=summary_text,
-    sender_trust=trust.tier,
-    sender_contact_id=trust.contact_id,
-)
+Strict Rule: If it looks like a mass-email or automated notification, it is NOISE unless it's clearly an update you requested.
+
+Verdict:"""
 ```
 
-**Step-70 does NOT change the classify_email() call.** That's step-71. Step-70 only assembles and makes the context available. The existing classifier continues to work unchanged — it just ignores the context for now.
-
-‼️ TRR-S2: Store the assembled context in a dict keyed by email_id so step-71 can consume it. Add this before the per-email loop:
+### 4. Update classify_email() body
 
 ```python
-email_contexts = {}  # email_id -> EmailContext
+def classify_email(
+    email: dict,
+    model: str = "gemma4:e4b",
+    context: "EmailContext | None" = None,
+) -> str:
+    """Classify email using context-aware prompt when available."""
+    
+    if context:
+        prompt = _build_classification_prompt(email, context)
+    else:
+        prompt = _build_fallback_prompt(email)
+    
+    payload = json.dumps({
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+        "think": False,          # TOP LEVEL — critical for gemma4
+        "options": {
+            "num_predict": 10,   # one word answer
+            "temperature": 0     # deterministic
+        }
+    }).encode()
+    
+    # ... rest of HTTP call unchanged
 ```
 
-Then inside the loop after assembly:
+**Note:** `think: False` added at top level (same pattern as step-67 summarization). The current classify_email doesn't have this — it was using llama3.2 which doesn't support thinking. Gemma4:e4b requires it.
+
+‼️ TRR-H1: The current payload at line 562 does NOT include `think: False`. Adding it is correct for gemma4:e4b. However, if for any reason the function is called with `model="llama3.2:latest"` (e.g. during fallback or testing), Ollama silently ignores unknown top-level keys, so this is safe. No conditional logic needed.
+
+### 5. Wire context into tick() classification call
+
+In `bregger_heartbeat.py` → `tick()`, at the classification point (line 1267 ‼️ TRR-C4 — was 1127; shifted by step-70's 17-line addition):
+
 ```python
-email_contexts[email_id] = ctx
+# BEFORE
+verdict = rule_verdict if rule_verdict else classify_email(email, model=model)
+
+# AFTER
+ctx = email_contexts.get(email_id)  # from step-70 (populated at line 1226)
+verdict = rule_verdict if rule_verdict else classify_email(email, model=model, context=ctx)
 ```
 
-This dict is analogous to `batch_topics` and `body_summaries` — a tick-scoped lookup table. Step-71 will read from it when upgrading the classification prompt.
+‼️ TRR-S1: The `email_contexts` dict is already populated by step-70's code at line 1226. Step-71 does NOT need to call `assemble_email_context()` again — it just reads from `email_contexts`. The variable `ctx` here is a lookup, not a new assembly.
 
-### 5. Wire into poller.py
+One-line change. The pre-filter rules and triage rules are still checked first — the LLM is only called when no rule matched.
 
-In `xibi/heartbeat/poller.py` → `_process_email_signals()` at line 542:
+### 6. Update poller path
 
-The poller already collects all email data into a `processed` list before writing to DB. This is well-suited for the batch approach. After the processing loop builds the `processed` list (which already contains `trust_assessment` per item from step-69):
+In `xibi/heartbeat/poller.py` → `_classify_email()` at line 197 ‼️ TRR-C2:
+
+Same upgrade: accept optional `context` parameter, use `_build_classification_prompt()` when available, fall back to existing prompt when not.
+
+Import the prompt builder from a shared location:
 
 ```python
-from xibi.heartbeat.context_assembly import assemble_batch_context
-
-# Build trust_results dict from processed items
-trust_results = {}
-for item in processed:
-    eid = item["email_id"]
-    trust_results[eid] = item["trust_assessment"]
-
-email_contexts = assemble_batch_context(
-    emails=[item["email"] for item in processed],
-    db_path=self.db_path,
-    batch_topics={item["email_id"]: item["sig"] for item in processed},
-    body_summaries={item["email_id"]: item.get("summary_data", {}) for item in processed},
-    trust_results=trust_results,
-)
-
-# Add context to each processed item
-for item in processed:
-    item["context"] = email_contexts.get(item["email_id"])
+from xibi.heartbeat.classification import build_classification_prompt, build_fallback_prompt
 ```
 
-This runs BEFORE the DB write loop that starts with `with sqlite3.connect(...)`.
+‼️ TRR-C3: The poller's `_classify_email()` currently runs phishing detection via `condense()` at lines 205-212 BEFORE building the prompt. This phishing gate must be preserved. The refactored `_classify_email()` should:
+1. Run `condense()` + phishing check (unchanged)
+2. If context provided, call `build_classification_prompt(email, context)` 
+3. If no context, use the existing sender+subject+body_preview prompt (or the shared fallback)
+4. Call LLM via router as before
+
+**Shared prompt module:** Extract the prompt building functions into `xibi/heartbeat/classification.py` so both `bregger_heartbeat.py` and `poller.py` use the same prompt. Do NOT duplicate the prompt text.
+
+### 7. Reconcile model default
+
+The bregger path currently defaults to `llama3.2:latest`. The poller path uses the router's `get_model(effort="fast")` which resolves to `gemma4:e4b` from config.
+
+**Change:** Update bregger's default to `gemma4:e4b` to match. This is the proven model with `think=false` benchmarked at 3.5s/email.
+
+### 8. Add classification logging
+
+After classification, log the verdict with the context that produced it. This enables us to trace bad classifications back to their inputs:
+
+```python
+if context:
+    print(f"📋 {email_id}: {verdict} | trust={context.sender_trust} thread={context.matching_thread_name or 'none'} signals_7d={context.sender_signals_7d}", flush=True)
+```
+
+---
+
+## Prompt Design Rationale
+
+**Why include trust tier in prompt:** An ESTABLISHED sender asking a question is very different from an UNKNOWN sender asking the same question. Without trust, the classifier has to guess intent from content alone.
+
+**Why include thread context:** "Quick update" from a sender in an active thread with a Friday deadline is URGENT. "Quick update" from a newsletter is NOISE. Same words, completely different priority.
+
+**Why include outbound count:** "You've emailed them 47 times" is a strong signal of an important relationship — stronger than any content analysis.
+
+**Why NOT include full body:** The summary (1-2 sentences) is enough. Full body would blow up the prompt size and slow inference. The classifier doesn't need to read the whole email — it needs to know what it's about.
+
+**Why rules at the end of the prompt:** Explicit classification rules after the context help the LLM reason about edge cases. "ESTABLISHED sender with a direct request → lean URGENT" is a concrete heuristic that grounds the decision.
+
+**Token budget:** The context-aware prompt is ~200-300 tokens input (vs ~80 tokens for the current prompt). With `num_predict: 10` for output, total is ~310 tokens. Gemma4:e4b handles this in <4 seconds — within the 3.5s benchmark.
 
 ---
 
 ## Edge Cases
 
-1. **Contact not found:** New sender with no contact record. All contact fields stay at defaults (None/0/False). The context is still useful — `contact_signal_count = 0` tells the classifier "this is a first-time sender."
+1. **Context assembly failed:** `context` is None. Falls back to the current sender+subject-only prompt. Classification quality degrades but doesn't break. Log a warning.
 
-2. **No matching thread:** Most emails won't match a thread (threads are created by tier-2+ signal intelligence). `matching_thread_*` fields stay None. This is normal and expected.
+2. **Summary is "[no body content]" or "[summary unavailable]":** Skip the "Email says:" line in the prompt. The classifier works without it — it's just less informed.
 
-3. **DB locked during batch query:** The batch query uses a read-only connection, so it won't conflict with writes. If the connection fails, catch the exception and return empty contexts — classification falls back to the current sender+subject-only path.
+3. **No matching thread:** Skip the "Active thread:" line. Most emails won't have thread context until the manager review (step-72) starts creating threads.
 
-4. **Large sender history:** A sender with 500+ signals in 7 days (e.g., automated system). The query is LIMITed to 20 rows. `sender_signals_7d` should still reflect the true count — use `COUNT(*)` in a separate query, don't count the LIMITed results.
+4. **Very long prompt from rich context:** Cap the prompt at 500 tokens by truncating the summary and recent activity sections. The trust/relationship section is always short and always included.
 
-5. **Thread LIKE matching false positives:** Searching `name LIKE '%acme%'` could match "Acme Corp" and "Acme Foundation" — different threads. The ORDER BY updated_at DESC picks the most recent, which is usually correct. If this becomes a problem, step-71 can include multiple thread matches in the prompt and let the LLM disambiguate.
+5. **Model disagreement with pre-filter:** Pre-filters run BEFORE the LLM. If auto-noise says NOISE, the LLM is never called. If triage rules say URGENT, the LLM is never called. The LLM only handles ambiguous cases that no rule matched — this is correct and unchanged.
 
-6. **Stale thread data:** Thread summaries and priorities are updated by the manager review (step-72). Before step-72 is built, thread summaries may be None. The context assembly function handles this gracefully — None fields are omitted from the classification prompt by step-71.
+6. **Cross-channel escalation still works:** The existing logic that escalates DIGEST → URGENT when topic matches an active thread runs AFTER classification. Step-71 puts thread context IN the prompt so the LLM may classify as URGENT directly, but the escalation check remains as a safety net.
+
+7. **Default model switch:** Changing from `llama3.2:latest` to `gemma4:e4b` could change classification behavior for edge cases. The context-aware prompt is designed for gemma4's strengths (structured input, instruction following). If llama3.2 must be supported, the fallback prompt handles it.
+
+‼️ TRR-S2: **Poller phishing gate preservation:** When refactoring the poller's `_classify_email()`, do NOT move the `condense()` + phishing check into the shared prompt builder. It must remain in the poller's method body, running before the prompt is built. The bregger path does not have a phishing check and should not gain one from this spec.
 
 ---
 
 ## Testing
 
-### Unit tests (pytest, no DB required)
+### Unit tests (no LLM required)
 
-1. **test_email_context_defaults**: Create EmailContext with minimal args → assert all optional fields are None/0/False/[]
-2. **test_email_context_full**: Create EmailContext with all fields populated → assert dict conversion includes everything
-3. **test_contact_id_computation**: Verify contact_id is computed correctly when not passed in (MD5 hash of lowercased email)
+1. **test_build_prompt_full_context**: EmailContext with all fields populated → assert prompt contains sender, trust, org, summary, thread, deadline, signals_7d
+2. **test_build_prompt_minimal_context**: EmailContext with only sender_addr and subject → assert prompt is well-formed, no "None" strings in output
+3. **test_build_prompt_unknown_sender**: contact_signal_count=0 → assert prompt contains "First contact — never seen before"
+4. **test_build_prompt_established_with_thread**: ESTABLISHED trust + active thread with deadline → assert both appear in prompt
+5. **test_build_prompt_no_summary**: summary is "[no body content]" → assert "Email says:" line is NOT in prompt
+6. **test_build_prompt_no_thread**: matching_thread_name is None → assert "Active thread:" line is NOT in prompt
+7. **test_build_prompt_endorsed_contact**: user_endorsed=True → assert "User-endorsed contact" in prompt
+8. **test_fallback_prompt_no_context**: context=None → assert original sender+subject prompt generated
+9. **test_classify_uses_context**: Mock urllib, pass context → assert prompt sent to Ollama contains context data
+10. **test_classify_fallback_on_none**: context=None → assert fallback prompt sent
 
-### Unit tests (in-memory SQLite)
+### Integration tests (mock Ollama)
 
-4. **test_assemble_known_contact**: Insert a contact with signal_count=10, outbound_count=5 → assemble → assert contact fields populated
-5. **test_assemble_unknown_contact**: No contact in DB → assemble → assert contact_signal_count=0, contact_id still computed
-6. **test_assemble_with_thread_match**: Insert an active thread with matching entity in `name` → assemble → assert thread fields populated
-7. **test_assemble_no_thread_match**: No matching thread → assemble → assert matching_thread_id is None
-8. **test_assemble_recent_signals**: Insert 5 signals from sender in last 7d → assemble → assert sender_signals_7d=5
-9. **test_assemble_stale_signals_excluded**: Insert signals from 10 days ago → assemble → assert sender_signals_7d=0
-10. **test_assemble_sender_recent_topics**: Insert signals with 3 different topics → assemble → assert sender_recent_topics has 3 items
-11. **test_batch_context_multiple_emails**: Batch with 3 emails, different senders → assert 3 contexts returned, each with correct contact data
-12. **test_batch_context_shared_connection**: Verify batch opens only one DB connection (mock sqlite3.connect, assert called once)
-13. **test_batch_context_empty_list**: Empty email list → assert empty dict returned
-14. **test_assembly_db_error_graceful**: Mock DB connection failure → assert returns empty contexts, no crash
+11. **test_classify_urgent_established_sender**: Mock Ollama returns "URGENT" for established sender with thread → assert verdict is URGENT
+12. **test_classify_noise_unknown_sender**: Mock Ollama returns "NOISE" for unknown sender, no thread → assert verdict is NOISE
+13. **test_classify_error_returns_digest**: Mock Ollama raises exception → assert verdict is "DIGEST" (bregger) or "DEFER" (poller)
+14. **test_classify_think_false_in_payload**: Mock urllib → capture request → assert `think: False` at top level of JSON payload
 
-### Integration tests
+### Tick integration tests
 
-15. **test_tick_has_context**: Full tick with mocked emails → assert email_contexts dict is populated (don't need to check classification, just that context was assembled)
-16. **test_context_matches_signal_data**: Insert signals via log_signal, then assemble context for same sender → assert counts match
+15. **test_tick_passes_context_to_classifier**: Full tick with mocked emails and contexts → assert classify_email called with context parameter
+16. **test_tick_prefilter_skips_classifier**: Email matching auto_noise → assert classify_email NOT called (pre-filter takes precedence)
+17. **test_tick_escalation_still_works**: DIGEST verdict + matching pinned topic → assert escalated to URGENT
 
 ---
 
 ## Observability
 
-- **Trace logging:** Log context assembly timing: `⏱️ Assembled context for {count} emails in {ms}ms`
-- **Warning:** If context assembly takes > 500ms for a batch, log warning — indicates DB performance issue
-- **Debug:** At DEBUG level, log the full EmailContext for each email (helps trace classification decisions)
+- **Classification trace:** Log verdict + key context signals for every classified email (trust, thread match, signal count)
+- **Prompt size tracking:** Log prompt token count at DEBUG level. Warn if > 400 tokens (approaching budget)
+- **A/B comparison (optional):** For the first week, run both old and new prompts on every email. Log both verdicts. If they diverge, log the full context for manual review. Remove after validation.
 
 ---
 
@@ -400,17 +355,20 @@ This runs BEFORE the DB write loop that starts with `with sqlite3.connect(...)`.
 
 | File | Change |
 |------|--------|
-| `xibi/heartbeat/context_assembly.py` | **NEW** — EmailContext dataclass + assemble functions |
-| `bregger_heartbeat.py` | Wire `assemble_email_context()` (single) into tick() per-email loop, build `email_contexts` dict |
-| `xibi/heartbeat/poller.py` | Wire `assemble_batch_context()` into `_process_email_signals()` before DB write loop |
-| `tests/test_context_assembly.py` | **NEW** — 16 tests |
+| `xibi/heartbeat/classification.py` | **NEW** — shared prompt builders (`build_classification_prompt`, `build_fallback_prompt`) |
+| `bregger_heartbeat.py` | Update `classify_email()` (line 544 ‼️ TRR-C1) to accept context, use shared prompt builder, default model → gemma4:e4b, add `think: False` ‼️ TRR-H1 |
+| `xibi/heartbeat/poller.py` | Update `_classify_email()` (line 197 ‼️ TRR-C2) to accept and use context, import shared prompt builder, preserve phishing gate ‼️ TRR-C3 |
+| `tests/test_classification.py` | **NEW** — 17 tests |
+
+‼️ TRR-C5: The `_build_fallback_prompt` in the shared module needs access to a `_extract_sender()` helper. In bregger, this is `_extract_sender()` at line 508. In the poller, sender extraction is inline (lines 200-202). The shared module should import `_extract_sender_addr` and `_extract_sender_name` from `xibi/heartbeat/sender_trust.py` (already used by step-70's context_assembly.py) and format as `"{name} <{addr}>"` for the fallback prompt. Do NOT import from `bregger_heartbeat.py` — that creates a circular dependency risk.
 
 ---
 
 ## NOT in scope
 
-- Changing the classification prompt — that's step-71
-- Adding new database columns or migrations — no schema changes needed
-- Calendar context assembly — future block, same pattern
-- Caching context between ticks — premature optimization
-- LLM calls of any kind — this is pure DB queries
+- Changing the three-tier verdict system (URGENT/DIGEST/NOISE) — that's working well
+- Adding new classification tiers (e.g., CRITICAL, LOW) — save for future iteration
+- Changing pre-filter rules or triage rule matching — those are independent
+- Manager review classification (step-72) — that's a separate prompt with different context
+- Changing the alert evaluation or broadcast logic — downstream of classification, untouched
+- Auto-tuning classification rules based on user feedback — future feature
