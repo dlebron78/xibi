@@ -276,11 +276,48 @@ def upsert_contact(
     db_path: Path,
     config: Config | None = None,
 ) -> str:
-    """Upsert a contact. Returns the contact_id."""
+    """Upsert an inbound contact. Returns the contact_id."""
+    return _upsert_contact_core(
+        email=email,
+        display_name=display_name,
+        organization=organization,
+        db_path=db_path,
+        direction="inbound",
+        config=config,
+    )
+
+
+def upsert_outbound_contact(
+    email: str,
+    display_name: str,
+    db_path: Path,
+    config: Config | None = None,
+) -> str:
+    """Upsert an outbound contact. Returns the contact_id."""
+    return _upsert_contact_core(
+        email=email,
+        display_name=display_name,
+        organization=None,
+        db_path=db_path,
+        direction="outbound",
+        config=config,
+    )
+
+
+def _upsert_contact_core(
+    email: str,
+    display_name: str,
+    organization: str | None,
+    db_path: Path,
+    direction: str,  # 'inbound' | 'outbound'
+    config: Config | None = None,
+    channel_type: str = "email",
+) -> str:
+    """Core contact upsert logic. Handles both directions and ensures channel rows."""
     db_str = str(db_path)
     contact = resolve_contact(
         handle=email,
-        channel_type="email",
+        channel_type=channel_type,
         display_name=display_name,
         organization=organization,
         db_path=db_str,
@@ -290,28 +327,28 @@ def upsert_contact(
         contact_id = contact.id
         try:
             with open_db(db_path) as conn, conn:
+                count_col = "signal_count" if direction == "inbound" else "outbound_count"
                 if contact.organization is None and organization:
                     conn.execute(
-                        "UPDATE contacts SET last_seen = CURRENT_TIMESTAMP, signal_count = signal_count + 1, organization = ? WHERE id = ?",
+                        f"UPDATE contacts SET last_seen = CURRENT_TIMESTAMP, {count_col} = {count_col} + 1, organization = ? WHERE id = ?",
                         (organization, contact_id),
                     )
                 else:
                     conn.execute(
-                        "UPDATE contacts SET last_seen = CURRENT_TIMESTAMP, signal_count = signal_count + 1 WHERE id = ?",
+                        f"UPDATE contacts SET last_seen = CURRENT_TIMESTAMP, {count_col} = {count_col} + 1 WHERE id = ?",
                         (contact_id,),
                     )
         except Exception as e:
-            logger.error(f"upsert_contact (update) failed: {e}")
+            logger.error(f"_upsert_contact_core (update) failed: {e}")
     else:
         # Domain-based relationship inference
         relationship = "unknown"
-        domain = email.split("@")[-1].lower() if "@" in email else ""
+        domain = email.split("@")[-1].lower() if "@" in email and channel_type == "email" else ""
 
         if domain:
             # Check owner's domain
             owner_domain = ""
             if config:
-                # Config is a TypedDict (xibi/router.py)
                 owner_domain_raw = config.get("email_from")
                 if owner_domain_raw:
                     owner_domain = str(owner_domain_raw).split("@")[-1].lower()
@@ -330,20 +367,33 @@ def upsert_contact(
                 except Exception:
                     pass
 
-        contact_id = (
-            create_contact(
-                display_name=display_name,
-                email=email,
-                organization=organization,
-                discovered_via="email_inbound",
-                relationship=relationship,
-                db_path=db_str,
-            )
-            or f"contact-{hashlib.md5(email.lower().encode()).hexdigest()[:8]}"
+        discovered_via = "email_inbound" if direction == "inbound" else "email_outbound"
+
+        contact_id = create_contact(
+            display_name=display_name,
+            email=email if channel_type == "email" else None,
+            organization=organization,
+            discovered_via=discovered_via,
+            relationship=relationship,
+            db_path=db_str,
         )
 
-    # Ensure channel row exists
-    upsert_contact_channel(contact_id, email, "email", verified=1, db_path=db_str)
+        if not contact_id:
+            contact_id = f"contact-{hashlib.md5(email.lower().encode()).hexdigest()[:8]}"
+
+        # Fix counts if outbound (create_contact defaults to signal_count=1, outbound_count=0)
+        if direction == "outbound":
+            try:
+                with open_db(db_path) as conn, conn:
+                    conn.execute(
+                        "UPDATE contacts SET signal_count = 0, outbound_count = 1 WHERE id = ?",
+                        (contact_id,),
+                    )
+            except Exception as e:
+                logger.error(f"_upsert_contact_core (fix outbound) failed: {e}")
+
+    # Ensure channel row exists (create_contact handles it, but we re-verify/update)
+    upsert_contact_channel(contact_id, email, channel_type, verified=1, db_path=db_str)
 
     return contact_id
 
