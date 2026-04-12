@@ -342,7 +342,7 @@ def _upsert_contact_core(
             logger.error(f"_upsert_contact_core (update) failed: {e}")
     else:
         # Domain-based relationship inference
-        relationship = "unknown"
+        relationship: str = "unknown"
         domain = email.split("@")[-1].lower() if "@" in email and channel_type == "email" else ""
 
         if domain:

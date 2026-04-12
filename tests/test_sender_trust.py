@@ -8,9 +8,10 @@ from xibi.heartbeat.sender_trust import (
     _tokenize_name,
     _extract_sender_addr,
     _extract_sender_name,
-    TrustAssessment
+    TrustAssessment,
 )
 from xibi.db import open_db
+
 
 @pytest.fixture
 def db_path(tmp_path):
@@ -47,11 +48,13 @@ def db_path(tmp_path):
         """)
     return db
 
+
 def test_tokenize_name():
     assert _tokenize_name("Sarah Chen") == {"sarah", "chen"}
     assert _tokenize_name("S. Chen") == {"s", "chen"}
     assert _tokenize_name("sarah.chen@acme.com") == set()
     assert _tokenize_name("Sarah-Jane") == {"sarah", "jane"}
+
 
 def test_extract_sender_helpers():
     email = {"from": {"name": "Sarah Chen", "addr": "sarah@acme.com"}}
@@ -62,30 +65,39 @@ def test_extract_sender_helpers():
     assert _extract_sender_addr(email_str) == "sarah@acme.com"
     assert _extract_sender_name(email_str) == "Sarah Chen"
 
+
 def test_assess_established(db_path):
     with open_db(db_path) as conn:
-        conn.execute("INSERT INTO contacts (id, display_name, email, outbound_count, signal_count) VALUES (?, ?, ?, ?, ?)",
-                     ("contact-1", "Sarah Chen", "sarah@acme.com", 5, 10))
+        conn.execute(
+            "INSERT INTO contacts (id, display_name, email, outbound_count, signal_count) VALUES (?, ?, ?, ?, ?)",
+            ("contact-1", "Sarah Chen", "sarah@acme.com", 5, 10),
+        )
 
     assessment = assess_sender_trust("sarah@acme.com", "Sarah Chen", db_path)
     assert assessment.tier == "ESTABLISHED"
     assert assessment.contact_id == "contact-1"
     assert "Two-way communication" in assessment.detail
 
+
 def test_assess_recognized(db_path):
     with open_db(db_path) as conn:
-        conn.execute("INSERT INTO contacts (id, display_name, email, outbound_count, signal_count) VALUES (?, ?, ?, ?, ?)",
-                     ("contact-1", "Sarah Chen", "sarah@acme.com", 0, 10))
+        conn.execute(
+            "INSERT INTO contacts (id, display_name, email, outbound_count, signal_count) VALUES (?, ?, ?, ?, ?)",
+            ("contact-1", "Sarah Chen", "sarah@acme.com", 0, 10),
+        )
 
     assessment = assess_sender_trust("sarah@acme.com", "Sarah Chen", db_path)
     assert assessment.tier == "RECOGNIZED"
     assert assessment.contact_id == "contact-1"
     assert "never replied to" in assessment.detail
 
+
 def test_assess_name_mismatch(db_path):
     with open_db(db_path) as conn:
-        conn.execute("INSERT INTO contacts (id, display_name, email, outbound_count, signal_count) VALUES (?, ?, ?, ?, ?)",
-                     ("contact-1", "Sarah Chen", "sarah@acme.com", 5, 10))
+        conn.execute(
+            "INSERT INTO contacts (id, display_name, email, outbound_count, signal_count) VALUES (?, ?, ?, ?, ?)",
+            ("contact-1", "Sarah Chen", "sarah@acme.com", 5, 10),
+        )
 
     # Same name, different email
     assessment = assess_sender_trust("sarah@personal.com", "Sarah Chen", db_path)
@@ -94,26 +106,35 @@ def test_assess_name_mismatch(db_path):
     assert "matches contact 'Sarah Chen'" in assessment.detail
     assert "sarah@acme.com" in assessment.detail
 
+
 def test_assess_unknown(db_path):
     assessment = assess_sender_trust("unknown@acme.com", "Unknown Person", db_path)
     assert assessment.tier == "UNKNOWN"
     assert assessment.contact_id is None
 
+
 def test_assess_secondary_channel(db_path):
     with open_db(db_path) as conn:
-        conn.execute("INSERT INTO contacts (id, display_name, email, outbound_count, signal_count) VALUES (?, ?, ?, ?, ?)",
-                     ("contact-1", "Sarah Chen", "sarah@acme.com", 5, 10))
-        conn.execute("INSERT INTO contact_channels (contact_id, channel_type, handle) VALUES (?, ?, ?)",
-                     ("contact-1", "email", "sarah@other.com"))
+        conn.execute(
+            "INSERT INTO contacts (id, display_name, email, outbound_count, signal_count) VALUES (?, ?, ?, ?, ?)",
+            ("contact-1", "Sarah Chen", "sarah@acme.com", 5, 10),
+        )
+        conn.execute(
+            "INSERT INTO contact_channels (contact_id, channel_type, handle) VALUES (?, ?, ?)",
+            ("contact-1", "email", "sarah@other.com"),
+        )
 
     assessment = assess_sender_trust("sarah@other.com", "Sarah Chen", db_path)
-    assert assessment.tier == "ESTABLISHED" # Matches via channel
+    assert assessment.tier == "ESTABLISHED"  # Matches via channel
     assert assessment.contact_id == "contact-1"
+
 
 def test_fuzzy_name_match_threshold(db_path):
     with open_db(db_path) as conn:
-        conn.execute("INSERT INTO contacts (id, display_name, email) VALUES (?, ?, ?)",
-                     ("contact-1", "Sarah Chen", "sarah@acme.com"))
+        conn.execute(
+            "INSERT INTO contacts (id, display_name, email) VALUES (?, ?, ?)",
+            ("contact-1", "Sarah Chen", "sarah@acme.com"),
+        )
 
     with open_db(db_path) as conn:
         # "Sarah" vs "Sarah Chen" -> tokens {'sarah'} vs {'sarah', 'chen'}
@@ -124,21 +145,29 @@ def test_fuzzy_name_match_threshold(db_path):
         # Above threshold with lower threshold
         assert _fuzzy_name_match("Sarah", conn, threshold=0.6) is not None
 
+
 def test_case_insensitivity(db_path):
     with open_db(db_path) as conn:
-        conn.execute("INSERT INTO contacts (id, display_name, email, outbound_count) VALUES (?, ?, ?, ?)",
-                     ("contact-1", "Sarah Chen", "sarah@acme.com", 1))
+        conn.execute(
+            "INSERT INTO contacts (id, display_name, email, outbound_count) VALUES (?, ?, ?, ?)",
+            ("contact-1", "Sarah Chen", "sarah@acme.com", 1),
+        )
 
     assessment = assess_sender_trust("SARAH@acme.COM", "sarah chen", db_path)
     assert assessment.tier == "ESTABLISHED"
 
+
 def test_tie_break_interaction(db_path):
     with open_db(db_path) as conn:
-        conn.execute("INSERT INTO contacts (id, display_name, email, signal_count, outbound_count) VALUES (?, ?, ?, ?, ?)",
-                     ("contact-1", "John Smith", "john1@acme.com", 1, 0))
-        conn.execute("INSERT INTO contacts (id, display_name, email, signal_count, outbound_count) VALUES (?, ?, ?, ?, ?)",
-                     ("contact-2", "John Smith", "john2@acme.com", 10, 5))
+        conn.execute(
+            "INSERT INTO contacts (id, display_name, email, signal_count, outbound_count) VALUES (?, ?, ?, ?, ?)",
+            ("contact-1", "John Smith", "john1@acme.com", 1, 0),
+        )
+        conn.execute(
+            "INSERT INTO contacts (id, display_name, email, signal_count, outbound_count) VALUES (?, ?, ?, ?, ?)",
+            ("contact-2", "John Smith", "john2@acme.com", 10, 5),
+        )
 
     with open_db(db_path) as conn:
         match = _fuzzy_name_match("John Smith", conn)
-        assert match["contact_id"] == "contact-2" # Higher interaction
+        assert match["contact_id"] == "contact-2"  # Higher interaction

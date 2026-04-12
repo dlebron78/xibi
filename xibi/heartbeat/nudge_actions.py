@@ -6,7 +6,10 @@ import json
 import logging
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from xibi.db import open_db
 
 if TYPE_CHECKING:
     from xibi.heartbeat.context_assembly import EmailContext
@@ -25,23 +28,25 @@ class ActionIntent(str, Enum):
 @dataclass
 class ActionPayload:
     """Everything needed to execute a nudge action."""
+
     intent: ActionIntent
-    tool_name: str                    # Which tool to call
-    tool_params: dict[str, Any]       # Params for the tool
-    signal_id: int | None = None      # Originating signal
-    ref_id: str | None = None         # Email ID for threading
-    preview: str = ""                 # Human-readable preview for confirmation
-    tier: str = "red"                 # Permission tier (resolved at execution time)
-    context_summary: str = ""         # One-line context for the confirmation prompt
+    tool_name: str  # Which tool to call
+    tool_params: dict[str, Any]  # Params for the tool
+    signal_id: int | None = None  # Originating signal
+    ref_id: str | None = None  # Email ID for threading
+    preview: str = ""  # Human-readable preview for confirmation
+    tier: str = "red"  # Permission tier (resolved at execution time)
+    context_summary: str = ""  # One-line context for the confirmation prompt
 
 
 @dataclass
 class ActionOutcome:
     """Result of executing (or declining) a nudge action."""
+
     signal_id: int | None
     intent: ActionIntent
-    result: str                       # "confirmed", "modified", "dismissed", "cancelled", "error"
-    detail: str = ""                  # Tool output or error message
+    result: str  # "confirmed", "modified", "dismissed", "cancelled", "error"
+    detail: str = ""  # Tool output or error message
 
 
 # ── Intent parsing ──────────────────────────────────────────────
@@ -118,6 +123,7 @@ def parse_intent(user_text: str, available_actions: list[str] | None = None) -> 
 
 # ── Payload builders ────────────────────────────────────────────
 
+
 def build_reply_payload(
     context: EmailContext,
     signal_id: int | None = None,
@@ -133,7 +139,7 @@ def build_reply_payload(
     text = user_text.strip().lower()
     for prefix in ("reply ", "respond ", "draft "):
         if text.startswith(prefix) and len(text) > len(prefix) + 2:
-            body_hint = user_text.strip()[len(prefix):]
+            body_hint = user_text.strip()[len(prefix) :]
             break
 
     sender_desc = context.sender_name or context.sender_addr
@@ -180,7 +186,7 @@ def build_schedule_meeting_payload(
     text = user_text.strip().lower()
     for prefix in ("meeting ", "meet ", "book ", "schedule meeting "):
         if text.startswith(prefix) and len(text) > len(prefix) + 2:
-            time_hint = user_text.strip()[len(prefix):]
+            time_hint = user_text.strip()[len(prefix) :]
             break
 
     return ActionPayload(
@@ -214,7 +220,7 @@ def build_followup_payload(
     text = user_text.strip().lower()
     for prefix in ("remind me ", "follow up ", "followup ", "later ", "snooze "):
         if text.startswith(prefix) and len(text) > len(prefix) + 2:
-            time_hint = user_text.strip()[len(prefix):]
+            time_hint = user_text.strip()[len(prefix) :]
             break
 
     goal = f"Follow up with {sender_name} about: {topic}"
@@ -281,6 +287,7 @@ def build_action_payload(
 
 # ── Tier resolution (future autonomy hook) ──────────────────────
 
+
 def resolve_action_tier(
     payload: ActionPayload,
     context: EmailContext,
@@ -299,6 +306,7 @@ def resolve_action_tier(
 
 
 # ── Action execution ────────────────────────────────────────────
+
 
 def execute_action(
     payload: ActionPayload,
@@ -342,8 +350,9 @@ def execute_action(
 def _execute_dismiss(payload: ActionPayload, core: Any) -> ActionOutcome:
     """Dismiss a signal — update proposal_status, log outcome."""
     if payload.signal_id:
-        import sqlite3
-        with sqlite3.connect(core.db_path) as conn, conn:
+        from pathlib import Path
+
+        with open_db(Path(core.db_path)) as conn:
             conn.execute(
                 "UPDATE signals SET proposal_status = 'dismissed', dismissed_at = datetime('now') WHERE id = ?",
                 (payload.signal_id,),
@@ -372,22 +381,26 @@ def _execute_with_confirmation(
     # Create task in awaiting_reply state
     # The scratchpad contains the pre-built tool call so _resume_task()
     # can execute it on confirmation
-    scratchpad = json.dumps([{
-        "type": "proposed_action",
-        "tool": payload.tool_name,
-        "params": payload.tool_params,
-        "signal_id": payload.signal_id,
-        "ref_id": payload.ref_id,
-    }])
+    scratchpad = json.dumps(
+        [
+            {
+                "type": "proposed_action",
+                "tool": payload.tool_name,
+                "params": payload.tool_params,
+                "signal_id": payload.signal_id,
+                "ref_id": payload.ref_id,
+            }
+        ]
+    )
 
     # trace_id must be a string for core class._create_task
     trace_id = f"nudge_action_{payload.signal_id}" if payload.signal_id else ""
 
     task_id = core._create_task(
         payload.preview,  # goal
-        "ask_user",       # exit_type
-        "high",           # urgency
-        None,             # due (missing in previous call)
+        "ask_user",  # exit_type
+        "high",  # urgency
+        None,  # due (missing in previous call)
         payload.context_summary,
         scratchpad,
         trace_id,
@@ -450,11 +463,12 @@ def _call_tool(payload: ActionPayload, core: Any) -> str:
         "tool": payload.tool_name,
         "parameters": payload.tool_params,
     }
+
     result = core.executive.execute_plan(plan, beliefs=getattr(core, "_belief_cache", None))
     if isinstance(result, dict):
-        return result.get("message", str(result))
+        res = result.get("message", str(result))
+        return str(res)
     return str(result)
-
 
 def _build_confirmation_prompt(payload: ActionPayload) -> str:
     """Build the Telegram message asking user to confirm an action."""
@@ -497,8 +511,9 @@ def log_outcome(outcome: ActionOutcome, db_path: str) -> None:
     if not outcome.signal_id:
         return
 
-    import sqlite3
-    with sqlite3.connect(db_path) as conn, conn:
+    from pathlib import Path
+
+    with open_db(Path(db_path)) as conn:
         # Update proposal_status on the signal
         status_map = {
             "confirmed": "confirmed",
@@ -521,6 +536,5 @@ def log_outcome(outcome: ActionOutcome, db_path: str) -> None:
             )
 
         logger.info(
-            f"Action outcome logged: signal={outcome.signal_id} "
-            f"intent={outcome.intent.value} result={outcome.result}"
+            f"Action outcome logged: signal={outcome.signal_id} intent={outcome.intent.value} result={outcome.result}"
         )

@@ -43,7 +43,7 @@ def build_classification_prompt(email: dict, context: EmailContext) -> str:
 
     # Thread context
     if context.matching_thread_name:
-        thread_line = f"Active thread: \"{context.matching_thread_name}\""
+        thread_line = f'Active thread: "{context.matching_thread_name}"'
         if context.matching_thread_priority:
             thread_line += f" (priority: {context.matching_thread_priority})"
         if context.matching_thread_deadline:
@@ -77,6 +77,7 @@ Rules:
 Verdict:"""
 
     return prompt
+
 
 def build_fallback_prompt(email: dict) -> str:
     """Original sender+subject-only prompt. Used when context assembly fails."""

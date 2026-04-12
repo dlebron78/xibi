@@ -303,6 +303,7 @@ class HeartbeatPoller:
         """Perform one-time contact backfill if needed."""
         try:
             import asyncio
+
             with xibi.db.open_db(self.db_path) as conn:
                 cursor = conn.execute("SELECT COUNT(*) FROM contacts")
                 contact_count = cursor.fetchone()[0]
@@ -330,6 +331,7 @@ class HeartbeatPoller:
         """Poll sent mail hourly to update contact graph."""
         try:
             import asyncio
+
             now = datetime.now()
             run_poll = False
             with xibi.db.open_db(self.db_path) as conn:

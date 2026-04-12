@@ -16,10 +16,11 @@ logger = logging.getLogger(__name__)
 SENT_FOLDER_CANDIDATES = [
     "Sent",
     "[Gmail]/Sent Mail",
-    "Sent Items",        # Outlook
-    "Sent Messages",     # Some IMAP
-    "INBOX.Sent",        # Dovecot
+    "Sent Items",  # Outlook
+    "Sent Messages",  # Some IMAP
+    "INBOX.Sent",  # Dovecot
 ]
+
 
 def find_himalaya() -> str:
     """Locate himalaya binary. Checks PATH, ~/.local/bin, ~/.cargo/bin."""
@@ -31,6 +32,7 @@ def find_himalaya() -> str:
                 himalaya_bin = str(path)
                 break
     return himalaya_bin or "himalaya"
+
 
 def _discover_sent_folder(himalaya_bin: str, db_path: Path) -> str | None:
     """Try candidate folder names, return the first that works. Cache in DB."""
@@ -63,15 +65,16 @@ def _discover_sent_folder(himalaya_bin: str, db_path: Path) -> str | None:
     logger.warning("Could not discover sent folder.")
     return None
 
+
 def _cache_sent_folder(folder: str, db_path: Path):
     try:
         with open_db(db_path) as conn, conn:
             conn.execute(
-                "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('sent_folder_name', ?)",
-                (folder,)
+                "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('sent_folder_name', ?)", (folder,)
             )
     except Exception as e:
         logger.error(f"Failed to cache sent folder name: {e}")
+
 
 def _list_envelopes(
     himalaya_bin: str,
@@ -94,6 +97,7 @@ def _list_envelopes(
         logger.error(f"Error listing envelopes: {e}")
         return []
 
+
 def _extract_recipients(himalaya_bin: str, envelope: dict) -> list[dict]:
     """Extract all recipients from an envelope."""
     recipients = []
@@ -105,7 +109,7 @@ def _extract_recipients(himalaya_bin: str, envelope: dict) -> list[dict]:
     if not to_field and not cc_field:
         return _fetch_recipients_full(himalaya_bin, envelope["id"])
 
-    def parse_addr(raw: Any, role: str):
+    def parse_addr(raw: Any, role: str) -> dict[str, Any] | None:
         if isinstance(raw, dict):
             return {"name": raw.get("name", ""), "addr": raw.get("addr", ""), "role": role}
         elif isinstance(raw, str):
@@ -122,7 +126,6 @@ def _extract_recipients(himalaya_bin: str, envelope: dict) -> list[dict]:
     if isinstance(bcc_field, (str, dict)):
         bcc_field = [bcc_field]
 
-
     for r in to_field:
         item = parse_addr(r, "to")
         if item:
@@ -137,6 +140,8 @@ def _extract_recipients(himalaya_bin: str, envelope: dict) -> list[dict]:
             recipients.append(item)
 
     return recipients
+
+
 def _fetch_recipients_full(himalaya_bin: str, email_id: str) -> list[dict]:
     """Fetch full RFC 5322 headers and parse To/CC/BCC."""
     try:
@@ -149,6 +154,7 @@ def _fetch_recipients_full(himalaya_bin: str, email_id: str) -> list[dict]:
         import email
         from email import policy
         from email.utils import getaddresses
+
         msg = email.message_from_string(res.stdout, policy=policy.default)
 
         for role in ["to", "cc", "bcc"]:
@@ -161,6 +167,7 @@ def _fetch_recipients_full(himalaya_bin: str, email_id: str) -> list[dict]:
     except Exception as e:
         logger.error(f"Error fetching full recipients for {email_id}: {e}")
         return []
+
 
 def poll_sent_folder(
     himalaya_bin: str,
@@ -216,10 +223,10 @@ def poll_sent_folder(
                     if rec["addr"]:
                         _upsert_contact_core(
                             email=rec["addr"],
-                            display_name=rec["name"] or rec["addr"],
+                            display_name=rec["name"] or rec["addr"] or "",
                             organization=None,
                             db_path=db_path,
-                            direction="outbound"
+                            direction="outbound",
                         )
             except Exception as e:
                 logger.error(f"Failed to process sent email {env.get('id')}: {e}")
@@ -234,12 +241,13 @@ def poll_sent_folder(
             with open_db(db_path) as conn, conn:
                 conn.execute(
                     "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('sent_mail_watermark', ?)",
-                    (new_watermark.isoformat(),)
+                    (new_watermark.isoformat(),),
                 )
         except Exception:
             pass
 
     return stats
+
 
 def backfill_contacts(
     himalaya_bin: str,
@@ -276,10 +284,10 @@ def backfill_contacts(
                         if rec["addr"]:
                             _upsert_contact_core(
                                 email=rec["addr"],
-                                display_name=rec["name"] or rec["addr"],
+                                display_name=rec["name"] or rec["addr"] or "",
                                 organization=None,
                                 db_path=db_path,
-                                direction="outbound"
+                                direction="outbound",
                             )
                 except Exception:
                     continue
@@ -317,11 +325,7 @@ def backfill_contacts(
 
                 if addr:
                     _upsert_contact_core(
-                        email=addr,
-                        display_name=name,
-                        organization=None,
-                        db_path=db_path,
-                        direction="inbound"
+                        email=addr, display_name=name or addr, organization=None, db_path=db_path, direction="inbound"
                     )
             except Exception:
                 continue

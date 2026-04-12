@@ -23,10 +23,10 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TrustAssessment:
-    tier: str               # 'ESTABLISHED' | 'RECOGNIZED' | 'UNKNOWN' | 'NAME_MISMATCH'
+    tier: str  # 'ESTABLISHED' | 'RECOGNIZED' | 'UNKNOWN' | 'NAME_MISMATCH'
     contact_id: str | None  # matched contact ID, None if UNKNOWN
-    confidence: float       # 0.0-1.0, for NAME_MISMATCH fuzzy match quality
-    detail: str             # human-readable explanation for nudges
+    confidence: float  # 0.0-1.0, for NAME_MISMATCH fuzzy match quality
+    detail: str  # human-readable explanation for nudges
 
 
 def assess_sender_trust(
@@ -58,7 +58,7 @@ def assess_sender_trust(
             # --- Step 1: Exact email match ---
             contact = conn.execute(
                 "SELECT id, display_name, outbound_count, signal_count, email FROM contacts WHERE email = ?",
-                (sender_addr_lower,)
+                (sender_addr_lower,),
             ).fetchone()
 
             if not contact:
@@ -68,7 +68,7 @@ def assess_sender_trust(
                        FROM contact_channels cc
                        JOIN contacts c ON cc.contact_id = c.id
                        WHERE cc.channel_type = 'email' AND LOWER(cc.handle) = ?""",
-                    (sender_addr_lower,)
+                    (sender_addr_lower,),
                 ).fetchone()
                 if channel:
                     contact = channel
@@ -79,14 +79,14 @@ def assess_sender_trust(
                         tier="ESTABLISHED",
                         contact_id=contact["id"],
                         confidence=1.0,
-                        detail=f"Two-way communication ({contact['outbound_count']} sent, {contact['signal_count']} received)"
+                        detail=f"Two-way communication ({contact['outbound_count']} sent, {contact['signal_count']} received)",
                     )
                 else:
                     return TrustAssessment(
                         tier="RECOGNIZED",
                         contact_id=contact["id"],
                         confidence=1.0,
-                        detail=f"Seen {contact['signal_count']} times, never replied to"
+                        detail=f"Seen {contact['signal_count']} times, never replied to",
                     )
 
             # --- Step 2: Display name fuzzy match ---
@@ -94,14 +94,14 @@ def assess_sender_trust(
                 name_match = _fuzzy_name_match(sender_display_name, conn)
                 if name_match:
                     logger.warning(
-                        f"⚠️ NAME_MISMATCH: \"{sender_display_name}\" from {sender_addr} "
+                        f'⚠️ NAME_MISMATCH: "{sender_display_name}" from {sender_addr} '
                         f"(known contact: {name_match['known_email']})"
                     )
                     return TrustAssessment(
                         tier="NAME_MISMATCH",
                         contact_id=name_match["contact_id"],
                         confidence=name_match["score"],
-                        detail=f"Name '{sender_display_name}' matches contact '{name_match['display_name']}' but address {sender_addr} is new (known: {name_match['known_email']})"
+                        detail=f"Name '{sender_display_name}' matches contact '{name_match['display_name']}' but address {sender_addr} is new (known: {name_match['known_email']})",
                     )
     except sqlite3.OperationalError as e:
         # Graceful degradation if contacts table doesn't exist yet
@@ -111,12 +111,7 @@ def assess_sender_trust(
             raise
 
     # --- Step 3: Unknown ---
-    return TrustAssessment(
-        tier="UNKNOWN",
-        contact_id=None,
-        confidence=1.0,
-        detail="First time seeing this address"
-    )
+    return TrustAssessment(tier="UNKNOWN", contact_id=None, confidence=1.0, detail="First time seeing this address")
 
 
 def _fuzzy_name_match(
@@ -136,7 +131,7 @@ def _fuzzy_name_match(
         return None
 
     # Get first token of query for boost
-    q_all = re.findall(r'[a-zA-Z]+', display_name.lower())
+    q_all = re.findall(r"[a-zA-Z]+", display_name.lower())
     query_first = q_all[0] if q_all else None
 
     # Ensure row_factory is set for this connection
@@ -169,7 +164,7 @@ def _fuzzy_name_match(
         score = len(intersection) / len(union) if union else 0
 
         # First-name boost: if first token matches, add 0.15
-        c_all = re.findall(r'[a-zA-Z]+', contact["display_name"].lower())
+        c_all = re.findall(r"[a-zA-Z]+", contact["display_name"].lower())
         contact_first = c_all[0] if c_all else None
 
         if query_first and contact_first and query_first == contact_first:
@@ -182,7 +177,7 @@ def _fuzzy_name_match(
                 "display_name": contact["display_name"],
                 "known_email": contact["email"],
                 "score": round(score, 2),
-                "interaction_count": (contact["signal_count"] or 0) + (contact["outbound_count"] or 0)
+                "interaction_count": (contact["signal_count"] or 0) + (contact["outbound_count"] or 0),
             }
         elif score == best_score and best_match:
             # Tie-break on interaction count
@@ -193,7 +188,7 @@ def _fuzzy_name_match(
                     "display_name": contact["display_name"],
                     "known_email": contact["email"],
                     "score": round(score, 2),
-                    "interaction_count": interaction_count
+                    "interaction_count": interaction_count,
                 }
 
     return best_match
@@ -209,7 +204,7 @@ def _tokenize_name(name: str) -> set[str]:
     if "@" in name:
         return set()  # Don't match email addresses as names
 
-    tokens = re.findall(r'[a-zA-Z]+', name.lower())
+    tokens = re.findall(r"[a-zA-Z]+", name.lower())
     return set(tokens)
 
 

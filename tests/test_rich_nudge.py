@@ -12,6 +12,7 @@ from xibi.heartbeat.rich_nudge import (
 )
 from xibi.heartbeat.context_assembly import EmailContext
 
+
 @pytest.fixture
 def full_context():
     return EmailContext(
@@ -30,8 +31,9 @@ def full_context():
         matching_thread_deadline="2026-04-15",
         matching_thread_owner="me",
         sender_signals_7d=3,
-        topic="Budget"
+        topic="Budget",
     )
+
 
 def test_rich_nudge_full_context(full_context):
     nudge = compose_rich_nudge(full_context)
@@ -51,18 +53,15 @@ def test_rich_nudge_full_context(full_context):
     assert "Reply" in nudge.actions
     assert "Draft response" in nudge.actions
 
+
 def test_rich_nudge_minimal_context():
-    ctx = EmailContext(
-        email_id="email-1",
-        sender_addr="unknown@unknown.com",
-        sender_name="Unknown",
-        subject="Hello"
-    )
+    ctx = EmailContext(email_id="email-1", sender_addr="unknown@unknown.com", sender_name="Unknown", subject="Hello")
     nudge = compose_rich_nudge(ctx)
     assert "🚨 *URGENT*" in nudge.text
     assert "From: *Unknown*" in nudge.text
     assert "📝 Re: Hello" in nudge.text
     assert "Reply" in nudge.actions
+
 
 def test_rich_nudge_unknown_sender():
     ctx = EmailContext(
@@ -70,11 +69,12 @@ def test_rich_nudge_unknown_sender():
         sender_addr="stranger@internet.com",
         sender_name="Stranger",
         subject="Spam",
-        sender_trust="UNKNOWN"
+        sender_trust="UNKNOWN",
     )
     nudge = compose_rich_nudge(ctx)
     assert "❓" in nudge.text
     assert "Dismiss" in nudge.actions
+
 
 def test_rich_nudge_no_thread():
     ctx = EmailContext(
@@ -82,10 +82,11 @@ def test_rich_nudge_no_thread():
         sender_addr="friend@home.com",
         sender_name="Friend",
         subject="Hey",
-        matching_thread_name=None
+        matching_thread_name=None,
     )
     nudge = compose_rich_nudge(ctx)
     assert "🧵 Thread:" not in nudge.text
+
 
 def test_rich_nudge_no_summary():
     ctx = EmailContext(
@@ -93,18 +94,21 @@ def test_rich_nudge_no_summary():
         sender_addr="friend@home.com",
         sender_name="Friend",
         subject="Important Subject",
-        summary=None
+        summary=None,
     )
     nudge = compose_rich_nudge(ctx)
     assert "📝 Re: Important Subject" in nudge.text
+
 
 def test_rich_nudge_late_alert(full_context):
     nudge = compose_rich_nudge(full_context, is_late=True)
     assert "⚠️ *Late Alert — Manager Reclassified as URGENT*" in nudge.text
 
+
 def test_rich_nudge_with_reason(full_context):
     nudge = compose_rich_nudge(full_context, verdict_reason="Manager review: critical deadline")
     assert "💡 _Manager review: critical deadline_" in nudge.text
+
 
 def test_rich_nudge_max_length():
     ctx = EmailContext(
@@ -112,16 +116,18 @@ def test_rich_nudge_max_length():
         sender_addr="friend@home.com",
         sender_name="Friend",
         subject="Important Subject",
-        summary="A" * 5000
+        summary="A" * 5000,
     )
     nudge = compose_rich_nudge(ctx)
     assert len(nudge.text) <= 4000
     assert "..." in nudge.text
 
+
 def test_rich_nudge_actions_capped(full_context):
     # full_context has deadline and owner="me", so it should have 3+ actions
     nudge = compose_rich_nudge(full_context)
     assert len(nudge.actions) <= 4
+
 
 def test_actions_always_has_reply():
     ctx = EmailContext(email_id="1", sender_addr="a@b.com", sender_name="A", subject="S")
@@ -129,26 +135,33 @@ def test_actions_always_has_reply():
     assert "Reply" in actions
     assert actions[0] == "Reply"
 
+
 def test_actions_deadline_offers_schedule():
-    ctx = EmailContext(email_id="1", sender_addr="a@b.com", sender_name="A", subject="S", matching_thread_deadline="tomorrow")
+    ctx = EmailContext(
+        email_id="1", sender_addr="a@b.com", sender_name="A", subject="S", matching_thread_deadline="tomorrow"
+    )
     actions = _suggest_actions(ctx)
     assert "Schedule follow-up" in actions
+
 
 def test_actions_unknown_sender_offers_dismiss():
     ctx = EmailContext(email_id="1", sender_addr="a@b.com", sender_name="A", subject="S", sender_trust="UNKNOWN")
     actions = _suggest_actions(ctx)
     assert "Dismiss" in actions
 
+
 def test_actions_owner_me_offers_draft():
     ctx = EmailContext(email_id="1", sender_addr="a@b.com", sender_name="A", subject="S", matching_thread_owner="me")
     actions = _suggest_actions(ctx)
     assert "Draft response" in actions
+
 
 def test_rate_limiter_allows_under_cap():
     limiter = NudgeRateLimiter(max_per_hour=3)
     assert limiter.allow() is True
     assert limiter.allow() is True
     assert limiter.allow() is True
+
 
 def test_rate_limiter_blocks_at_cap():
     limiter = NudgeRateLimiter(max_per_hour=3)
@@ -157,9 +170,10 @@ def test_rate_limiter_blocks_at_cap():
     limiter.allow()
     assert limiter.allow() is False
 
+
 def test_rate_limiter_resets_after_hour():
     limiter = NudgeRateLimiter(max_per_hour=3)
-    with patch('time.time') as mock_time:
+    with patch("time.time") as mock_time:
         mock_time.return_value = 1000
         limiter.allow()
         limiter.allow()
@@ -169,29 +183,27 @@ def test_rate_limiter_resets_after_hour():
         mock_time.return_value = 1000 + 3601
         assert limiter.allow() is True
 
+
 @pytest.fixture
 def mock_db(tmp_path):
     db_path = tmp_path / "test.db"
     import sqlite3
     from xibi.db.migrations import migrate
+
     migrate(db_path)
     return db_path
+
 
 @pytest.fixture
 def mock_config(tmp_path):
     cfg = {
-        "models": {
-            "text": {
-                "fast": {"provider": "ollama", "model": "gemma4:e4b"}
-            }
-        },
-        "providers": {
-            "ollama": {"base_url": "http://localhost:11434"}
-        }
+        "models": {"text": {"fast": {"provider": "ollama", "model": "gemma4:e4b"}}},
+        "providers": {"ollama": {"base_url": "http://localhost:11434"}},
     }
     cfg_path = tmp_path / "config.json"
     cfg_path.write_text(json.dumps(cfg))
     return cfg_path
+
 
 @pytest.mark.asyncio
 async def test_urgent_sends_rich_nudge(mock_db, mock_config):
@@ -208,25 +220,34 @@ async def test_urgent_sends_rich_nudge(mock_db, mock_config):
         rules=mock_rules,
         allowed_chat_ids=[123],
         config={"nudge": {"max_urgent_per_hour": 3}},
-        config_path=str(mock_config)
+        config_path=str(mock_config),
     )
 
     # Mock classification to return URGENT
     poller._classify_email = MagicMock(return_value="URGENT")
 
-    with patch('xibi.heartbeat.rich_nudge.compose_smart_nudge', new_callable=AsyncMock) as mock_compose:
+    with patch("xibi.heartbeat.rich_nudge.compose_smart_nudge", new_callable=AsyncMock) as mock_compose:
         mock_compose.return_value = RichNudge(signal_id=1, text="Rich Text", actions=[], thread_id=None, ref_id="e1")
 
         await poller._process_email_signals(
-            raw_signals=[{"ref_id": "e1", "source": "email", "topic_hint": "Urgent!", "entity_text": "Sarah", "metadata": {"email": {"id": "e1"}}}],
+            raw_signals=[
+                {
+                    "ref_id": "e1",
+                    "source": "email",
+                    "topic_hint": "Urgent!",
+                    "entity_text": "Sarah",
+                    "metadata": {"email": {"id": "e1"}},
+                }
+            ],
             seen_ids=set(),
             triage_rules={},
-            email_rules=[]
+            email_rules=[],
         )
 
         mock_adapter.send_message.assert_called()
         args, kwargs = mock_adapter.send_message.call_args
         assert "Rich Text" in args[1]
+
 
 @pytest.mark.asyncio
 async def test_urgent_rate_limited_queues_for_digest(mock_db, mock_config):
@@ -242,29 +263,48 @@ async def test_urgent_rate_limited_queues_for_digest(mock_db, mock_config):
         adapter=mock_adapter,
         rules=mock_rules,
         allowed_chat_ids=[123],
-        config={"nudge": {"max_urgent_per_hour": 1}}, # Low cap
-        config_path=str(mock_config)
+        config={"nudge": {"max_urgent_per_hour": 1}},  # Low cap
+        config_path=str(mock_config),
     )
 
     poller._classify_email = MagicMock(return_value="URGENT")
 
     # First one allowed
     await poller._process_email_signals(
-        raw_signals=[{"ref_id": "e1", "source": "email", "topic_hint": "U1", "entity_text": "S1", "metadata": {"email": {"id": "e1"}}, "content_preview": "P1"}],
+        raw_signals=[
+            {
+                "ref_id": "e1",
+                "source": "email",
+                "topic_hint": "U1",
+                "entity_text": "S1",
+                "metadata": {"email": {"id": "e1"}},
+                "content_preview": "P1",
+            }
+        ],
         seen_ids=set(),
         triage_rules={},
-        email_rules=[]
+        email_rules=[],
     )
 
     # Second one should be rate limited
     await poller._process_email_signals(
-        raw_signals=[{"ref_id": "e2", "source": "email", "topic_hint": "U2", "entity_text": "S2", "metadata": {"email": {"id": "e2"}}, "content_preview": "P2"}],
+        raw_signals=[
+            {
+                "ref_id": "e2",
+                "source": "email",
+                "topic_hint": "U2",
+                "entity_text": "S2",
+                "metadata": {"email": {"id": "e2"}},
+                "content_preview": "P2",
+            }
+        ],
         seen_ids=set(),
         triage_rules={},
-        email_rules=[]
+        email_rules=[],
     )
 
     assert len(poller._digest_overflow) == 1
+
 
 @pytest.mark.asyncio
 async def test_urgent_no_context_falls_back(mock_db, mock_config):
@@ -281,20 +321,30 @@ async def test_urgent_no_context_falls_back(mock_db, mock_config):
         adapter=mock_adapter,
         rules=mock_rules,
         allowed_chat_ids=[123],
-        config_path=str(mock_config)
+        config_path=str(mock_config),
     )
 
     poller._classify_email = MagicMock(return_value="URGENT")
 
-    with patch('xibi.heartbeat.context_assembly.assemble_batch_context', return_value={}): # No context
+    with patch("xibi.heartbeat.context_assembly.assemble_batch_context", return_value={}):  # No context
         await poller._process_email_signals(
-            raw_signals=[{"ref_id": "e1", "source": "email", "topic_hint": "U", "entity_text": "S", "metadata": {"email": {"id": "e1"}}, "content_preview": "P"}],
+            raw_signals=[
+                {
+                    "ref_id": "e1",
+                    "source": "email",
+                    "topic_hint": "U",
+                    "entity_text": "S",
+                    "metadata": {"email": {"id": "e1"}},
+                    "content_preview": "P",
+                }
+            ],
             seen_ids=set(),
             triage_rules={},
-            email_rules=[]
+            email_rules=[],
         )
 
     mock_adapter.send_message.assert_called_with(123, "Bare Nudge")
+
 
 def test_headless_stores_nudge(mock_db):
     from xibi.heartbeat.poller import HeartbeatPoller
@@ -307,7 +357,7 @@ def test_headless_stores_nudge(mock_db):
         adapter=mock_adapter,
         rules=MagicMock(),
         allowed_chat_ids=[123],
-        config={"nudge": {"headless": True}}
+        config={"nudge": {"headless": True}},
     )
 
     poller._broadcast("Hello", nudge=RichNudge(signal_id=1, text="Hello", actions=["A"], thread_id=None, ref_id=None))
@@ -315,6 +365,7 @@ def test_headless_stores_nudge(mock_db):
     assert len(poller._pending_nudges) == 1
     assert poller._pending_nudges[0]["text"] == "Hello"
     mock_adapter.send_message.assert_not_called()
+
 
 def test_late_nudge_uses_rich_format(tmp_path):
     from xibi.observation import ObservationCycle
@@ -326,18 +377,14 @@ def test_late_nudge_uses_rich_format(tmp_path):
     migrate(db_path)
 
     with sqlite3.connect(db_path) as conn:
-        conn.execute("INSERT INTO signals (id, source, ref_id, ref_source, topic_hint, summary, env, content_preview) VALUES (1, 'email', 'e1', 'email', 'Urgent', 'Summary', 'production', 'Preview')")
+        conn.execute(
+            "INSERT INTO signals (id, source, ref_id, ref_source, topic_hint, summary, env, content_preview) VALUES (1, 'email', 'e1', 'email', 'Urgent', 'Summary', 'production', 'Preview')"
+        )
         conn.commit()
 
     profile = {
-        "models": {
-            "text": {
-                "review": {"provider": "ollama", "model": "gemma4:e4b"}
-            }
-        },
-        "providers": {
-            "ollama": {"base_url": "http://localhost:11434"}
-        }
+        "models": {"text": {"review": {"provider": "ollama", "model": "gemma4:e4b"}}},
+        "providers": {"ollama": {"base_url": "http://localhost:11434"}},
     }
     obs = ObservationCycle(db_path=db_path, profile=profile)
     mock_executor = MagicMock()
@@ -345,21 +392,26 @@ def test_late_nudge_uses_rich_format(tmp_path):
     # Mock manager review data
     review_data = {
         "thread_updates": [],
-        "signal_flags": [{"signal_id": 1, "reclassify_urgent": True, "suggested_urgency": "high", "reason": "Important"}],
-        "digest": "Done"
+        "signal_flags": [
+            {"signal_id": 1, "reclassify_urgent": True, "suggested_urgency": "high", "reason": "Important"}
+        ],
+        "digest": "Done",
     }
 
-    with patch('xibi.observation.get_model') as mock_get_model:
+    with patch("xibi.observation.get_model") as mock_get_model:
         mock_llm = MagicMock()
         mock_llm.generate.return_value = json.dumps(review_data)
         mock_get_model.return_value = mock_llm
 
-        with patch('xibi.observation.dispatch') as mock_dispatch:
+        with patch("xibi.observation.dispatch") as mock_dispatch:
             obs._run_manager_review(executor=mock_executor)
 
             calls = mock_dispatch.call_args_list
             late_nudge_call = next(c for c in calls if "Late Alert" in c[0][1]["message"])
-            assert "🚨 *URGENT*" in late_nudge_call[0][1]["message"] or "⚠️ *Late Alert" in late_nudge_call[0][1]["message"]
+            assert (
+                "🚨 *URGENT*" in late_nudge_call[0][1]["message"] or "⚠️ *Late Alert" in late_nudge_call[0][1]["message"]
+            )
+
 
 def test_late_nudge_no_ref_falls_back(tmp_path):
     from xibi.observation import ObservationCycle
@@ -371,34 +423,32 @@ def test_late_nudge_no_ref_falls_back(tmp_path):
     migrate(db_path)
 
     with sqlite3.connect(db_path) as conn:
-        conn.execute("INSERT INTO signals (id, source, ref_id, ref_source, topic_hint, summary, env, content_preview) VALUES (1, 'manual', NULL, 'manual', 'Urgent', 'Summary', 'production', 'Preview')")
+        conn.execute(
+            "INSERT INTO signals (id, source, ref_id, ref_source, topic_hint, summary, env, content_preview) VALUES (1, 'manual', NULL, 'manual', 'Urgent', 'Summary', 'production', 'Preview')"
+        )
         conn.commit()
 
     profile = {
-        "models": {
-            "text": {
-                "review": {"provider": "ollama", "model": "gemma4:e4b"}
-            }
-        },
-        "providers": {
-            "ollama": {"base_url": "http://localhost:11434"}
-        }
+        "models": {"text": {"review": {"provider": "ollama", "model": "gemma4:e4b"}}},
+        "providers": {"ollama": {"base_url": "http://localhost:11434"}},
     }
     obs = ObservationCycle(db_path=db_path, profile=profile)
     mock_executor = MagicMock()
 
     review_data = {
         "thread_updates": [],
-        "signal_flags": [{"signal_id": 1, "reclassify_urgent": True, "suggested_urgency": "high", "reason": "Important"}],
-        "digest": "Done"
+        "signal_flags": [
+            {"signal_id": 1, "reclassify_urgent": True, "suggested_urgency": "high", "reason": "Important"}
+        ],
+        "digest": "Done",
     }
 
-    with patch('xibi.observation.get_model') as mock_get_model:
+    with patch("xibi.observation.get_model") as mock_get_model:
         mock_llm = MagicMock()
         mock_llm.generate.return_value = json.dumps(review_data)
         mock_get_model.return_value = mock_llm
 
-        with patch('xibi.observation.dispatch') as mock_dispatch:
+        with patch("xibi.observation.dispatch") as mock_dispatch:
             obs._run_manager_review(executor=mock_executor)
 
             calls = mock_dispatch.call_args_list

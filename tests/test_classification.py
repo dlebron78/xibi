@@ -5,8 +5,8 @@ from xibi.heartbeat.classification import build_classification_prompt, build_fal
 from xibi.heartbeat.context_assembly import EmailContext
 from bregger_heartbeat import classify_email
 
-class TestClassification(unittest.TestCase):
 
+class TestClassification(unittest.TestCase):
     def test_build_prompt_full_context(self):
         """Test 1: EmailContext with all fields populated"""
         ctx = EmailContext(
@@ -23,7 +23,7 @@ class TestClassification(unittest.TestCase):
             matching_thread_priority="medium",
             matching_thread_deadline="2026-04-12",
             matching_thread_owner="Alice",
-            sender_signals_7d=10
+            sender_signals_7d=10,
         )
         email = {"id": "123", "from": "Alice <alice@example.com>", "subject": "Lunch?"}
         prompt = build_classification_prompt(email, ctx)
@@ -34,7 +34,7 @@ class TestClassification(unittest.TestCase):
         self.assertIn("Org: Acme Corp", prompt)
         self.assertIn("You've emailed them 5 times", prompt)
         self.assertIn("Email says: Wants to grab lunch on Friday.", prompt)
-        self.assertIn("Active thread: \"Team Lunch\"", prompt)
+        self.assertIn('Active thread: "Team Lunch"', prompt)
         self.assertIn("(priority: medium)", prompt)
         self.assertIn("(deadline: 2026-04-12)", prompt)
         self.assertIn("(ball in: Alice's court)", prompt)
@@ -42,12 +42,7 @@ class TestClassification(unittest.TestCase):
 
     def test_build_prompt_minimal_context(self):
         """Test 2: EmailContext with minimal fields"""
-        ctx = EmailContext(
-            email_id="123",
-            sender_addr="bob@example.com",
-            sender_name="Bob",
-            subject="Hey"
-        )
+        ctx = EmailContext(email_id="123", sender_addr="bob@example.com", sender_name="Bob", subject="Hey")
         email = {"id": "123", "from": "Bob <bob@example.com>", "subject": "Hey"}
         prompt = build_classification_prompt(email, ctx)
         self.assertIn("From: Bob <bob@example.com>", prompt)
@@ -62,7 +57,7 @@ class TestClassification(unittest.TestCase):
             sender_addr="stranger@example.com",
             sender_name="Stranger",
             subject="Hello",
-            contact_signal_count=0
+            contact_signal_count=0,
         )
         email = {"id": "123", "from": "Stranger <stranger@example.com>", "subject": "Hello"}
         prompt = build_classification_prompt(email, ctx)
@@ -77,12 +72,12 @@ class TestClassification(unittest.TestCase):
             subject="Update",
             sender_trust="ESTABLISHED",
             matching_thread_name="Project X",
-            matching_thread_deadline="Friday"
+            matching_thread_deadline="Friday",
         )
         email = {"id": "123", "from": "Alice <alice@example.com>", "subject": "Update"}
         prompt = build_classification_prompt(email, ctx)
         self.assertIn("Trust: ESTABLISHED", prompt)
-        self.assertIn("Active thread: \"Project X\"", prompt)
+        self.assertIn('Active thread: "Project X"', prompt)
         self.assertIn("(deadline: Friday)", prompt)
 
     def test_build_prompt_no_summary(self):
@@ -92,7 +87,7 @@ class TestClassification(unittest.TestCase):
             sender_addr="alice@example.com",
             sender_name="Alice",
             subject="Update",
-            summary="[no body content]"
+            summary="[no body content]",
         )
         email = {"id": "123"}
         prompt = build_classification_prompt(email, ctx)
@@ -100,12 +95,7 @@ class TestClassification(unittest.TestCase):
 
     def test_build_prompt_no_thread(self):
         """Test 6: Skip thread if none"""
-        ctx = EmailContext(
-            email_id="123",
-            sender_addr="alice@example.com",
-            sender_name="Alice",
-            subject="Update"
-        )
+        ctx = EmailContext(email_id="123", sender_addr="alice@example.com", sender_name="Alice", subject="Update")
         email = {"id": "123"}
         prompt = build_classification_prompt(email, ctx)
         self.assertNotIn("Active thread:", prompt)
@@ -117,7 +107,7 @@ class TestClassification(unittest.TestCase):
             sender_addr="alice@example.com",
             sender_name="Alice",
             subject="Update",
-            contact_user_endorsed=True
+            contact_user_endorsed=True,
         )
         email = {"id": "123"}
         prompt = build_classification_prompt(email, ctx)
@@ -144,7 +134,7 @@ class TestClassification(unittest.TestCase):
             sender_addr="alice@example.com",
             sender_name="Alice",
             subject="Urgent!",
-            sender_trust="ESTABLISHED"
+            sender_trust="ESTABLISHED",
         )
         email = {"id": "123", "from": "Alice <alice@example.com>", "subject": "Urgent!"}
 
@@ -178,7 +168,9 @@ class TestClassification(unittest.TestCase):
         mock_response.__enter__.return_value = mock_response
         mock_urlopen.return_value = mock_response
 
-        ctx = EmailContext(email_id="123", sender_addr="a@b.com", sender_name="A", subject="S", sender_trust="ESTABLISHED")
+        ctx = EmailContext(
+            email_id="123", sender_addr="a@b.com", sender_name="A", subject="S", sender_trust="ESTABLISHED"
+        )
         email = {"id": "123"}
         verdict = classify_email(email, context=ctx)
         self.assertEqual(verdict, "URGENT")
@@ -253,10 +245,12 @@ class TestClassification(unittest.TestCase):
     def test_tick_escalation_still_works(self):
         """Test 17: DIGEST -> URGENT escalation"""
         from bregger_heartbeat import _should_escalate
+
         priority_topics = [{"topic": "project x", "pinned": False}]
         verdict, subject = _should_escalate("DIGEST", "Project X", "Updates", priority_topics)
         self.assertEqual(verdict, "URGENT")
         self.assertIn("🔥", subject)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -22,6 +22,7 @@ from xibi.heartbeat.nudge_actions import (
 
 # ── Unit tests: parse_intent ──────────────────────────────────────────
 
+
 def test_parse_reply_keyword():
     assert parse_intent("reply") == ActionIntent.REPLY
     assert parse_intent("respond") == ActionIntent.REPLY
@@ -71,6 +72,7 @@ def test_parse_case_insensitive():
 
 
 # ── Unit tests: payload builders ──────────────────────────────────────
+
 
 @pytest.fixture
 def mock_context():
@@ -150,6 +152,7 @@ def test_build_action_payload_routing(mock_context):
 
 # ── Unit tests: resolve_action_tier ───────────────────────────────────
 
+
 def test_tier_defaults(mock_context):
     reply = build_reply_payload(mock_context)
     assert resolve_action_tier(reply, mock_context) == "red"
@@ -171,6 +174,7 @@ def test_tier_future_hook(mock_context):
 
 
 # ── Integration tests: execute_action ──────────────────────────────────
+
 
 @pytest.fixture
 def mock_core(tmp_path):
@@ -226,9 +230,10 @@ def test_execute_error_handling(mock_core, mock_context):
 
 
 def test_execute_with_notification_yellow(mock_core, mock_context):
-    with patch("xibi.heartbeat.nudge_actions.resolve_action_tier", return_value="yellow"), \
-         patch("xibi.heartbeat.nudge_actions._call_tool", return_value="Sent successfully"):
-
+    with (
+        patch("xibi.heartbeat.nudge_actions.resolve_action_tier", return_value="yellow"),
+        patch("xibi.heartbeat.nudge_actions._call_tool", return_value="Sent successfully"),
+    ):
         payload = build_followup_payload(mock_context)
         outcome = execute_action(payload, mock_core, mock_context)
 
@@ -237,9 +242,10 @@ def test_execute_with_notification_yellow(mock_core, mock_context):
 
 
 def test_execute_silent_green(mock_core, mock_context):
-    with patch("xibi.heartbeat.nudge_actions.resolve_action_tier", return_value="green"), \
-         patch("xibi.heartbeat.nudge_actions._call_tool", return_value="Signal dismissed"):
-
+    with (
+        patch("xibi.heartbeat.nudge_actions.resolve_action_tier", return_value="green"),
+        patch("xibi.heartbeat.nudge_actions._call_tool", return_value="Signal dismissed"),
+    ):
         # We use a payload that isn't DISMISS to test the green path specifically
         payload = build_reply_payload(mock_context)
         outcome = execute_action(payload, mock_core, mock_context)
@@ -249,6 +255,7 @@ def test_execute_silent_green(mock_core, mock_context):
 
 
 # ── Outcome logging tests ───────────────────────────────────────────
+
 
 def test_outcome_confirmed_updates_signal(mock_core):
     with sqlite3.connect(mock_core.db_path) as conn:
@@ -295,8 +302,10 @@ def test_outcome_error_keeps_active(mock_core):
 from datetime import datetime, timedelta
 import bregger_telegram
 import importlib
+
 importlib.reload(bregger_telegram)
 from bregger_telegram import BreggerTelegramAdapter
+
 
 @pytest.fixture
 def mock_adapter(mock_core):
@@ -309,7 +318,9 @@ def mock_adapter(mock_core):
 
 def test_nudge_response_routes_to_action(mock_adapter, mock_context, mock_core):
     with sqlite3.connect(mock_core.db_path) as conn:
-        conn.execute("CREATE TABLE IF NOT EXISTS signals (id INTEGER PRIMARY KEY, proposal_status TEXT, dismissed_at DATETIME)")
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS signals (id INTEGER PRIMARY KEY, proposal_status TEXT, dismissed_at DATETIME)"
+        )
 
     mock_adapter._pending_nudge_context = {
         "signal_id": 50,
@@ -327,15 +338,12 @@ def test_nudge_response_routes_to_action(mock_adapter, mock_context, mock_core):
 
         updates = {
             "ok": True,
-            "result": [{
-                "update_id": 1,
-                "message": {
-                    "chat": {"id": 123},
-                    "text": "reply",
-                    "from": {"first_name": "Dan"},
-                    "message_id": 100
+            "result": [
+                {
+                    "update_id": 1,
+                    "message": {"chat": {"id": 123}, "text": "reply", "from": {"first_name": "Dan"}, "message_id": 100},
                 }
-            }]
+            ],
         }
 
         # Need to mock more than just one call because sendChatAction is called too
@@ -363,15 +371,12 @@ def test_nudge_context_expires(mock_adapter, mock_context, mock_core):
 
     updates = {
         "ok": True,
-        "result": [{
-            "update_id": 1,
-            "message": {
-                "chat": {"id": 123},
-                "text": "reply",
-                "from": {"first_name": "Dan"},
-                "message_id": 101
+        "result": [
+            {
+                "update_id": 1,
+                "message": {"chat": {"id": 123}, "text": "reply", "from": {"first_name": "Dan"}, "message_id": 101},
             }
-        }]
+        ],
     }
 
     with patch.object(mock_adapter, "_api_call", side_effect=[updates, {"ok": True}, Exception("stop loop")]):
@@ -424,15 +429,12 @@ def test_multiple_nudges_uses_latest(mock_adapter, mock_context, mock_core):
 
         updates = {
             "ok": True,
-            "result": [{
-                "update_id": 1,
-                "message": {
-                    "chat": {"id": 123},
-                    "text": "reply",
-                    "from": {"first_name": "Dan"},
-                    "message_id": 103
+            "result": [
+                {
+                    "update_id": 1,
+                    "message": {"chat": {"id": 123}, "text": "reply", "from": {"first_name": "Dan"}, "message_id": 103},
                 }
-            }]
+            ],
         }
 
         with patch.object(mock_adapter, "_api_call", side_effect=[updates, {"ok": True}, Exception("stop loop")]):
@@ -456,15 +458,17 @@ def test_unknown_intent_clears_context(mock_adapter, mock_context, mock_core):
 
     updates = {
         "ok": True,
-        "result": [{
-            "update_id": 1,
-            "message": {
-                "chat": {"id": 123},
-                "text": "what's the weather",
-                "from": {"first_name": "Dan"},
-                "message_id": 102
+        "result": [
+            {
+                "update_id": 1,
+                "message": {
+                    "chat": {"id": 123},
+                    "text": "what's the weather",
+                    "from": {"first_name": "Dan"},
+                    "message_id": 102,
+                },
             }
-        }]
+        ],
     }
 
     with patch.object(mock_adapter, "_api_call", side_effect=[updates, {"ok": True}, Exception("stop loop")]):
