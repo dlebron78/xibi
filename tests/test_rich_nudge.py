@@ -1,16 +1,15 @@
-import pytest
-import asyncio
-import time
 import json
-from unittest.mock import MagicMock, patch, AsyncMock
-from xibi.heartbeat.rich_nudge import (
-    RichNudge,
-    compose_rich_nudge,
-    compose_smart_nudge,
-    NudgeRateLimiter,
-    _suggest_actions,
-)
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
 from xibi.heartbeat.context_assembly import EmailContext
+from xibi.heartbeat.rich_nudge import (
+    NudgeRateLimiter,
+    RichNudge,
+    _suggest_actions,
+    compose_rich_nudge,
+)
 
 
 @pytest.fixture
@@ -187,7 +186,6 @@ def test_rate_limiter_resets_after_hour():
 @pytest.fixture
 def mock_db(tmp_path):
     db_path = tmp_path / "test.db"
-    import sqlite3
     from xibi.db.migrations import migrate
 
     migrate(db_path)
@@ -207,8 +205,9 @@ def mock_config(tmp_path):
 
 @pytest.mark.asyncio
 async def test_urgent_sends_rich_nudge(mock_db, mock_config):
-    from xibi.heartbeat.poller import HeartbeatPoller
     from pathlib import Path
+
+    from xibi.heartbeat.poller import HeartbeatPoller
 
     mock_adapter = MagicMock()
     mock_rules = MagicMock()
@@ -251,8 +250,9 @@ async def test_urgent_sends_rich_nudge(mock_db, mock_config):
 
 @pytest.mark.asyncio
 async def test_urgent_rate_limited_queues_for_digest(mock_db, mock_config):
-    from xibi.heartbeat.poller import HeartbeatPoller
     from pathlib import Path
+
+    from xibi.heartbeat.poller import HeartbeatPoller
 
     mock_adapter = MagicMock()
     mock_rules = MagicMock()
@@ -308,8 +308,9 @@ async def test_urgent_rate_limited_queues_for_digest(mock_db, mock_config):
 
 @pytest.mark.asyncio
 async def test_urgent_no_context_falls_back(mock_db, mock_config):
-    from xibi.heartbeat.poller import HeartbeatPoller
     from pathlib import Path
+
+    from xibi.heartbeat.poller import HeartbeatPoller
 
     mock_adapter = MagicMock()
     mock_rules = MagicMock()
@@ -347,8 +348,9 @@ async def test_urgent_no_context_falls_back(mock_db, mock_config):
 
 
 def test_headless_stores_nudge(mock_db):
-    from xibi.heartbeat.poller import HeartbeatPoller
     from pathlib import Path
+
+    from xibi.heartbeat.poller import HeartbeatPoller
 
     mock_adapter = MagicMock()
     poller = HeartbeatPoller(
@@ -368,10 +370,10 @@ def test_headless_stores_nudge(mock_db):
 
 
 def test_late_nudge_uses_rich_format(tmp_path):
-    from xibi.observation import ObservationCycle
-    from pathlib import Path
     import sqlite3
+
     from xibi.db.migrations import migrate
+    from xibi.observation import ObservationCycle
 
     db_path = tmp_path / "test_obs.db"
     migrate(db_path)
@@ -414,10 +416,10 @@ def test_late_nudge_uses_rich_format(tmp_path):
 
 
 def test_late_nudge_no_ref_falls_back(tmp_path):
-    from xibi.observation import ObservationCycle
-    from pathlib import Path
     import sqlite3
+
     from xibi.db.migrations import migrate
+    from xibi.observation import ObservationCycle
 
     db_path = tmp_path / "test_obs_fallback.db"
     migrate(db_path)

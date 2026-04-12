@@ -264,7 +264,9 @@ def test_mark_processed_idempotent(tmp_path, monkeypatch):
         adapter._mark_processed(conn, 7)  # Should not raise
     with sqlite3.connect(db_path) as conn:
         # Check both columns for full compatibility
-        row = conn.execute("SELECT COUNT(*) FROM processed_messages WHERE message_id=7 AND source='telegram' AND ref_id='7'").fetchone()
+        row = conn.execute(
+            "SELECT COUNT(*) FROM processed_messages WHERE message_id=7 AND source='telegram' AND ref_id='7'"
+        ).fetchone()
         assert row[0] == 1
 
 
@@ -325,8 +327,12 @@ def test_purge_old_processed_messages(tmp_path, monkeypatch):
 
     with sqlite3.connect(db_path) as conn:
         # Insert an old row and a recent row
-        conn.execute("INSERT INTO processed_messages (message_id, source, ref_id, processed_at) VALUES (1, 'telegram', '1', datetime('now', '-8 days'))")
-        conn.execute("INSERT INTO processed_messages (message_id, source, ref_id, processed_at) VALUES (2, 'telegram', '2', datetime('now', '-1 day'))")
+        conn.execute(
+            "INSERT INTO processed_messages (message_id, source, ref_id, processed_at) VALUES (1, 'telegram', '1', datetime('now', '-8 days'))"
+        )
+        conn.execute(
+            "INSERT INTO processed_messages (message_id, source, ref_id, processed_at) VALUES (2, 'telegram', '2', datetime('now', '-1 day'))"
+        )
 
     adapter._purge_old_processed_messages()
 

@@ -1,8 +1,9 @@
 import sqlite3
+
 import pytest
-from pathlib import Path
-from datetime import datetime, timedelta
+
 from xibi.heartbeat.migration import stamp_roberto_cutover
+
 
 @pytest.fixture
 def db_path(tmp_path):
@@ -28,12 +29,19 @@ def db_path(tmp_path):
         """)
     return path
 
+
 def test_stamp_cutover_first_run(db_path):
     # Setup: 2 recent signals, 1 old signal
     with sqlite3.connect(db_path) as conn:
-        conn.execute("INSERT INTO signals (source, ref_id, timestamp, content_preview) VALUES ('email', 'ref1', datetime('now', '-1 days'), 'preview1')")
-        conn.execute("INSERT INTO signals (source, ref_id, timestamp, content_preview) VALUES ('email', 'ref2', datetime('now', '-5 days'), 'preview2')")
-        conn.execute("INSERT INTO signals (source, ref_id, timestamp, content_preview) VALUES ('email', 'ref3', datetime('now', '-20 days'), 'preview3')")
+        conn.execute(
+            "INSERT INTO signals (source, ref_id, timestamp, content_preview) VALUES ('email', 'ref1', datetime('now', '-1 days'), 'preview1')"
+        )
+        conn.execute(
+            "INSERT INTO signals (source, ref_id, timestamp, content_preview) VALUES ('email', 'ref2', datetime('now', '-5 days'), 'preview2')"
+        )
+        conn.execute(
+            "INSERT INTO signals (source, ref_id, timestamp, content_preview) VALUES ('email', 'ref3', datetime('now', '-20 days'), 'preview3')"
+        )
 
     count = stamp_roberto_cutover(db_path)
     assert count == 2
@@ -41,23 +49,29 @@ def test_stamp_cutover_first_run(db_path):
     with sqlite3.connect(db_path) as conn:
         rows = conn.execute("SELECT ref_id FROM processed_messages WHERE source='email'").fetchall()
         assert len(rows) == 2
-        assert sorted([r[0] for r in rows]) == ['ref1', 'ref2']
+        assert sorted([r[0] for r in rows]) == ["ref1", "ref2"]
 
         mig = conn.execute("SELECT name FROM migrations_log").fetchone()
-        assert mig[0] == 'roberto_cutover'
+        assert mig[0] == "roberto_cutover"
+
 
 def test_stamp_cutover_idempotent(db_path):
     with sqlite3.connect(db_path) as conn:
-        conn.execute("INSERT INTO signals (source, ref_id, timestamp, content_preview) VALUES ('email', 'ref1', datetime('now', '-1 days'), 'preview1')")
+        conn.execute(
+            "INSERT INTO signals (source, ref_id, timestamp, content_preview) VALUES ('email', 'ref1', datetime('now', '-1 days'), 'preview1')"
+        )
 
     assert stamp_roberto_cutover(db_path) == 1
     assert stamp_roberto_cutover(db_path) == 0
 
+
 def test_stamp_cutover_no_recent_signals(db_path):
     with sqlite3.connect(db_path) as conn:
-        conn.execute("INSERT INTO signals (source, ref_id, timestamp, content_preview) VALUES ('email', 'ref1', datetime('now', '-20 days'), 'preview1')")
+        conn.execute(
+            "INSERT INTO signals (source, ref_id, timestamp, content_preview) VALUES ('email', 'ref1', datetime('now', '-20 days'), 'preview1')"
+        )
 
     assert stamp_roberto_cutover(db_path) == 0
     with sqlite3.connect(db_path) as conn:
         mig = conn.execute("SELECT name FROM migrations_log").fetchone()
-        assert mig[0] == 'roberto_cutover'
+        assert mig[0] == "roberto_cutover"

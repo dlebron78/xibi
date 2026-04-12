@@ -654,7 +654,9 @@ class SchemaManager:
                 conn.execute(f"ALTER TABLE processed_messages ADD COLUMN {col_name} {col_type}")
 
         # Create unique index for multi-source dedup
-        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_processed_source_ref ON processed_messages (source, ref_id)")
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_processed_source_ref ON processed_messages (source, ref_id)"
+        )
 
         # Backfill existing Telegram rows
         conn.execute("""

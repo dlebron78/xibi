@@ -55,6 +55,7 @@ def poll_calendar_signals(
         try:
             # Fetch events
             import urllib.parse
+
             cal_id_encoded = urllib.parse.quote(cal_id, safe="")
             data = gcal_request(
                 f"/calendars/{cal_id_encoded}/events"
@@ -144,15 +145,27 @@ def _mark_processed(db_path: Path, source: str, ref_id: str) -> None:
 
 def _log_calendar_signal(db_path: Path, sig: dict) -> None:
     with open_db(db_path) as conn, conn:
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO signals (
                 source, ref_id, ref_source, topic_hint, timestamp,
                 content_preview, summary, urgency, entity_type, entity_text, env
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            sig["source"], sig["ref_id"], sig["ref_source"], sig["topic_hint"], sig["timestamp"],
-            sig["content_preview"], sig["summary"], sig["urgency"], sig["entity_type"], sig["entity_text"], sig["env"]
-        ))
+        """,
+            (
+                sig["source"],
+                sig["ref_id"],
+                sig["ref_source"],
+                sig["topic_hint"],
+                sig["timestamp"],
+                sig["content_preview"],
+                sig["summary"],
+                sig["urgency"],
+                sig["entity_type"],
+                sig["entity_text"],
+                sig["env"],
+            ),
+        )
 
 
 def _derive_urgency(start_iso: str) -> str:

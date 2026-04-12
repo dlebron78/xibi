@@ -1,9 +1,12 @@
 import os
 import sqlite3
+from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import patch, MagicMock
-from datetime import datetime, timezone, timedelta
+
 from xibi.heartbeat.calendar_poller import poll_calendar_signals
+
 
 @pytest.fixture
 def db_path(tmp_path):
@@ -35,6 +38,7 @@ def db_path(tmp_path):
         """)
     return path
 
+
 @patch("xibi.heartbeat.calendar_poller.gcal_request")
 @patch("xibi.heartbeat.calendar_poller.load_calendar_config")
 def test_poll_new_event(mock_load_config, mock_gcal, db_path):
@@ -46,7 +50,7 @@ def test_poll_new_event(mock_load_config, mock_gcal, db_path):
                 "id": "evt1",
                 "summary": "Meeting with Sarah",
                 "start": {"dateTime": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()},
-                "attendees": [{"email": "sarah@other.com", "displayName": "Sarah"}]
+                "attendees": [{"email": "sarah@other.com", "displayName": "Sarah"}],
             }
         ]
     }
@@ -65,6 +69,7 @@ def test_poll_new_event(mock_load_config, mock_gcal, db_path):
         processed = conn.execute("SELECT 1 FROM processed_messages WHERE ref_id='evt1'").fetchone()
         assert processed is not None
 
+
 @patch("xibi.heartbeat.calendar_poller.gcal_request")
 @patch("xibi.heartbeat.calendar_poller.load_calendar_config")
 def test_poll_dedup(mock_load_config, mock_gcal, db_path):
@@ -79,37 +84,52 @@ def test_poll_dedup(mock_load_config, mock_gcal, db_path):
     signals = poll_calendar_signals(db_path)
     assert len(signals) == 0
 
+
 @patch("xibi.heartbeat.calendar_poller.gcal_request")
 @patch("xibi.heartbeat.calendar_poller.load_calendar_config")
 def test_poll_past_event_skipped(mock_load_config, mock_gcal, db_path):
     mock_load_config.return_value = [{"label": "personal", "calendar_id": "dan@example.com"}]
     mock_gcal.return_value = {
-        "items": [{"id": "evt1", "summary": "Old", "start": {"dateTime": (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()}}]
+        "items": [
+            {
+                "id": "evt1",
+                "summary": "Old",
+                "start": {"dateTime": (datetime.now(timezone.utc) - timedelta(hours=5)).isoformat()},
+            }
+        ]
     }
 
     signals = poll_calendar_signals(db_path)
     assert len(signals) == 0
 
+
 def test_poll_urgency_within_2h():
     from xibi.heartbeat.calendar_poller import _derive_urgency
+
     start = (datetime.now(timezone.utc) + timedelta(minutes=90)).isoformat()
     assert _derive_urgency(start) == "URGENT"
 
+
 def test_poll_urgency_beyond_2h():
     from xibi.heartbeat.calendar_poller import _derive_urgency
+
     start = (datetime.now(timezone.utc) + timedelta(hours=5)).isoformat()
     assert _derive_urgency(start) == "DIGEST"
 
+
 def test_poll_allday_event():
     from xibi.heartbeat.calendar_poller import _derive_urgency
+
     assert _derive_urgency("2026-05-01") == "DIGEST"
+
 
 def test_poll_attendee_extraction():
     from xibi.heartbeat.calendar_poller import _extract_attendees
+
     event = {
         "attendees": [
             {"email": "dan@example.com", "self": True},
-            {"email": "sarah@other.com", "displayName": "Sarah Jones"}
+            {"email": "sarah@other.com", "displayName": "Sarah Jones"},
         ]
     }
     with patch.dict(os.environ, {"XIBI_KNOWN_ADDRESSES": "dan@example.com"}):
@@ -117,14 +137,11 @@ def test_poll_attendee_extraction():
         assert name == "Sarah Jones"
         assert email == "sarah@other.com"
 
+
 def test_poll_known_address_skipped():
     from xibi.heartbeat.calendar_poller import _extract_attendees
-    event = {
-        "attendees": [
-            {"email": "dan@example.com"},
-            {"email": "other@me.com"}
-        ]
-    }
+
+    event = {"attendees": [{"email": "dan@example.com"}, {"email": "other@me.com"}]}
     with patch.dict(os.environ, {"XIBI_KNOWN_ADDRESSES": "dan@example.com,other@me.com"}):
         name, email = _extract_attendees(event)
         assert name is None

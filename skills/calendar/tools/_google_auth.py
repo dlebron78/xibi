@@ -11,11 +11,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any
 
-_TOKEN_CACHE: Dict[str, Any] = {"access_token": None, "expires_at": 0}
+_TOKEN_CACHE: dict[str, Any] = {"access_token": None, "expires_at": 0}
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"
+
 
 def load_calendar_config() -> list[dict]:
     """
@@ -36,6 +37,7 @@ def load_calendar_config() -> list[dict]:
     raw = os.environ.get("XIBI_CALENDARS")
     if not raw:
         import logging
+
         logging.getLogger(__name__).warning("XIBI_CALENDARS not set, falling back to default:primary")
         raw = "default:primary"
 
@@ -128,7 +130,7 @@ def get_access_token() -> str:
     try:
         resp = json.loads(urllib.request.urlopen(req, timeout=10).read())
     except urllib.error.HTTPError as e:
-        raise RuntimeError(f"Token refresh failed: {e.code} {e.read().decode()}")
+        raise RuntimeError(f"Token refresh failed: {e.code} {e.read().decode()}") from e
 
     if "access_token" not in resp:
         raise RuntimeError(f"Token refresh returned no access_token: {resp}")
@@ -155,4 +157,4 @@ def gcal_request(path: str, method: str = "GET", body: dict | None = None) -> di
         return result
     except urllib.error.HTTPError as e:
         err_body = e.read().decode()
-        raise RuntimeError(f"Calendar API error {e.code}: {err_body}")
+        raise RuntimeError(f"Calendar API error {e.code}: {err_body}") from e

@@ -1,16 +1,13 @@
 import pytest
-import sqlite3
-import hashlib
-from pathlib import Path
+
+from xibi.db import open_db
 from xibi.heartbeat.sender_trust import (
-    assess_sender_trust,
-    _fuzzy_name_match,
-    _tokenize_name,
     _extract_sender_addr,
     _extract_sender_name,
-    TrustAssessment,
+    _fuzzy_name_match,
+    _tokenize_name,
+    assess_sender_trust,
 )
-from xibi.db import open_db
 
 
 @pytest.fixture

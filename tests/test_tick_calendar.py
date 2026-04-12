@@ -1,9 +1,11 @@
 import sqlite3
+from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import patch, MagicMock
-from pathlib import Path
-from datetime import datetime, timezone, timedelta
+
 from bregger_heartbeat import tick
+
 
 @pytest.fixture
 def db_path(tmp_path):
@@ -32,12 +34,19 @@ def db_path(tmp_path):
             )
         """)
         conn.execute("CREATE TABLE heartbeat_seen (email_id TEXT PRIMARY KEY)")
-        conn.execute("CREATE TABLE triage_log (id INTEGER PRIMARY KEY AUTOINCREMENT, email_id TEXT, sender TEXT, subject TEXT, verdict TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)")
+        conn.execute(
+            "CREATE TABLE triage_log (id INTEGER PRIMARY KEY AUTOINCREMENT, email_id TEXT, sender TEXT, subject TEXT, verdict TEXT, timestamp DATETIME DEFAULT CURRENT_TIMESTAMP)"
+        )
         conn.execute("CREATE TABLE heartbeat_state (key TEXT PRIMARY KEY, value TEXT)")
-        conn.execute("CREATE TABLE processed_messages (message_id INTEGER PRIMARY KEY, source TEXT, ref_id TEXT, processed_at DATETIME DEFAULT CURRENT_TIMESTAMP)")
-        conn.execute("CREATE TABLE tasks (id TEXT PRIMARY KEY, status TEXT, due DATETIME, goal TEXT, urgency TEXT, nudge_count INTEGER, last_nudged_at DATETIME, updated_at DATETIME)")
+        conn.execute(
+            "CREATE TABLE processed_messages (message_id INTEGER PRIMARY KEY, source TEXT, ref_id TEXT, processed_at DATETIME DEFAULT CURRENT_TIMESTAMP)"
+        )
+        conn.execute(
+            "CREATE TABLE tasks (id TEXT PRIMARY KEY, status TEXT, due DATETIME, goal TEXT, urgency TEXT, nudge_count INTEGER, last_nudged_at DATETIME, updated_at DATETIME)"
+        )
         conn.execute("CREATE TABLE pinned_topics (topic TEXT PRIMARY KEY)")
     return path
+
 
 @patch("bregger_heartbeat.check_email")
 @patch("bregger_heartbeat.TelegramNotifier")
@@ -53,6 +62,7 @@ def test_tick_calls_calendar_poller(mock_poll, mock_rules, mock_notifier, mock_c
 
     mock_poll.assert_called_once()
 
+
 @patch("bregger_heartbeat.check_email")
 @patch("bregger_heartbeat.TelegramNotifier")
 @patch("bregger_heartbeat.RuleEngine")
@@ -67,7 +77,7 @@ def test_tick_urgent_calendar_nudge(mock_poll, mock_rules, mock_notifier, mock_c
             "topic_hint": "Urgent Meeting",
             "timestamp": start_dt.isoformat(),
             "entity_text": "Dan",
-            "content_preview": "Urgent Meeting at 14:00 with Dan"
+            "content_preview": "Urgent Meeting at 14:00 with Dan",
         }
     ]
 
@@ -79,11 +89,14 @@ def test_tick_urgent_calendar_nudge(mock_poll, mock_rules, mock_notifier, mock_c
     assert "Starting in 4" in call_text
     assert "Urgent Meeting" in call_text
 
+
 @patch("bregger_heartbeat.check_email")
 @patch("bregger_heartbeat.TelegramNotifier")
 @patch("bregger_heartbeat.RuleEngine")
 @patch("xibi.heartbeat.calendar_poller.poll_calendar_signals")
-def test_tick_calendar_error_doesnt_break_email(mock_poll, mock_rules, mock_notifier, mock_check_email, db_path, tmp_path):
+def test_tick_calendar_error_doesnt_break_email(
+    mock_poll, mock_rules, mock_notifier, mock_check_email, db_path, tmp_path
+):
     mock_poll.side_effect = Exception("Calendar API down")
     mock_check_email.return_value = [{"id": "m1", "subject": "Hi", "from": "bob@example.com"}]
 
