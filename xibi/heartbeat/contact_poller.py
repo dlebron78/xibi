@@ -41,7 +41,7 @@ def _discover_sent_folder(himalaya_bin: str, db_path: Path) -> str | None:
             cursor = conn.execute("SELECT value FROM heartbeat_state WHERE key = 'sent_folder_name'")
             row = cursor.fetchone()
             if row:
-                return row[0]
+                return str(row[0])
     except Exception:
         pass
 
@@ -92,7 +92,10 @@ def _list_envelopes(
         if res.returncode != 0:
             logger.error(f"Himalaya list failed: {res.stderr}")
             return []
-        return json.loads(res.stdout)
+        data = json.loads(res.stdout)
+        if not isinstance(data, list):
+            return []
+        return data
     except Exception as e:
         logger.error(f"Error listing envelopes: {e}")
         return []

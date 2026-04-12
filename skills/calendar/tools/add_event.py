@@ -5,7 +5,10 @@ Tagged irreversible in manifest — confirmation gate fires automatically.
 
 from datetime import timedelta
 
-from _google_auth import gcal_request, load_calendar_config, resolve_calendar_id
+try:
+    from _google_auth import gcal_request, load_calendar_config, resolve_calendar_id
+except ImportError:
+    from ._google_auth import gcal_request, load_calendar_config, resolve_calendar_id
 
 from bregger_utils import parse_semantic_datetime
 

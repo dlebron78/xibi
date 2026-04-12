@@ -2,14 +2,17 @@
 xibi/heartbeat/migration.py — Roberto account cutover migration guard.
 """
 
-import sqlite3
 from datetime import datetime
 from pathlib import Path
 
 from xibi.db import open_db
 
 
-def stamp_roberto_cutover(db_path: str | Path, cutover_date: str | None = None) -> int:
+def stamp_roberto_cutover(
+    db_path: str | Path,
+    cutover_date: str | None = None,
+    env: str = "production",
+) -> int:
     """
     One-time migration: stamp processed_messages with recent email ref_ids
     to prevent duplicate triage after Roberto account cutover.
@@ -18,6 +21,9 @@ def stamp_roberto_cutover(db_path: str | Path, cutover_date: str | None = None) 
 
     Returns count of ref_ids stamped.
     """
+    if env != "production":
+        return 0
+
     db_path = Path(db_path)
 
     try:

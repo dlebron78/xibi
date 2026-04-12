@@ -5,13 +5,22 @@ find_event — Search Google Calendar events by keyword across multiple calendar
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 
-from _google_auth import (
-    format_date_label,
-    format_event_time,
-    gcal_request,
-    get_calendar_label,
-    load_calendar_config,
-)
+try:
+    from _google_auth import (
+        format_date_label,
+        format_event_time,
+        gcal_request,
+        get_calendar_label,
+        load_calendar_config,
+    )
+except ImportError:
+    from ._google_auth import (
+        format_date_label,
+        format_event_time,
+        gcal_request,
+        get_calendar_label,
+        load_calendar_config,
+    )
 
 
 def run(params: dict) -> dict:
@@ -72,16 +81,16 @@ def run(params: dict) -> dict:
     # Dedup by event ID
     seen = set()
     unique_events = []
-    for e in all_events:
-        if e["id"] not in seen:
-            seen.add(e["id"])
-            unique_events.append(e)
+    for ev in all_events:
+        if ev["id"] not in seen:
+            seen.add(ev["id"])
+            unique_events.append(ev)
 
     # Sort merged results by start time
-    unique_events.sort(key=lambda e: e.get("_start_iso", ""))
+    unique_events.sort(key=lambda x: x.get("_start_iso", ""))
 
-    for e in unique_events:
-        e.pop("_start_iso", None)
+    for ev in unique_events:
+        ev.pop("_start_iso", None)
 
     result = {"status": "success", "as_of": today_str, "count": len(unique_events), "events": unique_events}
     if errors:

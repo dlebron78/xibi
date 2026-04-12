@@ -2,16 +2,14 @@
 xibi/heartbeat/calendar_poller.py — Calendar → signals pipeline.
 """
 
-import os
-import sqlite3
 import logging
-from datetime import datetime, timezone, timedelta
+import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from skills.calendar.tools._google_auth import (
     gcal_request,
     load_calendar_config,
-    get_calendar_label,
 )
 from xibi.db import open_db
 

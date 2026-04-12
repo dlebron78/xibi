@@ -370,7 +370,7 @@ def _upsert_contact_core(
 
         discovered_via = "email_inbound" if direction == "inbound" else "email_outbound"
 
-        contact_id = create_contact(
+        _contact_id = create_contact(
             display_name=display_name,
             email=email if channel_type == "email" else None,
             organization=organization,
@@ -379,8 +379,10 @@ def _upsert_contact_core(
             db_path=db_str,
         )
 
-        if not contact_id:
+        if not _contact_id:
             contact_id = f"contact-{hashlib.md5(email.lower().encode()).hexdigest()[:8]}"
+        else:
+            contact_id = _contact_id
 
         # Fix counts if outbound (create_contact defaults to signal_count=1, outbound_count=0)
         if direction == "outbound":

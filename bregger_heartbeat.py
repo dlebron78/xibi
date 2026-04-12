@@ -1607,7 +1607,7 @@ def main():
     # ── Migration Guard (Roberto Cutover) ───────────────────────
     try:
         from xibi.heartbeat.migration import stamp_roberto_cutover
-        stamped = stamp_roberto_cutover(db_path)
+        stamped = stamp_roberto_cutover(db_path, env=env)
         if stamped > 0:
             print(f"✅ roberto_cutover: stamped {stamped} recent email(s) as processed", flush=True)
     except Exception as e:
