@@ -66,7 +66,7 @@ def _discover_sent_folder(himalaya_bin: str, db_path: Path) -> str | None:
     return None
 
 
-def _cache_sent_folder(folder: str, db_path: Path):
+def _cache_sent_folder(folder: str, db_path: Path) -> None:
     try:
         with open_db(db_path) as conn, conn:
             conn.execute(

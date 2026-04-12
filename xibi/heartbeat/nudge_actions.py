@@ -350,8 +350,6 @@ def execute_action(
 def _execute_dismiss(payload: ActionPayload, core: Any) -> ActionOutcome:
     """Dismiss a signal — update proposal_status, log outcome."""
     if payload.signal_id:
-        from pathlib import Path
-
         with open_db(Path(core.db_path)) as conn:
             conn.execute(
                 "UPDATE signals SET proposal_status = 'dismissed', dismissed_at = datetime('now') WHERE id = ?",
@@ -470,6 +468,7 @@ def _call_tool(payload: ActionPayload, core: Any) -> str:
         return str(res)
     return str(result)
 
+
 def _build_confirmation_prompt(payload: ActionPayload) -> str:
     """Build the Telegram message asking user to confirm an action."""
     lines = []
@@ -510,8 +509,6 @@ def log_outcome(outcome: ActionOutcome, db_path: str) -> None:
     """Log action outcome on the originating signal."""
     if not outcome.signal_id:
         return
-
-    from pathlib import Path
 
     with open_db(Path(db_path)) as conn:
         # Update proposal_status on the signal
