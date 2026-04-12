@@ -5,6 +5,20 @@
 > **Phase:** 3 — depends on Block 6 (step-73)
 > **Acceptance criteria:** see epic Block 7
 
+> **TRR Record**
+> Date: 2026-04-11 | HEAD: 7576234 | Reviewer: Cowork Pipeline (Haiku)
+> Verdict: BLOCK
+> Findings: TRR-C1, TRR-C2, TRR-C3, TRR-C4, TRR-H1, TRR-H2, TRR-S1, TRR-S2, TRR-V1, TRR-P1
+> Open Questions:
+> 1. Is step-73 merged? Cannot proceed while it's in triggered/.
+> 2. Which step/PR delivers reply_email.py, add_event.py, bregger_core.py, bregger_telegram.py?
+> 3. Is BreggerCore a new class this step defines, or pre-existing? If new, add skeleton.
+> 4. Is dispatch() defined in xibi.tools or elsewhere? Clarify.
+> 5. Are tool calls async or sync? Spec mixes async execute_action() with sync Telegram routing.
+> 6. Reference step-70 EmailContext schema for serialization.
+> 7. Move ~30% "Future Autonomy Path" to separate doc or mark as "not in step-74".
+
+
 ---
 
 ## Context
@@ -889,3 +903,4 @@ The entire autonomy upgrade is: uncomment `resolve_action_tier()`, add config, a
 - Undo/recall after execution — emails are fire-and-forget after confirmation
 - Action templates ("always reply to Sarah with 'acknowledged'") — future personalization layer
 - Slack/Teams/other channel routing — Telegram only today
+
