@@ -329,14 +329,15 @@ class RuleEngine:
         topic = "_".join(words[:2]) if words else None
 
         # Entity candidates: look for project/org patterns in ORIGINAL subject
-        # Brackets [Afya-fit] often contain the most reliable metadata.
+        # Brackets often contain the most reliable metadata.
         entity_text = None
         entity_type = None
 
         m = re.search(r"\[(.*?)\]", subject)  # Check original for brackets
         if m:
-            entity_text = m.group(1).split("/")[0]  # e.g. [Afya-fit/...] -> Afya-fit
-            entity_type = "project" if "-" in entity_text or "afya" in entity_text.lower() else "org"
+            entity_text = m.group(1).split("/")[0]
+            # Simple heuristic for project vs org
+            entity_type = "project" if "-" in entity_text else "org"
 
         return topic, entity_text, entity_type
 
@@ -1105,7 +1106,12 @@ def reflect(notifier: TelegramNotifier, db_path: Path, model: str = "llama3.2:la
 
 
 def tick(
-    skills_dir: Path, db_path: Path, notifier: TelegramNotifier, rules: RuleEngine, model: str = "llama3.2:latest"
+    skills_dir: Path,
+    db_path: Path,
+    notifier: TelegramNotifier,
+    rules: RuleEngine,
+    model: str = "llama3.2:latest",
+    env: str = "production",
 ):
     if is_quiet_hours():
         print("🌙 Quiet hours — skipping heartbeat tick", flush=True)
@@ -1320,6 +1326,42 @@ def tick(
                 )
         except Exception:
             pass
+
+    # ── Calendar Signals ──────────────────────────────────────────
+    try:
+        from xibi.heartbeat.calendar_poller import poll_calendar_signals
+        calendar_signals = poll_calendar_signals(db_path=db_path, env=env)
+        if calendar_signals:
+            print(f"📅 {len(calendar_signals)} new calendar signal(s)", flush=True)
+            for sig in calendar_signals:
+                if sig.get("urgency") == "URGENT":
+                    # Extract title and derive delta for the nudge
+                    title = sig.get("topic_hint", "Meeting")
+                    start_iso = sig.get("timestamp")
+                    delta_min = 0
+                    try:
+                        from datetime import timezone
+                        start = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+                        delta_min = int((start - datetime.now(timezone.utc)).total_seconds() / 60)
+                    except Exception:
+                        pass
+
+                    attendee = sig.get("entity_text")
+                    # content_preview already has formatted time and attendees,
+                    # but we use a specific nudge format per spec
+                    msg = f"📅 Starting in {delta_min} min: {title}"
+                    if attendee:
+                        msg += f"\nwith {attendee}"
+
+                    # Try to extract location from preview if it has (@ ...)
+                    if "(@ " in sig.get("content_preview", ""):
+                        loc = sig["content_preview"].split("(@ ")[1].rstrip(")")
+                        msg += f"\n@ {loc}"
+
+                    notifier.send(msg)
+                    print(f"📅 URGENT: {title} in {delta_min}min", flush=True)
+    except Exception as e:
+        print(f"⚠️ calendar_poller error: {e}", flush=True)
 
     # --- Reflection Loop ----------------------------------------------------
     # Run intelligence cycle after emails have been ingested
@@ -1561,6 +1603,15 @@ def main():
     notifier = TelegramNotifier(token, allowed_chats)
     rules = RuleEngine(db_path)
     rules._ensure_triage_tables()
+
+    # ── Migration Guard (Roberto Cutover) ───────────────────────
+    try:
+        from xibi.heartbeat.migration import stamp_roberto_cutover
+        stamped = stamp_roberto_cutover(db_path)
+        if stamped > 0:
+            print(f"✅ roberto_cutover: stamped {stamped} recent email(s) as processed", flush=True)
+    except Exception as e:
+        print(f"⚠️ Migration guard error: {e}", flush=True)
 
     interval_secs = POLL_INTERVAL_MINUTES * 60
     ticks_per_hour = 60 // POLL_INTERVAL_MINUTES

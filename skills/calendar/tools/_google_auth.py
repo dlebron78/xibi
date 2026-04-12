@@ -16,11 +16,49 @@ _TOKEN_CACHE = {"access_token": None, "expires_at": 0}
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 
-# Calendars to include by default in list_events and find_event
-DEFAULT_CALENDARS = [
-    "primary",
-    "family11858167880136244905@group.calendar.google.com",
-]
+def load_calendar_config() -> list[dict]:
+    """
+    Parse XIBI_CALENDARS env var into list of {label, calendar_id} dicts.
+
+    Falls back to [{label: "default", calendar_id: "primary"}] if not set.
+    NOTE: The "primary" fallback is only safe when the OAuth account is also
+    the calendar owner. In Roberto deployments, always set XIBI_CALENDARS
+    explicitly — the fallback will resolve to Roberto's empty calendar.
+
+    Example:
+        XIBI_CALENDARS=personal:dannylebron@gmail.com,afya:lebron@afya.fit
+        → [
+            {"label": "personal", "calendar_id": "dannylebron@gmail.com"},
+            {"label": "afya",     "calendar_id": "lebron@afya.fit"},
+          ]
+    """
+    import os
+    raw = os.environ.get("XIBI_CALENDARS", "default:primary")
+    calendars = []
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if ":" in entry:
+            label, cal_id = entry.split(":", 1)
+            calendars.append({"label": label.strip(), "calendar_id": cal_id.strip()})
+    return calendars if calendars else [{"label": "default", "calendar_id": "primary"}]
+
+
+def get_calendar_label(calendar_id: str) -> str:
+    """Reverse lookup: given a calendar_id, return its label. Falls back to calendar_id."""
+    for cal in load_calendar_config():
+        if cal["calendar_id"] == calendar_id:
+            return cal["label"]
+    return calendar_id
+
+
+def resolve_calendar_id(label_or_id: str) -> str:
+    """Resolve a friendly label ('personal', 'afya') to a Google Calendar ID.
+    Falls back to the input value if no match — allows passing raw IDs directly.
+    """
+    for cal in load_calendar_config():
+        if cal["label"].lower() == label_or_id.lower():
+            return cal["calendar_id"]
+    return label_or_id  # pass-through for raw IDs
 
 
 def format_date_label(iso_str: str, today: datetime) -> str:

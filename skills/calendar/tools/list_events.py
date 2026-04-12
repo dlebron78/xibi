@@ -5,7 +5,13 @@ list_events — Fetch upcoming Google Calendar events across multiple calendars.
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 
-from _google_auth import DEFAULT_CALENDARS, format_date_label, format_event_time, gcal_request
+from _google_auth import (
+    format_date_label,
+    format_event_time,
+    gcal_request,
+    get_calendar_label,
+    load_calendar_config,
+)
 
 
 def run(params: dict) -> dict:
@@ -17,7 +23,9 @@ def run(params: dict) -> dict:
     time_min = urllib.parse.quote(now.isoformat())
     time_max = urllib.parse.quote((now + timedelta(days=days)).isoformat())
 
-    calendar_ids = params.get("calendar_ids", DEFAULT_CALENDARS)
+    config = load_calendar_config()
+    default_ids = [c["calendar_id"] for c in config]
+    calendar_ids = params.get("calendar_ids", default_ids)
 
     all_events = []
     errors = []
@@ -34,8 +42,8 @@ def run(params: dict) -> dict:
             errors.append(f"{cal_id}: {e}")
             continue
 
-        # Map known calendar IDs to readable names
-        cal_name = "Family" if "family" in cal_id else "Primary"
+        # Map calendar IDs to readable names via config
+        cal_name = get_calendar_label(cal_id)
 
         for item in data.get("items", []):
             start = item.get("start", {})

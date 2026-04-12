@@ -144,14 +144,16 @@ class TelegramAdapter:
 
     def _is_already_processed(self, conn: sqlite3.Connection, message_id: int) -> bool:
         """Return True if this Telegram message_id has already been handled."""
+        # Primary check via PRIMARY KEY (message_id) for speed and backward compatibility
         row = conn.execute("SELECT 1 FROM processed_messages WHERE message_id = ?", (message_id,)).fetchone()
         return row is not None
 
     def _mark_processed(self, conn: sqlite3.Connection, message_id: int) -> None:
         """Record that this Telegram message_id has been handled (idempotency gate)."""
+        # Populate both old and new columns to maintain compatibility
         conn.execute(
-            "INSERT OR IGNORE INTO processed_messages (message_id) VALUES (?)",
-            (message_id,),
+            "INSERT OR IGNORE INTO processed_messages (message_id, source, ref_id) VALUES (?, 'telegram', ?)",
+            (message_id, str(message_id)),
         )
 
     def _purge_old_processed_messages(self) -> None:
