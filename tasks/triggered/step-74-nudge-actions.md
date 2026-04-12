@@ -6,17 +6,13 @@
 > **Acceptance criteria:** see epic Block 7
 
 > **TRR Record**
-> Date: 2026-04-11 | HEAD: 7576234 | Reviewer: Cowork Pipeline (Haiku)
-> Verdict: BLOCK
-> Findings: TRR-C1, TRR-C2, TRR-C3, TRR-C4, TRR-H1, TRR-H2, TRR-S1, TRR-S2, TRR-V1, TRR-P1
-> Open Questions:
-> 1. Is step-73 merged? Cannot proceed while it's in triggered/.
-> 2. Which step/PR delivers reply_email.py, add_event.py, bregger_core.py, bregger_telegram.py?
-> 3. Is BreggerCore a new class this step defines, or pre-existing? If new, add skeleton.
-> 4. Is dispatch() defined in xibi.tools or elsewhere? Clarify.
-> 5. Are tool calls async or sync? Spec mixes async execute_action() with sync Telegram routing.
-> 6. Reference step-70 EmailContext schema for serialization.
-> 7. Move ~30% "Future Autonomy Path" to separate doc or mark as "not in step-74".
+> Date: 2026-04-11 | HEAD: 7576234 | Reviewer: Cowork Pipeline (Haiku) → amended by Cowork (Sonnet) 2026-04-11
+> Verdict: AMEND
+> Findings: TRR-C1 (dispatch → BreggerExecutive stub), TRR-C2 (async → sync), TRR-C3 (Future Autonomy section removed)
+> Open Questions: None
+> Notes: Prior BLOCK questions 2–6 were false positives — all referenced files exist; EmailContext in step-70.
+>   step-73 merged as PR #74. TRR-C1: _call_tool() now raises NotImplementedError (future YELLOW/GREEN only).
+>   TRR-C2: sync throughout; async deferred to subagent step. TRR-C3: Future Autonomy section cut.
 
 
 ---
@@ -443,7 +439,7 @@ Executes the payload through the existing tool/confirmation infrastructure:
 ```python
 # ── Action execution ────────────────────────────────────────────
 
-async def execute_action(
+def execute_action(
     payload: ActionPayload,
     core: "BreggerCore",
     context: "EmailContext",
@@ -466,11 +462,11 @@ async def execute_action(
             return _execute_dismiss(payload, core)
 
         if tier == "red":
-            return await _execute_with_confirmation(payload, core)
+            return _execute_with_confirmation(payload, core)
         elif tier == "yellow":
-            return await _execute_with_notification(payload, core)
+            return _execute_with_notification(payload, core)
         else:  # green
-            return await _execute_silent(payload, core)
+            return _execute_silent(payload, core)
 
     except Exception as e:
         logger.error(f"Action execution failed: {e}", exc_info=True)
@@ -500,7 +496,7 @@ def _execute_dismiss(payload: ActionPayload, core: "BreggerCore") -> ActionOutco
     )
 
 
-async def _execute_with_confirmation(
+def _execute_with_confirmation(
     payload: ActionPayload,
     core: "BreggerCore",
 ) -> ActionOutcome:
@@ -542,7 +538,7 @@ async def _execute_with_confirmation(
     )
 
 
-async def _execute_with_notification(
+def _execute_with_notification(
     payload: ActionPayload,
     core: "BreggerCore",
 ) -> ActionOutcome:
@@ -551,7 +547,7 @@ async def _execute_with_notification(
     Future use only. Today all actions route through RED.
     """
     # Execute the tool directly
-    result = await _call_tool(payload, core)
+    result = _call_tool(payload, core)
 
     # Notify user of what happened
     notify_text = f"✅ Auto-executed: {payload.preview}"
@@ -564,7 +560,7 @@ async def _execute_with_notification(
     )
 
 
-async def _execute_silent(
+def _execute_silent(
     payload: ActionPayload,
     core: "BreggerCore",
 ) -> ActionOutcome:
@@ -572,7 +568,7 @@ async def _execute_silent(
 
     Future use only. Today only dismiss uses this path.
     """
-    result = await _call_tool(payload, core)
+    result = _call_tool(payload, core)
     return ActionOutcome(
         signal_id=payload.signal_id,
         intent=payload.intent,
@@ -581,11 +577,18 @@ async def _execute_silent(
     )
 
 
-async def _call_tool(payload: ActionPayload, core: "BreggerCore") -> str:
+def _call_tool(payload: ActionPayload, core: "BreggerCore") -> str:
     """Call the actual tool. Thin wrapper around existing tool dispatch."""
-    from xibi.tools import dispatch
-    result = dispatch(payload.tool_name, payload.tool_params, workdir=core.workdir)
-    return result.get("message", str(result))
+    # ‼️ TRR-C1: dispatch() does not exist in xibi.tools. The correct mechanism is
+    # BreggerExecutive.execute_plan(). This path is FUTURE USE ONLY (YELLOW/GREEN
+    # tiers only) — today all actions go through RED → _execute_with_confirmation().
+    # When implementing YELLOW/GREEN, wire through:
+    #   plan = {"skill": skill_name, "tool": payload.tool_name, "parameters": payload.tool_params}
+    #   return core.executive.execute_plan(plan).get("message", "")
+    raise NotImplementedError(
+        "_call_tool() is for future YELLOW/GREEN tier execution. "
+        "All actions today are RED tier and route through _execute_with_confirmation()."
+    )
 ```
 
 ### 5. Confirmation prompt builder
@@ -731,70 +734,6 @@ def _log_outcome(outcome: ActionOutcome, db_path: str) -> None:
             f"intent={outcome.intent.value} result={outcome.result}"
         )
 ```
-
----
-
-## Future Autonomy Path
-
-Step-74 is structured so trust-based autonomy is a config change + one function, not a rewrite.
-
-### What exists after step-74:
-- `resolve_action_tier()` — single function that decides RED/YELLOW/GREEN per action
-- `_execute_with_confirmation()` — RED path (today's default)
-- `_execute_with_notification()` — YELLOW path (built but unused)
-- `_execute_silent()` — GREEN path (only dismiss uses it today)
-- Outcome log — records what the user confirmed/dismissed for every signal
-
-### What a future "trust autonomy" step adds:
-
-**1. Trust score function** (replaces the stub in `resolve_action_tier()`):
-```python
-def _compute_trust_score(context: EmailContext, intent: ActionIntent) -> float:
-    """Score 0.0–1.0 based on trust signals. Higher = more autonomous."""
-    score = 0.0
-    if context.sender_trust == "ESTABLISHED": score += 0.3
-    if context.contact_user_endorsed: score += 0.3
-    if context.contact_outbound_count > 5: score += 0.1
-    if context.matching_thread_owner == "me": score += 0.1
-    if context.sender_signals_7d > 2: score += 0.1
-    # Historical: user has confirmed replies to this contact N times
-    if _get_confirm_rate(context.contact_id, intent) > 0.9: score += 0.1
-    return min(score, 1.0)
-```
-
-**2. Threshold config** in `config.json`:
-```json
-"autonomy": {
-    "enabled": false,
-    "thresholds": {
-        "reply": {"yellow": 0.8, "green": 999},
-        "schedule_meeting": {"yellow": 0.7, "green": 999},
-        "schedule_followup": {"yellow": 0.3, "green": 0.7},
-        "dismiss": {"yellow": 0.0, "green": 0.3}
-    },
-    "timed_hold_seconds": 60
-}
-```
-(`green: 999` means "never auto-send emails without confirmation" — a safety cap)
-
-**3. Timed hold for YELLOW** (show preview, auto-execute after N seconds unless cancelled):
-- Send preview with countdown: "Sending in 60s — reply *cancel* to stop"
-- Background timer fires tool call
-- Cancel word clears the timer
-
-**4. Outcome-based learning** (use logged outcomes to update trust scores):
-- If user confirms 10 consecutive replies to a contact → trust score for that contact+intent goes up
-- If user dismisses or modifies → trust score goes down
-- Stored per contact_id × intent in a lightweight table
-
-### What does NOT change:
-- `parse_intent()` — same parsing
-- Payload builders — same payloads
-- Tool calls — same tools
-- Outcome logging — same log
-- Telegram routing — same routing
-
-The entire autonomy upgrade is: uncomment `resolve_action_tier()`, add config, add the timed-hold mechanism. Everything else is already in place.
 
 ---
 
