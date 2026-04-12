@@ -7,8 +7,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from xibi.heartbeat.context_assembly import EmailContext
@@ -250,8 +249,10 @@ async def _call_local_model(prompt: str, model_name: str) -> dict | None:
         import re
         match = re.search(r"\{.*\}", response, re.DOTALL)
         if match:
-            return json.loads(match.group(0))
-        return json.loads(response.strip())
+            res = json.loads(match.group(0))
+            return cast(dict[Any, Any], res) if isinstance(res, dict) else None
+        res = json.loads(response.strip())
+        return cast(dict[Any, Any], res) if isinstance(res, dict) else None
     except json.JSONDecodeError:
         return None
 

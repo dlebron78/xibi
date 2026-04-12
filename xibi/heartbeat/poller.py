@@ -11,17 +11,17 @@ from typing import TYPE_CHECKING, Any
 import xibi.db
 import xibi.signal_intelligence as sig_intel
 from xibi.alerting.rules import RuleEngine
-from xibi.heartbeat.contact_poller import backfill_contacts, find_himalaya, poll_sent_folder
-from xibi.heartbeat.sender_trust import (
-    assess_sender_trust,
-    _extract_sender_addr,
-    _extract_sender_name,
-)
-from xibi.heartbeat.classification import build_classification_prompt, build_fallback_prompt
 from xibi.channels.sheets import SheetsExporter
 from xibi.channels.telegram import TelegramAdapter
 from xibi.command_layer import CommandLayer
+from xibi.heartbeat.classification import build_classification_prompt
+from xibi.heartbeat.contact_poller import backfill_contacts, find_himalaya, poll_sent_folder
 from xibi.heartbeat.extractors import SignalExtractorRegistry
+from xibi.heartbeat.sender_trust import (
+    _extract_sender_addr,
+    _extract_sender_name,
+    assess_sender_trust,
+)
 from xibi.heartbeat.source_poller import SourcePoller
 from xibi.observation import ObservationCycle
 from xibi.radiant import Radiant
@@ -29,6 +29,8 @@ from xibi.router import get_model
 from xibi.threads import sweep_resolved_threads, sweep_stale_threads
 
 if TYPE_CHECKING:
+    from xibi.heartbeat.context_assembly import EmailContext
+    from xibi.heartbeat.rich_nudge import RichNudge
     from xibi.trust.gradient import TrustGradient
 
 # Jules watcher — lazy import to avoid hard dependency if Jules not configured
@@ -159,7 +161,7 @@ class HeartbeatPoller:
             logger.warning("Failed to init JulesWatcher: %s", e)
             return None
 
-    def _broadcast(self, text: str, nudge: "RichNudge | None" = None) -> None:
+    def _broadcast(self, text: str, nudge: RichNudge | None = None) -> None:
         """Send nudge via Telegram, or store for headless mode."""
         if self.headless:
             # Store nudge for later retrieval
@@ -220,7 +222,7 @@ class HeartbeatPoller:
         emails = result.get("emails", [])
         return list(emails)
 
-    def _classify_email(self, email: dict[str, Any], context: "EmailContext | None" = None) -> str:
+    def _classify_email(self, email: dict[str, Any], context: EmailContext | None = None) -> str:
         from xibi.condensation import condense
 
         body = email.get("body", email.get("text", ""))

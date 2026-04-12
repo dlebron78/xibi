@@ -644,7 +644,7 @@ def test_apply_topic_pin_duplicate(db_path):
     review_data = {
         "topic_pins": [{"topic": "Existing", "action": "pin", "reason": "still hot"}]
     }
-    actions = cycle._apply_manager_updates(review_data)
+    cycle._apply_manager_updates(review_data)
     with open_db(db_path) as conn:
         count = conn.execute("SELECT COUNT(*) FROM pinned_topics WHERE topic = 'existing'").fetchone()[0]
     assert count == 1
@@ -713,7 +713,7 @@ def test_apply_thread_owner_deadline(db_path):
         }],
         "signal_flags": [],
     }
-    actions = cycle._apply_manager_updates(review_data)
+    cycle._apply_manager_updates(review_data)
     with open_db(db_path) as conn:
         row = conn.execute(
             "SELECT priority, summary, owner, current_deadline FROM threads WHERE id = 't1'"
@@ -809,7 +809,7 @@ def test_run_manager_review_late_nudge(db_path):
 
     assert result.ran is True
     assert mock_dispatch.call_count >= 2
-    late_calls = [c for c in mock_dispatch.call_args_list if "Late Alerts" in str(c)]
+    late_calls = [c for c in mock_dispatch.call_args_list if "Late Alert" in str(c)]
     assert len(late_calls) >= 1
 
 

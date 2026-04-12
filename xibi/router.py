@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import contextvars
 import json
 import logging
@@ -257,10 +259,11 @@ class OllamaClient:
         # Separate top-level Ollama API flags (e.g. "think") from model options
         top_level_keys = {"think", "keep_alive", "format"}
         merged = {**self.options, **kwargs}
-        top_level = {k: merged.pop(k) for k in top_level_keys if k in merged}
 
         # Allow model override via kwargs
-        target_model = top_level.pop("model", self.model)
+        target_model = merged.pop("model", self.model)
+
+        top_level = {k: merged.pop(k) for k in top_level_keys if k in merged}
 
         payload: dict[str, Any] = {
             "model": target_model,

@@ -197,7 +197,7 @@ def assign_threads(signals: list[dict], intels: list[SignalIntel], db_path: Path
             topic_hint = (sig.get("topic_hint") or "").lower()
             entity_text = sig.get("entity_text")
 
-            assigned_tid = None
+            assigned_tid: str | None = None
 
             # 1. Exact sender+topic match
             for t in active_threads:
@@ -478,7 +478,9 @@ def enrich_signals(
             entity = sig.get("entity_text", "")
             if entity and "@" in entity:
                 # Use display_name = entity (address) if name not available in tier-0/1
-                upsert_contact(entity, entity, sig.get("entity_org"), db_path, config=config)
+                entity_org = sig.get("entity_org")
+                org_to_pass = str(entity_org) if entity_org else None
+                upsert_contact(entity, entity, org_to_pass, db_path, config=config)
 
         # Write back to DB
         with open_db(db_path) as conn, conn:
