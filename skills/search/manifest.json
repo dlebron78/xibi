@@ -17,7 +17,7 @@
         {
             "name": "search_searxng",
             "output_type": "synthesis",
-            "description": "Perform a real-time web search using the local SearXNG instance. This is the primary search tool — no API key, no rate limits, returns rich results with snippets and URLs. Use this for any world-state or current information request.",
+            "description": "Perform a real-time web search using the local SearXNG instance. This is the primary search tool \u2014 no API key, no rate limits, returns rich results with snippets and URLs. Use this for any world-state or current information request.",
             "examples": [
                 "search for the latest news on AI",
                 "look up the stock price of AAPL",
@@ -74,6 +74,29 @@
                 },
                 "required": [
                     "api_key"
+                ]
+            }
+        },
+        {
+            "name": "get_weather",
+            "output_type": "synthesis",
+            "description": "Get current weather conditions and 3-day forecast for any location. Returns temperature, humidity, wind, UV index, and daily highs/lows. Uses wttr.in \u2014 no API key needed.",
+            "examples": [
+                "what is the weather in San Juan",
+                "weather forecast for Miami",
+                "how hot is it in New York today",
+                "will it rain tomorrow in Orlando"
+            ],
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string",
+                        "description": "City name, optionally with state/country (e.g. San Juan Puerto Rico, Miami FL, London UK)"
+                    }
+                },
+                "required": [
+                    "location"
                 ]
             }
         },
