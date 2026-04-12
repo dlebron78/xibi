@@ -117,6 +117,7 @@ class HeartbeatPoller:
         self.headless = nudge_config.get("headless", False)
         self._digest_overflow: list[dict] = []
         self._pending_nudges: list[dict] = []
+        self._pending_nudge_context: dict | None = None
 
         self.scheduler_kernel: ScheduledActionKernel | None
         if self.executor is not None:
@@ -725,6 +726,17 @@ class HeartbeatPoller:
                                 timeout_ms=self.nudge_timeout_ms,
                             )
                             self._broadcast(nudge.text, nudge=nudge)
+                            # Store nudge context for the adapter
+                            self._pending_nudge_context = {
+                                "signal_id": nudge.signal_id,
+                                "email_context": ctx,
+                                "actions": nudge.actions,
+                                "sent_at": datetime.now().isoformat(),
+                            }
+                            # Sync back to adapter if possible
+                            if hasattr(self.adapter, "_pending_nudge_context"):
+                                self.adapter._pending_nudge_context = self._pending_nudge_context
+
                             logger.info(
                                 f"Rich URGENT nudge sent for signal {nudge.signal_id}: "
                                 f"{len(nudge.text)} chars, actions={nudge.actions}"
