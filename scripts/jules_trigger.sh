@@ -107,21 +107,76 @@ else
   [[ ! -f "${SPEC_FILE}" ]] && die "Spec file not found: ${SPEC_FILE}"
 fi
 
-# ── Pipeline gate: don't fire if previous task hasn't merged ──────────────────
-if [[ "${1:-}" == "--check-pending" ]]; then
-  TRIGGERED_COUNT=$(find "${XIBI_DIR}/tasks/triggered" -name "*.md" 2>/dev/null | wc -l)
-  if [[ "${TRIGGERED_COUNT}" -gt 0 ]]; then
-    log "Pipeline gate: ${TRIGGERED_COUNT} task(s) still in tasks/triggered/. Waiting for merge before firing next."
-    exit 0
-  fi
-fi
-
-
 TASK_NAME=$(basename "${SPEC_FILE}" .md)
 TASK_CONTENT=$(cat "${SPEC_FILE}")
 
 log "Creating Jules session for: ${TASK_NAME}"
 log "Spec length: $(echo "${TASK_CONTENT}" | wc -c) chars"
+
+# ── Gate: TRR provenance check ───────────────────────────────────────────────
+# The TRR Record must exist in the spec AND must have been committed by a
+# different author than the spec itself. This prevents NucBox (or any single
+# entity) from authoring a spec, rubber-stamping a TRR, and triggering Jules
+# all on its own. TRR is Opus's job — conducted via Cowork pipeline review.
+#
+# How it works:
+#   1. Grep the spec for "## TRR Record" — if missing, block.
+#   2. Check the TRR verdict — must be PASS or AMEND (not BLOCK).
+#   3. Use git log to find who last touched the TRR Record section.
+#   4. Compare against the spec's original author (first commit of the file).
+#   5. If same author, block — the TRR was self-authored.
+#
+# Override: set SKIP_TRR_GATE=1 to bypass (for reruns after manual TRR).
+
+if [[ "${SKIP_TRR_GATE:-0}" != "1" ]]; then
+  log "Running TRR provenance gate..."
+
+  # 1. Check TRR Record exists
+  if ! grep -q "## TRR Record" "${SPEC_FILE}"; then
+    die "TRR GATE FAILED: No '## TRR Record' section found in spec. Opus must conduct TRR before triggering."
+  fi
+
+  # 2. Check verdict is PASS or AMEND (not BLOCK or missing)
+  TRR_VERDICT=$(grep -A5 "## TRR Record" "${SPEC_FILE}" | grep -oP '\*\*\K(PASS|AMEND|BLOCK)' | head -1)
+  if [[ -z "${TRR_VERDICT}" ]]; then
+    die "TRR GATE FAILED: Could not parse TRR verdict. Ensure the TRR Record has a **PASS** or **AMEND** verdict."
+  fi
+  if [[ "${TRR_VERDICT}" == "BLOCK" ]]; then
+    die "TRR GATE FAILED: TRR verdict is BLOCK. Fix the spec findings before triggering."
+  fi
+  log "TRR verdict: ${TRR_VERDICT}"
+
+  # 3. Get the spec's original author (first commit that added this file)
+  SPEC_AUTHOR=$(git -C "${XIBI_DIR}" log --diff-filter=A --format="%an" -- "${SPEC_FILE}" 2>/dev/null \
+    || git -C "${XIBI_DIR}" log --diff-filter=A --format="%an" -- "tasks/pending/$(basename "${SPEC_FILE}")" 2>/dev/null \
+    || git -C "${XIBI_DIR}" log --diff-filter=A --format="%an" -- "tasks/backlog/$(basename "${SPEC_FILE}")" 2>/dev/null \
+    || echo "unknown")
+  SPEC_AUTHOR=$(echo "${SPEC_AUTHOR}" | head -1)
+
+  # 4. Get who last modified the TRR Record section (last commit touching "TRR Record")
+  TRR_AUTHOR=$(git -C "${XIBI_DIR}" log -1 --format="%an" -S "TRR Record" -- "${SPEC_FILE}" 2>/dev/null \
+    || git -C "${XIBI_DIR}" log -1 --format="%an" -S "TRR Record" -- "tasks/pending/$(basename "${SPEC_FILE}")" 2>/dev/null \
+    || git -C "${XIBI_DIR}" log -1 --format="%an" -S "TRR Record" -- "tasks/backlog/$(basename "${SPEC_FILE}")" 2>/dev/null \
+    || echo "unknown")
+  TRR_AUTHOR=$(echo "${TRR_AUTHOR}" | head -1)
+
+  log "Spec author: ${SPEC_AUTHOR}"
+  log "TRR author:  ${TRR_AUTHOR}"
+
+  # 5. Block if same author wrote both
+  if [[ "${SPEC_AUTHOR}" == "${TRR_AUTHOR}" ]]; then
+    die "TRR GATE FAILED: Spec and TRR Record were both committed by '${SPEC_AUTHOR}'. TRR must be conducted by an independent reviewer (Opus via Cowork). Self-authored TRRs are not valid."
+  fi
+
+  # 6. Sanity: reject generic rubber-stamp verdicts (optional heuristic)
+  if grep -q "Architecture sound, dependencies correct, scope well-defined" "${SPEC_FILE}"; then
+    log "WARNING: TRR findings look generic/rubber-stamped. Proceeding but flagging for review."
+  fi
+
+  log "TRR provenance gate PASSED — spec by '${SPEC_AUTHOR}', TRR by '${TRR_AUTHOR}'"
+else
+  log "TRR provenance gate SKIPPED (SKIP_TRR_GATE=1)"
+fi
 
 # ── Call Jules API ────────────────────────────────────────────────────────────
 PAYLOAD=$(python3 -c "
