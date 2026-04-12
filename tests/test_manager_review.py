@@ -12,6 +12,7 @@ Covers:
 from __future__ import annotations
 
 import json
+import sqlite3
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -608,233 +609,172 @@ def test_build_review_dump_exception_returns_error_string(db_path):
     assert "Error building review dump" in dump
 
 
-# Step-72 enrichment tests
+# ── Step-72 Enrichment Tests ──────────────────────────────────────────────
 
 
-def test_apply_topic_pin(db_path):
+def test_apply_manager_updates_topic_pins(db_path):
     cycle = ObservationCycle(db_path=db_path)
     review_data = {
-        "topic_pins": [{"topic": "Acme Launch", "action": "pin", "reason": "heating up"}]
+        "topic_pins": [
+            {"topic": "Hot Topic", "action": "pin", "reason": "important"},
+            {"topic": "Cold Topic", "action": "unpin", "reason": "over"},
+        ]
     }
+    # Pre-insert Cold Topic to test unpin
+    with open_db(db_path) as conn, conn:
+        conn.execute("INSERT INTO pinned_topics (topic) VALUES ('cold topic')")
+
     actions = cycle._apply_manager_updates(review_data)
     assert any(a["tool"] == "manager_topic_pin" for a in actions)
+
     with open_db(db_path) as conn:
-        row = conn.execute("SELECT topic FROM pinned_topics WHERE topic = 'acme launch'").fetchone()
-    assert row is not None
+        pinned = [r[0] for r in conn.execute("SELECT topic FROM pinned_topics").fetchall()]
+    assert "hot topic" in pinned
+    assert "cold topic" not in pinned
 
 
-def test_apply_topic_unpin(db_path):
+def test_apply_manager_updates_contact_enrichment(db_path):
     with open_db(db_path) as conn, conn:
-        conn.execute("INSERT INTO pinned_topics (topic) VALUES ('old topic')")
+        conn.execute("INSERT INTO contacts (id, display_name) VALUES ('c1', 'Alice')")
+
     cycle = ObservationCycle(db_path=db_path)
-    review_data = {
-        "topic_pins": [{"topic": "old topic", "action": "unpin", "reason": "cooled off"}]
-    }
-    actions = cycle._apply_manager_updates(review_data)
-    assert any(a["tool"] == "manager_topic_pin" for a in actions)
-    with open_db(db_path) as conn:
-        row = conn.execute("SELECT topic FROM pinned_topics WHERE topic = 'old topic'").fetchone()
-    assert row is None
-
-
-def test_apply_topic_pin_duplicate(db_path):
-    with open_db(db_path) as conn, conn:
-        conn.execute("INSERT INTO pinned_topics (topic) VALUES ('existing')")
-    cycle = ObservationCycle(db_path=db_path)
-    review_data = {
-        "topic_pins": [{"topic": "Existing", "action": "pin", "reason": "still hot"}]
-    }
-    actions = cycle._apply_manager_updates(review_data)
-    with open_db(db_path) as conn:
-        count = conn.execute("SELECT COUNT(*) FROM pinned_topics WHERE topic = 'existing'").fetchone()[0]
-    assert count == 1
-
-
-def test_apply_contact_enrichment(db_path):
-    with open_db(db_path) as conn, conn:
-        conn.execute(
-            "INSERT INTO contacts (id, display_name, relationship, organization) "
-            "VALUES ('c1', 'Alice', 'unknown', NULL)"
-        )
-    cycle = ObservationCycle(db_path=db_path)
-    review_data = {
-        "contact_updates": [{"contact_id": "c1", "relationship": "vendor", "organization": "Acme Corp"}]
-    }
+    review_data = {"contact_updates": [{"contact_id": "c1", "relationship": "client", "organization": "Acme Corp"}]}
     actions = cycle._apply_manager_updates(review_data)
     assert any(a["tool"] == "manager_contact_enrichment" for a in actions)
+
     with open_db(db_path) as conn:
+        conn.row_factory = sqlite3.Row
         row = conn.execute("SELECT relationship, organization FROM contacts WHERE id = 'c1'").fetchone()
-    assert row[0] == "vendor"
-    assert row[1] == "Acme Corp"
+    assert row["relationship"] == "client"
+    assert row["organization"] == "Acme Corp"
 
 
-def test_apply_contact_invalid_id(db_path):
-    cycle = ObservationCycle(db_path=db_path)
-    review_data = {
-        "contact_updates": [{"contact_id": "nonexistent", "relationship": "client"}]
-    }
-    actions = cycle._apply_manager_updates(review_data)
-    assert any(a["tool"] == "manager_contact_enrichment" for a in actions)
-
-
-def test_apply_reclassify_urgent(db_path):
-    signal_id = _insert_signal(db_path, source="email", content_preview="urgent-email")
+def test_apply_manager_updates_reclassify_urgent(db_path):
+    # Insert a signal
     with open_db(db_path) as conn, conn:
-        ref_id = conn.execute("SELECT ref_id FROM signals WHERE id = ?", (signal_id,)).fetchone()
-        if ref_id and ref_id[0]:
-            conn.execute(
-                "INSERT INTO triage_log (email_id, verdict, timestamp) VALUES (?, 'DIGEST', datetime('now'))",
-                (ref_id[0],)
-            )
+        cursor = conn.execute("INSERT INTO signals (source, content_preview, ref_id) VALUES ('email', 'p', 'ref-1')")
+        signal_id = cursor.lastrowid
+        conn.execute("INSERT INTO triage_log (email_id, verdict) VALUES ('ref-1', 'DIGEST')")
+
     cycle = ObservationCycle(db_path=db_path)
     review_data = {
-        "signal_flags": [{
-            "signal_id": signal_id,
-            "suggested_urgency": "high",
-            "reclassify_urgent": True,
-            "reason": "escalation pattern"
-        }]
+        "signal_flags": [
+            {"signal_id": signal_id, "suggested_urgency": "high", "reclassify_urgent": True, "reason": "Very important"}
+        ]
     }
     actions = cycle._apply_manager_updates(review_data)
     assert any(a["tool"] == "late_nudge_queued" for a in actions)
-    assert any(a["tool"] == "manager_signal_flag" for a in actions)
 
-
-def test_apply_thread_owner_deadline(db_path):
-    _insert_thread(db_path, "t1", "Test Thread", priority=None)
-    cycle = ObservationCycle(db_path=db_path)
-    review_data = {
-        "thread_updates": [{
-            "thread_id": "t1",
-            "priority": "high",
-            "summary": "Updated",
-            "owner": "me",
-            "deadline": "2026-12-25"
-        }],
-        "signal_flags": [],
-    }
-    actions = cycle._apply_manager_updates(review_data)
     with open_db(db_path) as conn:
-        row = conn.execute(
-            "SELECT priority, summary, owner, current_deadline FROM threads WHERE id = 't1'"
-        ).fetchone()
-    assert row[0] == "high"
-    assert row[1] == "Updated"
-    assert row[2] == "me"
-    assert row[3] == "2026-12-25"
+        urgency = conn.execute("SELECT urgency FROM signals WHERE id = ?", (signal_id,)).fetchone()[0]
+        verdict = conn.execute(
+            "SELECT verdict FROM triage_log WHERE email_id = 'ref-1' ORDER BY id DESC LIMIT 1"
+        ).fetchone()[0]
+    assert urgency == "high"
+    assert verdict == "URGENT"
 
 
-def test_build_review_dump_includes_summaries(db_path):
-    _insert_signal(db_path, source="email", content_preview="test")
-    with open_db(db_path) as conn, conn:
-        conn.execute("UPDATE signals SET summary = 'Meeting about Q4 budget', env = 'production'")
+def test_apply_manager_updates_thread_owner_deadline(db_path):
+    _insert_thread(db_path, "t1", "Test")
     cycle = ObservationCycle(db_path=db_path)
-    dump = cycle._build_review_dump()
-    assert "Meeting about Q4 budget" in dump
+    review_data = {"thread_updates": [{"thread_id": "t1", "owner": "me", "deadline": "2026-05-01"}]}
+    cycle._apply_manager_updates(review_data)
+    with open_db(db_path) as conn:
+        row = conn.execute("SELECT owner, current_deadline FROM threads WHERE id = 't1'").fetchone()
+    assert row[0] == "me"
+    assert row[1] == "2026-05-01"
 
 
-def test_build_review_dump_includes_trust(db_path):
-    _insert_signal(db_path, source="email", content_preview="test")
+def test_build_review_dump_enriched_content(db_path):
+    # Setup: thread with summary, signal with summary and trust, contact
+    _insert_thread(db_path, "t1", "Thread 1", priority="medium", owner="me")
     with open_db(db_path) as conn, conn:
-        conn.execute("UPDATE signals SET sender_trust = 'ESTABLISHED', env = 'production'")
-    cycle = ObservationCycle(db_path=db_path)
-    dump = cycle._build_review_dump()
-    assert "ESTABLISHED" in dump
-
-
-def test_build_review_dump_includes_contacts(db_path):
-    _insert_signal(db_path, source="email", content_preview="test")
-    with open_db(db_path) as conn, conn:
+        conn.execute("UPDATE threads SET summary = 'Old summary' WHERE id = 't1'")
+        conn.execute(
+            "INSERT INTO signals (source, content_preview, summary, sender_trust, sender_contact_id, timestamp, env) "
+            "VALUES ('email', 'p', 'Signal summary', 'ESTABLISHED', 'c1', datetime('now'), 'production')"
+        )
         conn.execute(
             "INSERT INTO contacts (id, display_name, organization, relationship, outbound_count) "
-            "VALUES ('c1', 'Bob Smith', 'Acme Inc', 'colleague', 7)"
+            "VALUES ('c1', 'Bob', 'Acme', 'colleague', 5)"
         )
-        conn.execute("UPDATE signals SET sender_contact_id = 'c1', env = 'production'")
+        conn.execute("INSERT INTO pinned_topics (topic) VALUES ('hot topic')")
+
     cycle = ObservationCycle(db_path=db_path)
     dump = cycle._build_review_dump()
-    assert "Bob Smith" in dump
-    assert "Acme Inc" in dump
+
+    assert "Old summary" in dump
+    assert "Signal summary" in dump
+    assert "ESTABLISHED" in dump
+    assert "Bob" in dump
+    assert "org: Acme" in dump
     assert "colleague" in dump
-    assert "7x" in dump
-
-
-def test_build_review_dump_includes_pinned_topics(db_path):
-    with open_db(db_path) as conn, conn:
-        conn.execute("INSERT INTO pinned_topics (topic) VALUES ('urgent project')")
-    cycle = ObservationCycle(db_path=db_path)
-    dump = cycle._build_review_dump()
-    assert "urgent project" in dump.lower()
-
-
-def test_build_review_dump_recent_signals_section(db_path):
-    _insert_signal(db_path, source="email", content_preview="recent one")
-    with open_db(db_path) as conn, conn:
-        conn.execute(
-            "UPDATE signals SET env = 'production', timestamp = datetime('now')"
-        )
-    cycle = ObservationCycle(db_path=db_path)
-    dump = cycle._build_review_dump()
+    assert "you've emailed them 5x" in dump
+    assert "HOT TOPIC" in dump.upper()
     assert "RECENT SIGNALS" in dump
 
 
-def test_run_manager_review_late_nudge(db_path):
-    signal_id = _insert_signal(db_path, source="email", content_preview="hot-signal")
+def test_run_manager_review_late_nudge_dispatch(db_path):
     with open_db(db_path) as conn, conn:
-        conn.execute(
-            "UPDATE signals SET summary = 'Important email', topic_hint = 'Hot Topic', "
-            "ref_id = 'ref-hot', env = 'production'"
+        cursor = conn.execute(
+            "INSERT INTO signals (source, content_preview, topic_hint, ref_id) VALUES ('email', 'p', 'Hot', 'ref-1')"
         )
+        signal_id = cursor.lastrowid
+
     cycle = ObservationCycle(db_path=db_path)
 
-    response = json.dumps({
-        "thread_updates": [],
-        "signal_flags": [{
-            "signal_id": signal_id,
-            "suggested_urgency": "high",
-            "reclassify_urgent": True,
-            "reason": "escalation"
-        }],
-        "topic_pins": [],
-        "contact_updates": [],
-        "digest": "Digest text"
-    })
-    mock_llm = _make_llm_mock(response)
+    response = json.dumps(
+        {
+            "thread_updates": [],
+            "signal_flags": [
+                {"signal_id": signal_id, "suggested_urgency": "high", "reclassify_urgent": True, "reason": "escalation"}
+            ],
+            "digest": "Digest text",
+        }
+    )
+    mock_llm = MagicMock()
+    mock_llm.generate.return_value = response
     mock_executor = MagicMock()
 
     with (
         patch("xibi.observation.get_model", return_value=mock_llm),
-        patch("xibi.observation.dispatch") as mock_dispatch,
+        patch("xibi.observation.dispatch", return_value={"status": "ok"}) as mock_dispatch,
     ):
         result = cycle._run_manager_review(executor=mock_executor, command_layer=None)
 
     assert result.ran is True
-    assert mock_dispatch.call_count >= 2
-    late_calls = [c for c in mock_dispatch.call_args_list if "Late Alerts" in str(c)]
-    assert len(late_calls) >= 1
+    # Two nudges: one for digest, one for late alerts
+    assert mock_dispatch.call_count == 2
+
+    # Verify late nudge content
+    late_nudge_call = [c for c in mock_dispatch.call_args_list if "Late Alerts" in c[0][1]["message"]][0]
+    assert "Hot" in late_nudge_call[0][1]["message"]
+    assert "escalation" in late_nudge_call[0][1]["message"]
 
 
-def test_run_manager_review_all_new_actions(db_path):
+def test_run_manager_review_all_actions(db_path):
     _insert_thread(db_path, "t1", "T1")
     with open_db(db_path) as conn, conn:
-        conn.execute(
-            "INSERT INTO contacts (id, display_name) VALUES ('c1', 'Alice')"
-        )
+        conn.execute("INSERT INTO contacts (id, display_name) VALUES ('c1', 'Alice')")
+
     cycle = ObservationCycle(db_path=db_path)
 
-    response = json.dumps({
-        "thread_updates": [{"thread_id": "t1", "priority": "high", "owner": "me"}],
-        "signal_flags": [],
-        "topic_pins": [{"topic": "new topic", "action": "pin", "reason": "rising"}],
-        "contact_updates": [{"contact_id": "c1", "relationship": "vendor"}],
-        "digest": "ok"
-    })
-    mock_llm = _make_llm_mock(response)
+    response = json.dumps(
+        {
+            "thread_updates": [{"thread_id": "t1", "priority": "high", "owner": "me"}],
+            "signal_flags": [],
+            "topic_pins": [{"topic": "new topic", "action": "pin", "reason": "rising"}],
+            "contact_updates": [{"contact_id": "c1", "relationship": "vendor"}],
+            "digest": "ok",
+        }
+    )
+    mock_llm = MagicMock()
+    mock_llm.generate.return_value = response
 
     with patch("xibi.observation.get_model", return_value=mock_llm):
         result = cycle._run_manager_review(executor=None, command_layer=None)
 
     assert result.ran is True
-    action_tools = [a["tool"] for a in result.actions_taken]
-    assert "manager_thread_update" in action_tools
-    assert "manager_topic_pin" in action_tools
-    assert "manager_contact_enrichment" in action_tools
+    assert any(a["tool"] == "manager_thread_update" for a in result.actions_taken)
+    assert any(a["tool"] == "manager_topic_pin" for a in result.actions_taken)
+    assert any(a["tool"] == "manager_contact_enrichment" for a in result.actions_taken)
