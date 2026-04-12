@@ -11,17 +11,17 @@ from typing import TYPE_CHECKING, Any
 import xibi.db
 import xibi.signal_intelligence as sig_intel
 from xibi.alerting.rules import RuleEngine
+from xibi.heartbeat.contact_poller import backfill_contacts, find_himalaya, poll_sent_folder
+from xibi.heartbeat.sender_trust import (
+    assess_sender_trust,
+    _extract_sender_addr,
+    _extract_sender_name,
+)
+from xibi.heartbeat.classification import build_classification_prompt, build_fallback_prompt
 from xibi.channels.sheets import SheetsExporter
 from xibi.channels.telegram import TelegramAdapter
 from xibi.command_layer import CommandLayer
-from xibi.heartbeat.classification import build_classification_prompt
-from xibi.heartbeat.contact_poller import backfill_contacts, find_himalaya, poll_sent_folder
 from xibi.heartbeat.extractors import SignalExtractorRegistry
-from xibi.heartbeat.sender_trust import (
-    _extract_sender_addr,
-    _extract_sender_name,
-    assess_sender_trust,
-)
 from xibi.heartbeat.source_poller import SourcePoller
 from xibi.observation import ObservationCycle
 from xibi.radiant import Radiant
@@ -29,6 +29,8 @@ from xibi.router import get_model
 from xibi.threads import sweep_resolved_threads, sweep_stale_threads
 
 if TYPE_CHECKING:
+    from xibi.heartbeat.context_assembly import EmailContext
+    from xibi.heartbeat.rich_nudge import RichNudge
     from xibi.trust.gradient import TrustGradient
 
 # Jules watcher — lazy import to avoid hard dependency if Jules not configured
@@ -738,7 +740,6 @@ class HeartbeatPoller:
                             # Sync back to adapter if possible
                             if hasattr(self.adapter, "_pending_nudge_context"):
                                 self.adapter._pending_nudge_context = self._pending_nudge_context
-
                             logger.info(
                                 f"Rich URGENT nudge sent for signal {nudge.signal_id}: "
                                 f"{len(nudge.text)} chars, actions={nudge.actions}"

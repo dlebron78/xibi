@@ -1,6 +1,7 @@
 import json
 import sqlite3
 from unittest.mock import MagicMock, patch
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -209,6 +210,7 @@ def test_execute_reply_creates_task(mock_core, mock_context):
     assert "Draft Reply" in outcome.detail
     mock_core._create_task.assert_called_once()
     args, kwargs = mock_core._create_task.call_args
+    # Signature: (goal, exit_type, urgency, due, context_compressed, scratchpad_json, trace_id)
     assert args[1] == "ask_user"
     assert "reply_email" in args[5]
 
@@ -299,7 +301,6 @@ def test_outcome_error_keeps_active(mock_core):
 
 # ── Integration tests: Telegram routing ────────────────────────────────
 
-from datetime import datetime, timedelta
 import bregger_telegram
 import importlib
 

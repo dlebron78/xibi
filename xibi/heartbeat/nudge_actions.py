@@ -350,7 +350,7 @@ def execute_action(
 def _execute_dismiss(payload: ActionPayload, core: Any) -> ActionOutcome:
     """Dismiss a signal — update proposal_status, log outcome."""
     if payload.signal_id:
-        with open_db(Path(core.db_path)) as conn:
+        with open_db(Path(core.db_path)) as conn, conn:
             conn.execute(
                 "UPDATE signals SET proposal_status = 'dismissed', dismissed_at = datetime('now') WHERE id = ?",
                 (payload.signal_id,),
@@ -391,14 +391,14 @@ def _execute_with_confirmation(
         ]
     )
 
-    # trace_id must be a string for core class._create_task
+    # trace_id must be a string for core class's _create_task
     trace_id = f"nudge_action_{payload.signal_id}" if payload.signal_id else ""
 
     task_id = core._create_task(
         payload.preview,  # goal
         "ask_user",  # exit_type
         "high",  # urgency
-        None,  # due (missing in previous call)
+        None,  # due
         payload.context_summary,
         scratchpad,
         trace_id,
@@ -452,21 +452,8 @@ def _execute_silent(
 
 def _call_tool(payload: ActionPayload, core: Any) -> str:
     """Call the actual tool. Thin wrapper around existing tool dispatch."""
-    tool_meta = core._get_tool_meta(payload.tool_name)
-    if not tool_meta:
-        return f"Error: Tool {payload.tool_name} not found."
-
-    plan = {
-        "skill": tool_meta["skill"],
-        "tool": payload.tool_name,
-        "parameters": payload.tool_params,
-    }
-
-    result = core.executive.execute_plan(plan, beliefs=getattr(core, "_belief_cache", None))
-    if isinstance(result, dict):
-        res = result.get("message", str(result))
-        return str(res)
-    return str(result)
+    # TRR-C1: Raise NotImplementedError for future tiers today
+    raise NotImplementedError("YELLOW/GREEN automatic tool execution not implemented in step-74")
 
 
 def _build_confirmation_prompt(payload: ActionPayload) -> str:
@@ -510,7 +497,7 @@ def log_outcome(outcome: ActionOutcome, db_path: str) -> None:
     if not outcome.signal_id:
         return
 
-    with open_db(Path(db_path)) as conn:
+    with open_db(Path(db_path)) as conn, conn:
         # Update proposal_status on the signal
         status_map = {
             "confirmed": "confirmed",

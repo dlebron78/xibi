@@ -7,7 +7,8 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from datetime import datetime
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from xibi.heartbeat.context_assembly import EmailContext

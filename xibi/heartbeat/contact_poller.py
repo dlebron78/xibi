@@ -66,7 +66,7 @@ def _discover_sent_folder(himalaya_bin: str, db_path: Path) -> str | None:
     return None
 
 
-def _cache_sent_folder(folder: str, db_path: Path) -> None:
+def _cache_sent_folder(folder: str, db_path: Path):
     try:
         with open_db(db_path) as conn, conn:
             conn.execute(
@@ -109,7 +109,7 @@ def _extract_recipients(himalaya_bin: str, envelope: dict) -> list[dict]:
     if not to_field and not cc_field:
         return _fetch_recipients_full(himalaya_bin, envelope["id"])
 
-    def parse_addr(raw: Any, role: str) -> dict[str, Any] | None:
+    def parse_addr(raw: Any, role: str):
         if isinstance(raw, dict):
             return {"name": raw.get("name", ""), "addr": raw.get("addr", ""), "role": role}
         elif isinstance(raw, str):
@@ -223,7 +223,7 @@ def poll_sent_folder(
                     if rec["addr"]:
                         _upsert_contact_core(
                             email=rec["addr"],
-                            display_name=rec["name"] or rec["addr"] or "",
+                            display_name=rec["name"] or rec["addr"],
                             organization=None,
                             db_path=db_path,
                             direction="outbound",
@@ -284,7 +284,7 @@ def backfill_contacts(
                         if rec["addr"]:
                             _upsert_contact_core(
                                 email=rec["addr"],
-                                display_name=rec["name"] or rec["addr"] or "",
+                                display_name=rec["name"] or rec["addr"],
                                 organization=None,
                                 db_path=db_path,
                                 direction="outbound",
@@ -325,7 +325,7 @@ def backfill_contacts(
 
                 if addr:
                     _upsert_contact_core(
-                        email=addr, display_name=name or addr, organization=None, db_path=db_path, direction="inbound"
+                        email=addr, display_name=name, organization=None, db_path=db_path, direction="inbound"
                     )
             except Exception:
                 continue
