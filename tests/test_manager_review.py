@@ -613,9 +613,7 @@ def test_build_review_dump_exception_returns_error_string(db_path):
 
 def test_apply_topic_pin(db_path):
     cycle = ObservationCycle(db_path=db_path)
-    review_data = {
-        "topic_pins": [{"topic": "Acme Launch", "action": "pin", "reason": "heating up"}]
-    }
+    review_data = {"topic_pins": [{"topic": "Acme Launch", "action": "pin", "reason": "heating up"}]}
     actions = cycle._apply_manager_updates(review_data)
     assert any(a["tool"] == "manager_topic_pin" for a in actions)
     with open_db(db_path) as conn:
@@ -627,9 +625,7 @@ def test_apply_topic_unpin(db_path):
     with open_db(db_path) as conn, conn:
         conn.execute("INSERT INTO pinned_topics (topic) VALUES ('old topic')")
     cycle = ObservationCycle(db_path=db_path)
-    review_data = {
-        "topic_pins": [{"topic": "old topic", "action": "unpin", "reason": "cooled off"}]
-    }
+    review_data = {"topic_pins": [{"topic": "old topic", "action": "unpin", "reason": "cooled off"}]}
     actions = cycle._apply_manager_updates(review_data)
     assert any(a["tool"] == "manager_topic_pin" for a in actions)
     with open_db(db_path) as conn:
@@ -641,9 +637,7 @@ def test_apply_topic_pin_duplicate(db_path):
     with open_db(db_path) as conn, conn:
         conn.execute("INSERT INTO pinned_topics (topic) VALUES ('existing')")
     cycle = ObservationCycle(db_path=db_path)
-    review_data = {
-        "topic_pins": [{"topic": "Existing", "action": "pin", "reason": "still hot"}]
-    }
+    review_data = {"topic_pins": [{"topic": "Existing", "action": "pin", "reason": "still hot"}]}
     actions = cycle._apply_manager_updates(review_data)
     with open_db(db_path) as conn:
         count = conn.execute("SELECT COUNT(*) FROM pinned_topics WHERE topic = 'existing'").fetchone()[0]
@@ -657,9 +651,7 @@ def test_apply_contact_enrichment(db_path):
             "VALUES ('c1', 'Alice', 'unknown', NULL)"
         )
     cycle = ObservationCycle(db_path=db_path)
-    review_data = {
-        "contact_updates": [{"contact_id": "c1", "relationship": "vendor", "organization": "Acme Corp"}]
-    }
+    review_data = {"contact_updates": [{"contact_id": "c1", "relationship": "vendor", "organization": "Acme Corp"}]}
     actions = cycle._apply_manager_updates(review_data)
     assert any(a["tool"] == "manager_contact_enrichment" for a in actions)
     with open_db(db_path) as conn:
@@ -670,9 +662,7 @@ def test_apply_contact_enrichment(db_path):
 
 def test_apply_contact_invalid_id(db_path):
     cycle = ObservationCycle(db_path=db_path)
-    review_data = {
-        "contact_updates": [{"contact_id": "nonexistent", "relationship": "client"}]
-    }
+    review_data = {"contact_updates": [{"contact_id": "nonexistent", "relationship": "client"}]}
     actions = cycle._apply_manager_updates(review_data)
     assert any(a["tool"] == "manager_contact_enrichment" for a in actions)
 
@@ -684,16 +674,18 @@ def test_apply_reclassify_urgent(db_path):
         if ref_id and ref_id[0]:
             conn.execute(
                 "INSERT INTO triage_log (email_id, verdict, timestamp) VALUES (?, 'DIGEST', datetime('now'))",
-                (ref_id[0],)
+                (ref_id[0],),
             )
     cycle = ObservationCycle(db_path=db_path)
     review_data = {
-        "signal_flags": [{
-            "signal_id": signal_id,
-            "suggested_urgency": "high",
-            "reclassify_urgent": True,
-            "reason": "escalation pattern"
-        }]
+        "signal_flags": [
+            {
+                "signal_id": signal_id,
+                "suggested_urgency": "high",
+                "reclassify_urgent": True,
+                "reason": "escalation pattern",
+            }
+        ]
     }
     actions = cycle._apply_manager_updates(review_data)
     assert any(a["tool"] == "late_nudge_queued" for a in actions)
@@ -704,20 +696,14 @@ def test_apply_thread_owner_deadline(db_path):
     _insert_thread(db_path, "t1", "Test Thread", priority=None)
     cycle = ObservationCycle(db_path=db_path)
     review_data = {
-        "thread_updates": [{
-            "thread_id": "t1",
-            "priority": "high",
-            "summary": "Updated",
-            "owner": "me",
-            "deadline": "2026-12-25"
-        }],
+        "thread_updates": [
+            {"thread_id": "t1", "priority": "high", "summary": "Updated", "owner": "me", "deadline": "2026-12-25"}
+        ],
         "signal_flags": [],
     }
     actions = cycle._apply_manager_updates(review_data)
     with open_db(db_path) as conn:
-        row = conn.execute(
-            "SELECT priority, summary, owner, current_deadline FROM threads WHERE id = 't1'"
-        ).fetchone()
+        row = conn.execute("SELECT priority, summary, owner, current_deadline FROM threads WHERE id = 't1'").fetchone()
     assert row[0] == "high"
     assert row[1] == "Updated"
     assert row[2] == "me"
@@ -769,9 +755,7 @@ def test_build_review_dump_includes_pinned_topics(db_path):
 def test_build_review_dump_recent_signals_section(db_path):
     _insert_signal(db_path, source="email", content_preview="recent one")
     with open_db(db_path) as conn, conn:
-        conn.execute(
-            "UPDATE signals SET env = 'production', timestamp = datetime('now')"
-        )
+        conn.execute("UPDATE signals SET env = 'production', timestamp = datetime('now')")
     cycle = ObservationCycle(db_path=db_path)
     dump = cycle._build_review_dump()
     assert "RECENT SIGNALS" in dump
@@ -786,18 +770,17 @@ def test_run_manager_review_late_nudge(db_path):
         )
     cycle = ObservationCycle(db_path=db_path)
 
-    response = json.dumps({
-        "thread_updates": [],
-        "signal_flags": [{
-            "signal_id": signal_id,
-            "suggested_urgency": "high",
-            "reclassify_urgent": True,
-            "reason": "escalation"
-        }],
-        "topic_pins": [],
-        "contact_updates": [],
-        "digest": "Digest text"
-    })
+    response = json.dumps(
+        {
+            "thread_updates": [],
+            "signal_flags": [
+                {"signal_id": signal_id, "suggested_urgency": "high", "reclassify_urgent": True, "reason": "escalation"}
+            ],
+            "topic_pins": [],
+            "contact_updates": [],
+            "digest": "Digest text",
+        }
+    )
     mock_llm = _make_llm_mock(response)
     mock_executor = MagicMock()
 
@@ -809,25 +792,25 @@ def test_run_manager_review_late_nudge(db_path):
 
     assert result.ran is True
     assert mock_dispatch.call_count >= 2
-    late_calls = [c for c in mock_dispatch.call_args_list if "Late Alerts" in str(c)]
+    late_calls = [c for c in mock_dispatch.call_args_list if "Late Alert" in str(c)]
     assert len(late_calls) >= 1
 
 
 def test_run_manager_review_all_new_actions(db_path):
     _insert_thread(db_path, "t1", "T1")
     with open_db(db_path) as conn, conn:
-        conn.execute(
-            "INSERT INTO contacts (id, display_name) VALUES ('c1', 'Alice')"
-        )
+        conn.execute("INSERT INTO contacts (id, display_name) VALUES ('c1', 'Alice')")
     cycle = ObservationCycle(db_path=db_path)
 
-    response = json.dumps({
-        "thread_updates": [{"thread_id": "t1", "priority": "high", "owner": "me"}],
-        "signal_flags": [],
-        "topic_pins": [{"topic": "new topic", "action": "pin", "reason": "rising"}],
-        "contact_updates": [{"contact_id": "c1", "relationship": "vendor"}],
-        "digest": "ok"
-    })
+    response = json.dumps(
+        {
+            "thread_updates": [{"thread_id": "t1", "priority": "high", "owner": "me"}],
+            "signal_flags": [],
+            "topic_pins": [{"topic": "new topic", "action": "pin", "reason": "rising"}],
+            "contact_updates": [{"contact_id": "c1", "relationship": "vendor"}],
+            "digest": "ok",
+        }
+    )
     mock_llm = _make_llm_mock(response)
 
     with patch("xibi.observation.get_model", return_value=mock_llm):

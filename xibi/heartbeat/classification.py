@@ -1,9 +1,12 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
+
 if TYPE_CHECKING:
     from xibi.heartbeat.context_assembly import EmailContext
 
 from xibi.heartbeat.sender_trust import _extract_sender_addr, _extract_sender_name
+
 
 def build_classification_prompt(email: dict, context: EmailContext) -> str:
     """Build a context-rich classification prompt from EmailContext."""
@@ -40,7 +43,7 @@ def build_classification_prompt(email: dict, context: EmailContext) -> str:
 
     # Thread context
     if context.matching_thread_name:
-        thread_line = f"Active thread: \"{context.matching_thread_name}\""
+        thread_line = f'Active thread: "{context.matching_thread_name}"'
         if context.matching_thread_priority:
             thread_line += f" (priority: {context.matching_thread_priority})"
         if context.matching_thread_deadline:
@@ -75,14 +78,12 @@ Verdict:"""
 
     return prompt
 
+
 def build_fallback_prompt(email: dict) -> str:
     """Original sender+subject-only prompt. Used when context assembly fails."""
     addr = _extract_sender_addr(email)
     name = _extract_sender_name(email)
-    if name and addr:
-        sender = f"{name} <{addr}>"
-    else:
-        sender = name or addr or "Unknown"
+    sender = f"{name} <{addr}>" if name and addr else (name or addr or "Unknown")
 
     subject = email.get("subject", "No Subject")
     return f"""From: {sender}

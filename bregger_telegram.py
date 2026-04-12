@@ -6,9 +6,17 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 
 from bregger_core import BreggerCore
+from xibi.heartbeat.nudge_actions import (
+    ActionIntent,
+    build_action_payload,
+    execute_action,
+    log_outcome,
+    parse_intent,
+)
 
 # Temporary store: chat_id -> local file path of the most recently uploaded file.
 _pending_attachments: dict = {}
@@ -63,6 +71,7 @@ class BreggerTelegramAdapter:
         self.base_url = f"https://api.telegram.org/bot{self.token}"
         self.offset_file = Path(core.workdir) / "data" / "telegram_offset.txt"
         self.offset = self._load_offset()
+        self._pending_nudge_context: dict | None = None
 
         # Wire up the step_callback to send a progress nudge for long-running ReAct loops.
         # The callback receives the step number and the LLM's own thought as context.
@@ -271,10 +280,49 @@ class BreggerTelegramAdapter:
                     try:
                         response = None
 
+                        # Stale nudge context timeout (10 min)
+                        if self._pending_nudge_context:
+                            sent = datetime.fromisoformat(self._pending_nudge_context["sent_at"])
+                            if (datetime.now() - sent).total_seconds() > 600:
+                                self._pending_nudge_context = None
+
                         # Single Active Slot routing
                         _ESCAPE_WORDS = {"cancel", "skip", "nevermind", "not now", "forget it", "move on"}
                         awaiting = self.core._get_awaiting_task()
-                        if awaiting:
+
+                        # Check if this is a response to a recent nudge
+                        if self._pending_nudge_context and not awaiting:
+                            nudge_ctx = self._pending_nudge_context
+                            intent = parse_intent(user_text, nudge_ctx.get("actions"))
+
+                            if intent != ActionIntent.UNKNOWN:
+                                context = nudge_ctx["email_context"]
+                                payload = build_action_payload(
+                                    intent=intent,
+                                    context=context,
+                                    signal_id=nudge_ctx.get("signal_id"),
+                                    user_text=user_text,
+                                )
+                                if payload:
+                                    outcome = execute_action(payload, self.core, context)
+
+                                    if outcome.result == "awaiting_confirmation":
+                                        response = outcome.detail
+                                    elif outcome.result == "dismissed":
+                                        response = f"👋 Dismissed: {outcome.detail}"
+                                        self._pending_nudge_context = None
+                                    else:
+                                        response = f"Action result: {outcome.detail}"
+                                        self._pending_nudge_context = None
+
+                                    log_outcome(outcome, self.core.db_path)
+
+                            # If intent was unknown, or if we cleared context above, we fall through.
+                            # But if intent was unknown, we should clear context anyway as user is doing something else.
+                            if intent == ActionIntent.UNKNOWN:
+                                self._pending_nudge_context = None
+
+                        if not response and awaiting:
                             if user_text.strip().lower() in _ESCAPE_WORDS:
                                 self.core._cancel_task(awaiting["id"])
                                 response = "Task cancelled. What's next?"

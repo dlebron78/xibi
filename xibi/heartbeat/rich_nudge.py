@@ -7,8 +7,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from xibi.heartbeat.context_assembly import EmailContext
@@ -19,12 +18,13 @@ logger = logging.getLogger(__name__)
 @dataclass
 class RichNudge:
     """Composed nudge ready to send."""
+
     signal_id: int | None
-    text: str                    # Formatted Telegram message
-    actions: list[str]           # Suggested action labels
-    thread_id: str | None        # For nudge skill routing
-    ref_id: str | None           # Original email ref for reply threading
-    is_late: bool = False        # True if from manager reclassification
+    text: str  # Formatted Telegram message
+    actions: list[str]  # Suggested action labels
+    thread_id: str | None  # For nudge skill routing
+    ref_id: str | None  # Original email ref for reply threading
+    is_late: bool = False  # True if from manager reclassification
 
 
 def compose_rich_nudge(
@@ -226,11 +226,13 @@ def _build_nudge_prompt(context: EmailContext) -> str:
     if context.sender_signals_7d > 1:
         parts.append(f"Sender sent {context.sender_signals_7d} messages this week")
 
-    parts.extend([
-        "",
-        'Respond with JSON: {"reason": "one sentence", "actions": ["Reply", "Schedule"]}',
-        "Keep it under 20 words. No markdown.",
-    ])
+    parts.extend(
+        [
+            "",
+            'Respond with JSON: {"reason": "one sentence", "actions": ["Reply", "Schedule"]}',
+            "Keep it under 20 words. No markdown.",
+        ]
+    )
 
     return "\n".join(parts)
 
@@ -248,10 +250,11 @@ async def _call_local_model(prompt: str, model_name: str) -> dict | None:
     try:
         # Simple extraction in case there's markdown
         import re
+
         match = re.search(r"\{.*\}", response, re.DOTALL)
         if match:
-            return json.loads(match.group(0))
-        return json.loads(response.strip())
+            return dict(json.loads(match.group(0)))
+        return dict(json.loads(response.strip()))
     except json.JSONDecodeError:
         return None
 

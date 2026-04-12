@@ -11,17 +11,17 @@ from typing import TYPE_CHECKING, Any
 import xibi.db
 import xibi.signal_intelligence as sig_intel
 from xibi.alerting.rules import RuleEngine
-from xibi.heartbeat.contact_poller import backfill_contacts, find_himalaya, poll_sent_folder
-from xibi.heartbeat.sender_trust import (
-    assess_sender_trust,
-    _extract_sender_addr,
-    _extract_sender_name,
-)
-from xibi.heartbeat.classification import build_classification_prompt, build_fallback_prompt
 from xibi.channels.sheets import SheetsExporter
 from xibi.channels.telegram import TelegramAdapter
 from xibi.command_layer import CommandLayer
+from xibi.heartbeat.classification import build_classification_prompt
+from xibi.heartbeat.contact_poller import backfill_contacts, find_himalaya, poll_sent_folder
 from xibi.heartbeat.extractors import SignalExtractorRegistry
+from xibi.heartbeat.sender_trust import (
+    _extract_sender_addr,
+    _extract_sender_name,
+    assess_sender_trust,
+)
 from xibi.heartbeat.source_poller import SourcePoller
 from xibi.observation import ObservationCycle
 from xibi.radiant import Radiant
@@ -117,6 +117,7 @@ class HeartbeatPoller:
         self.headless = nudge_config.get("headless", False)
         self._digest_overflow: list[dict] = []
         self._pending_nudges: list[dict] = []
+        self._pending_nudge_context: dict | None = None
 
         self.scheduler_kernel: ScheduledActionKernel | None
         if self.executor is not None:
@@ -159,7 +160,7 @@ class HeartbeatPoller:
             logger.warning("Failed to init JulesWatcher: %s", e)
             return None
 
-    def _broadcast(self, text: str, nudge: "RichNudge | None" = None) -> None:
+    def _broadcast(self, text: str, nudge: Any | None = None) -> None:
         """Send nudge via Telegram, or store for headless mode."""
         if self.headless:
             # Store nudge for later retrieval
@@ -220,7 +221,7 @@ class HeartbeatPoller:
         emails = result.get("emails", [])
         return list(emails)
 
-    def _classify_email(self, email: dict[str, Any], context: "EmailContext | None" = None) -> str:
+    def _classify_email(self, email: dict[str, Any], context: Any | None = None) -> str:
         from xibi.condensation import condense
 
         body = email.get("body", email.get("text", ""))
@@ -302,6 +303,7 @@ class HeartbeatPoller:
         """Perform one-time contact backfill if needed."""
         try:
             import asyncio
+
             with xibi.db.open_db(self.db_path) as conn:
                 cursor = conn.execute("SELECT COUNT(*) FROM contacts")
                 contact_count = cursor.fetchone()[0]
@@ -329,6 +331,7 @@ class HeartbeatPoller:
         """Poll sent mail hourly to update contact graph."""
         try:
             import asyncio
+
             now = datetime.now()
             run_poll = False
             with xibi.db.open_db(self.db_path) as conn:
@@ -725,6 +728,17 @@ class HeartbeatPoller:
                                 timeout_ms=self.nudge_timeout_ms,
                             )
                             self._broadcast(nudge.text, nudge=nudge)
+                            # Store nudge context for the adapter
+                            self._pending_nudge_context = {
+                                "signal_id": nudge.signal_id,
+                                "email_context": ctx,
+                                "actions": nudge.actions,
+                                "sent_at": datetime.now().isoformat(),
+                            }
+                            # Sync back to adapter if possible
+                            if hasattr(self.adapter, "_pending_nudge_context"):
+                                self.adapter._pending_nudge_context = self._pending_nudge_context
+
                             logger.info(
                                 f"Rich URGENT nudge sent for signal {nudge.signal_id}: "
                                 f"{len(nudge.text)} chars, actions={nudge.actions}"
