@@ -115,22 +115,28 @@ def _extract_recipients(himalaya_bin: str, envelope: dict) -> list[dict]:
             return {"name": "", "addr": raw.strip(), "role": role}
         return None
 
-    if isinstance(to_field, (str, dict)): to_field = [to_field]
-    if isinstance(cc_field, (str, dict)): cc_field = [cc_field]
-    if isinstance(bcc_field, (str, dict)): bcc_field = [bcc_field]
+    if isinstance(to_field, (str, dict)):
+        to_field = [to_field]
+    if isinstance(cc_field, (str, dict)):
+        cc_field = [cc_field]
+    if isinstance(bcc_field, (str, dict)):
+        bcc_field = [bcc_field]
+
 
     for r in to_field:
         item = parse_addr(r, "to")
-        if item: recipients.append(item)
+        if item:
+            recipients.append(item)
     for r in cc_field:
         item = parse_addr(r, "cc")
-        if item: recipients.append(item)
+        if item:
+            recipients.append(item)
     for r in bcc_field:
         item = parse_addr(r, "bcc")
-        if item: recipients.append(item)
+        if item:
+            recipients.append(item)
 
     return recipients
-
 def _fetch_recipients_full(himalaya_bin: str, email_id: str) -> list[dict]:
     """Fetch full RFC 5322 headers and parse To/CC/BCC."""
     try:

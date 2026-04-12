@@ -809,7 +809,7 @@ def test_run_manager_review_late_nudge(db_path):
 
     assert result.ran is True
     assert mock_dispatch.call_count >= 2
-    late_calls = [c for c in mock_dispatch.call_args_list if "Late Alerts" in str(c)]
+    late_calls = [c for c in mock_dispatch.call_args_list if "Late Alert" in str(c)]
     assert len(late_calls) >= 1
 
 

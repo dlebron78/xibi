@@ -205,8 +205,8 @@ def test_execute_reply_creates_task(mock_core, mock_context):
     assert "Draft Reply" in outcome.detail
     mock_core._create_task.assert_called_once()
     args, kwargs = mock_core._create_task.call_args
-    assert kwargs["exit_type"] == "ask_user"
-    assert "reply_email" in kwargs["scratchpad_json"]
+    assert args[1] == "ask_user"
+    assert "reply_email" in args[5]
 
 
 def test_execute_meeting_no_time_prompts(mock_core, mock_context):

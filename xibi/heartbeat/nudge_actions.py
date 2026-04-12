@@ -9,7 +9,6 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from bregger_core import BreggerCore
     from xibi.heartbeat.context_assembly import EmailContext
 
 logger = logging.getLogger(__name__)
@@ -303,7 +302,7 @@ def resolve_action_tier(
 
 def execute_action(
     payload: ActionPayload,
-    core: BreggerCore,
+    core: Any,
     context: EmailContext,
     profile: dict | None = None,
 ) -> ActionOutcome:
@@ -340,7 +339,7 @@ def execute_action(
         )
 
 
-def _execute_dismiss(payload: ActionPayload, core: BreggerCore) -> ActionOutcome:
+def _execute_dismiss(payload: ActionPayload, core: Any) -> ActionOutcome:
     """Dismiss a signal — update proposal_status, log outcome."""
     if payload.signal_id:
         import sqlite3
@@ -360,7 +359,7 @@ def _execute_dismiss(payload: ActionPayload, core: BreggerCore) -> ActionOutcome
 
 def _execute_with_confirmation(
     payload: ActionPayload,
-    core: BreggerCore,
+    core: Any,
 ) -> ActionOutcome:
     """RED tier — create awaiting_reply task with preview.
 
@@ -381,13 +380,17 @@ def _execute_with_confirmation(
         "ref_id": payload.ref_id,
     }])
 
+    # trace_id must be a string for core class._create_task
+    trace_id = f"nudge_action_{payload.signal_id}" if payload.signal_id else ""
+
     task_id = core._create_task(
-        goal=payload.preview,
-        exit_type="ask_user",
-        urgency="high",
-        context_compressed=payload.context_summary,
-        scratchpad_json=scratchpad,
-        trace_id=f"nudge_action_{payload.signal_id}" if payload.signal_id else None,
+        payload.preview,  # goal
+        "ask_user",       # exit_type
+        "high",           # urgency
+        None,             # due (missing in previous call)
+        payload.context_summary,
+        scratchpad,
+        trace_id,
     )
 
     logger.info(f"Created confirmation task {task_id} for {payload.intent.value}")
@@ -402,7 +405,7 @@ def _execute_with_confirmation(
 
 def _execute_with_notification(
     payload: ActionPayload,
-    core: BreggerCore,
+    core: Any,
 ) -> ActionOutcome:
     """YELLOW tier — execute immediately, notify user.
 
@@ -421,7 +424,7 @@ def _execute_with_notification(
 
 def _execute_silent(
     payload: ActionPayload,
-    core: BreggerCore,
+    core: Any,
 ) -> ActionOutcome:
     """GREEN tier — execute silently, log only.
 
@@ -436,7 +439,7 @@ def _execute_silent(
     )
 
 
-def _call_tool(payload: ActionPayload, core: BreggerCore) -> str:
+def _call_tool(payload: ActionPayload, core: Any) -> str:
     """Call the actual tool. Thin wrapper around existing tool dispatch."""
     tool_meta = core._get_tool_meta(payload.tool_name)
     if not tool_meta:
