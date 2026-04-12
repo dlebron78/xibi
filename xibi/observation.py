@@ -1018,35 +1018,65 @@ Rules:
             late_nudges = [a["input"] for a in result.actions_taken if a["tool"] == "late_nudge_queued"]
             if late_nudges and executor is not None:
                 try:
-                    nudge_lines = ["⚠️ *Manager Review — Late Alerts*\n"]
+                    from xibi.heartbeat.context_assembly import assemble_email_context
+                    from xibi.heartbeat.rich_nudge import compose_rich_nudge
+
+                    rich_late_nudges = []
                     for n in late_nudges:
-                        line = f"• {n.get('topic') or 'Email'}: {n['preview'][:100]}"
-                        if n.get("reason"):
-                            line += f"\n  _{n['reason']}_"
-                        nudge_lines.append(line)
+                        # Try to assemble context for the reclassified signal
+                        sig = None
+                        with open_db(self.db_path) as conn:
+                            conn.row_factory = sqlite3.Row
+                            sig = conn.execute(
+                                "SELECT ref_id, ref_source FROM signals WHERE id = ?", (n["signal_id"],)
+                            ).fetchone()
 
-                    nudge_text = "\n".join(nudge_lines)
+                        if sig and sig["ref_id"] and sig["ref_source"] == "email":
+                            context = assemble_email_context(
+                                email={"id": sig["ref_id"]},
+                                db_path=self.db_path,
+                                summary=n.get("preview"),
+                            )
+                            nudge = compose_rich_nudge(
+                                context,
+                                verdict_reason=n.get("reason"),
+                                signal_id=n["signal_id"],
+                                is_late=True,
+                            )
+                            rich_late_nudges.append(nudge.text)
+                        else:
+                            # Fallback for signals without ref_id
+                            fallback_text = (
+                                f"⚠️ *Late Alert — Manager Reclassified as URGENT*\n"
+                                f"• {n['topic'] or 'Email'}: {n['preview'][:100]}"
+                            )
+                            if n.get("reason"):
+                                fallback_text += f"\n_{n['reason']}_"
+                            rich_late_nudges.append(fallback_text)
 
-                    nudge_output = dispatch(
-                        "nudge",
-                        {
-                            "message": nudge_text,
-                            "thread_id": "manager-review-late",
-                            "refs": [f"signal:{n['signal_id']}" for n in late_nudges],
-                            "category": "urgent",
-                        },
-                        self.skill_registry,
-                        executor=executor,
-                        command_layer=command_layer,
-                    )
-                    result.actions_taken.append(
-                        {
-                            "tool": "nudge",
-                            "input": {"category": "late_urgent"},
-                            "output": nudge_output,
-                            "allowed": nudge_output.get("status") not in ("blocked", "suppressed"),
-                        }
-                    )
+                    if rich_late_nudges:
+                        # Send each as a separate message
+                        for nudge_text in rich_late_nudges:
+                            nudge_output = dispatch(
+                                "nudge",
+                                {
+                                    "message": nudge_text,
+                                    "thread_id": "manager-review-late",
+                                    "refs": [],  # ref logic handled in text composition
+                                    "category": "urgent",
+                                },
+                                self.skill_registry,
+                                executor=executor,
+                                command_layer=command_layer,
+                            )
+                            result.actions_taken.append(
+                                {
+                                    "tool": "nudge",
+                                    "input": {"category": "late_urgent"},
+                                    "output": nudge_output,
+                                    "allowed": nudge_output.get("status") not in ("blocked", "suppressed"),
+                                }
+                            )
                 except Exception as e:
                     logger.warning(f"Manager review: failed to send late nudges: {e}")
                     result.errors.append(f"Late nudge failed: {e}")

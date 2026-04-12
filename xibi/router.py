@@ -258,8 +258,12 @@ class OllamaClient:
         top_level_keys = {"think", "keep_alive", "format"}
         merged = {**self.options, **kwargs}
         top_level = {k: merged.pop(k) for k in top_level_keys if k in merged}
+
+        # Allow model override via kwargs
+        target_model = top_level.pop("model", self.model)
+
         payload: dict[str, Any] = {
-            "model": self.model,
+            "model": target_model,
             "prompt": prompt,
             "stream": False,
             "options": merged,
@@ -572,12 +576,15 @@ class GeminiClient:
         if "timeout" in kwargs:
             kwargs.pop("timeout")  # handled via http_options if needed; ignore for now
 
+        # Allow model override via kwargs
+        target_model = kwargs.pop("model", self.model)
+
         config = _google_genai_types.GenerateContentConfig(**config_kwargs) if config_kwargs else None
 
         t_start = time.monotonic()
         try:
             response = self.client.models.generate_content(
-                model=self.model,
+                model=target_model,
                 contents=prompt,
                 config=config,
             )
@@ -780,8 +787,11 @@ class OpenAIClient:
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
+        # Allow model override via kwargs
+        target_model = kwargs.pop("model", self.model)
+
         call_kwargs: dict[str, Any] = {
-            "model": self.model,
+            "model": target_model,
             "messages": messages,
         }
         if "temperature" in self.options:
@@ -896,8 +906,11 @@ class AnthropicClient:
         self._last_tokens: tuple[int, int, int] = (0, 0, 0)
 
     def _call_provider(self, prompt: str, system: str | None = None, **kwargs: Any) -> str:
+        # Allow model override via kwargs
+        target_model = kwargs.pop("model", self.model)
+
         call_kwargs: dict[str, Any] = {
-            "model": self.model,
+            "model": target_model,
             "max_tokens": kwargs.get("max_tokens", 4096),
             "messages": [{"role": "user", "content": prompt}],
         }

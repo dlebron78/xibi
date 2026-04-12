@@ -108,6 +108,16 @@ class HeartbeatPoller:
             initialize_checklists(self.db_path)
 
         self.tracer = Tracer(self.db_path) if self.db_path else None
+        from xibi.heartbeat.rich_nudge import NudgeRateLimiter
+
+        nudge_config = self.config.get("nudge", {})
+        self._nudge_limiter = NudgeRateLimiter(max_per_hour=nudge_config.get("max_urgent_per_hour", 3))
+        self.nudge_model = nudge_config.get("model", "gemma4:e4b")
+        self.nudge_timeout_ms = nudge_config.get("timeout_ms", 3000)
+        self.headless = nudge_config.get("headless", False)
+        self._digest_overflow: list[dict] = []
+        self._pending_nudges: list[dict] = []
+
         self.scheduler_kernel: ScheduledActionKernel | None
         if self.executor is not None:
             self.scheduler_kernel = ScheduledActionKernel(
@@ -149,11 +159,26 @@ class HeartbeatPoller:
             logger.warning("Failed to init JulesWatcher: %s", e)
             return None
 
-    def _broadcast(self, text: str) -> None:
+    def _broadcast(self, text: str, nudge: "RichNudge | None" = None) -> None:
+        """Send nudge via Telegram, or store for headless mode."""
+        if self.headless:
+            # Store nudge for later retrieval
+            self._pending_nudges.append(
+                {
+                    "text": text,
+                    "signal_id": nudge.signal_id if nudge else None,
+                    "actions": nudge.actions if nudge else [],
+                    "ref_id": nudge.ref_id if nudge else None,
+                    "timestamp": datetime.now().isoformat(),
+                }
+            )
+            logger.info(f"Headless mode: queued nudge ({len(self._pending_nudges)} pending)")
+            return
+
         for chat_id in self.allowed_chat_ids:
             try:
                 self.adapter.send_message(chat_id, text)
-                logger.info(f"Broadcast to {chat_id}: {text}")
+                logger.info(f"Broadcast to {chat_id}: {text[:80]}...")
             except Exception as e:
                 logger.warning(f"Failed to broadcast to {chat_id}: {e}", exc_info=True)
 
@@ -689,9 +714,39 @@ class HeartbeatPoller:
                     self.rules.mark_seen_with_conn(conn, item["email_id"])
 
                     if item["verdict"] == "URGENT":
-                        alert_msg = self.rules.evaluate_email(item["email"], email_rules, sender_trust=trust)
-                        if alert_msg:
-                            self._broadcast(alert_msg)
+                        from xibi.heartbeat.rich_nudge import compose_smart_nudge
+
+                        ctx = email_contexts.get(item["email_id"])
+                        if ctx and self._nudge_limiter.allow():
+                            nudge = await compose_smart_nudge(
+                                ctx,
+                                model=self.nudge_model,
+                                signal_id=item.get("signal_id"),
+                                timeout_ms=self.nudge_timeout_ms,
+                            )
+                            self._broadcast(nudge.text, nudge=nudge)
+                            logger.info(
+                                f"Rich URGENT nudge sent for signal {nudge.signal_id}: "
+                                f"{len(nudge.text)} chars, actions={nudge.actions}"
+                            )
+                        elif ctx and not self._nudge_limiter.allow():
+                            # Rate limited — queue for next digest
+                            self._digest_overflow.append(
+                                {
+                                    "signal_id": item.get("signal_id"),
+                                    "preview": ctx.summary or item["subject"],
+                                    "topic": ctx.topic,
+                                }
+                            )
+                            logger.info(
+                                f"URGENT nudge rate-limited (#{self._nudge_limiter.count_this_hour}/hr), "
+                                f"queued for digest"
+                            )
+                        else:
+                            # Fallback — no context assembled
+                            alert_msg = self.rules.evaluate_email(item["email"], email_rules, sender_trust=trust)
+                            if alert_msg:
+                                self._broadcast(alert_msg)
         except Exception as e:
             logger.warning(f"Error in process_email_signals write phase: {e}", exc_info=True)
 
@@ -711,6 +766,13 @@ class HeartbeatPoller:
             return
 
         msg_lines = ["\U0001f4e5 **Digest Recap**"]
+
+        # Prepend rate-limited URGENT signals
+        if self._digest_overflow:
+            for item in self._digest_overflow:
+                msg_lines.append(f"⚡ *Rate-limited URGENT* — {item['topic'] or 'Email'}: {item['preview'][:100]}")
+            self._digest_overflow = []  # Clear after prepending
+
         for item in important[:10]:
             msg_lines.append(f"\u2022 {item['sender']}: {item['subject']} ({item['verdict']})")
 
