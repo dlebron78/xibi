@@ -53,15 +53,32 @@ Step-75 fixes both. The dedup risk is a one-time migration. The calendar wiring 
 - `env TEXT` — "production" / "dev"
 
 ### Processed messages table (existing schema)
-- `source TEXT`, `ref_id TEXT`, `processed_at TEXT`
-- UNIQUE constraint on (source, ref_id)
-- Used for dedup — heartbeat skips signals already in this table
+
+> **[TRR-C1]** The original spec listed `source TEXT`, `ref_id TEXT`, `processed_at TEXT` with `UNIQUE(source, ref_id)`. This is **wrong**. Actual schema (migration 6):
+> ```sql
+> CREATE TABLE IF NOT EXISTS processed_messages (
+>     message_id    INTEGER PRIMARY KEY,
+>     processed_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+> );
+> ```
+> The table is currently Telegram-only — `xibi/channels/telegram.py` inserts/queries by `message_id` (Telegram int).
+> **Jules must add migration 24** to ALTER the table: add `source TEXT DEFAULT 'telegram'`, `ref_id TEXT`, backfill existing rows (`ref_id = CAST(message_id AS TEXT), source = 'telegram'`), and create a UNIQUE index on `(source, ref_id)`.
+
+- `message_id INTEGER PRIMARY KEY` — Telegram message ID (existing)
+- `processed_at DATETIME` — timestamp (existing)
+- `source TEXT` — **to be added in migration 24** ("telegram", "email", "calendar")
+- `ref_id TEXT` — **to be added in migration 24** (string key per source)
+- After migration 24: UNIQUE index on `(source, ref_id)` for multi-source dedup
+
+> **[TRR-S1]** Existing Telegram dedup code in `xibi/channels/telegram.py` (lines 140–149) uses `message_id` column directly for INSERT/SELECT. After adding the new columns, this code should migrate to `source='telegram', ref_id=str(message_id)` for consistency — but `message_id` column must be preserved (it's the PRIMARY KEY). The simplest approach: keep `message_id` for Telegram backward compat, use `(source, ref_id)` for new sources (email, calendar). Telegram's `_mark_processed` can optionally set `source='telegram', ref_id=str(message_id)` going forward.
 
 ---
 
 ## Implementation
 
 ### Part 1 — Migration Guard
+
+> **[TRR-S2]** Migration numbering: current latest migration in `xibi/db/migrations.py` is **23**. The `processed_messages` schema upgrade (TRR-C1) must be **migration 24** in `xibi/db/migrations.py`, registered in the migration list. The `migrations_log` table below is a separate data-migration tracker for one-time operations — this is fine.
 
 **File:** `xibi/heartbeat/migration.py` (new)
 
@@ -172,7 +189,7 @@ def poll_calendar_signals(
     """
     Fetch upcoming calendar events and log new ones as signals.
 
-    - Polls DEFAULT_CALENDARS (primary + family)
+    - Polls all calendars from load_calendar_config() (replaces DEFAULT_CALENDARS)
     - Deduplicates via processed_messages (source='calendar', ref_id=event_id)
     - Logs new events to signals table
     - Returns list of new signal dicts for downstream use
@@ -376,12 +393,31 @@ The LLM says `"calendar_id": "afya"` — `resolve_calendar_id()` maps it to the 
 
 ## TRR Record
 
+> ~~Previous "TRR Record" removed — it was self-authored by NucBox (same entity that wrote the spec, 7 minutes apart, no independent review commit). This is the real TRR.~~
+
 | Field | Value |
 |-------|-------|
 | Date | 2026-04-12 |
-| Reviewer | Cowork Pipeline (Opus) |
-| Verdict | **PASS** |
-| Findings | Architecture sound, dependencies correct, scope well-defined. Ready for implementation. |
+| Reviewer | Cowork (Opus) — independent review |
+| HEAD | `f367ed5` (main after PR #75 merge) |
+| Verdict | **AMEND** |
+
+### Findings
+
+**TRR-C1 (Correctness — Critical):** `processed_messages` schema in "What Already Exists" was completely wrong. Spec claimed `source TEXT, ref_id TEXT, processed_at TEXT` with `UNIQUE(source, ref_id)`. Actual schema (migration 6): `message_id INTEGER PRIMARY KEY, processed_at DATETIME`. Table is Telegram-only. **Action:** Jules must create migration 24 in `xibi/db/migrations.py` to ALTER table: add `source TEXT DEFAULT 'telegram'`, `ref_id TEXT`, backfill existing rows, add UNIQUE index on `(source, ref_id)`. Spec amended inline.
+
+**TRR-S1 (Spec gap):** Existing Telegram dedup in `xibi/channels/telegram.py` uses `message_id` directly. After schema upgrade, backward compatibility needed. Recommended: keep `message_id` PK for Telegram, use `(source, ref_id)` for new sources. Spec amended inline.
+
+**TRR-S2 (Spec gap):** No migration number specified. Current latest is 23. Processed_messages upgrade must be migration 24 in the existing migration system. Spec amended inline.
+
+**TRR-C2 (Correctness — Minor):** Calendar poller docstring referenced `DEFAULT_CALENDARS` which Part 1.5 removes. Corrected to `load_calendar_config()`.
+
+**TRR-V1 (Verification):** Confirmed signals table has all columns referenced in the event→signal mapping (`entity_type`, `entity_text`, `ref_source`, `urgency`, `source`, `ref_id`, `content_preview`, `topic_hint`, `timestamp`, `env`). No schema changes needed for signals.
+
+**TRR-P1 (Process):** Architecture is sound — calendar poller follows the same pattern as email polling, migration guard is properly idempotent, config-driven calendar labels eliminate hardcoding. All Roberto-specific values are env-var driven (`XIBI_CALENDARS`, `XIBI_KNOWN_ADDRESSES`), not hardcoded. Scope is well-bounded.
+
+### Open Questions
+None — all findings resolved via inline amendments.
 
 ## NOT in scope
 
