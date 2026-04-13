@@ -29,6 +29,7 @@ from xibi.router import get_model
 from xibi.threads import sweep_resolved_threads, sweep_stale_threads
 
 if TYPE_CHECKING:
+    from xibi.heartbeat.context_assembly import SignalContext
     from xibi.trust.gradient import TrustGradient
 
 # Jules watcher — lazy import to avoid hard dependency if Jules not configured
@@ -264,8 +265,8 @@ class HeartbeatPoller:
             return verdict, subject
 
         if any(pt.lower() in topic.lower() for pt in priority_topics):
-            ESC_MAP = {"LOW": "MEDIUM", "MEDIUM": "HIGH", "DIGEST": "URGENT"}
-            new_verdict = ESC_MAP.get(verdict, verdict)
+            esc_map = {"LOW": "MEDIUM", "MEDIUM": "HIGH", "DIGEST": "URGENT"}
+            new_verdict = esc_map.get(verdict, verdict)
             prefix = "[Priority Topic]" if verdict != "DIGEST" else "[Escalated]"
             return new_verdict, f"{prefix} {subject}"
 

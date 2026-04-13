@@ -132,8 +132,8 @@ def parse_classification_response(response: str) -> tuple[str, str | None]:
         reasoning = None
 
     # Legacy mapping for backward compat during rollout
-    LEGACY_MAP = {"URGENT": "CRITICAL", "DIGEST": "MEDIUM"}
-    tier = LEGACY_MAP.get(tier_raw, tier_raw)
+    legacy_map = {"URGENT": "CRITICAL", "DIGEST": "MEDIUM"}
+    tier = legacy_map.get(tier_raw, tier_raw)
 
     if tier not in VALID_TIERS:
         return "MEDIUM", None  # safe fallback
