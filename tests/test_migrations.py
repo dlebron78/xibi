@@ -427,3 +427,21 @@ def test_migration_24_processed_messages_upgrade(tmp_path: Path):
         cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='processed_messages'")
         indexes = {row[0] for row in cursor.fetchall()}
         assert "idx_processed_source_ref" in indexes
+
+
+def test_migration_25_classification_reasoning(tmp_path: Path):
+    db_path = tmp_path / "test_m25.db"
+    migrate(db_path)
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.execute("PRAGMA table_info(signals)")
+        columns = {row[1] for row in cursor.fetchall()}
+        assert "classification_reasoning" in columns
+
+
+def test_migration_26_correction_reason(tmp_path: Path):
+    db_path = tmp_path / "test_m26.db"
+    migrate(db_path)
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.execute("PRAGMA table_info(signals)")
+        columns = {row[1] for row in cursor.fetchall()}
+        assert "correction_reason" in columns

@@ -5,7 +5,55 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from xibi.heartbeat.context_assembly import SignalContext
 
+import sqlite3
+from pathlib import Path
+
 from xibi.heartbeat.sender_trust import _extract_sender_addr, _extract_sender_name
+
+
+def query_correction_context(
+    db_path: str | Path,
+    sender_contact_id: str | None,
+    topic_hint: str | None,
+    lookback_days: int = 30,
+) -> list[dict]:
+    """
+    Find recent signals where the manager corrected gemma's classification.
+    A correction is detected when triage_log.verdict differs from signals.urgency.
+    """
+    if not sender_contact_id and not topic_hint:
+        return []
+
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.execute(
+            """
+            SELECT
+                t.verdict AS original_tier,
+                s.urgency AS corrected_tier,
+                s.topic_hint,
+                s.sender_contact_id,
+                COUNT(*) AS correction_count,
+                MAX(s.correction_reason) AS latest_reason,
+                MAX(s.timestamp) AS last_seen
+            FROM triage_log t
+            JOIN signals s ON t.email_id = s.ref_id
+            WHERE t.verdict != s.urgency
+              AND s.timestamp > datetime('now', '-' || ? || ' days')
+              AND (
+                (s.sender_contact_id = ? AND ? IS NOT NULL)
+                OR (s.topic_hint = ? AND ? IS NOT NULL)
+              )
+            GROUP BY s.sender_contact_id, s.topic_hint, t.verdict, s.urgency
+            ORDER BY correction_count DESC
+            LIMIT 5
+            """,
+            (lookback_days, sender_contact_id, sender_contact_id, topic_hint, topic_hint),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+    except Exception:
+        return []
 
 
 def build_classification_prompt(signal: dict, context: SignalContext) -> str:
@@ -55,6 +103,27 @@ def build_classification_prompt(signal: dict, context: SignalContext) -> str:
     # Recent pattern
     if context.sender_signals_7d and context.sender_signals_7d > 2:
         sections.append(f"Recent activity: {context.sender_signals_7d} signals from this sender in last 7 days")
+
+    # Past correction context
+    if context.db_path and context.signal_ref_id:
+        corrections = query_correction_context(
+            db_path=context.db_path,
+            sender_contact_id=context.contact_id,
+            topic_hint=context.topic,
+        )
+        if corrections:
+            correction_lines = []
+            for c in corrections:
+                line = (
+                    f"- Signals from this {'sender' if c['sender_contact_id'] == context.contact_id else 'topic'}"
+                    f' about "{c["topic_hint"] or "general"}" '
+                    f"were corrected from {c['original_tier']} -> {c['corrected_tier']} "
+                    f"{c['correction_count']} time(s) in the last 30 days."
+                )
+                if c.get("latest_reason"):
+                    line += f' Manager noted: "{c["latest_reason"]}"'
+                correction_lines.append(line)
+            sections.append("Past corrections:\n" + "\n".join(correction_lines))
 
     # Build final prompt
     context_block = "\n".join(sections)

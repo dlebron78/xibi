@@ -222,7 +222,7 @@ class HeartbeatPoller:
         emails = result.get("emails", [])
         return list(emails)
 
-    def _classify_signal(self, signal: dict[str, Any], context: "SignalContext | None" = None) -> tuple[str, str | None]:
+    def _classify_signal(self, signal: dict[str, Any], context: SignalContext | None = None) -> tuple[str, str | None]:
         from xibi.condensation import condense
         from xibi.heartbeat.classification import (
             build_fallback_prompt,

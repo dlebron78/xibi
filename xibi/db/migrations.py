@@ -7,7 +7,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 25  # increment when adding new migrations
+SCHEMA_VERSION = 26  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -56,6 +56,7 @@ class SchemaManager:
             (23, "signals: add sender_trust and sender_contact_id", self._migration_23),
             (24, "processed_messages: multi-source schema", self._migration_24),
             (25, "signals: add classification_reasoning column", self._migration_25),
+            (26, "signals: add correction_reason column", self._migration_26),
         ]
 
         for version, description, func in migrations:
@@ -670,6 +671,11 @@ class SchemaManager:
         """Add classification_reasoning column to signals table."""
         with contextlib.suppress(sqlite3.OperationalError):
             conn.execute("ALTER TABLE signals ADD COLUMN classification_reasoning TEXT")
+
+    def _migration_26(self, conn: sqlite3.Connection) -> None:
+        """Add correction_reason column to signals table."""
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("ALTER TABLE signals ADD COLUMN correction_reason TEXT")
 
 
 def migrate(db_path: Path) -> list[int]:
