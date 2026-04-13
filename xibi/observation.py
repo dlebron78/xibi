@@ -1208,6 +1208,10 @@ Rules:
                             sets.append("action_type = ?")
                             params_s.append(flag["suggested_action_type"])
 
+                        if flag.get("reason"):
+                            sets.append("correction_reason = ?")
+                            params_s.append(flag["reason"])
+
                         if sets:
                             params_s.append(signal_id)
                             conn.execute(

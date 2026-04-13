@@ -70,6 +70,9 @@ class SignalContext:
     matching_thread_summary: str | None = None
     matching_thread_signal_count: int = 0
 
+    # Step-77: Correction context
+    db_path: str | Path | None = None
+
     # Recent sender history (queried from signals table)
     sender_signals_7d: int = 0  # signals from this sender in last 7 days
     sender_last_signal_age_hours: float | None = None  # hours since last signal from sender
@@ -117,6 +120,7 @@ def assemble_signal_context(
         topic=topic,
         entity_text=entity_text,
         entity_type=entity_type,
+        db_path=db_path,
     )
 
     try:
@@ -303,6 +307,7 @@ def assemble_batch_signal_context(
                 topic=bt.get("topic"),
                 entity_text=bt.get("entity_text"),
                 entity_type=bt.get("entity_type"),
+                db_path=db_path,
             )
 
             # Contact profile
@@ -441,6 +446,7 @@ def assemble_batch_signal_context(
                     sender_id=sender_addr,
                     sender_name=_extract_sender_name(email),
                     headline=email.get("subject", ""),
+                    db_path=db_path,
                 )
 
     return contexts
