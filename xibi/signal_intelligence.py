@@ -312,6 +312,7 @@ def _upsert_contact_core(
     direction: str,  # 'inbound' | 'outbound'
     config: Config | None = None,
     channel_type: str = "email",
+    activity_date: str | None = None,
 ) -> str:
     """Core contact upsert logic. Handles both directions and ensures channel rows."""
     db_str = str(db_path)
@@ -321,6 +322,7 @@ def _upsert_contact_core(
         display_name=display_name,
         organization=organization,
         db_path=db_str,
+        activity_date=activity_date,
     )
 
     if contact:
@@ -328,15 +330,17 @@ def _upsert_contact_core(
         try:
             with open_db(db_path) as conn, conn:
                 count_col = "signal_count" if direction == "inbound" else "outbound_count"
+                last_seen_val = activity_date if activity_date else datetime.utcnow().isoformat()
+
                 if contact.organization is None and organization:
                     conn.execute(
-                        f"UPDATE contacts SET last_seen = CURRENT_TIMESTAMP, {count_col} = {count_col} + 1, organization = ? WHERE id = ?",
-                        (organization, contact_id),
+                        f"UPDATE contacts SET last_seen = MAX(COALESCE(last_seen, '0001-01-01'), ?), {count_col} = {count_col} + 1, organization = ? WHERE id = ?",
+                        (last_seen_val, organization, contact_id),
                     )
                 else:
                     conn.execute(
-                        f"UPDATE contacts SET last_seen = CURRENT_TIMESTAMP, {count_col} = {count_col} + 1 WHERE id = ?",
-                        (contact_id,),
+                        f"UPDATE contacts SET last_seen = MAX(COALESCE(last_seen, '0001-01-01'), ?), {count_col} = {count_col} + 1 WHERE id = ?",
+                        (last_seen_val, contact_id),
                     )
         except Exception as e:
             logger.error(f"_upsert_contact_core (update) failed: {e}")

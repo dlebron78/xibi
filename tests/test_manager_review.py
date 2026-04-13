@@ -671,9 +671,7 @@ def test_apply_reclassify_urgent(db_path):
     signal_id = _insert_signal(db_path, source="email", content_preview="urgent-email")
     with open_db(db_path) as conn, conn:
         conn.execute("UPDATE signals SET ref_id = 'e1' WHERE id = ?", (signal_id,))
-        conn.execute(
-            "INSERT INTO triage_log (email_id, verdict, timestamp) VALUES ('e1', 'MEDIUM', datetime('now'))"
-        )
+        conn.execute("INSERT INTO triage_log (email_id, verdict, timestamp) VALUES ('e1', 'MEDIUM', datetime('now'))")
     cycle = ObservationCycle(db_path=db_path)
     review_data = {
         "signal_flags": [

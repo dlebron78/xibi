@@ -76,15 +76,16 @@ def test_resolve_updates_last_seen(db_path):
     # Setup: Create contact with old last_seen
     cid = create_contact("Alice", email="alice@acme.com", db_path=db_path)
     upsert_contact_channel(cid, "alice@acme.com", "email", verified=1, db_path=db_path)
+    old_last_seen = "2000-01-01 00:00:00"
     with open_db(db_path) as conn:
-        conn.execute("UPDATE contacts SET last_seen = '2000-01-01 00:00:00' WHERE id = ?", (cid,))
+        conn.execute("UPDATE contacts SET last_seen = ? WHERE id = ?", (old_last_seen, cid))
 
-    # Test: Resolve updates last_seen
+    # Test: Resolve should update last_seen
     import time
 
-    time.sleep(1.1)  # Ensure time passes for SQLite CURRENT_TIMESTAMP
+    time.sleep(1.1)  # Ensure time passes
     resolve_contact("alice@acme.com", "email", db_path=db_path)
 
     with open_db(db_path) as conn:
         row = conn.execute("SELECT last_seen FROM contacts WHERE id = ?", (cid,)).fetchone()
-        assert row[0] > "2000-01-01 00:00:00"
+        assert row[0] > old_last_seen

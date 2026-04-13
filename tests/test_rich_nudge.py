@@ -54,7 +54,9 @@ def test_rich_nudge_full_context(full_context):
 
 
 def test_rich_nudge_minimal_context():
-    ctx = EmailContext(signal_ref_id="email-1", sender_id="unknown@unknown.com", sender_name="Unknown", headline="Hello")
+    ctx = EmailContext(
+        signal_ref_id="email-1", sender_id="unknown@unknown.com", sender_name="Unknown", headline="Hello"
+    )
     nudge = compose_rich_nudge(ctx)
     assert "🚨 *URGENT*" in nudge.text
     assert "From: *Unknown*" in nudge.text
@@ -150,7 +152,9 @@ def test_actions_unknown_sender_offers_dismiss():
 
 
 def test_actions_owner_me_offers_draft():
-    ctx = EmailContext(signal_ref_id="1", sender_id="a@b.com", sender_name="A", headline="S", matching_thread_owner="me")
+    ctx = EmailContext(
+        signal_ref_id="1", sender_id="a@b.com", sender_name="A", headline="S", matching_thread_owner="me"
+    )
     actions = _suggest_actions(ctx)
     assert "Draft response" in actions
 
@@ -222,8 +226,10 @@ async def test_urgent_sends_rich_nudge(mock_db, mock_config):
         config_path=str(mock_config),
     )
 
-    with patch("xibi.heartbeat.rich_nudge.compose_smart_nudge") as mock_compose, \
-         patch.object(poller, "_classify_signal", return_value=("CRITICAL", "Reason")):
+    with (
+        patch("xibi.heartbeat.rich_nudge.compose_smart_nudge") as mock_compose,
+        patch.object(poller, "_classify_signal", return_value=("CRITICAL", "Reason")),
+    ):
         mock_compose.return_value = RichNudge(signal_id=1, text="Rich Text", actions=[], thread_id=None, ref_id="e1")
 
         await poller._process_email_signals(

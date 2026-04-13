@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from xibi.db import open_db
@@ -39,6 +40,7 @@ def resolve_contact(
     display_name: str | None = None,
     organization: str | None = None,
     db_path: str = "",
+    activity_date: str | None = None,
 ) -> Contact | None:
     """
     Resolve a contact across multiple channels.
@@ -66,7 +68,7 @@ def resolve_contact(
 
             if row:
                 contact = Contact.from_row(row)
-                _update_last_seen(conn, contact.id)
+                _update_last_seen(conn, contact.id, activity_date)
                 logger.info(f"Resolved contact {contact.id} via exact_channel match ({channel_type}:{handle})")
                 return contact
 
@@ -88,7 +90,7 @@ def resolve_contact(
 
                     if row:
                         contact = Contact.from_row(row)
-                        _update_last_seen(conn, contact.id)
+                        _update_last_seen(conn, contact.id, activity_date)
                         logger.info(
                             f"Resolved contact {contact.id} via cross_channel match ({display_name} @ {domain})"
                         )
@@ -107,7 +109,7 @@ def resolve_contact(
 
                 if len(rows) == 1:
                     contact = Contact.from_row(rows[0])
-                    _update_last_seen(conn, contact.id)
+                    _update_last_seen(conn, contact.id, activity_date)
                     logger.info(f"Resolved contact {contact.id} via name_org match ({display_name}, {organization})")
                     return contact
                 elif len(rows) > 1:
@@ -122,7 +124,7 @@ def resolve_contact(
 
                 if len(rows) == 1:
                     contact = Contact.from_row(rows[0])
-                    _update_last_seen(conn, contact.id)
+                    _update_last_seen(conn, contact.id, activity_date)
                     logger.info(f"Resolved contact {contact.id} via name match ({display_name})")
                     return contact
                 elif len(rows) > 1:
@@ -135,11 +137,12 @@ def resolve_contact(
     return None
 
 
-def _update_last_seen(conn: sqlite3.Connection, contact_id: str) -> None:
+def _update_last_seen(conn: sqlite3.Connection, contact_id: str, activity_date: str | None = None) -> None:
     try:
+        val = activity_date if activity_date else datetime.utcnow().isoformat()
         conn.execute(
-            "UPDATE contacts SET last_seen = CURRENT_TIMESTAMP WHERE id = ?",
-            (contact_id,),
+            "UPDATE contacts SET last_seen = MAX(COALESCE(last_seen, '0001-01-01'), ?) WHERE id = ?",
+            (val, contact_id),
         )
     except Exception as e:
         logger.warning(f"Failed to update last_seen for {contact_id}: {e}")

@@ -1,4 +1,3 @@
-
 import pytest
 
 from xibi.db import open_db
