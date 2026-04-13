@@ -104,6 +104,44 @@ def build_classification_prompt(signal: dict, context: SignalContext) -> str:
     if context.sender_signals_7d and context.sender_signals_7d > 2:
         sections.append(f"Recent activity: {context.sender_signals_7d} signals from this sender in last 7 days")
 
+    # Calendar context — present facts, let the LLM reason
+    cal_lines = []
+
+    if context.sender_on_calendar and context.sender_calendar_event:
+        delta = context.sender_event_minutes_until
+        overlap_event = next(
+            (e for e in context.upcoming_events if e.get("title") == context.sender_calendar_event),
+            None,
+        )
+        is_recurring = overlap_event and overlap_event.get("recurring", False)
+        event_type = "recurring" if is_recurring else "one-off"
+        time_str = f" (in {delta} min)" if delta is not None else ""
+        cal_lines.append(
+            f"This sender is an attendee on a {event_type} event: "
+            f'"{context.sender_calendar_event}"{time_str}'
+        )
+
+    if context.next_event_summary:
+        cal_lines.append(f"Next on schedule: {context.next_event_summary}")
+
+    if context.calendar_busy_next_2h:
+        cal_lines.append("Daniel has events in the next 2 hours.")
+
+    # Surface up to 3 notable upcoming events
+    for event in context.upcoming_events[:3]:
+        tags = event.get("event_tags", [])
+        mins = event.get("minutes_until")
+        title = event.get("title", "(no title)")
+        loc = event.get("location") or event.get("conference_url") or ""
+        recurring = " (recurring)" if event.get("recurring") else ""
+        loc_str = f" — {loc}" if loc else ""
+        time_str = f"in {mins} min" if mins is not None else "all day"
+        tag_str = f" [{', '.join(tags)}]" if tags else ""
+        cal_lines.append(f"📅 {title}{recurring} — {time_str}{loc_str}{tag_str}")
+
+    if cal_lines:
+        sections.append("CALENDAR CONTEXT:\n" + "\n".join(cal_lines))
+
     # Past correction context
     if context.db_path and context.signal_ref_id:
         corrections = query_correction_context(
