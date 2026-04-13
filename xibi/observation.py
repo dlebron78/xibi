@@ -796,12 +796,12 @@ Set deadline if one is mentioned or implied in signal summaries.
 
 ## Signal Review
 Look at all recent signals, especially those the real-time classifier may have gotten wrong:
-- ESTABLISHED sender with a direct request classified as DIGEST → should be URGENT
-- Pattern of escalating emails from same sender → last one should be URGENT
-- Signal mentioning a thread with a deadline → should be URGENT if deadline is soon
-- Unknown sender with no thread context classified as DIGEST → probably NOISE
+- ESTABLISHED sender with a direct request classified as MEDIUM → should be HIGH or CRITICAL
+- Pattern of escalating signals from same sender → last one should be HIGH or CRITICAL
+- Signal mentioning a thread with a deadline → should be CRITICAL if deadline is today
+- Unknown sender with no thread context classified as MEDIUM → probably LOW or NOISE
 
-For signals that should be reclassified to URGENT, set reclassify_urgent=true.
+For signals that should be reclassified to CRITICAL, set reclassify=true.
 The system will send a late nudge to the user for these.
 
 ## Topic Pinning
@@ -831,9 +831,9 @@ Respond with ONLY valid JSON matching this schema (no markdown, no explanation):
   "signal_flags": [
     {
       "signal_id": 123,
-      "suggested_urgency": "high|medium|low",
+      "suggested_tier": "CRITICAL|HIGH|MEDIUM|LOW|NOISE",
       "suggested_action_type": "request|reply|fyi|confirmation",
-      "reclassify_urgent": false,
+      "reclassify": false,
       "reason": "why this was reclassified"
     }
   ],
@@ -1191,9 +1191,19 @@ Rules:
                         sets = []
                         params_s: list[Any] = []
 
-                        if flag.get("suggested_urgency"):
+                        suggested_tier = flag.get("suggested_tier") or flag.get("suggested_urgency")
+                        if suggested_tier:
+                            # Map legacy lowercase high|medium|low
+                            if suggested_tier == "high":
+                                suggested_tier = "HIGH"
+                            elif suggested_tier == "medium":
+                                suggested_tier = "MEDIUM"
+                            elif suggested_tier == "low":
+                                suggested_tier = "LOW"
+
                             sets.append("urgency = ?")
-                            params_s.append(flag["suggested_urgency"])
+                            params_s.append(suggested_tier)
+
                         if flag.get("suggested_action_type"):
                             sets.append("action_type = ?")
                             params_s.append(flag["suggested_action_type"])
@@ -1206,7 +1216,8 @@ Rules:
                             )
 
                             # NEW: retroactive URGENT reclassification
-                            if flag.get("reclassify_urgent"):
+                            reclassify = flag.get("reclassify") or flag.get("reclassify_urgent")
+                            if reclassify and suggested_tier in ("CRITICAL", "HIGH", "URGENT"):
                                 # Fetch signal details for the nudge
                                 conn.row_factory = sqlite3.Row
                                 sig_row = conn.execute(
@@ -1221,13 +1232,13 @@ Rules:
                                     # Update triage_log verdict
                                     conn.execute(
                                         """
-                                        UPDATE triage_log SET verdict = "URGENT"
+                                        UPDATE triage_log SET verdict = ?
                                         WHERE email_id = ?
                                         AND timestamp = (
                                             SELECT MAX(timestamp) FROM triage_log WHERE email_id = ?
                                         )
                                     """,
-                                        (sig_row["ref_id"], sig_row["ref_id"]),
+                                        (suggested_tier, sig_row["ref_id"], sig_row["ref_id"]),
                                     )
                                     # Signal that we need to send a late nudge
                                     actions.append(
@@ -1237,7 +1248,7 @@ Rules:
                                                 "signal_id": signal_id,
                                                 "preview": sig_row["summary"] or sig_row["content_preview"],
                                                 "topic": sig_row["topic_hint"],
-                                                "reason": flag.get("reason", "Manager review reclassified as urgent"),
+                                                "reason": flag.get("reason", "Manager review reclassified"),
                                             },
                                             "output": {"status": "ok"},
                                             "allowed": True,

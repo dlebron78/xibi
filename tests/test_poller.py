@@ -187,20 +187,21 @@ def test_check_email_on_error(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# _classify_email
+# _classify_signal
 # ---------------------------------------------------------------------------
 
 
 def test_classify_email_success(tmp_path):
     hp = _make_hp(tmp_path)
     mock_model = MagicMock()
-    mock_model.generate.return_value = "URGENT"
+    mock_model.generate.return_value = "CRITICAL: Reason"
     with (
         patch("xibi.heartbeat.poller.get_model", return_value=mock_model),
         patch("xibi.router.set_trace_context"),
     ):
-        result = hp._classify_email({"from": "boss@work.com", "subject": "Critical"})
-    assert result == "URGENT"
+        result, reasoning = hp._classify_signal({"from": "boss@work.com", "subject": "Critical"})
+    assert result == "CRITICAL"
+    assert reasoning == "Reason"
 
 
 def test_classify_email_exception(tmp_path):
@@ -209,8 +210,8 @@ def test_classify_email_exception(tmp_path):
         patch("xibi.heartbeat.poller.get_model", side_effect=RuntimeError("no model")),
         patch("xibi.router.set_trace_context"),
     ):
-        result = hp._classify_email({"from": "x@y.com", "subject": "test"})
-    assert result == "DEFER"
+        result, reasoning = hp._classify_signal({"from": "x@y.com", "subject": "test"})
+    assert result == "MEDIUM"
 
 
 # ---------------------------------------------------------------------------
@@ -220,14 +221,14 @@ def test_classify_email_exception(tmp_path):
 
 def test_should_escalate_upgrades_digest(tmp_path):
     hp = _make_hp(tmp_path)
-    verdict, subject = hp._should_escalate("DIGEST", "urgent topic", "subj", ["urgent topic"])
-    assert verdict == "URGENT"
+    verdict, subject = hp._should_escalate("MEDIUM", "urgent topic", "subj", ["urgent topic"])
+    assert verdict == "HIGH"
 
 
 def test_should_escalate_no_change(tmp_path):
     hp = _make_hp(tmp_path)
-    verdict, subject = hp._should_escalate("DIGEST", "random", "subj", ["other"])
-    assert verdict == "DIGEST"
+    verdict, subject = hp._should_escalate("MEDIUM", "random", "subj", ["other"])
+    assert verdict == "MEDIUM"
 
 
 # ---------------------------------------------------------------------------
@@ -279,7 +280,7 @@ def test_tick_marks_seen_email(tmp_path):
             ),
         ),
         patch("xibi.db.open_db", _null_db_ctx),
-        patch.object(hp, "_classify_email", return_value="DIGEST"),
+        patch.object(hp, "_classify_signal", return_value=("MEDIUM", "Reason")),
         patch("xibi.heartbeat.poller.enrich_signals", return_value=0, create=True),
         patch("xibi.signal_intelligence.enrich_signals", return_value=0),
         patch("xibi.heartbeat.email_body.find_himalaya", return_value="himalaya"),
@@ -308,7 +309,7 @@ def test_tick_urgent_broadcasts(tmp_path):
             ),
         ),
         patch("xibi.db.open_db", _null_db_ctx),
-        patch.object(hp, "_classify_email", return_value="URGENT"),
+        patch.object(hp, "_classify_signal", return_value=("CRITICAL", "Reason")),
         patch("xibi.signal_intelligence.enrich_signals", return_value=0),
         patch.object(hp, "_broadcast") as mock_broadcast,
         patch("xibi.heartbeat.email_body.find_himalaya", return_value="himalaya"),
@@ -337,7 +338,7 @@ def test_tick_auto_noise_prefilter(tmp_path):
             ),
         ),
         patch("xibi.db.open_db", _null_db_ctx),
-        patch.object(hp, "_classify_email") as mock_classify,
+        patch.object(hp, "_classify_signal") as mock_classify,
         patch("xibi.signal_intelligence.enrich_signals", return_value=0),
     ):
         hp.tick()
@@ -485,7 +486,7 @@ def test_digest_tick_force_empty(tmp_path):
 def test_digest_tick_with_items(tmp_path):
     hp = _make_hp(tmp_path)
     hp.rules.pop_digest_items.return_value = [
-        {"sender": "alice@example.com", "subject": "Hi", "verdict": "DIGEST"},
+        {"sender": "alice@example.com", "subject": "Hi", "verdict": "MEDIUM"},
     ]
     with patch.object(hp, "_is_quiet_hours", return_value=False):
         hp.digest_tick()

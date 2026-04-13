@@ -15,10 +15,10 @@ from xibi.heartbeat.rich_nudge import (
 @pytest.fixture
 def full_context():
     return EmailContext(
-        email_id="email-123",
-        sender_addr="sarah@acme.com",
+        signal_ref_id="email-123",
+        sender_id="sarah@acme.com",
         sender_name="Sarah Chen",
-        subject="Q3 Budget Review",
+        headline="Q3 Budget Review",
         summary="Requesting updated pricing for Q3 proposal. Mentions Tuesday deadline.",
         sender_trust="ESTABLISHED",
         contact_org="Acme Corp",
@@ -54,7 +54,7 @@ def test_rich_nudge_full_context(full_context):
 
 
 def test_rich_nudge_minimal_context():
-    ctx = EmailContext(email_id="email-1", sender_addr="unknown@unknown.com", sender_name="Unknown", subject="Hello")
+    ctx = EmailContext(signal_ref_id="email-1", sender_id="unknown@unknown.com", sender_name="Unknown", headline="Hello")
     nudge = compose_rich_nudge(ctx)
     assert "🚨 *URGENT*" in nudge.text
     assert "From: *Unknown*" in nudge.text
@@ -64,10 +64,10 @@ def test_rich_nudge_minimal_context():
 
 def test_rich_nudge_unknown_sender():
     ctx = EmailContext(
-        email_id="email-1",
-        sender_addr="stranger@internet.com",
+        signal_ref_id="email-1",
+        sender_id="stranger@internet.com",
         sender_name="Stranger",
-        subject="Spam",
+        headline="Spam",
         sender_trust="UNKNOWN",
     )
     nudge = compose_rich_nudge(ctx)
@@ -77,10 +77,10 @@ def test_rich_nudge_unknown_sender():
 
 def test_rich_nudge_no_thread():
     ctx = EmailContext(
-        email_id="email-1",
-        sender_addr="friend@home.com",
+        signal_ref_id="email-1",
+        sender_id="friend@home.com",
         sender_name="Friend",
-        subject="Hey",
+        headline="Hey",
         matching_thread_name=None,
     )
     nudge = compose_rich_nudge(ctx)
@@ -89,10 +89,10 @@ def test_rich_nudge_no_thread():
 
 def test_rich_nudge_no_summary():
     ctx = EmailContext(
-        email_id="email-1",
-        sender_addr="friend@home.com",
+        signal_ref_id="email-1",
+        sender_id="friend@home.com",
         sender_name="Friend",
-        subject="Important Subject",
+        headline="Important Subject",
         summary=None,
     )
     nudge = compose_rich_nudge(ctx)
@@ -111,10 +111,10 @@ def test_rich_nudge_with_reason(full_context):
 
 def test_rich_nudge_max_length():
     ctx = EmailContext(
-        email_id="email-1",
-        sender_addr="friend@home.com",
+        signal_ref_id="email-1",
+        sender_id="friend@home.com",
         sender_name="Friend",
-        subject="Important Subject",
+        headline="Important Subject",
         summary="A" * 5000,
     )
     nudge = compose_rich_nudge(ctx)
@@ -129,7 +129,7 @@ def test_rich_nudge_actions_capped(full_context):
 
 
 def test_actions_always_has_reply():
-    ctx = EmailContext(email_id="1", sender_addr="a@b.com", sender_name="A", subject="S")
+    ctx = EmailContext(signal_ref_id="1", sender_id="a@b.com", sender_name="A", headline="S")
     actions = _suggest_actions(ctx)
     assert "Reply" in actions
     assert actions[0] == "Reply"
@@ -137,20 +137,20 @@ def test_actions_always_has_reply():
 
 def test_actions_deadline_offers_schedule():
     ctx = EmailContext(
-        email_id="1", sender_addr="a@b.com", sender_name="A", subject="S", matching_thread_deadline="tomorrow"
+        signal_ref_id="1", sender_id="a@b.com", sender_name="A", headline="S", matching_thread_deadline="tomorrow"
     )
     actions = _suggest_actions(ctx)
     assert "Schedule follow-up" in actions
 
 
 def test_actions_unknown_sender_offers_dismiss():
-    ctx = EmailContext(email_id="1", sender_addr="a@b.com", sender_name="A", subject="S", sender_trust="UNKNOWN")
+    ctx = EmailContext(signal_ref_id="1", sender_id="a@b.com", sender_name="A", headline="S", sender_trust="UNKNOWN")
     actions = _suggest_actions(ctx)
     assert "Dismiss" in actions
 
 
 def test_actions_owner_me_offers_draft():
-    ctx = EmailContext(email_id="1", sender_addr="a@b.com", sender_name="A", subject="S", matching_thread_owner="me")
+    ctx = EmailContext(signal_ref_id="1", sender_id="a@b.com", sender_name="A", headline="S", matching_thread_owner="me")
     actions = _suggest_actions(ctx)
     assert "Draft response" in actions
 
@@ -222,10 +222,8 @@ async def test_urgent_sends_rich_nudge(mock_db, mock_config):
         config_path=str(mock_config),
     )
 
-    # Mock classification to return URGENT
-    poller._classify_email = MagicMock(return_value="URGENT")
-
-    with patch("xibi.heartbeat.rich_nudge.compose_smart_nudge", new_callable=AsyncMock) as mock_compose:
+    with patch("xibi.heartbeat.rich_nudge.compose_smart_nudge") as mock_compose, \
+         patch.object(poller, "_classify_signal", return_value=("CRITICAL", "Reason")):
         mock_compose.return_value = RichNudge(signal_id=1, text="Rich Text", actions=[], thread_id=None, ref_id="e1")
 
         await poller._process_email_signals(
@@ -267,7 +265,7 @@ async def test_urgent_rate_limited_queues_for_digest(mock_db, mock_config):
         config_path=str(mock_config),
     )
 
-    poller._classify_email = MagicMock(return_value="URGENT")
+    poller._classify_signal = MagicMock(return_value=("CRITICAL", "Reason"))
 
     # First one allowed
     await poller._process_email_signals(
@@ -325,9 +323,9 @@ async def test_urgent_no_context_falls_back(mock_db, mock_config):
         config_path=str(mock_config),
     )
 
-    poller._classify_email = MagicMock(return_value="URGENT")
+    poller._classify_signal = MagicMock(return_value=("CRITICAL", "Reason"))
 
-    with patch("xibi.heartbeat.context_assembly.assemble_batch_context", return_value={}):  # No context
+    with patch("xibi.heartbeat.context_assembly.assemble_batch_signal_context", return_value={}):  # No context
         await poller._process_email_signals(
             raw_signals=[
                 {

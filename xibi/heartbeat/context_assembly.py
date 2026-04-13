@@ -12,14 +12,32 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class EmailContext:
-    """All available context for a single email, assembled for classification."""
+class SignalContext:
+    """All available context for a single inbound signal, assembled for classification.
 
-    # Core email data (passed in, not queried)
-    email_id: str
-    sender_addr: str
+    Source-agnostic: works for email, calendar events, Slack messages, etc.
+    The channel adapter is responsible for populating the fields from its native format.
+    """
+
+    # Core signal data (passed in, not queried)
+    signal_ref_id: str  # was: email_id
+    sender_id: str  # was: sender_addr (email address, Slack user ID, etc.)
     sender_name: str
-    subject: str
+    headline: str  # was: subject (email subject, Slack thread title, event title, etc.)
+    source_channel: str = "email"  # "email" | "calendar" | "slack" | "github" | etc.
+
+    # --- Backward-compatible aliases for step-76 ---
+    @property
+    def email_id(self) -> str:
+        return self.signal_ref_id
+
+    @property
+    def sender_addr(self) -> str:
+        return self.sender_id
+
+    @property
+    def subject(self) -> str:
+        return self.headline
 
     # Step-67: Body summary
     summary: str | None = None  # LLM-generated body summary
@@ -62,7 +80,7 @@ class EmailContext:
     sender_has_open_thread: bool = False  # any active thread involving this sender
 
 
-def assemble_email_context(
+def assemble_signal_context(
     email: dict,
     db_path: str | Path,
     topic: str | None = None,
@@ -71,7 +89,7 @@ def assemble_email_context(
     summary: str | None = None,
     sender_trust: str | None = None,
     sender_contact_id: str | None = None,
-) -> EmailContext:
+) -> SignalContext:
     """Assemble all available context for a single email.
 
     This is a PURE QUERY function — no LLM calls, no side effects, no writes.
@@ -88,11 +106,11 @@ def assemble_email_context(
     if not sender_contact_id:
         sender_contact_id = "contact-" + hashlib.md5(sender_addr.encode()).hexdigest()[:8]
 
-    ctx = EmailContext(
-        email_id=str(email.get("id", "")),
-        sender_addr=sender_addr,
+    ctx = SignalContext(
+        signal_ref_id=str(email.get("id", "")),
+        sender_id=sender_addr,
         sender_name=sender_name,
-        subject=subject,
+        headline=subject,
         summary=summary,
         sender_trust=sender_trust,
         contact_id=sender_contact_id,
@@ -231,13 +249,13 @@ def assemble_email_context(
     return ctx
 
 
-def assemble_batch_context(
+def assemble_batch_signal_context(
     emails: list[dict],
     db_path: str | Path,
     batch_topics: dict,  # email_id -> {topic, entity_text, entity_type}
     body_summaries: dict,  # email_id -> {summary, ...}
     trust_results: dict,  # email_id -> TrustAssessment (from step-69)
-) -> dict[str, EmailContext]:
+) -> dict[str, SignalContext]:
     """Assemble context for all emails in a tick batch.
 
     Opens ONE read-only connection, runs all queries, returns
@@ -274,11 +292,11 @@ def assemble_batch_context(
             if not sender_contact_id:
                 sender_contact_id = "contact-" + hashlib.md5(sender_addr.encode()).hexdigest()[:8]
 
-            ctx = EmailContext(
-                email_id=email_id,
-                sender_addr=sender_addr,
+            ctx = SignalContext(
+                signal_ref_id=email_id,
+                sender_id=sender_addr,
                 sender_name=sender_name,
-                subject=subject,
+                headline=subject,
                 summary=bs.get("summary") if isinstance(bs, dict) else None,
                 sender_trust=trust.tier if trust else None,
                 contact_id=sender_contact_id,
@@ -418,11 +436,17 @@ def assemble_batch_context(
                 from xibi.heartbeat.sender_trust import _extract_sender_name
 
                 sender_addr = _extract_sender_addr(email)
-                contexts[eid] = EmailContext(
-                    email_id=eid,
-                    sender_addr=sender_addr,
+                contexts[eid] = SignalContext(
+                    signal_ref_id=eid,
+                    sender_id=sender_addr,
                     sender_name=_extract_sender_name(email),
-                    subject=email.get("subject", ""),
+                    headline=email.get("subject", ""),
                 )
 
     return contexts
+
+
+# Deprecated aliases — use SignalContext. Will be removed in step-77.
+EmailContext = SignalContext
+assemble_email_context = assemble_signal_context
+assemble_batch_context = assemble_batch_signal_context

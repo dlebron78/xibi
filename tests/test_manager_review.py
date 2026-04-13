@@ -247,14 +247,14 @@ def test_apply_manager_updates_signal_flags(db_path):
     cycle = ObservationCycle(db_path=db_path)
     review_data = {
         "thread_updates": [],
-        "signal_flags": [{"signal_id": signal_id, "suggested_urgency": "high", "suggested_action_type": "reply"}],
+        "signal_flags": [{"signal_id": signal_id, "suggested_tier": "HIGH", "suggested_action_type": "reply"}],
     }
     actions = cycle._apply_manager_updates(review_data)
     assert any(a["tool"] == "manager_signal_flag" for a in actions)
 
     with open_db(db_path) as conn:
         row = conn.execute("SELECT urgency, action_type FROM signals WHERE id = ?", (signal_id,)).fetchone()
-    assert row[0] == "high"
+    assert row[0] == "HIGH"
     assert row[1] == "reply"
 
 
@@ -670,19 +670,17 @@ def test_apply_contact_invalid_id(db_path):
 def test_apply_reclassify_urgent(db_path):
     signal_id = _insert_signal(db_path, source="email", content_preview="urgent-email")
     with open_db(db_path) as conn, conn:
-        ref_id = conn.execute("SELECT ref_id FROM signals WHERE id = ?", (signal_id,)).fetchone()
-        if ref_id and ref_id[0]:
-            conn.execute(
-                "INSERT INTO triage_log (email_id, verdict, timestamp) VALUES (?, 'DIGEST', datetime('now'))",
-                (ref_id[0],),
-            )
+        conn.execute("UPDATE signals SET ref_id = 'e1' WHERE id = ?", (signal_id,))
+        conn.execute(
+            "INSERT INTO triage_log (email_id, verdict, timestamp) VALUES ('e1', 'MEDIUM', datetime('now'))"
+        )
     cycle = ObservationCycle(db_path=db_path)
     review_data = {
         "signal_flags": [
             {
                 "signal_id": signal_id,
-                "suggested_urgency": "high",
-                "reclassify_urgent": True,
+                "suggested_tier": "HIGH",
+                "reclassify": True,
                 "reason": "escalation pattern",
             }
         ]
@@ -774,7 +772,7 @@ def test_run_manager_review_late_nudge(db_path):
         {
             "thread_updates": [],
             "signal_flags": [
-                {"signal_id": signal_id, "suggested_urgency": "high", "reclassify_urgent": True, "reason": "escalation"}
+                {"signal_id": signal_id, "suggested_tier": "HIGH", "reclassify": True, "reason": "escalation"}
             ],
             "topic_pins": [],
             "contact_updates": [],

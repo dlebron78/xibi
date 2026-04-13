@@ -221,52 +221,54 @@ class HeartbeatPoller:
         emails = result.get("emails", [])
         return list(emails)
 
-    def _classify_email(self, email: dict[str, Any], context: Any | None = None) -> str:
+    def _classify_signal(self, signal: dict[str, Any], context: "SignalContext | None" = None) -> tuple[str, str | None]:
         from xibi.condensation import condense
+        from xibi.heartbeat.classification import (
+            build_fallback_prompt,
+            parse_classification_response,
+        )
 
-        body = email.get("body", email.get("text", ""))
+        body = signal.get("body", signal.get("text", ""))
         body_preview = ""
         if body:
-            cc = condense(body, source="email", ref_id=email.get("id"))
+            cc = condense(body, source="email", ref_id=signal.get("id"))
             if cc.phishing_flag:
-                logger.info(f"Auto-noise: phishing detected in {email.get('id')}: {cc.phishing_reason}")
-                return "NOISE"
+                logger.info(f"Auto-noise: phishing detected in {signal.get('id')}: {cc.phishing_reason}")
+                return "NOISE", "Phishing detected"
             body_preview = cc.condensed[:500]
 
         if context:
-            prompt = build_classification_prompt(email, context)
+            prompt = build_classification_prompt(signal, context)
         else:
-            # Fallback to current sender+subject+body_preview prompt
-            sender = email.get("from", email.get("sender", "unknown"))
-            if isinstance(sender, dict):
-                sender = sender.get("name") or sender.get("addr", "unknown")
-            subject = email.get("subject", "No Subject")
-            prompt = (
-                "Classify this email. Reply with exactly one word: URGENT, DIGEST, or NOISE.\n"
-                "URGENT = needs immediate attention.\n"
-                "DIGEST = worth a summary later.\n"
-                "NOISE = automated/newsletters/irrelevant.\n\n"
-                f"From: {sender}\n"
-                f"Subject: {subject}" + (f"\nBody preview:\n{body_preview}" if body_preview else "")
-            )
+            prompt = build_fallback_prompt(signal)
+            if body_preview:
+                prompt += f"\nBody preview:\n{body_preview}"
 
         try:
             from xibi.router import set_trace_context
 
-            set_trace_context(trace_id=None, span_id=None, operation="heartbeat_email_classify")
+            set_trace_context(trace_id=None, span_id=None, operation="heartbeat_signal_classify")
             model = get_model(effort="fast", config_path=self.config_path)
-            response = model.generate(prompt, max_tokens=5).strip().upper()
-            first_word = response.split()[0] if response else ""
-            if first_word in ["URGENT", "DIGEST", "NOISE"]:
-                return first_word
-            return "DIGEST"
+            response = model.generate(prompt, max_tokens=30).strip()
+            return parse_classification_response(response)
         except Exception as e:
             logger.warning(f"LLM classification error: {e}", exc_info=True)
-            return "DEFER"
+            return "MEDIUM", None
+
+    # Deprecated alias — will be removed in step-77
+    _classify_email = _classify_signal
 
     def _should_escalate(self, verdict: str, topic: str, subject: str, priority_topics: list[str]) -> tuple[str, str]:
-        if verdict == "DIGEST" and any(pt.lower() in topic.lower() for pt in priority_topics):
-            return "URGENT", f"[Priority Topic] {subject}"
+        """Escalate verdict based on thread/pinned topic match."""
+        if verdict not in ("MEDIUM", "LOW", "DIGEST"):
+            return verdict, subject
+
+        if any(pt.lower() in topic.lower() for pt in priority_topics):
+            ESC_MAP = {"LOW": "MEDIUM", "MEDIUM": "HIGH", "DIGEST": "URGENT"}
+            new_verdict = ESC_MAP.get(verdict, verdict)
+            prefix = "[Priority Topic]" if verdict != "DIGEST" else "[Escalated]"
+            return new_verdict, f"{prefix} {subject}"
+
         return verdict, subject
 
     def tick(self) -> None:
@@ -659,10 +661,10 @@ class HeartbeatPoller:
             )
 
         # ── Context Assembly (Step 70) ─────────────────────────────
-        from xibi.heartbeat.context_assembly import assemble_batch_context
+        from xibi.heartbeat.context_assembly import assemble_batch_signal_context
 
         trust_results = {item["email_id"]: item["trust_assessment"] for item in processed}
-        email_contexts = assemble_batch_context(
+        email_contexts = assemble_batch_signal_context(
             emails=[item["email"] for item in processed],
             db_path=self.db_path,
             batch_topics={item["email_id"]: item["sig"] for item in processed},
@@ -688,14 +690,16 @@ class HeartbeatPoller:
                         verdict = status.upper()
                         break
 
+            reasoning = None
             if not verdict and item["is_new"]:
-                verdict = self._classify_email(item["email"], context=ctx)
+                verdict, reasoning = self._classify_signal(item["email"], context=ctx)
 
-            if verdict == "DIGEST":
+            if verdict in ("MEDIUM", "LOW", "DIGEST"):
                 verdict, subject = self._should_escalate(verdict, subject, subject, [])
 
             item["verdict"] = verdict
             item["subject"] = subject
+            item["reasoning"] = reasoning
 
         try:
             with xibi.db.open_db(self.db_path) as conn, conn:
@@ -718,6 +722,7 @@ class HeartbeatPoller:
                         summary_ms=summary_data.get("duration_ms"),
                         sender_trust=trust.tier,
                         sender_contact_id=trust.contact_id,
+                        classification_reasoning=item.get("reasoning"),
                     )
 
                     if not item["is_new"] or item["verdict"] == "DEFER":
@@ -728,7 +733,7 @@ class HeartbeatPoller:
                     )
                     self.rules.mark_seen_with_conn(conn, item["email_id"])
 
-                    if item["verdict"] == "URGENT":
+                    if item["verdict"] in ("CRITICAL", "HIGH", "URGENT"):
                         from xibi.heartbeat.rich_nudge import compose_smart_nudge
 
                         ctx = email_contexts.get(item["email_id"])
@@ -787,7 +792,7 @@ class HeartbeatPoller:
             return
 
         # Only surface items worth attention
-        important = [i for i in items if i.get("verdict") in ("URGENT", "DIGEST")]
+        important = [i for i in items if i.get("verdict") in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "URGENT", "DIGEST")]
         if not important:
             return
 
@@ -799,8 +804,19 @@ class HeartbeatPoller:
                 msg_lines.append(f"⚡ *Rate-limited URGENT* — {item['topic'] or 'Email'}: {item['preview'][:100]}")
             self._digest_overflow = []  # Clear after prepending
 
-        for item in important[:10]:
-            msg_lines.append(f"\u2022 {item['sender']}: {item['subject']} ({item['verdict']})")
+        # Group by section
+        critical_high = [i for i in important if i.get("verdict") in ("CRITICAL", "HIGH", "URGENT")]
+        worth_reading = [i for i in important if i.get("verdict") in ("MEDIUM", "LOW", "DIGEST")]
+
+        if critical_high:
+            msg_lines.append("\n🚨 *Priority Attention*")
+            for item in critical_high[:5]:
+                msg_lines.append(f"• {item['sender']}: {item['subject']} ({item['verdict']})")
+
+        if worth_reading:
+            msg_lines.append("\n📥 *Worth Reading*")
+            for item in worth_reading[:10]:
+                msg_lines.append(f"• {item['sender']}: {item['subject']}")
 
         self._broadcast("\n".join(msg_lines))
 

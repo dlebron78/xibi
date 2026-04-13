@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 from xibi.heartbeat.classification import build_classification_prompt, build_fallback_prompt
 
 if TYPE_CHECKING:
-    from xibi.heartbeat.context_assembly import EmailContext
+    from xibi.heartbeat.context_assembly import SignalContext
 
 # Add project root to sys.path to allow importing from the root
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__))))
@@ -196,11 +196,11 @@ class RuleEngine:
             watermark = self._watermark_cache
 
             with sqlite3.connect(self.db_path) as conn:
-                # Query triage_log (excluding URGENT as they were alerted immediately)
+                # Query triage_log (excluding CRITICAL/HIGH/URGENT as they were alerted immediately)
                 cursor = conn.execute(
                     """
                     SELECT sender, subject, verdict, timestamp FROM triage_log
-                    WHERE timestamp > ? AND verdict != 'URGENT'
+                    WHERE timestamp > ? AND verdict NOT IN ('CRITICAL', 'HIGH', 'URGENT')
                     ORDER BY timestamp ASC
                 """,
                     (watermark,),
@@ -289,6 +289,7 @@ class RuleEngine:
         summary_ms=None,
         sender_trust=None,
         sender_contact_id=None,
+        classification_reasoning=None,
     ):
         """Insert a signal into the signals table."""
         try:
@@ -307,8 +308,8 @@ class RuleEngine:
 
                 conn.execute(
                     """
-                    INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id, env)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'production')
+                    INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id, classification_reasoning, env)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'production')
                 """,
                     (
                         source,
@@ -323,6 +324,7 @@ class RuleEngine:
                         summary_ms,
                         sender_trust,
                         sender_contact_id,
+                        classification_reasoning,
                     ),
                 )
         except Exception as e:
@@ -354,7 +356,9 @@ class RuleEngine:
 
         return topic, entity_text, entity_type
 
-    def evaluate_email(self, email: dict, rules: list[dict], sender_trust=None) -> str | None:
+    def evaluate_email(
+        self, email: dict, rules: list[dict], sender_trust=None, classification_reasoning=None
+    ) -> str | None:
         """
         Returns the alert message if any rule matches, else None.
         email is a dict with keys: from, subject, date, id
@@ -556,16 +560,15 @@ def _extract_sender_name(email: dict) -> str:
     return ""
 
 
-def classify_email(
-    email: dict,
+def classify_signal(
+    signal: dict,
     model: str = "gemma4:e4b",
-    context: "EmailContext | None" = None,
-) -> str:
-    """Ask Ollama to classify email as URGENT, DIGEST, or NOISE."""
-    # Note: We removed the is_ollama_busy guard here to ensure we don't
-    # fall back to DIGEST/dumps. Ollama will queue these internally.
+    context: "SignalContext | None" = None,
+) -> tuple[str, str | None]:
+    """Ask Ollama to classify signal as CRITICAL, HIGH, MEDIUM, LOW, or NOISE."""
+    from xibi.heartbeat.classification import parse_classification_response
 
-    prompt = build_classification_prompt(email, context) if context else build_fallback_prompt(email)
+    prompt = build_classification_prompt(signal, context) if context else build_fallback_prompt(signal)
 
     payload = json.dumps(
         {
@@ -574,7 +577,7 @@ def classify_email(
             "stream": False,
             "think": False,  # TOP LEVEL — critical for gemma4
             "options": {
-                "num_predict": 10,  # one word answer
+                "num_predict": 30,  # enough for TIER: reasoning
                 "temperature": 0,  # deterministic
             },
         }
@@ -587,15 +590,15 @@ def classify_email(
         )
         with inference_lock, urllib.request.urlopen(req, timeout=15) as r:
             resp = json.loads(r.read())
-            verdict = resp.get("response", "").strip().upper()
-            if "URGENT" in verdict:
-                return "URGENT"
-            if "NOISE" in verdict:
-                return "NOISE"
-            return "DIGEST"
+            raw = resp.get("response", "").strip()
+            return parse_classification_response(raw)
     except Exception as e:
         print(f"⚠️ Classification error: {e}", flush=True)
-        return "DIGEST"  # Default to digest on error
+        return "MEDIUM", None  # Default to MEDIUM on error
+
+
+# Deprecated alias — will be removed in step-77
+classify_email = classify_signal
 
 
 def _should_escalate(
@@ -604,22 +607,21 @@ def _should_escalate(
     subject: str,
     priority_topics: list,
 ) -> tuple:
-    """Pure function: decide whether a DIGEST verdict should escalate to URGENT.
+    """Pure function: decide whether a verdict should escalate based on thread match.
 
-    Phase 2.2 — Cross-Channel Relevance. Extracted from tick() so it can be
-    tested directly without wiring up a full heartbeat tick.
+    LOW -> MEDIUM, MEDIUM -> HIGH for active thread/pinned topic match.
+    CRITICAL stays CRITICAL.
 
     Args:
-        verdict:         Current classification ("URGENT", "DIGEST", "NOISE").
+        verdict:         Current classification ("CRITICAL", "HIGH", "MEDIUM", "LOW", "NOISE").
         topic:           Normalized topic string extracted from the email.
         subject:         Original email subject line.
-        priority_topics: Combined list of active threads + pinned topics
-                         (pre-loaded once per tick, not fetched here).
+        priority_topics: Combined list of active threads + pinned topics.
 
     Returns:
         (new_verdict, new_subject) — verdict is unchanged unless escalated.
     """
-    if verdict != "DIGEST" or not topic:
+    if verdict not in ("MEDIUM", "LOW", "DIGEST") or not topic:
         return verdict, subject
 
     norm_topic = _normalize_topic(topic)
@@ -628,8 +630,13 @@ def _should_escalate(
     if matching:
         prefix = "📌 [Pinned Topic" if matching.get("pinned") else "🔥 [Active Thread"
         new_subject = f"{prefix}: {topic}] {subject}"
-        print(f"🚀 Escalating DIGEST→URGENT for active thread: {topic}", flush=True)
-        return "URGENT", new_subject
+
+        # Escalate
+        ESC_MAP = {"LOW": "MEDIUM", "MEDIUM": "HIGH", "DIGEST": "URGENT"}
+        new_verdict = ESC_MAP.get(verdict, verdict)
+
+        print(f"🚀 Escalating {verdict}→{new_verdict} for active thread: {topic}", flush=True)
+        return new_verdict, new_subject
 
     return verdict, subject
 
@@ -643,8 +650,8 @@ def _synthesize_digest(items: list[dict], model: str = "llama3.2:latest") -> str
     digest_lines = []
     noise_senders = []
     for item in items:
-        if item["verdict"] == "DIGEST":
-            digest_lines.append(f"- {item['sender']}: {item['subject']}")
+        if item["verdict"] in ("MEDIUM", "LOW", "DIGEST"):
+            digest_lines.append(f"- {item['sender']}: {item['subject']} ({item['verdict']})")
         else:
             noise_senders.append(item["sender"])
 
@@ -1240,9 +1247,9 @@ def tick(
         trust = assess_sender_trust(sender_addr, sender_name, db_path)
 
         # ── Context Assembly (Step 70) ─────────────────────────────
-        from xibi.heartbeat.context_assembly import assemble_email_context
+        from xibi.heartbeat.context_assembly import assemble_signal_context
 
-        ctx = assemble_email_context(
+        ctx = assemble_signal_context(
             email=email,
             db_path=db_path,
             topic=topic,
@@ -1253,24 +1260,6 @@ def tick(
             sender_contact_id=trust.contact_id,
         )
         email_contexts[email_id] = ctx
-
-        rules.log_signal(
-            source="email",
-            topic_hint=topic,
-            entity_text=entity_text,
-            entity_type=entity_type,
-            content_preview=f"{sender}: {subject}",
-            ref_id=email_id,
-            ref_source="email",
-            summary=summary_text,
-            summary_model=summary_data.get("model"),
-            summary_ms=summary_data.get("duration_ms"),
-            sender_trust=trust.tier,
-            sender_contact_id=trust.contact_id,
-        )
-
-        if not email_id or email_id in seen:
-            continue  # Skip triage/alerts for already-seen emails
 
         # ── User-declared triage rules
         sender_lower = sender.lower()
@@ -1293,8 +1282,36 @@ def tick(
                     break
 
         # Determine if we should ping or digest — skip LLM if rule or pre-filter matched
-        ctx = email_contexts.get(email_id)  # from step-70 (populated at line 1226)
-        verdict = rule_verdict if rule_verdict else classify_email(email, model=model, context=ctx)
+        ctx = email_contexts.get(email_id)
+        reasoning = None
+        is_new = email_id and email_id not in seen
+
+        if is_new:
+            if rule_verdict:
+                verdict = rule_verdict
+            else:
+                verdict, reasoning = classify_signal(email, model=model, context=ctx)
+        else:
+            verdict = "DEFER"  # placeholder, skipped below
+
+        rules.log_signal(
+            source="email",
+            topic_hint=topic,
+            entity_text=entity_text,
+            entity_type=entity_type,
+            content_preview=f"{sender}: {subject}",
+            ref_id=email_id,
+            ref_source="email",
+            summary=summary_text,
+            summary_model=summary_data.get("model"),
+            summary_ms=summary_data.get("duration_ms"),
+            sender_trust=trust.tier,
+            sender_contact_id=trust.contact_id,
+            classification_reasoning=reasoning,
+        )
+
+        if not is_new:
+            continue  # Skip triage/alerts for already-seen emails
 
         if ctx:
             print(
@@ -1303,7 +1320,7 @@ def tick(
             )
 
         # ── Cross-Channel Escalation Check ──
-        if verdict == "DIGEST" and topic:
+        if verdict in ("MEDIUM", "LOW", "DIGEST") and topic:
             verdict, subject = _should_escalate(verdict, topic, subject, tick_priority_topics)
 
         rules.log_triage(email_id, sender, subject, verdict)
@@ -1312,11 +1329,13 @@ def tick(
             print(f"⏳ Ollama busy, deferring triage for {email_id}", flush=True)
             continue  # Try again next tick (we won't mark as seen)
 
-        if verdict == "URGENT":
-            alert = rules.evaluate_email(email, email_rules, sender_trust=trust)
+        if verdict in ("CRITICAL", "HIGH", "URGENT"):
+            alert = rules.evaluate_email(email, email_rules, sender_trust=trust, classification_reasoning=reasoning)
             if alert:
+                if reasoning:
+                    alert += f"\n💡 _{reasoning}_"
                 notifier.send(alert)
-                print(f"📬 URGENT: Alert sent for email {email_id}", flush=True)
+                print(f"📬 {verdict}: Alert sent for email {email_id}", flush=True)
         else:
             # DIGEST or NOISE (both go to triage_log, which is now the queue)
             print(f"📥 {verdict}: Logged email {email_id}", flush=True)
@@ -1404,7 +1423,8 @@ def digest_tick(notifier: TelegramNotifier, rules: RuleEngine, model: str = "lla
         return
 
     # Filter out pure noise for hourly updates unless force=True
-    has_notable = any(i["verdict"] == "DIGEST" for i in items)
+    # Notable = anything not NOISE
+    has_notable = any(i["verdict"] not in ("NOISE", "DEFER") for i in items)
     if not has_notable and not force:
         print(f"🔇 Skipping hourly digest: {len(items)} items are all NOISE", flush=True)
         return
@@ -1417,7 +1437,7 @@ def digest_tick(notifier: TelegramNotifier, rules: RuleEngine, model: str = "lla
     if not summary:
         # Fallback to Quick Mode
         lines = ["📥 **Email recap** *(quick mode)*"]
-        notable = [i for i in items if i["verdict"] == "DIGEST"]
+        notable = [i for i in items if i["verdict"] in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "DIGEST")]
         noise = [i["sender"] for i in items if i["verdict"] == "NOISE"]
 
         if notable:
