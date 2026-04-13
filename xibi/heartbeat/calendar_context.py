@@ -2,6 +2,7 @@ import logging
 import os
 import re
 from datetime import datetime, timedelta, timezone
+
 from skills.calendar.tools._google_auth import gcal_request, load_calendar_config
 
 logger = logging.getLogger(__name__)
