@@ -211,84 +211,25 @@ def test_repoll_skips_inbound_contacts(mock_discover, mock_list, db_path):
 
 
 def test_scanner_no_bump_on_rescan(db_path):
-    # Setup contact with a fixed last_seen in the past
-    past_date = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+    # Setup contact with a fixed last_seen
+    last_seen = "2023-01-01T12:00:00"
     with open_db(db_path) as conn, conn:
         conn.execute(
             "INSERT INTO contacts (id, display_name, email, last_seen) VALUES (?, ?, ?, ?)",
-            ("contact-75211903", "Test", "test@example.com", past_date),
+            ("contact-75211903", "Test", "test@example.com", last_seen),
         )
         conn.execute(
             "INSERT INTO contact_channels (contact_id, channel_type, handle) VALUES (?, ?, ?)",
             ("contact-75211903", "email", "test@example.com"),
         )
 
-    # We need to mock CURRENT_TIMESTAMP in SQLite to be OLDER or EQUAL than past_date to test "no bump"
-    # But CURRENT_TIMESTAMP is always "now".
-    # Wait, the fix is: last_seen = MAX(last_seen, CURRENT_TIMESTAMP)
-    # If we want to test "no bump", we'd need CURRENT_TIMESTAMP to be older than what's in DB.
-    # Actually, the bug was that last_seen was ALWAYS updated to CURRENT_TIMESTAMP (now).
-    # If we process an OLD email, we don't want last_seen to jump to "now".
-    # Oh, wait. The fix I proposed uses CURRENT_TIMESTAMP which is "now" in SQLite.
-    # If I'm processing an old email, I should probably pass the EMAIL DATE to the upsert,
-    # but _upsert_contact_core doesn't take a date, it uses CURRENT_TIMESTAMP.
-
-    # RE-READING ISSUE: "last_seen gets bumped to the current time on every scanner pass, making it meaningless."
-    # The fix in Part 3 says: last_seen = MAX(last_seen, CURRENT_TIMESTAMP)
-    # But CURRENT_TIMESTAMP is always "now". So it will STILL bump to "now" if we run the scanner today.
-
-    # WAIT! The issue says: "Only update last_seen if CURRENT_TIMESTAMP > existing last_seen (idempotent — re-scanning same email doesn't bump the date)"
-    # If I use MAX(last_seen, CURRENT_TIMESTAMP), and CURRENT_TIMESTAMP is "now", it will ALWAYS be >= last_seen.
-
-    # Let's check _upsert_contact_core again.
-    # It uses CURRENT_TIMESTAMP.
-
-    # If the scanner runs again on the SAME email, and we use MAX(last_seen, CURRENT_TIMESTAMP),
-    # it still bumps if some time has passed since last run.
-
-    # UNLESS the scanner passed the EMAIL DATE. But it doesn't.
-
-    # Let's look at the "Correct" implementation in the issue:
-    # f"UPDATE contacts SET last_seen = MAX(last_seen, CURRENT_TIMESTAMP), {count_col} = {count_col} + 1, organization = ? WHERE id = ?"
-
-    # If I run it at 12:00:00, last_seen becomes 12:00:00.
-    # If I run it again at 12:00:01, last_seen becomes 12:00:01.
-
-    # This doesn't seem to fix the "meaningless" last_seen if it always bumps to "now".
-
-    # MAYBE the intention was to use the email's date?
-    # But the SQL provided in the issue EXPLICITLY uses CURRENT_TIMESTAMP.
-
-    # Ah, I see. If last_seen is ALREADY in the future (somehow), it won't be moved back.
-    # But that's not the case here.
-
-    # Wait, if I'm re-polling dates, I'm setting last_seen to e.g. "2023-01-01".
-    # If the scanner runs today (2025), it will bump it to 2025.
-
-    # The only way it doesn't bump is if the scanner is NOT running on that contact,
-    # OR if we only update last_seen when we see NEW activity.
-
-    # The issue says: "last_seen should only update on genuinely new activity, not every scan pass"
-
-    # If the scanner has a high-water mark, it only sees NEW emails.
-    # So every email it sees IS new activity.
-
-    # But what if we are re-scanning?
-
-    # If we use MAX(last_seen, ...), it's a bit better than unconditional.
-
-    # Let's test the behavior of my implemented fix.
-
-    # If I set last_seen to a FUTURE date, and call upsert, it should remain that future date.
-    future_date = (datetime.now(timezone.utc) + timedelta(days=10)).isoformat()
-    with open_db(db_path) as conn, conn:
-        conn.execute("UPDATE contacts SET last_seen = ? WHERE id = ?", (future_date, "contact-75211903"))
-
-    _upsert_contact_core("test@example.com", "Test", None, db_path, "outbound")
+    # Re-scan with an OLDER email date -> last_seen should NOT change
+    older_date = "2022-01-01T12:00:00"
+    _upsert_contact_core("test@example.com", "Test", None, db_path, "outbound", activity_date=older_date)
 
     with open_db(db_path) as conn:
         row = conn.execute("SELECT last_seen FROM contacts WHERE id = 'contact-75211903'").fetchone()
-        assert row[0] == future_date  # Should NOT have been bumped to CURRENT_TIMESTAMP (now)
+        assert row[0] == last_seen
 
 
 def test_scanner_updates_on_new_email(db_path):

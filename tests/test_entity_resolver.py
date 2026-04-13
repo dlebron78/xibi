@@ -72,7 +72,7 @@ def test_resolve_creates_no_contact(db_path):
         assert row[0] == 0
 
 
-def test_resolve_does_not_update_last_seen(db_path):
+def test_resolve_updates_last_seen(db_path):
     # Setup: Create contact with old last_seen
     cid = create_contact("Alice", email="alice@acme.com", db_path=db_path)
     upsert_contact_channel(cid, "alice@acme.com", "email", verified=1, db_path=db_path)
@@ -80,12 +80,12 @@ def test_resolve_does_not_update_last_seen(db_path):
     with open_db(db_path) as conn:
         conn.execute("UPDATE contacts SET last_seen = ? WHERE id = ?", (old_last_seen, cid))
 
-    # Test: Resolve should NOT update last_seen
+    # Test: Resolve should update last_seen
     import time
 
-    time.sleep(1.1)  # Ensure time passes for SQLite CURRENT_TIMESTAMP
+    time.sleep(1.1)  # Ensure time passes
     resolve_contact("alice@acme.com", "email", db_path=db_path)
 
     with open_db(db_path) as conn:
         row = conn.execute("SELECT last_seen FROM contacts WHERE id = ?", (cid,)).fetchone()
-        assert row[0] == old_last_seen
+        assert row[0] > old_last_seen

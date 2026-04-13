@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime
 from pathlib import Path
 
 from xibi.db import open_db
@@ -40,6 +41,7 @@ def create_contact(
     discovered_via: str | None = None,
     relationship: str = "unknown",
     db_path: str = "",
+    activity_date: str | None = None,
 ) -> str | None:
     """Create a new contact and return its ID."""
     if not db_path:
@@ -54,18 +56,29 @@ def create_contact(
         # Write contact row and commit before opening a second connection for the channel.
         # Both operations write to the same WAL db; nesting open_db calls deadlocks SQLite
         # (second connection waits 30 s for the first's implicit transaction to commit).
+        last_seen_val = activity_date if activity_date else datetime.utcnow().isoformat()
+
         with open_db(Path(db_path)) as conn:
             conn.execute(
                 """
-                INSERT INTO contacts (id, display_name, email, organization, relationship, discovered_via, signal_count)
-                VALUES (?, ?, ?, ?, ?, ?, 1)
+                INSERT INTO contacts (id, display_name, email, organization, relationship, discovered_via, signal_count, first_seen, last_seen)
+                VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     display_name = COALESCE(excluded.display_name, display_name),
                     organization = COALESCE(excluded.organization, organization),
-                    last_seen = MAX(last_seen, CURRENT_TIMESTAMP),
+                    last_seen = MAX(COALESCE(last_seen, '0001-01-01'), excluded.last_seen),
                     signal_count = signal_count + 1
                 """,
-                (contact_id, display_name, email, organization, relationship, discovered_via),
+                (
+                    contact_id,
+                    display_name,
+                    email,
+                    organization,
+                    relationship,
+                    discovered_via,
+                    last_seen_val,
+                    last_seen_val,
+                ),
             )
         # open_db committed above — safe to open a second connection for the channel row.
         if email:

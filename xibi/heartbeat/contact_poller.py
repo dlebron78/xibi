@@ -230,6 +230,7 @@ def poll_sent_folder(
                             organization=None,
                             db_path=db_path,
                             direction="outbound",
+                            activity_date=env_date_str if "T" in env_date_str else None,
                         )
             except Exception as e:
                 logger.error(f"Failed to process sent email {env.get('id')}: {e}")
@@ -291,6 +292,7 @@ def backfill_contacts(
                                 organization=None,
                                 db_path=db_path,
                                 direction="outbound",
+                                activity_date=env_date_str if "T" in env_date_str else None,
                             )
                 except Exception:
                     continue
@@ -328,7 +330,12 @@ def backfill_contacts(
 
                 if addr:
                     _upsert_contact_core(
-                        email=addr, display_name=name or addr, organization=None, db_path=db_path, direction="inbound"
+                        email=addr,
+                        display_name=name or addr,
+                        organization=None,
+                        db_path=db_path,
+                        direction="inbound",
+                        activity_date=env_date_str if "T" in env_date_str else None,
                     )
             except Exception:
                 continue
