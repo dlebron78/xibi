@@ -5,6 +5,12 @@
 > **Phase:** 4 — depends on Block 9 (step-76)
 > **Theme:** Close the feedback loop between manager review and local classification
 
+> **TRR Record**
+> Date: 2026-04-12 | HEAD: de5e516 | Reviewer: Cowork Pipeline (Opus)
+> Verdict: AMEND
+> Findings: C1, C2, S1, S2, H1
+> Open Questions: None
+
 ---
 
 ## Context
@@ -47,11 +53,11 @@ Make `build_classification_prompt()` correction-aware. When classifying a new si
 ### Manager review output (observation.py)
 
 The manager outputs `signal_flags` with:
-- `suggested_urgency` — the corrected tier (step-76 renames to `suggested_tier`)
+- `suggested_tier` — the corrected tier (renamed from `suggested_urgency` in step-76)
 - `reason` — one sentence explaining the correction
-- `reclassify_urgent` — boolean flag (step-76 renames to `reclassify`)
+- `reclassify` — boolean flag (renamed from `reclassify_urgent` in step-76)
 
-**Problem:** The manager's `reason` is currently used only in the Telegram nudge text (observation.py line 1240) — it is NOT stored in the database. Step-77 must persist it.
+**Problem:** The manager's `reason` is currently used only in the Telegram nudge text (observation.py, in the reclassification handler near the `late_nudge_queued` action) — it is NOT stored in the database. Step-77 must persist it. ‼️ TRR-C1: Line number reference removed; use code pattern search, not line numbers, since step-76 will shift observation.py substantially.
 
 ### Prompt builder (classification.py)
 
@@ -65,7 +71,7 @@ The manager outputs `signal_flags` with:
 
 **File: `xibi/db/migrations.py`**
 
-Migration 26 (step-76 uses 25 for `classification_reasoning`):
+Migration 26 (step-76 uses 25 for `classification_reasoning`): ‼️ TRR-S1: Verified — current SCHEMA_VERSION is 24, step-76 adds migration 25, so migration 26 is correct.
 
 ```sql
 ALTER TABLE signals ADD COLUMN correction_reason TEXT
@@ -78,7 +84,7 @@ This stores the manager's `reason` string when a signal is reclassified. NULL fo
 Update the manager correction handler to store the reason alongside the urgency update:
 
 ```python
-# Current (step-76):
+# Current (post step-76):
 if flag.get("suggested_tier"):
     sets.append("urgency = ?")
     params_s.append(flag["suggested_tier"])
@@ -97,34 +103,22 @@ One extra column in the existing UPDATE statement. No schema change to the manag
 
 **File: `xibi/heartbeat/classification.py`** — new function
 
-```python
-def query_correction_context(
-    db_path: str | Path,
-    sender_contact_id: str | None,
-    topic_hint: str | None,
-    lookback_days: int = 30,
-) -> list[dict]:
-    """
-    Find recent signals where the manager corrected gemma's classification.
-    
-    A correction is detected when triage_log.verdict (gemma's original call)
-    differs from signals.urgency (post-manager-review tier).
-    
-    Returns aggregated correction patterns grouped by (sender_contact_id, topic_hint),
-    ordered by correction count descending. Each result includes:
-    - original_tier: what gemma said
-    - corrected_tier: what the manager changed it to
-    - count: how many times this correction happened
-    - latest_reason: the manager's most recent reasoning for this correction pattern
-    - last_seen: when the most recent correction occurred
-    
-    Only returns corrections relevant to the incoming signal:
-    - Matches on sender_contact_id (if provided)
-    - OR matches on topic_hint (if provided)
-    """
-```
+`query_correction_context(db_path, sender_contact_id, topic_hint, lookback_days=30) -> list[dict]`
 
-**Query:**
+Find recent signals where the manager corrected gemma's classification. A correction is detected when triage_log.verdict (gemma's original call) differs from signals.urgency (post-manager-review tier).
+
+Returns aggregated correction patterns grouped by (sender_contact_id, topic_hint), ordered by correction count descending. Each result includes:
+- original_tier: what gemma said
+- corrected_tier: what the manager changed it to
+- count: how many times this correction happened
+- latest_reason: the manager's most recent reasoning for this correction pattern
+- last_seen: when the most recent correction occurred
+
+Only returns corrections relevant to the incoming signal:
+- Matches on sender_contact_id (if provided)
+- OR matches on topic_hint (if provided)
+
+**Query:** ‼️ TRR-C2: Fixed SQL lookback — original spec used `? || ' days'` which with `lookback_days=30` produced `datetime('now', '30 days')` (30 days in the FUTURE), returning zero results. Corrected to negate the value so the modifier reads `'-30 days'`.
 
 ```sql
 SELECT 
@@ -138,7 +132,7 @@ SELECT
 FROM triage_log t
 JOIN signals s ON t.email_id = s.ref_id
 WHERE t.verdict != s.urgency
-  AND s.timestamp > datetime('now', ? || ' days')
+  AND s.timestamp > datetime('now', '-' || ? || ' days')
   AND (
     (s.sender_contact_id = ? AND ? IS NOT NULL)
     OR (s.topic_hint = ? AND ? IS NOT NULL)
@@ -160,9 +154,9 @@ After the "Recent activity" section and before the tier definitions, add:
 
 ```python
 # Past correction context
-if context.signal_ref_id:  # after step-76 rename from email_id
+if context.signal_ref_id:  # renamed from email_id in step-76
     corrections = query_correction_context(
-        db_path=db_path,
+        db_path=context.db_path,
         sender_contact_id=context.contact_id,
         topic_hint=context.topic,
     )
@@ -172,7 +166,7 @@ if context.signal_ref_id:  # after step-76 rename from email_id
             line = (
                 f"- Signals from this {'sender' if c['sender_contact_id'] else 'topic'}"
                 f" about \"{c['topic_hint'] or 'general'}\" "
-                f"were corrected from {c['original_tier']} → {c['corrected_tier']} "
+                f"were corrected from {c['original_tier']} -> {c['corrected_tier']} "
                 f"{c['correction_count']} time(s) in the last 30 days."
             )
             if c.get("latest_reason"):
@@ -188,7 +182,7 @@ This is the only runtime change. Gemma sees a richer prompt. No new API calls, n
 1. **Pass it in** — add `db_path` param to `build_classification_prompt()`, thread it through from `_classify_signal()` in poller.py and `classify_signal()` in bregger_heartbeat.py. Clean but touches calling code.
 2. **Add it to SignalContext** — add `db_path` to the context dataclass (already has everything else). Populated during `assemble_signal_context()`. Less plumbing.
 
-**Recommendation:** Option 2. The context object is already the "everything you need to classify" bundle. db_path fits naturally.
+**Recommendation:** Option 2. The context object is already the "everything you need to classify" bundle. db_path fits naturally. ‼️ TRR-S2: The assembly function `assemble_signal_context()` already receives `db_path` as its second parameter. Implementation: add `db_path: str | Path | None = None` field to `SignalContext`, then set `ctx.db_path = db_path` after construction inside `assemble_signal_context()`. Explicit enough for Jules.
 
 ---
 
@@ -225,40 +219,40 @@ No changes needed to `build_fallback_prompt()`.
 ## Testing
 
 ### Correction query
-1. **test_query_no_corrections:** No mismatches in DB → returns empty list
-2. **test_query_sender_match:** Signal from sender X corrected 3 times → returns 1 row with count=3
-3. **test_query_topic_match:** Signal about topic Y corrected 2 times from different senders → returns rows grouped by sender+topic
-4. **test_query_lookback_window:** Correction older than 30 days → not returned
-5. **test_query_limit_5:** 7 different correction patterns → only top 5 by count returned
-6. **test_query_no_sender_no_topic:** Both None → returns empty list (no match criteria)
-7. **test_query_correction_reason_included:** correction_reason set → included in result
-8. **test_query_correction_reason_null:** correction_reason NULL → result has latest_reason=None
+1. **test_query_no_corrections:** No mismatches in DB -> returns empty list
+2. **test_query_sender_match:** Signal from sender X corrected 3 times -> returns 1 row with count=3
+3. **test_query_topic_match:** Signal about topic Y corrected 2 times from different senders -> returns rows grouped by sender+topic
+4. **test_query_lookback_window:** Correction older than 30 days -> not returned
+5. **test_query_limit_5:** 7 different correction patterns -> only top 5 by count returned
+6. **test_query_no_sender_no_topic:** Both None -> returns empty list (no match criteria)
+7. **test_query_correction_reason_included:** correction_reason set -> included in result
+8. **test_query_correction_reason_null:** correction_reason NULL -> result has latest_reason=None
 
 ### Prompt injection
-9. **test_prompt_includes_corrections:** Mock query returns 2 corrections → prompt contains "Past corrections:" section
-10. **test_prompt_no_corrections:** Mock query returns empty → prompt has no "Past corrections:" section
-11. **test_prompt_includes_manager_reason:** Correction with reason → prompt includes "Manager noted: ..."
-12. **test_prompt_omits_null_reason:** Correction without reason → no "Manager noted:" suffix
-13. **test_prompt_correction_count_shown:** count=3 → prompt says "3 time(s)"
+9. **test_prompt_includes_corrections:** Mock query returns 2 corrections -> prompt contains "Past corrections:" section
+10. **test_prompt_no_corrections:** Mock query returns empty -> prompt has no "Past corrections:" section
+11. **test_prompt_includes_manager_reason:** Correction with reason -> prompt includes "Manager noted: ..."
+12. **test_prompt_omits_null_reason:** Correction without reason -> no "Manager noted:" suffix
+13. **test_prompt_correction_count_shown:** count=3 -> prompt says "3 time(s)"
 
 ### Correction storage
-14. **test_manager_stores_correction_reason:** Manager flag with reason → signals.correction_reason updated
-15. **test_manager_no_reason:** Manager flag without reason → correction_reason stays NULL
-16. **test_migration_adds_correction_reason:** Apply migration 26 → column exists
+14. **test_manager_stores_correction_reason:** Manager flag with reason -> signals.correction_reason updated
+15. **test_manager_no_reason:** Manager flag without reason -> correction_reason stays NULL
+16. **test_migration_adds_correction_reason:** Apply migration 26 -> column exists
 
 ### Fallback path
 17. **test_fallback_no_corrections:** Fallback prompt has no correction section regardless of DB state
 
 ### Integration
-18. **test_classify_signal_with_corrections:** Full classify flow with mocked corrections → gemma's prompt includes past correction context
-19. **test_classify_signal_no_db_path:** db_path missing from context → corrections skipped, no crash
+18. **test_classify_signal_with_corrections:** Full classify flow with mocked corrections -> gemma's prompt includes past correction context
+19. **test_classify_signal_no_db_path:** db_path missing from context -> corrections skipped, no crash
 
 ---
 
 ## Observability
 
-- `📝 {n} correction pattern(s) injected into classification prompt` — per classification (DEBUG)
-- `📊 Correction context: {sender} + {topic} → {original} → {corrected} ×{count}` — detailed (DEBUG)
+- `{n} correction pattern(s) injected into classification prompt` — per classification (DEBUG)
+- `Correction context: {sender} + {topic} -> {original} -> {corrected} x{count}` — detailed (DEBUG)
 - No new INFO-level logs — this is a prompt enrichment, not a user-facing event
 
 ---
@@ -283,6 +277,6 @@ No changes needed to `build_fallback_prompt()`.
 - Distilled lessons table (pattern aggregation cache) — future optimization if correction queries get slow
 - Correction patterns across senders (e.g., "all invoices from any vendor") — requires topic taxonomy, future step
 - Automatic threshold tuning (gemma adjusts its own tier boundaries) — that's trust autonomy (parked)
-- Removing deprecated EmailContext aliases — step-76 deferred this cleanup
+- Removing deprecated EmailContext aliases — step-76 deferred this cleanup; ‼️ TRR-H1: step-76's spec says "removed in step-77" but this step correctly defers. Aliases remain until a dedicated cleanup step. No downstream risk — aliases are pass-through.
 - Surfacing correction stats in the dashboard — future step
-- Correction context for calendar signals — works automatically since calendar signals flow through the same classify → triage_log → manager review → signals pipeline
+- Correction context for calendar signals — works automatically since calendar signals flow through the same classify -> triage_log -> manager review -> signals pipeline
