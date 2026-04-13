@@ -145,3 +145,76 @@ def test_poll_known_address_skipped():
     with patch.dict(os.environ, {"XIBI_KNOWN_ADDRESSES": "dan@example.com,other@me.com"}):
         name, email = _extract_attendees(event)
         assert name is None
+
+
+@patch("xibi.heartbeat.calendar_poller.load_calendar_config")
+def test_poll_calendar_signals_config_error(mock_load_config, db_path):
+    mock_load_config.side_effect = RuntimeError("Auth failed")
+    signals = poll_calendar_signals(db_path)
+    assert signals == []
+
+
+@patch("xibi.heartbeat.calendar_poller.load_calendar_config")
+def test_poll_calendar_signals_unexpected_error(mock_load_config, db_path):
+    mock_load_config.side_effect = Exception("Surprise")
+    signals = poll_calendar_signals(db_path)
+    assert signals == []
+
+
+@patch("xibi.heartbeat.calendar_poller.gcal_request")
+@patch("xibi.heartbeat.calendar_poller.load_calendar_config")
+def test_poll_calendar_signals_gcal_error(mock_load_config, mock_gcal, db_path):
+    mock_load_config.return_value = [{"label": "personal", "calendar_id": "dan@example.com"}]
+    mock_gcal.side_effect = Exception("API down")
+    signals = poll_calendar_signals(db_path)
+    assert signals == []
+
+
+@patch("xibi.heartbeat.calendar_poller.gcal_request")
+@patch("xibi.heartbeat.calendar_poller.load_calendar_config")
+def test_poll_calendar_signals_missing_id_skipped(mock_load_config, mock_gcal, db_path):
+    mock_load_config.return_value = [{"label": "personal", "calendar_id": "dan@example.com"}]
+    mock_gcal.return_value = {"items": [{"summary": "No ID"}]}
+    signals = poll_calendar_signals(db_path)
+    assert signals == []
+
+
+@patch("xibi.heartbeat.calendar_poller.gcal_request")
+@patch("xibi.heartbeat.calendar_poller.load_calendar_config")
+def test_poll_calendar_signals_missing_start_skipped(mock_load_config, mock_gcal, db_path):
+    mock_load_config.return_value = [{"label": "personal", "calendar_id": "dan@example.com"}]
+    mock_gcal.return_value = {"items": [{"id": "evt1", "summary": "No Start"}]}
+    signals = poll_calendar_signals(db_path)
+    assert signals == []
+
+
+def test_derive_urgency_invalid_iso():
+    from xibi.heartbeat.calendar_poller import _derive_urgency
+
+    assert _derive_urgency("not-a-date") == "DIGEST"
+
+
+def test_format_start_time_invalid():
+    from xibi.heartbeat.calendar_poller import _format_start_time
+
+    # "not-a-date" is <= 10 chars, so it returns "All day"
+    assert _format_start_time("not-a-date") == "All day"
+    # Long invalid string
+    assert _format_start_time("this-is-a-very-long-invalid-string") == "this-is-a-very-long-invalid-string"
+
+
+def test_extract_attendees_no_email():
+    from xibi.heartbeat.calendar_poller import _extract_attendees
+
+    event = {"attendees": [{"displayName": "Ghost"}]}
+    name, email = _extract_attendees(event)
+    assert name is None
+    assert email is None
+
+
+def test_extract_attendees_organizer_skipped():
+    from xibi.heartbeat.calendar_poller import _extract_attendees
+
+    event = {"attendees": [{"email": "boss@corp.com", "organizer": True}]}
+    name, email = _extract_attendees(event)
+    assert name is None

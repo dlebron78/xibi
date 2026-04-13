@@ -48,11 +48,14 @@ def db_path(tmp_path):
     return path
 
 
+@patch("bregger_heartbeat.is_quiet_hours", return_value=False)
 @patch("bregger_heartbeat.check_email")
 @patch("bregger_heartbeat.TelegramNotifier")
 @patch("bregger_heartbeat.RuleEngine")
 @patch("xibi.heartbeat.calendar_poller.poll_calendar_signals")
-def test_tick_calls_calendar_poller(mock_poll, mock_rules, mock_notifier, mock_check_email, db_path, tmp_path):
+def test_tick_calls_calendar_poller(
+    mock_poll, mock_rules, mock_notifier, mock_check_email, mock_quiet, db_path, tmp_path
+):
     mock_check_email.return_value = []
     mock_rules_inst = mock_rules.return_value
     mock_rules_inst.load_rules.return_value = []
@@ -63,11 +66,14 @@ def test_tick_calls_calendar_poller(mock_poll, mock_rules, mock_notifier, mock_c
     mock_poll.assert_called_once()
 
 
+@patch("bregger_heartbeat.is_quiet_hours", return_value=False)
 @patch("bregger_heartbeat.check_email")
 @patch("bregger_heartbeat.TelegramNotifier")
 @patch("bregger_heartbeat.RuleEngine")
 @patch("xibi.heartbeat.calendar_poller.poll_calendar_signals")
-def test_tick_urgent_calendar_nudge(mock_poll, mock_rules, mock_notifier, mock_check_email, db_path, tmp_path):
+def test_tick_urgent_calendar_nudge(
+    mock_poll, mock_rules, mock_notifier, mock_check_email, mock_quiet, db_path, tmp_path
+):
     mock_check_email.return_value = []
     # Use fixed start time relative to now for predictable delta
     start_dt = datetime.now(timezone.utc) + timedelta(minutes=45)
@@ -90,12 +96,13 @@ def test_tick_urgent_calendar_nudge(mock_poll, mock_rules, mock_notifier, mock_c
     assert "Urgent Meeting" in call_text
 
 
+@patch("bregger_heartbeat.is_quiet_hours", return_value=False)
 @patch("bregger_heartbeat.check_email")
 @patch("bregger_heartbeat.TelegramNotifier")
 @patch("bregger_heartbeat.RuleEngine")
 @patch("xibi.heartbeat.calendar_poller.poll_calendar_signals")
 def test_tick_calendar_error_doesnt_break_email(
-    mock_poll, mock_rules, mock_notifier, mock_check_email, db_path, tmp_path
+    mock_poll, mock_rules, mock_notifier, mock_check_email, mock_quiet, db_path, tmp_path
 ):
     mock_poll.side_effect = Exception("Calendar API down")
     mock_check_email.return_value = [{"id": "m1", "subject": "Hi", "from": "bob@example.com"}]

@@ -75,3 +75,25 @@ def test_stamp_cutover_no_recent_signals(db_path):
     with sqlite3.connect(db_path) as conn:
         mig = conn.execute("SELECT name FROM migrations_log").fetchone()
         assert mig[0] == "roberto_cutover"
+
+
+def test_stamp_cutover_dev_noop(db_path):
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO signals (source, ref_id, timestamp, content_preview) VALUES ('email', 'ref1', datetime('now', '-1 days'), 'preview1')"
+        )
+
+    count = stamp_roberto_cutover(db_path, env="dev")
+    assert count == 0
+
+    with sqlite3.connect(db_path) as conn:
+        # Check that processed_messages was NOT updated
+        row = conn.execute("SELECT 1 FROM processed_messages WHERE source='email' AND ref_id='ref1'").fetchone()
+        assert row is None
+
+
+def test_stamp_cutover_error_handling(tmp_path):
+    # Non-existent DB path to trigger exception
+    bad_path = tmp_path / "subdir" / "missing.db"
+    # Should catch exception and return 0
+    assert stamp_roberto_cutover(bad_path) == 0
