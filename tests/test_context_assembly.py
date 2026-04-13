@@ -222,3 +222,15 @@ def test_assemble_batch_single_fetch(db_path, mocker):
 
     # Called once at the top of the batch
     assert mock_fetch.call_count == 1
+
+
+def test_assemble_context_calendar_failure(db_path, mocker):
+    mock_fetch = mocker.patch("xibi.heartbeat.calendar_context.fetch_upcoming_events")
+    mock_fetch.side_effect = Exception("API Down")
+
+    email = {"id": "1", "from": {"addr": "test@example.com", "name": "Test"}}
+    ctx = assemble_signal_context(email, db_path)
+
+    assert ctx.signal_ref_id == "1"
+    assert ctx.upcoming_events == []
+    assert ctx.calendar_busy_next_2h is False

@@ -46,6 +46,9 @@ def fetch_upcoming_events(
     time_min = now.isoformat()
     time_max = (now + timedelta(hours=lookahead_hours)).isoformat()
 
+    known_raw = os.environ.get("XIBI_KNOWN_ADDRESSES", "")
+    known_addresses = {a.strip().lower() for a in known_raw.split(",") if a.strip()}
+
     events_by_id = {}
     import urllib.parse
 
@@ -85,14 +88,15 @@ def fetch_upcoming_events(
             if "dateTime" in start:
                 try:
                     dt_start = datetime.fromisoformat(start["dateTime"].replace("Z", "+00:00"))
+                    # Explicitly skip past events (delta < 0)
+                    if dt_start < now:
+                        continue
                     minutes_until = int((dt_start - now).total_seconds() / 60)
                 except Exception:
                     pass
 
             # Extract ALL external attendees
             attendees = []
-            known_raw = os.environ.get("XIBI_KNOWN_ADDRESSES", "")
-            known_addresses = {a.strip().lower() for a in known_raw.split(",") if a.strip()}
 
             for a in event.get("attendees", []):
                 email = a.get("email", "").strip().lower()

@@ -282,6 +282,52 @@ class TestClassification(unittest.TestCase):
         self.assertIn("Daniel has events in the next 2 hours", prompt)
         self.assertIn("📅 Meeting with Alice (recurring) — in 30 min [meeting]", prompt)
 
+    def test_prompt_with_max_3_events(self):
+        """Test: Prompt only surfaces up to 3 notable events"""
+        ctx = SignalContext(
+            signal_ref_id="123",
+            sender_id="alice@example.com",
+            sender_name="Alice",
+            headline="Meeting?",
+            upcoming_events=[{"title": f"Event {i}", "minutes_until": i * 30, "event_tags": ["tag"]} for i in range(5)],
+        )
+        email = {"id": "123"}
+        prompt = build_classification_prompt(email, ctx)
+
+        self.assertIn("📅 Event 0", prompt)
+        self.assertIn("📅 Event 1", prompt)
+        self.assertIn("📅 Event 2", prompt)
+        self.assertNotIn("📅 Event 3", prompt)
+
+    def test_prompt_no_calendar_context(self):
+        """Test: Prompt doesn't include section if no calendar data"""
+        ctx = SignalContext(signal_ref_id="123", sender_id="alice@example.com", sender_name="Alice", headline="Hey")
+        email = {"id": "123"}
+        prompt = build_classification_prompt(email, ctx)
+        self.assertNotIn("CALENDAR CONTEXT:", prompt)
+
+    def test_prompt_sender_oneoff_event(self):
+        """Test: Non-recurring event labeled as 'one-off'"""
+        ctx = SignalContext(
+            signal_ref_id="123",
+            sender_id="alice@example.com",
+            sender_name="Alice",
+            headline="Meeting?",
+            upcoming_events=[
+                {
+                    "title": "One-off with Alice",
+                    "minutes_until": 30,
+                    "recurring": False,
+                }
+            ],
+            sender_on_calendar=True,
+            sender_calendar_event="One-off with Alice",
+            sender_event_minutes_until=30,
+        )
+        email = {"id": "123"}
+        prompt = build_classification_prompt(email, ctx)
+        self.assertIn("attendee on a one-off event", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()
