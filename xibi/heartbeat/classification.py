@@ -116,12 +116,12 @@ def build_classification_prompt(signal: dict, context: SignalContext) -> str:
             for c in corrections:
                 line = (
                     f"- Signals from this {'sender' if c['sender_contact_id'] == context.contact_id else 'topic'}"
-                    f" about \"{c['topic_hint'] or 'general'}\" "
+                    f' about "{c["topic_hint"] or "general"}" '
                     f"were corrected from {c['original_tier']} -> {c['corrected_tier']} "
                     f"{c['correction_count']} time(s) in the last 30 days."
                 )
                 if c.get("latest_reason"):
-                    line += f" Manager noted: \"{c['latest_reason']}\""
+                    line += f' Manager noted: "{c["latest_reason"]}"'
                 correction_lines.append(line)
             sections.append("Past corrections:\n" + "\n".join(correction_lines))
 
