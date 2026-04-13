@@ -7,7 +7,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 23  # increment when adding new migrations
+SCHEMA_VERSION = 24  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -54,6 +54,7 @@ class SchemaManager:
             (21, "universal action scheduler tables", self._migration_21),
             (22, "checklist templates and instances", self._migration_22),
             (23, "signals: add sender_trust and sender_contact_id", self._migration_23),
+            (24, "processed_messages: multi-source schema", self._migration_24),
         ]
 
         for version, description, func in migrations:
@@ -644,6 +645,25 @@ class SchemaManager:
         for col_name, col_type in new_cols:
             with contextlib.suppress(sqlite3.OperationalError):
                 conn.execute(f"ALTER TABLE signals ADD COLUMN {col_name} {col_type}")
+
+    def _migration_24(self, conn: sqlite3.Connection) -> None:
+        """Upgrade processed_messages to multi-source schema."""
+        # Add source and ref_id columns to existing table
+        for col_name, col_type in [("source", "TEXT"), ("ref_id", "TEXT")]:
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute(f"ALTER TABLE processed_messages ADD COLUMN {col_name} {col_type}")
+
+        # Create unique index for multi-source dedup
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_processed_source_ref ON processed_messages (source, ref_id)"
+        )
+
+        # Backfill existing Telegram rows
+        conn.execute("""
+            UPDATE processed_messages
+            SET source = 'telegram', ref_id = CAST(message_id AS TEXT)
+            WHERE source IS NULL
+        """)
 
 
 def migrate(db_path: Path) -> list[int]:

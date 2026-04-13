@@ -84,6 +84,10 @@
             "type": "string",
             "description": "Optional event description / notes"
           },
+          "calendar_id": {
+            "type": "string",
+            "description": "Calendar to add event to. Use the label configured in XIBI_CALENDARS (e.g. whatever labels the operator has defined). Defaults to the first configured calendar. Omit unless the user specifies a different calendar."
+          },
           "timezone": {
             "type": "string",
             "description": "IANA timezone, e.g. 'America/New_York'. Defaults to America/New_York."

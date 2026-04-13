@@ -11,16 +11,61 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime
+from typing import Any
 
-_TOKEN_CACHE = {"access_token": None, "expires_at": 0}
+_TOKEN_CACHE: dict[str, Any] = {"access_token": None, "expires_at": 0}
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 
-# Calendars to include by default in list_events and find_event
-DEFAULT_CALENDARS = [
-    "primary",
-    "family11858167880136244905@group.calendar.google.com",
-]
+
+def load_calendar_config() -> list[dict]:
+    """
+    Parse XIBI_CALENDARS env var into list of {label, calendar_id} dicts.
+
+    Falls back to [{label: "default", calendar_id: "primary"}] if not set.
+    NOTE: The "primary" fallback is only safe when the OAuth account is also
+    the calendar owner. In Roberto deployments, always set XIBI_CALENDARS
+    explicitly — the fallback will resolve to Roberto's empty calendar.
+
+    Example:
+        XIBI_CALENDARS=personal:dannylebron@gmail.com,afya:lebron@afya.fit
+        → [
+            {"label": "personal", "calendar_id": "dannylebron@gmail.com"},
+            {"label": "afya",     "calendar_id": "lebron@afya.fit"},
+          ]
+    """
+    raw = os.environ.get("XIBI_CALENDARS")
+    if not raw:
+        import logging
+
+        logging.getLogger(__name__).warning("XIBI_CALENDARS not set, falling back to default:primary")
+        raw = "default:primary"
+
+    calendars = []
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if ":" in entry:
+            label, cal_id = entry.split(":", 1)
+            calendars.append({"label": label.strip(), "calendar_id": cal_id.strip()})
+    return calendars if calendars else [{"label": "default", "calendar_id": "primary"}]
+
+
+def get_calendar_label(calendar_id: str) -> str:
+    """Reverse lookup: given a calendar_id, return its label. Falls back to calendar_id."""
+    for cal in load_calendar_config():
+        if cal["calendar_id"] == calendar_id:
+            return str(cal["label"])
+    return calendar_id
+
+
+def resolve_calendar_id(label_or_id: str) -> str:
+    """Resolve a friendly label ('personal', 'afya') to a Google Calendar ID.
+    Falls back to the input value if no match — allows passing raw IDs directly.
+    """
+    for cal in load_calendar_config():
+        if cal["label"].lower() == label_or_id.lower():
+            return str(cal["calendar_id"])
+    return label_or_id  # pass-through for raw IDs
 
 
 def format_date_label(iso_str: str, today: datetime) -> str:
@@ -58,8 +103,9 @@ def get_access_token() -> str:
     """Return a valid Google OAuth2 access token, refreshing if necessary."""
     now = time.time()
     # Refresh 60s before actual expiry to avoid edge cases
-    if _TOKEN_CACHE["access_token"] and _TOKEN_CACHE["expires_at"] - now > 60:
-        return _TOKEN_CACHE["access_token"]
+    expires_at = _TOKEN_CACHE["expires_at"]
+    if _TOKEN_CACHE["access_token"] and expires_at is not None and expires_at - now > 60:
+        return str(_TOKEN_CACHE["access_token"])
 
     client_id = os.environ.get("GOOGLE_CALENDAR_CLIENT_ID")
     client_secret = os.environ.get("GOOGLE_CALENDAR_CLIENT_SECRET")
@@ -84,17 +130,18 @@ def get_access_token() -> str:
     try:
         resp = json.loads(urllib.request.urlopen(req, timeout=10).read())
     except urllib.error.HTTPError as e:
-        raise RuntimeError(f"Token refresh failed: {e.code} {e.read().decode()}")
+        raise RuntimeError(f"Token refresh failed: {e.code} {e.read().decode()}") from e
 
     if "access_token" not in resp:
         raise RuntimeError(f"Token refresh returned no access_token: {resp}")
 
-    _TOKEN_CACHE["access_token"] = resp["access_token"]
+    token = str(resp["access_token"])
+    _TOKEN_CACHE["access_token"] = token
     _TOKEN_CACHE["expires_at"] = now + resp.get("expires_in", 3600)
-    return _TOKEN_CACHE["access_token"]
+    return token
 
 
-def gcal_request(path: str, method: str = "GET", body: dict = None) -> dict:
+def gcal_request(path: str, method: str = "GET", body: dict | None = None) -> dict:
     """Make an authenticated request to the Google Calendar API v3."""
     token = get_access_token()
     url = f"https://www.googleapis.com/calendar/v3{path}"
@@ -104,7 +151,10 @@ def gcal_request(path: str, method: str = "GET", body: dict = None) -> dict:
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         resp = urllib.request.urlopen(req, timeout=15)
-        return json.loads(resp.read())
+        result = json.loads(resp.read())
+        if not isinstance(result, dict):
+            return {}
+        return result
     except urllib.error.HTTPError as e:
         err_body = e.read().decode()
-        raise RuntimeError(f"Calendar API error {e.code}: {err_body}")
+        raise RuntimeError(f"Calendar API error {e.code}: {err_body}") from e

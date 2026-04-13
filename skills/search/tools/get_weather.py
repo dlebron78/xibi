@@ -52,14 +52,16 @@ def run(params: dict) -> dict:
 
     # Extract daily forecasts (3 days)
     for day in data.get("weather", []):
-        result["forecast"].append({
-            "date": day.get("date"),
-            "high_f": day.get("maxtempF"),
-            "low_f": day.get("mintempF"),
-            "high_c": day.get("maxtempC"),
-            "low_c": day.get("mintempC"),
-            "sun_hours": day.get("sunHour"),
-            "uv_index": day.get("uvIndex"),
-        })
+        result["forecast"].append(
+            {
+                "date": day.get("date"),
+                "high_f": day.get("maxtempF"),
+                "low_f": day.get("mintempF"),
+                "high_c": day.get("maxtempC"),
+                "low_c": day.get("mintempC"),
+                "sun_hours": day.get("sunHour"),
+                "uv_index": day.get("uvIndex"),
+            }
+        )
 
     return result

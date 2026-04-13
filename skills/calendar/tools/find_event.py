@@ -5,7 +5,22 @@ find_event — Search Google Calendar events by keyword across multiple calendar
 import urllib.parse
 from datetime import datetime, timedelta, timezone
 
-from _google_auth import DEFAULT_CALENDARS, format_date_label, format_event_time, gcal_request
+try:
+    from _google_auth import (
+        format_date_label,
+        format_event_time,
+        gcal_request,
+        get_calendar_label,
+        load_calendar_config,
+    )
+except ImportError:
+    from ._google_auth import (
+        format_date_label,
+        format_event_time,
+        gcal_request,
+        get_calendar_label,
+        load_calendar_config,
+    )
 
 
 def run(params: dict) -> dict:
@@ -21,7 +36,9 @@ def run(params: dict) -> dict:
     time_min = urllib.parse.quote(now.isoformat())
     time_max = urllib.parse.quote((now + timedelta(days=days)).isoformat())
 
-    calendar_ids = params.get("calendar_ids", DEFAULT_CALENDARS)
+    config = load_calendar_config()
+    default_ids = [c["calendar_id"] for c in config]
+    calendar_ids = params.get("calendar_ids", default_ids)
 
     all_events = []
     errors = []
@@ -38,8 +55,8 @@ def run(params: dict) -> dict:
             errors.append(f"{cal_id}: {e}")
             continue
 
-        # Map known calendar IDs to readable names
-        cal_name = "Family" if "family" in cal_id else "Primary"
+        # Map calendar IDs to readable names via config
+        cal_name = get_calendar_label(cal_id)
 
         for item in data.get("items", []):
             start = item.get("start", {})
@@ -64,16 +81,16 @@ def run(params: dict) -> dict:
     # Dedup by event ID
     seen = set()
     unique_events = []
-    for e in all_events:
-        if e["id"] not in seen:
-            seen.add(e["id"])
-            unique_events.append(e)
+    for ev in all_events:
+        if ev["id"] not in seen:
+            seen.add(ev["id"])
+            unique_events.append(ev)
 
     # Sort merged results by start time
-    unique_events.sort(key=lambda e: e.get("_start_iso", ""))
+    unique_events.sort(key=lambda x: x.get("_start_iso", ""))
 
-    for e in unique_events:
-        e.pop("_start_iso", None)
+    for ev in unique_events:
+        ev.pop("_start_iso", None)
 
     result = {"status": "success", "as_of": today_str, "count": len(unique_events), "events": unique_events}
     if errors:

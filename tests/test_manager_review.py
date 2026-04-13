@@ -638,7 +638,7 @@ def test_apply_topic_pin_duplicate(db_path):
         conn.execute("INSERT INTO pinned_topics (topic) VALUES ('existing')")
     cycle = ObservationCycle(db_path=db_path)
     review_data = {"topic_pins": [{"topic": "Existing", "action": "pin", "reason": "still hot"}]}
-    actions = cycle._apply_manager_updates(review_data)
+    cycle._apply_manager_updates(review_data)
     with open_db(db_path) as conn:
         count = conn.execute("SELECT COUNT(*) FROM pinned_topics WHERE topic = 'existing'").fetchone()[0]
     assert count == 1
@@ -701,7 +701,7 @@ def test_apply_thread_owner_deadline(db_path):
         ],
         "signal_flags": [],
     }
-    actions = cycle._apply_manager_updates(review_data)
+    cycle._apply_manager_updates(review_data)
     with open_db(db_path) as conn:
         row = conn.execute("SELECT priority, summary, owner, current_deadline FROM threads WHERE id = 't1'").fetchone()
     assert row[0] == "high"

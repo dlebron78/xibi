@@ -75,7 +75,10 @@ def _null_db_ctx(db_path):
             id TEXT PRIMARY KEY, name TEXT, status TEXT DEFAULT 'active'
         );
         CREATE TABLE IF NOT EXISTS processed_messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, processed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            message_id INTEGER PRIMARY KEY,
+            source TEXT,
+            ref_id TEXT,
+            processed_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
     """)
     try:

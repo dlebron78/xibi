@@ -1,4 +1,3 @@
-import json
 import sqlite3
 from unittest.mock import MagicMock, patch
 
@@ -18,7 +17,6 @@ from xibi.heartbeat.nudge_actions import (
     parse_intent,
     resolve_action_tier,
 )
-
 
 # ── Unit tests: parse_intent ──────────────────────────────────────────
 
@@ -299,9 +297,10 @@ def test_outcome_error_keeps_active(mock_core):
 
 # ── Integration tests: Telegram routing ────────────────────────────────
 
-from datetime import datetime, timedelta
-import bregger_telegram
 import importlib
+from datetime import datetime, timedelta
+
+import bregger_telegram
 
 importlib.reload(bregger_telegram)
 from bregger_telegram import BreggerTelegramAdapter

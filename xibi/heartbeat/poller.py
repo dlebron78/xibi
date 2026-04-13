@@ -467,11 +467,23 @@ class HeartbeatPoller:
                     # Standard signal logging
                     with xibi.db.open_db(self.db_path) as conn, conn:
                         for sig in raw_signals:
+                            # 1. Deduplicate via signals table (short-term window)
                             if sig.get("ref_id") and sig_intel.is_duplicate_signal(
                                 sig.get("ref_source", ""), sig["ref_id"], self.db_path
                             ):
-                                logger.debug(f"Dedup skip: {sig['ref_id']} from {sig.get('ref_source')}")
+                                logger.debug(f"Dedup skip (signals): {sig['ref_id']} from {sig.get('ref_source')}")
                                 continue
+
+                            # 2. Deduplicate via processed_messages table (long-term/migration)
+                            if sig.get("ref_id"):
+                                source = sig.get("ref_source") or sig.get("source")
+                                row = conn.execute(
+                                    "SELECT 1 FROM processed_messages WHERE source = ? AND ref_id = ?",
+                                    (source, str(sig["ref_id"])),
+                                ).fetchone()
+                                if row:
+                                    logger.debug(f"Dedup skip (processed): {sig['ref_id']} from {source}")
+                                    continue
                             self.rules.log_signal_with_conn(
                                 conn,
                                 source=sig["source"],

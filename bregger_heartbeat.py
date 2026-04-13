@@ -19,11 +19,16 @@ import re
 import sqlite3
 import sys
 import time
-from xibi.heartbeat.classification import build_classification_prompt, build_fallback_prompt
 import urllib.error
 import urllib.request
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+from xibi.heartbeat.classification import build_classification_prompt, build_fallback_prompt
+
+if TYPE_CHECKING:
+    from xibi.heartbeat.context_assembly import EmailContext
 
 # Add project root to sys.path to allow importing from the root
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__))))
@@ -39,13 +44,8 @@ from bregger_utils import (
 from bregger_utils import (
     get_pinned_topics as _get_pinned_topics,
 )
-from bregger_utils import (
-    normalize_topic as _normalize_topic,
-)
 from xibi.heartbeat.sender_trust import (
     assess_sender_trust,
-    _extract_sender_addr,
-    _extract_sender_name,
 )
 
 # ---------------------------------------------------------------------------
@@ -310,7 +310,20 @@ class RuleEngine:
                     INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id, env)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'production')
                 """,
-                    (source, topic_hint, entity_text, entity_type, preview, str(ref_id), ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id),
+                    (
+                        source,
+                        topic_hint,
+                        entity_text,
+                        entity_type,
+                        preview,
+                        str(ref_id),
+                        ref_source,
+                        summary,
+                        summary_model,
+                        summary_ms,
+                        sender_trust,
+                        sender_contact_id,
+                    ),
                 )
         except Exception as e:
             print(f"⚠️ Heartbeat: Failed to log signal: {e}", flush=True)
@@ -329,14 +342,15 @@ class RuleEngine:
         topic = "_".join(words[:2]) if words else None
 
         # Entity candidates: look for project/org patterns in ORIGINAL subject
-        # Brackets [Afya-fit] often contain the most reliable metadata.
+        # Brackets often contain the most reliable metadata.
         entity_text = None
         entity_type = None
 
         m = re.search(r"\[(.*?)\]", subject)  # Check original for brackets
         if m:
-            entity_text = m.group(1).split("/")[0]  # e.g. [Afya-fit/...] -> Afya-fit
-            entity_type = "project" if "-" in entity_text or "afya" in entity_text.lower() else "org"
+            entity_text = m.group(1).split("/")[0]
+            # Simple heuristic for project vs org
+            entity_type = "project" if "-" in entity_text else "org"
 
         return topic, entity_text, entity_type
 
@@ -551,21 +565,20 @@ def classify_email(
     # Note: We removed the is_ollama_busy guard here to ensure we don't
     # fall back to DIGEST/dumps. Ollama will queue these internally.
 
-    if context:
-        prompt = build_classification_prompt(email, context)
-    else:
-        prompt = build_fallback_prompt(email)
+    prompt = build_classification_prompt(email, context) if context else build_fallback_prompt(email)
 
-    payload = json.dumps({
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "think": False,          # TOP LEVEL — critical for gemma4
-        "options": {
-            "num_predict": 10,   # one word answer
-            "temperature": 0     # deterministic
+    payload = json.dumps(
+        {
+            "model": model,
+            "prompt": prompt,
+            "stream": False,
+            "think": False,  # TOP LEVEL — critical for gemma4
+            "options": {
+                "num_predict": 10,  # one word answer
+                "temperature": 0,  # deterministic
+            },
         }
-    }).encode()
+    ).encode()
 
     try:
         # 15s timeout for classification
@@ -1105,7 +1118,12 @@ def reflect(notifier: TelegramNotifier, db_path: Path, model: str = "llama3.2:la
 
 
 def tick(
-    skills_dir: Path, db_path: Path, notifier: TelegramNotifier, rules: RuleEngine, model: str = "llama3.2:latest"
+    skills_dir: Path,
+    db_path: Path,
+    notifier: TelegramNotifier,
+    rules: RuleEngine,
+    model: str = "llama3.2:latest",
+    env: str = "production",
 ):
     if is_quiet_hours():
         print("🌙 Quiet hours — skipping heartbeat tick", flush=True)
@@ -1131,8 +1149,11 @@ def tick(
     # Fetch bodies and generate LLM summaries for all emails in this tick.
     # Runs BEFORE the per-email loop so summaries are available when logging signals.
     from xibi.heartbeat.email_body import (
-        find_himalaya, fetch_raw_email, parse_email_body,
-        compact_body, summarize_email_body
+        compact_body,
+        fetch_raw_email,
+        find_himalaya,
+        parse_email_body,
+        summarize_email_body,
     )
 
     try:
@@ -1173,7 +1194,10 @@ def tick(
 
         _summary_elapsed = int((time.time() - _summary_start) * 1000)
         if emails:
-            print(f"📝 Summarized {len([v for v in body_summaries.values() if v.get('status') == 'success'])}/{len(emails)} emails in {_summary_elapsed}ms", flush=True)
+            print(
+                f"📝 Summarized {len([v for v in body_summaries.values() if v.get('status') == 'success'])}/{len(emails)} emails in {_summary_elapsed}ms",
+                flush=True,
+            )
             if _summary_elapsed > 45000:
                 print(f"⚠️ Summarization budget exceeded: {_summary_elapsed}ms for {len(emails)} emails", flush=True)
 
@@ -1273,7 +1297,10 @@ def tick(
         verdict = rule_verdict if rule_verdict else classify_email(email, model=model, context=ctx)
 
         if ctx:
-            print(f"📋 {email_id}: {verdict} | trust={ctx.sender_trust} thread={ctx.matching_thread_name or 'none'} signals_7d={ctx.sender_signals_7d}", flush=True)
+            print(
+                f"📋 {email_id}: {verdict} | trust={ctx.sender_trust} thread={ctx.matching_thread_name or 'none'} signals_7d={ctx.sender_signals_7d}",
+                flush=True,
+            )
 
         # ── Cross-Channel Escalation Check ──
         if verdict == "DIGEST" and topic:
@@ -1320,6 +1347,44 @@ def tick(
                 )
         except Exception:
             pass
+
+    # ── Calendar Signals ──────────────────────────────────────────
+    try:
+        from xibi.heartbeat.calendar_poller import poll_calendar_signals
+
+        calendar_signals = poll_calendar_signals(db_path=db_path, env=env)
+        if calendar_signals:
+            print(f"📅 {len(calendar_signals)} new calendar signal(s)", flush=True)
+            for sig in calendar_signals:
+                if sig.get("urgency") == "URGENT":
+                    # Extract title and derive delta for the nudge
+                    title = sig.get("topic_hint", "Meeting")
+                    start_iso = sig.get("timestamp")
+                    delta_min = 0
+                    try:
+                        from datetime import timezone
+
+                        start = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+                        delta_min = int((start - datetime.now(timezone.utc)).total_seconds() / 60)
+                    except Exception:
+                        pass
+
+                    attendee = sig.get("entity_text")
+                    # content_preview already has formatted time and attendees,
+                    # but we use a specific nudge format per spec
+                    msg = f"📅 Starting in {delta_min} min: {title}"
+                    if attendee:
+                        msg += f"\nwith {attendee}"
+
+                    # Try to extract location from preview if it has (@ ...)
+                    if "(@ " in sig.get("content_preview", ""):
+                        loc = sig["content_preview"].split("(@ ")[1].rstrip(")")
+                        msg += f"\n@ {loc}"
+
+                    notifier.send(msg)
+                    print(f"📅 URGENT: {title} in {delta_min}min", flush=True)
+    except Exception as e:
+        print(f"⚠️ calendar_poller error: {e}", flush=True)
 
     # --- Reflection Loop ----------------------------------------------------
     # Run intelligence cycle after emails have been ingested
@@ -1562,6 +1627,18 @@ def main():
     rules = RuleEngine(db_path)
     rules._ensure_triage_tables()
 
+    env = config.get("env", "production")
+
+    # ── Migration Guard (Roberto Cutover) ───────────────────────
+    try:
+        from xibi.heartbeat.migration import stamp_roberto_cutover
+
+        stamped = stamp_roberto_cutover(db_path, env=env)
+        if stamped > 0:
+            print(f"✅ roberto_cutover: stamped {stamped} recent email(s) as processed", flush=True)
+    except Exception as e:
+        print(f"⚠️ Migration guard error: {e}", flush=True)
+
     interval_secs = POLL_INTERVAL_MINUTES * 60
     ticks_per_hour = 60 // POLL_INTERVAL_MINUTES
     tick_count = 0
@@ -1575,7 +1652,7 @@ def main():
 
     while True:
         try:
-            tick(skills_dir, db_path, notifier, rules, model=triage_model)
+            tick(skills_dir, db_path, notifier, rules, model=triage_model, env=env)
 
             # Run digest summary every ~1 hour
             tick_count += 1

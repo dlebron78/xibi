@@ -365,3 +365,65 @@ def test_open_db_allows_check_same_thread_false(tmp_path: Path):
         thread = threading.Thread(target=run_query, args=(conn,))
         thread.start()
         thread.join()
+
+
+def test_migration_24_processed_messages_upgrade(tmp_path: Path):
+    db_path = tmp_path / "test_m24.db"
+    # 1. Setup DB at version 23
+    sm = SchemaManager(db_path)
+
+    # We need to apply migrations 1-23 manually to stop before 24
+    migrations = [
+        sm._migration_1,
+        sm._migration_2,
+        sm._migration_3,
+        sm._migration_4,
+        sm._migration_5,
+        sm._migration_6,
+        sm._migration_7,
+        sm._migration_8,
+        sm._migration_9,
+        sm._migration_10,
+        sm._migration_11,
+        sm._migration_12,
+        sm._migration_13,
+        sm._migration_14,
+        sm._migration_15,
+        sm._migration_16,
+        sm._migration_17,
+        sm._migration_18,
+        sm._migration_19,
+        sm._migration_20,
+        sm._migration_21,
+        sm._migration_22,
+        sm._migration_23,
+    ]
+
+    with sqlite3.connect(db_path) as conn:
+        for func in migrations:
+            func(conn)
+        # Table is already created by _migration_1
+        conn.execute("INSERT INTO schema_version (version) VALUES (23)")
+
+    # 2. Insert old Telegram messages (version 23 schema has message_id only)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("INSERT INTO processed_messages (message_id) VALUES (123)")
+        conn.execute("INSERT INTO processed_messages (message_id) VALUES (456)")
+
+    # 3. Apply migration 24
+    sm.migrate()
+
+    # 4. Verify columns, index and backfill
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.execute("PRAGMA table_info(processed_messages)")
+        cols = {row[1] for row in cursor.fetchall()}
+        assert "source" in cols
+        assert "ref_id" in cols
+
+        cursor = conn.execute("SELECT source, ref_id FROM processed_messages ORDER BY message_id ASC")
+        rows = cursor.fetchall()
+        assert rows == [("telegram", "123"), ("telegram", "456")]
+
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='processed_messages'")
+        indexes = {row[0] for row in cursor.fetchall()}
+        assert "idx_processed_source_ref" in indexes
