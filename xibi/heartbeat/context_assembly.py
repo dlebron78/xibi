@@ -82,6 +82,36 @@ class SignalContext:
     sender_avg_urgency: str | None = None  # most common urgency from recent signals
     sender_has_open_thread: bool = False  # any active thread involving this sender
 
+    # Step-78: Calendar context
+    upcoming_events: list[dict] = field(default_factory=list)
+    # Each dict: {
+    #   title: str,
+    #   start: str (ISO),
+    #   end: str (ISO),
+    #   calendar_label: str,
+    #   attendees: [{name: str, email: str}],
+    #   location: str | None,          # physical address or None
+    #   conference_url: str | None,     # Zoom/Meet/Teams link or None
+    #   event_tags: list[str],          # e.g. ["birthday", "reservation"] or ["flight", "travel"] or ["meeting"]
+    #   recurring: bool,                # True if part of a recurring series (Google API: recurringEventId present)
+    #   minutes_until: int | None,      # None for all-day events
+    # }
+
+    sender_on_calendar: bool = False
+    # True if sender_id matches an attendee email on any upcoming event
+
+    sender_calendar_event: str | None = None
+    # Title of the upcoming event where sender is an attendee (nearest one)
+
+    sender_event_minutes_until: int | None = None
+    # Minutes until that event starts (None if no overlap)
+
+    calendar_busy_next_2h: bool = False
+    # True if any event starts within 2 hours — indicates Daniel is about to be in meetings
+
+    next_event_summary: str | None = None
+    # Human-readable summary of the very next event: "Flight to NYC in 3h" or "1:1 with Sarah in 45min (Zoom)"
+
 
 def assemble_signal_context(
     email: dict,
@@ -92,6 +122,7 @@ def assemble_signal_context(
     summary: str | None = None,
     sender_trust: str | None = None,
     sender_contact_id: str | None = None,
+    upcoming_events: list[dict] | None = None,
 ) -> SignalContext:
     """Assemble all available context for a single email.
 
@@ -250,6 +281,31 @@ def assemble_signal_context(
     except Exception as e:
         logger.warning(f"Error assembling email context: {e}")
 
+    # e) Calendar context
+    try:
+        from xibi.heartbeat.calendar_context import (
+            build_next_event_summary,
+            detect_sender_overlap,
+            fetch_upcoming_events,
+        )
+
+        upcoming = upcoming_events if upcoming_events is not None else fetch_upcoming_events(lookahead_hours=24)
+        ctx.upcoming_events = upcoming
+
+        # Busy check
+        ctx.calendar_busy_next_2h = any(e.get("minutes_until", 999) <= 120 for e in upcoming)
+
+        # Sender overlap
+        overlap = detect_sender_overlap(upcoming, ctx.sender_id)
+        if overlap:
+            ctx.sender_on_calendar = True
+            ctx.sender_calendar_event = overlap.get("title")
+            ctx.sender_event_minutes_until = overlap.get("minutes_until")
+
+        ctx.next_event_summary = build_next_event_summary(upcoming)
+    except Exception as e:
+        logger.warning(f"Calendar context failed (non-fatal): {e}")
+
     return ctx
 
 
@@ -259,6 +315,7 @@ def assemble_batch_signal_context(
     batch_topics: dict,  # email_id -> {topic, entity_text, entity_type}
     body_summaries: dict,  # email_id -> {summary, ...}
     trust_results: dict,  # email_id -> TrustAssessment (from step-69)
+    upcoming_events: list[dict] | None = None,
 ) -> dict[str, SignalContext]:
     """Assemble context for all emails in a tick batch.
 
@@ -267,6 +324,16 @@ def assemble_batch_signal_context(
     """
     if not emails:
         return {}
+
+    # Fetch upcoming events once for the batch
+    if upcoming_events is None:
+        try:
+            from xibi.heartbeat.calendar_context import fetch_upcoming_events
+
+            upcoming_events = fetch_upcoming_events(lookahead_hours=24)
+        except Exception as e:
+            logger.warning(f"Failed to fetch calendar events for batch: {e}")
+            upcoming_events = []
 
     contexts = {}
     try:
@@ -427,6 +494,29 @@ def assemble_batch_signal_context(
                 (f"%{sender_contact_id}%",),
             ).fetchone()
             ctx.sender_has_open_thread = bool(has_open)
+
+            # e) Calendar context
+            try:
+                from xibi.heartbeat.calendar_context import (
+                    build_next_event_summary,
+                    detect_sender_overlap,
+                )
+
+                ctx.upcoming_events = upcoming_events
+
+                # Busy check
+                ctx.calendar_busy_next_2h = any(e.get("minutes_until", 999) <= 120 for e in upcoming_events)
+
+                # Sender overlap
+                overlap = detect_sender_overlap(upcoming_events, ctx.sender_id)
+                if overlap:
+                    ctx.sender_on_calendar = True
+                    ctx.sender_calendar_event = overlap.get("title")
+                    ctx.sender_event_minutes_until = overlap.get("minutes_until")
+
+                ctx.next_event_summary = build_next_event_summary(upcoming_events)
+            except Exception as e:
+                logger.warning(f"Calendar context failed for {email_id} (non-fatal): {e}")
 
             contexts[email_id] = ctx
 

@@ -188,3 +188,37 @@ def test_assembly_db_error_graceful(tmp_path):
     ctx = assemble_signal_context(email, bad_db)
     assert ctx.signal_ref_id == "1"
     # Should not crash, just return minimal context
+
+
+def test_assemble_context_with_calendar(db_path, mocker):
+    mock_fetch = mocker.patch("xibi.heartbeat.calendar_context.fetch_upcoming_events")
+    mock_fetch.return_value = [
+        {
+            "title": "Meeting with Test",
+            "minutes_until": 30,
+            "attendees": [{"email": "test@example.com", "name": "Test"}],
+            "recurring": False,
+        }
+    ]
+
+    email = {"id": "1", "from": {"addr": "test@example.com", "name": "Test"}}
+    ctx = assemble_signal_context(email, db_path)
+
+    assert ctx.sender_on_calendar is True
+    assert ctx.sender_calendar_event == "Meeting with Test"
+    assert ctx.sender_event_minutes_until == 30
+    assert "Meeting with Test in 30min" in ctx.next_event_summary
+
+
+def test_assemble_batch_single_fetch(db_path, mocker):
+    mock_fetch = mocker.patch("xibi.heartbeat.calendar_context.fetch_upcoming_events")
+    mock_fetch.return_value = []
+
+    emails = [
+        {"id": "e1", "from": {"addr": "a@b.com", "name": "A"}},
+        {"id": "e2", "from": {"addr": "c@d.com", "name": "C"}},
+    ]
+    assemble_batch_signal_context(emails, db_path, {}, {}, {})
+
+    # Called once at the top of the batch
+    assert mock_fetch.call_count == 1

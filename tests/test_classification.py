@@ -251,6 +251,37 @@ class TestClassification(unittest.TestCase):
         self.assertEqual(verdict, "HIGH")
         self.assertIn("🔥", subject)
 
+    def test_prompt_with_calendar_context(self):
+        """Test: Calendar context appears in prompt"""
+        ctx = SignalContext(
+            signal_ref_id="123",
+            sender_id="alice@example.com",
+            sender_name="Alice",
+            headline="Meeting?",
+            upcoming_events=[
+                {
+                    "title": "Meeting with Alice",
+                    "minutes_until": 30,
+                    "recurring": True,
+                    "event_tags": ["meeting"],
+                }
+            ],
+            sender_on_calendar=True,
+            sender_calendar_event="Meeting with Alice",
+            sender_event_minutes_until=30,
+            calendar_busy_next_2h=True,
+            next_event_summary="Meeting with Alice in 30min",
+        )
+        email = {"id": "123"}
+        prompt = build_classification_prompt(email, ctx)
+
+        self.assertIn("CALENDAR CONTEXT:", prompt)
+        self.assertIn("This sender is an attendee on a recurring event", prompt)
+        self.assertIn(' "Meeting with Alice" (in 30 min)', prompt)
+        self.assertIn("Next on schedule: Meeting with Alice in 30min", prompt)
+        self.assertIn("Daniel has events in the next 2 hours", prompt)
+        self.assertIn("📅 Meeting with Alice (recurring) — in 30 min [meeting]", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()
