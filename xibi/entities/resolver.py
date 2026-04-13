@@ -129,5 +129,3 @@ def resolve_contact(
 
     logger.info(f"No match found for {channel_type}:{handle}")
     return None
-
-

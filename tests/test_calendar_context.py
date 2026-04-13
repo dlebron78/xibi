@@ -8,8 +8,8 @@ from xibi.heartbeat.calendar_context import (
     build_next_event_summary,
 )
 
-class TestCalendarContext(unittest.TestCase):
 
+class TestCalendarContext(unittest.TestCase):
     @patch("xibi.heartbeat.calendar_context.gcal_request")
     @patch("xibi.heartbeat.calendar_context.load_calendar_config")
     def test_fetch_upcoming_events_success(self, mock_load_config, mock_gcal_request):
@@ -101,11 +101,7 @@ class TestCalendarContext(unittest.TestCase):
 
     def test_detect_sender_overlap_match(self):
         events = [
-            {
-                "title": "Meeting",
-                "attendees": [{"email": "sarah@example.com", "name": "Sarah"}],
-                "minutes_until": 30
-            }
+            {"title": "Meeting", "attendees": [{"email": "sarah@example.com", "name": "Sarah"}], "minutes_until": 30}
         ]
         overlap = detect_sender_overlap(events, "Sarah@example.com")
         self.assertIsNotNone(overlap)
@@ -113,23 +109,13 @@ class TestCalendarContext(unittest.TestCase):
 
     def test_detect_sender_overlap_no_match(self):
         events = [
-            {
-                "title": "Meeting",
-                "attendees": [{"email": "sarah@example.com", "name": "Sarah"}],
-                "minutes_until": 30
-            }
+            {"title": "Meeting", "attendees": [{"email": "sarah@example.com", "name": "Sarah"}], "minutes_until": 30}
         ]
         overlap = detect_sender_overlap(events, "other@example.com")
         self.assertIsNone(overlap)
 
     def test_build_next_event_summary_meeting(self):
-        events = [
-            {
-                "title": "1:1 with Sarah",
-                "minutes_until": 45,
-                "conference_url": "https://zoom.us/j/123"
-            }
-        ]
+        events = [{"title": "1:1 with Sarah", "minutes_until": 45, "conference_url": "https://zoom.us/j/123"}]
         summary = build_next_event_summary(events)
         self.assertEqual(summary, "1:1 with Sarah in 45min (Zoom)")
 
@@ -142,6 +128,7 @@ class TestCalendarContext(unittest.TestCase):
         ]
         summary = build_next_event_summary(events)
         self.assertEqual(summary, "Mom's Birthday (all day)")
+
 
 if __name__ == "__main__":
     unittest.main()

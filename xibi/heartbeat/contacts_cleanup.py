@@ -18,31 +18,58 @@ logger = logging.getLogger(__name__)
 
 AUTOMATED_PATTERNS = [
     # Prefix patterns
-    r"^noreply@", r"^no-reply@", r"^no\.reply@",
-    r"^donotreply@", r"^do-not-reply@", r"^do\.not\.reply@",
-    r"^auto-reply@", r"^autoreply@",
-    r"^notifications?@", r"^notify@",
-    r"^alerts?@", r"^mailer-daemon@",
-    r"^postmaster@", r"^bounce@",
-    r"^service@", r"^support@", r"^help@",
-    r"^info@", r"^feedback@",
-    r"^news@", r"^newsletter@",
-    r"^updates?@", r"^digest@",
-    r"^marketing@", r"^promo@",
-    r"^billing@", r"^invoice@", r"^receipts?@",
-    r"^confirm@", r"^verification@",
+    r"^noreply@",
+    r"^no-reply@",
+    r"^no\.reply@",
+    r"^donotreply@",
+    r"^do-not-reply@",
+    r"^do\.not\.reply@",
+    r"^auto-reply@",
+    r"^autoreply@",
+    r"^notifications?@",
+    r"^notify@",
+    r"^alerts?@",
+    r"^mailer-daemon@",
+    r"^postmaster@",
+    r"^bounce@",
+    r"^service@",
+    r"^support@",
+    r"^help@",
+    r"^info@",
+    r"^feedback@",
+    r"^news@",
+    r"^newsletter@",
+    r"^updates?@",
+    r"^digest@",
+    r"^marketing@",
+    r"^promo@",
+    r"^billing@",
+    r"^invoice@",
+    r"^receipts?@",
+    r"^confirm@",
+    r"^verification@",
 ]
 
 AUTOMATED_DOMAINS = [
     # Transactional / notification services
-    "greenhouse-mail.io", "notifications.google.com",
-    "email.indeed.com", "linkedin.com",
-    "facebookmail.com", "mail.instagram.com",
-    "amazonses.com", "sendgrid.net", "mailchimp.com",
-    "mandrillapp.com", "postmarkapp.com",
+    "greenhouse-mail.io",
+    "notifications.google.com",
+    "email.indeed.com",
+    "linkedin.com",
+    "facebookmail.com",
+    "mail.instagram.com",
+    "amazonses.com",
+    "sendgrid.net",
+    "mailchimp.com",
+    "mandrillapp.com",
+    "postmarkapp.com",
     # Billing / commercial
-    "paypal.com", "venmo.com", "cashapp.com",
-    "usps.com", "ups.com", "fedex.com",
+    "paypal.com",
+    "venmo.com",
+    "cashapp.com",
+    "usps.com",
+    "ups.com",
+    "fedex.com",
 ]
 
 DOMAIN_HINTS = {
@@ -52,6 +79,7 @@ DOMAIN_HINTS = {
     "linkedin.com": "community/networking",
     "github.com": "professional/open-source",
 }
+
 
 def classify_automated_contacts(db_path: Path) -> int:
     """
@@ -76,19 +104,13 @@ def classify_automated_contacts(db_path: Path) -> int:
                 is_automated = any(re.search(pattern, email, re.IGNORECASE) for pattern in AUTOMATED_PATTERNS)
 
                 if is_automated:
-                    conn.execute(
-                        "UPDATE contacts SET relationship = 'automated' WHERE id = ?",
-                        (contact_id,)
-                    )
+                    conn.execute("UPDATE contacts SET relationship = 'automated' WHERE id = ?", (contact_id,))
                     classified_count += 1
                     continue
 
                 domain = email.split("@")[-1] if "@" in email else ""
                 if domain in AUTOMATED_DOMAINS:
-                    conn.execute(
-                        "UPDATE contacts SET relationship = 'commercial' WHERE id = ?",
-                        (contact_id,)
-                    )
+                    conn.execute("UPDATE contacts SET relationship = 'commercial' WHERE id = ?", (contact_id,))
                     classified_count += 1
 
             conn.commit()
@@ -96,6 +118,7 @@ def classify_automated_contacts(db_path: Path) -> int:
         logger.error(f"classify_automated_contacts failed: {e}")
 
     return classified_count
+
 
 def suggest_relationships(db_path: Path) -> int:
     """
@@ -136,10 +159,7 @@ def suggest_relationships(db_path: Path) -> int:
                 if suggestion:
                     new_note = f"suggested: {suggestion} (reason: {reason})"
                     updated_notes = f"{notes}\n{new_note}".strip()
-                    conn.execute(
-                        "UPDATE contacts SET notes = ? WHERE id = ?",
-                        (updated_notes, contact_id)
-                    )
+                    conn.execute("UPDATE contacts SET notes = ? WHERE id = ?", (updated_notes, contact_id))
                     suggested_count += 1
 
             conn.commit()
@@ -147,6 +167,7 @@ def suggest_relationships(db_path: Path) -> int:
         logger.error(f"suggest_relationships failed: {e}")
 
     return suggested_count
+
 
 def repoll_contact_dates(db_path: Path, himalaya_bin: str) -> int:
     """
@@ -163,14 +184,9 @@ def repoll_contact_dates(db_path: Path, himalaya_bin: str) -> int:
     try:
         with open_db(db_path) as conn:
             conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                "SELECT email, first_seen, last_seen FROM contacts WHERE signal_count = 0"
-            ).fetchall()
+            rows = conn.execute("SELECT email, first_seen, last_seen FROM contacts WHERE signal_count = 0").fetchall()
             contact_dates = {
-                r["email"]: {
-                    "first_seen": r["first_seen"],
-                    "last_seen": r["last_seen"]
-                } for r in rows if r["email"]
+                r["email"]: {"first_seen": r["first_seen"], "last_seen": r["last_seen"]} for r in rows if r["email"]
             }
     except Exception as e:
         logger.error(f"Failed to fetch contacts for repoll: {e}")
@@ -186,7 +202,7 @@ def repoll_contact_dates(db_path: Path, himalaya_bin: str) -> int:
     # We want to scan oldest to newest for first_seen, or just collect all and find min/max.
     # Himalaya lists newest first. We'll scan all pages first to find min/max.
 
-    found_updates = {} # email -> {'min': date, 'max': date}
+    found_updates = {}  # email -> {'min': date, 'max': date}
 
     logger.info("Starting Himalaya scan for contact date repoll...")
     while True:
@@ -243,13 +259,14 @@ def repoll_contact_dates(db_path: Path, himalaya_bin: str) -> int:
                             last_seen = ?
                         WHERE email = ?
                         """,
-                        (dates["min"].isoformat(), dates["max"].isoformat(), email)
+                        (dates["min"].isoformat(), dates["max"].isoformat(), email),
                     )
                     repoll_count += 1
         except Exception as e:
             logger.error(f"Failed to update contact dates: {e}")
 
     return repoll_count
+
 
 def get_unclassified_contacts(
     db_path: Path,
@@ -272,12 +289,13 @@ def get_unclassified_contacts(
                 ORDER BY {order_by}
                 LIMIT ?
                 """,
-                (limit,)
+                (limit,),
             ).fetchall()
             return [dict(r) for r in rows]
     except Exception as e:
         logger.error(f"get_unclassified_contacts failed: {e}")
         return []
+
 
 def update_contact_relationship(
     db_path: Path,
@@ -295,12 +313,9 @@ def update_contact_relationship(
                 new_notes = f"{existing_notes}\n{notes}".strip()
                 conn.execute(
                     "UPDATE contacts SET relationship = ?, notes = ? WHERE id = ?",
-                    (relationship, new_notes, contact_id)
+                    (relationship, new_notes, contact_id),
                 )
             else:
-                conn.execute(
-                    "UPDATE contacts SET relationship = ? WHERE id = ?",
-                    (relationship, contact_id)
-                )
+                conn.execute("UPDATE contacts SET relationship = ? WHERE id = ?", (relationship, contact_id))
     except Exception as e:
         logger.error(f"update_contact_relationship failed: {e}")
