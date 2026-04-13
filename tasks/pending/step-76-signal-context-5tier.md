@@ -510,3 +510,42 @@ Fallback returns just a tier with no reasoning — `parse_classification_respons
 - Slack adapter — future phase
 - Changing tier thresholds per contact trust level — step-78 (trust autonomy)
 - Using `classification_reasoning` for learning — step-77 (learning loop)
+
+---
+
+## TRR Record
+
+| Field | Value |
+|-------|-------|
+| Date | 2026-04-12 |
+| Reviewer | Cowork (Opus) — independent review |
+| HEAD | `39d64ab` (main after step-75 merge, PR #76) |
+| Verdict | **AMEND** |
+
+### Findings
+
+**TRR-C1 (Correctness — Minor):** `calendar_poller.py` (merged in step-75) has hardcoded "URGENT"/"DIGEST" at lines 172-183 in `_derive_urgency()`. This file is NOT listed in the spec's "Files Modified" table but must be updated to the new 5-tier scheme. Specifically: `"URGENT"` → `"CRITICAL"` (event within 2 hours), `"DIGEST"` → `"MEDIUM"` (event beyond 2 hours or fallback). Add `calendar_poller.py` to the Files Modified table.
+
+**TRR-S1 (Spec gap — Minor):** Line numbers throughout the spec are close but not exact against current `main` (post step-74/75 merges shifted things). Key corrections:
+- poller.py nudge trigger: spec says line 691, actual line 731
+- poller.py digest filter: spec says line 709, actual line 790
+- poller.py escalation: spec says line 243, actual line 268
+- bregger_heartbeat.py escalation: spec says line 618, actual line 607
+- observation.py reclassify_urgent: spec says line 1178, actual line 1209
+Jules should search by content pattern, not line number. Not blocking.
+
+**TRR-S2 (Spec gap):** Migration number not specified. Current SCHEMA_VERSION is 24 (step-75). The `classification_reasoning TEXT` column addition must be **migration 25**. Spec should state this explicitly.
+
+**TRR-V1 (Verification):** All structural claims verified against `main` at HEAD `39d64ab`:
+- `class EmailContext` in context_assembly.py with fields `email_id`, `sender_addr`, `subject` ✓
+- `assemble_email_context()`, `assemble_batch_context()` ✓
+- `build_classification_prompt()`, `build_fallback_prompt()` in classification.py ✓
+- `classify_email()` in bregger_heartbeat.py (line 559), `_classify_email()` in poller.py (line 224) ✓
+- `urgency` column in signals table (TEXT) ✓
+- `num_predict: 10` at bregger_heartbeat.py line 577 ✓
+- Tier references (URGENT/DIGEST/NOISE) confirmed in all listed files ✓
+
+**TRR-P1 (Process):** Architecture is sound. The rename-with-deprecated-alias approach is the right call — it avoids breaking anything while step-77 cleans up. The 5-tier scheme with `parse_classification_response()` and LEGACY_MAP handles the rollout gracefully. `num_predict: 10 → 30` is necessary for the new "TIER: reasoning" format.
+
+### Open Questions
+None — all findings resolved. TRR-C1 is the only actionable amendment (add calendar_poller.py to scope).
