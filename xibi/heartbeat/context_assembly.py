@@ -289,9 +289,7 @@ def assemble_signal_context(
             fetch_upcoming_events,
         )
 
-        upcoming = (
-            upcoming_events if upcoming_events is not None else fetch_upcoming_events(lookahead_hours=24)
-        )
+        upcoming = upcoming_events if upcoming_events is not None else fetch_upcoming_events(lookahead_hours=24)
         ctx.upcoming_events = upcoming
 
         # Busy check
@@ -507,9 +505,7 @@ def assemble_batch_signal_context(
                 ctx.upcoming_events = upcoming_events
 
                 # Busy check
-                ctx.calendar_busy_next_2h = any(
-                    e.get("minutes_until", 999) <= 120 for e in upcoming_events
-                )
+                ctx.calendar_busy_next_2h = any(e.get("minutes_until", 999) <= 120 for e in upcoming_events)
 
                 # Sender overlap
                 overlap = detect_sender_overlap(upcoming_events, ctx.sender_id)

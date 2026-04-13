@@ -117,8 +117,7 @@ def build_classification_prompt(signal: dict, context: SignalContext) -> str:
         event_type = "recurring" if is_recurring else "one-off"
         time_str = f" (in {delta} min)" if delta is not None else ""
         cal_lines.append(
-            f"This sender is an attendee on a {event_type} event: "
-            f'"{context.sender_calendar_event}"{time_str}'
+            f'This sender is an attendee on a {event_type} event: "{context.sender_calendar_event}"{time_str}'
         )
 
     if context.next_event_summary:

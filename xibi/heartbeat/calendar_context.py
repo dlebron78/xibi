@@ -20,6 +20,7 @@ _EVENT_TAG_PATTERNS = {
     "meeting": [r"1:1", r"standup", r"sync", r"review", r"meeting", r"call with", r"interview"],
 }
 
+
 def fetch_upcoming_events(
     lookahead_hours: int = 24,
 ) -> list[dict]:
@@ -98,10 +99,7 @@ def fetch_upcoming_events(
                 if not email:
                     continue
                 if email not in known_addresses and not a.get("organizer"):
-                    attendees.append({
-                        "name": a.get("displayName") or email,
-                        "email": email
-                    })
+                    attendees.append({"name": a.get("displayName") or email, "email": email})
 
             location = event.get("location")
             conference_url = None
@@ -125,11 +123,9 @@ def fetch_upcoming_events(
             }
 
     # Sort by minutes_until ascending, all-day events (None) at the end
-    sorted_events = sorted(
-        events_by_id.values(),
-        key=lambda x: (x["minutes_until"] is None, x["minutes_until"] or 0)
-    )
+    sorted_events = sorted(events_by_id.values(), key=lambda x: (x["minutes_until"] is None, x["minutes_until"] or 0))
     return sorted_events
+
 
 def tag_event(title: str, description: str | None = None, has_attendees: bool = False) -> list[str]:
     """
@@ -152,6 +148,7 @@ def tag_event(title: str, description: str | None = None, has_attendees: bool = 
 
     return matched_tags
 
+
 def detect_sender_overlap(
     events: list[dict],
     sender_id: str,
@@ -166,6 +163,7 @@ def detect_sender_overlap(
             if attendee.get("email", "").lower() == sender_id:
                 return event
     return None
+
 
 def build_next_event_summary(events: list[dict]) -> str | None:
     """
