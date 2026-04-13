@@ -7,7 +7,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 24  # increment when adding new migrations
+SCHEMA_VERSION = 25  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -55,6 +55,7 @@ class SchemaManager:
             (22, "checklist templates and instances", self._migration_22),
             (23, "signals: add sender_trust and sender_contact_id", self._migration_23),
             (24, "processed_messages: multi-source schema", self._migration_24),
+            (25, "signals: add classification_reasoning column", self._migration_25),
         ]
 
         for version, description, func in migrations:
@@ -664,6 +665,11 @@ class SchemaManager:
             SET source = 'telegram', ref_id = CAST(message_id AS TEXT)
             WHERE source IS NULL
         """)
+
+    def _migration_25(self, conn: sqlite3.Connection) -> None:
+        """Add classification_reasoning column to signals table."""
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("ALTER TABLE signals ADD COLUMN classification_reasoning TEXT")
 
 
 def migrate(db_path: Path) -> list[int]:

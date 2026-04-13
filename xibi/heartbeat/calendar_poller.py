@@ -169,18 +169,18 @@ def _log_calendar_signal(db_path: Path, sig: dict) -> None:
 
 
 def _derive_urgency(start_iso: str) -> str:
-    """URGENT if event starts within 2 hours. DIGEST otherwise."""
+    """CRITICAL if event starts within 2 hours. MEDIUM otherwise."""
     if len(start_iso) <= 10:  # All-day event (YYYY-MM-DD)
-        return "DIGEST"
+        return "MEDIUM"
 
     try:
         # Handle 'Z' and fromisoformat
         start = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
         now = datetime.now(timezone.utc)
         delta_hours = (start - now).total_seconds() / 3600
-        return "URGENT" if 0 <= delta_hours <= 2 else "DIGEST"
+        return "CRITICAL" if 0 <= delta_hours <= 2 else "MEDIUM"
     except Exception:
-        return "DIGEST"
+        return "MEDIUM"
 
 
 def _extract_attendees(event: dict) -> tuple[str | None, str | None]:

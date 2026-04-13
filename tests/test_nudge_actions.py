@@ -75,9 +75,9 @@ def test_parse_case_insensitive():
 @pytest.fixture
 def mock_context():
     return EmailContext(
-        email_id="msg-123",
-        subject="Project Alpha",
-        sender_addr="sarah@example.com",
+        signal_ref_id="msg-123",
+        headline="Project Alpha",
+        sender_id="sarah@example.com",
         sender_name="Sarah Chen",
         summary="Please review the board deck by Friday.",
         sender_trust="ESTABLISHED",

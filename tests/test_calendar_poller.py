@@ -60,7 +60,7 @@ def test_poll_new_event(mock_load_config, mock_gcal, db_path):
 
     assert len(signals) == 1
     assert signals[0]["ref_id"] == "evt1"
-    assert signals[0]["urgency"] == "URGENT"
+    assert signals[0]["urgency"] == "CRITICAL"
     assert signals[0]["entity_text"] == "Sarah"
 
     with sqlite3.connect(db_path) as conn:
@@ -107,20 +107,20 @@ def test_poll_urgency_within_2h():
     from xibi.heartbeat.calendar_poller import _derive_urgency
 
     start = (datetime.now(timezone.utc) + timedelta(minutes=90)).isoformat()
-    assert _derive_urgency(start) == "URGENT"
+    assert _derive_urgency(start) == "CRITICAL"
 
 
 def test_poll_urgency_beyond_2h():
     from xibi.heartbeat.calendar_poller import _derive_urgency
 
     start = (datetime.now(timezone.utc) + timedelta(hours=5)).isoformat()
-    assert _derive_urgency(start) == "DIGEST"
+    assert _derive_urgency(start) == "MEDIUM"
 
 
 def test_poll_allday_event():
     from xibi.heartbeat.calendar_poller import _derive_urgency
 
-    assert _derive_urgency("2026-05-01") == "DIGEST"
+    assert _derive_urgency("2026-05-01") == "MEDIUM"
 
 
 def test_poll_attendee_extraction():
@@ -191,7 +191,7 @@ def test_poll_calendar_signals_missing_start_skipped(mock_load_config, mock_gcal
 def test_derive_urgency_invalid_iso():
     from xibi.heartbeat.calendar_poller import _derive_urgency
 
-    assert _derive_urgency("not-a-date") == "DIGEST"
+    assert _derive_urgency("not-a-date") == "MEDIUM"
 
 
 def test_format_start_time_invalid():

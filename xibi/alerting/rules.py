@@ -80,6 +80,7 @@ class RuleEngine:
                         summary_ms     INTEGER,
                         sender_trust   TEXT,
                         sender_contact_id TEXT,
+                        classification_reasoning TEXT,
                         timestamp      DATETIME DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
@@ -182,7 +183,7 @@ class RuleEngine:
                 cursor = conn.execute(
                     """
                     SELECT sender, subject, verdict, timestamp FROM triage_log
-                    WHERE timestamp > ? AND verdict != 'URGENT'
+                    WHERE timestamp > ? AND verdict NOT IN ('CRITICAL', 'HIGH', 'URGENT')
                     ORDER BY timestamp ASC
                 """,
                     (self._watermark_cache,),
@@ -215,7 +216,7 @@ class RuleEngine:
                     cursor = conn.execute(
                         """
                         SELECT sender, subject, verdict, timestamp FROM triage_log
-                        WHERE timestamp > ? AND verdict != 'URGENT'
+                        WHERE timestamp > ? AND verdict NOT IN ('CRITICAL', 'HIGH', 'URGENT')
                         ORDER BY timestamp ASC
                         """,
                         (db_watermark,),
@@ -300,6 +301,7 @@ class RuleEngine:
         summary_ms: int | None = None,
         sender_trust: str | None = None,
         sender_contact_id: str | None = None,
+        classification_reasoning: str | None = None,
     ) -> None:
         try:
             preview = (content_preview[:277] + "...") if len(content_preview) > 280 else content_preview
@@ -315,8 +317,8 @@ class RuleEngine:
                 with conn:
                     conn.execute(
                         """
-                        INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id, classification_reasoning)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                         (
                             source,
@@ -331,6 +333,7 @@ class RuleEngine:
                             summary_ms,
                             sender_trust,
                             sender_contact_id,
+                            classification_reasoning,
                         ),
                     )
         except Exception as e:
@@ -385,6 +388,7 @@ class RuleEngine:
         summary_ms: int | None = None,
         sender_trust: str | None = None,
         sender_contact_id: str | None = None,
+        classification_reasoning: str | None = None,
     ) -> None:
         try:
             preview = (content_preview[:277] + "...") if len(content_preview) > 280 else content_preview
@@ -397,8 +401,8 @@ class RuleEngine:
                     return
             conn.execute(
                 """
-                INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id, classification_reasoning)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     source,
@@ -413,6 +417,7 @@ class RuleEngine:
                     summary_ms,
                     sender_trust,
                     sender_contact_id,
+                    classification_reasoning,
                 ),
             )
         except Exception as e:
@@ -440,7 +445,7 @@ class RuleEngine:
             cursor = conn.execute(
                 """
                 SELECT sender, subject, verdict, timestamp FROM triage_log
-                WHERE timestamp > ? AND verdict != 'URGENT'
+                WHERE timestamp > ? AND verdict NOT IN ('CRITICAL', 'HIGH', 'URGENT')
                 ORDER BY timestamp ASC
                 """,
                 (self._watermark_cache,),

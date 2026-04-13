@@ -3,22 +3,22 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from xibi.heartbeat.context_assembly import EmailContext
+    from xibi.heartbeat.context_assembly import SignalContext
 
 from xibi.heartbeat.sender_trust import _extract_sender_addr, _extract_sender_name
 
 
-def build_classification_prompt(email: dict, context: EmailContext) -> str:
-    """Build a context-rich classification prompt from EmailContext."""
+def build_classification_prompt(signal: dict, context: SignalContext) -> str:
+    """Build a context-rich classification prompt from SignalContext."""
 
     sections = []
 
     # Header: who sent this
     sender_line = f"From: {context.sender_name or 'Unknown'}"
-    if context.sender_addr:
-        sender_line += f" <{context.sender_addr}>"
+    if context.sender_id:
+        sender_line += f" <{context.sender_id}>"
     sections.append(sender_line)
-    sections.append(f"Subject: {context.subject}")
+    sections.append(f"Re: {context.headline}")
 
     # Trust & relationship
     trust_parts = []
@@ -39,7 +39,7 @@ def build_classification_prompt(email: dict, context: EmailContext) -> str:
 
     # Body summary
     if context.summary and context.summary not in ("[no body content]", "[summary unavailable]"):
-        sections.append(f"Email says: {context.summary}")
+        sections.append(f"Content: {context.summary}")
 
     # Thread context
     if context.matching_thread_name:
@@ -54,46 +54,88 @@ def build_classification_prompt(email: dict, context: EmailContext) -> str:
 
     # Recent pattern
     if context.sender_signals_7d and context.sender_signals_7d > 2:
-        sections.append(f"Recent activity: {context.sender_signals_7d} emails from this sender in last 7 days")
+        sections.append(f"Recent activity: {context.sender_signals_7d} signals from this sender in last 7 days")
 
     # Build final prompt
     context_block = "\n".join(sections)
 
     prompt = f"""{context_block}
 
-Classify this email. Answer with exactly one word.
+Classify this signal. Reply with a tier and one sentence explaining why.
 
-URGENT — Needs attention now. Signals: human-to-human from a trusted sender, active thread with a deadline, direct request or reply, security/fraud alert, travel disruption.
-DIGEST — Worth reading later. Signals: meaningful update from a known sender, job alert, newsletter you subscribe to, FYI from a colleague.
-NOISE — Ignore. Signals: automated marketing, bulk notification, social media alert, unknown sender with no thread context, coupon/promotion.
+Format: TIER: One sentence reasoning.
+Example: HIGH: Established contact following up on an open thread with a Friday deadline.
+
+Tiers:
+CRITICAL — Act now. Human-to-human from trusted sender, security/fraud alert, travel disruption, deadline today.
+HIGH — Act today. Important request or update from known sender, active thread approaching deadline, direct question requiring a response.
+MEDIUM — Read soon. Meaningful update, job alert, newsletter you read, FYI from colleague, no immediate action needed.
+LOW — Read when convenient. Low-priority update, automated notification you care about, confirmation email.
+NOISE — Ignore. Marketing, bulk email, social alerts, unknown sender with no context, promotional content.
 
 Rules:
-- ESTABLISHED or RECOGNIZED sender with a direct request → lean URGENT
-- Unknown sender with no thread context → lean NOISE unless the content is clearly important
-- Active thread with a deadline → lean URGENT regardless of sender
-- If unsure between URGENT and DIGEST → choose DIGEST
-- If unsure between DIGEST and NOISE → choose DIGEST
+- ESTABLISHED sender with a direct request → at least HIGH
+- Active thread with deadline today → CRITICAL regardless of sender
+- Unknown sender, no thread context → at most MEDIUM, usually LOW or NOISE
+- When unsure between adjacent tiers → choose the lower one
+- NOISE only when clearly automated or irrelevant
 
-Verdict:"""
+Classification:"""
 
     return prompt
 
 
-def build_fallback_prompt(email: dict) -> str:
-    """Original sender+subject-only prompt. Used when context assembly fails."""
-    addr = _extract_sender_addr(email)
-    name = _extract_sender_name(email)
+def build_fallback_prompt(signal: dict) -> str:
+    """Simplified prompt used when context assembly fails."""
+    addr = _extract_sender_addr(signal)
+    name = _extract_sender_name(signal)
     sender = f"{name} <{addr}>" if name and addr else (name or addr or "Unknown")
 
-    subject = email.get("subject", "No Subject")
+    subject = signal.get("subject", "No Subject")
     return f"""From: {sender}
 Subject: {subject}
 
-Classify this email for a personal assistant triage. Answer with exactly one word:
-URGENT - High priority. Human-to-human messages, travel, security, fraud, or direct replies.
-DIGEST - Medium priority. Newsletters you actively read, job alerts, or meaningful updates you care about.
-NOISE - Low priority. Automated marketing, coupons, social media notifications, bulk receipts, or junk.
-
-Strict Rule: If it looks like a mass-email or automated notification, it is NOISE unless it's clearly an update you requested.
+Classify this signal. Reply with one word: CRITICAL, HIGH, MEDIUM, LOW, or NOISE.
+CRITICAL = urgent, needs action now.
+HIGH = important, needs action today.
+MEDIUM = worth reading, no immediate action.
+LOW = low priority.
+NOISE = automated/irrelevant.
 
 Verdict:"""
+
+
+VALID_TIERS = {"CRITICAL", "HIGH", "MEDIUM", "LOW", "NOISE"}
+
+
+def parse_classification_response(response: str) -> tuple[str, str | None]:
+    """
+    Parse LLM response into (tier, reasoning).
+
+    Handles:
+    - "CRITICAL: Established contact asking about today's deadline."
+    - "HIGH" (no reasoning)
+    - "urgent" (case-insensitive, maps to legacy URGENT → CRITICAL)
+    - Garbage → ("MEDIUM", None)
+
+    Returns (tier, reasoning_or_None).
+    """
+    text = response.strip()
+
+    # Try "TIER: reasoning" format
+    if ":" in text:
+        parts = text.split(":", 1)
+        tier_raw = parts[0].strip().upper()
+        reasoning = parts[1].strip() if len(parts) > 1 else None
+    else:
+        tier_raw = text.split()[0].upper() if text else ""
+        reasoning = None
+
+    # Legacy mapping for backward compat during rollout
+    legacy_map = {"URGENT": "CRITICAL", "DIGEST": "MEDIUM"}
+    tier = legacy_map.get(tier_raw, tier_raw)
+
+    if tier not in VALID_TIERS:
+        return "MEDIUM", None  # safe fallback
+
+    return tier, reasoning

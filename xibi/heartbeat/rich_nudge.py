@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from xibi.heartbeat.context_assembly import EmailContext
+    from xibi.heartbeat.context_assembly import SignalContext
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +28,12 @@ class RichNudge:
 
 
 def compose_rich_nudge(
-    context: EmailContext,
+    context: SignalContext,
     verdict_reason: str | None = None,
     signal_id: int | None = None,
     is_late: bool = False,
 ) -> RichNudge:
-    """Build a rich nudge from assembled EmailContext.
+    """Build a rich nudge from assembled SignalContext.
 
     This is the template path — no LLM call. Used as the default and as
     fallback when the local model is unavailable or too slow.
@@ -78,7 +78,7 @@ def compose_rich_nudge(
             summary = summary[:2997] + "..."
         lines.append(f"\n📝 {summary}")
     else:
-        lines.append(f"\n📝 Re: {context.subject}")
+        lines.append(f"\n📝 Re: {context.headline}")
 
     # THREAD — which conversation, priority, deadline
     if context.matching_thread_name:
@@ -130,12 +130,12 @@ def compose_rich_nudge(
         text=text,
         actions=actions,
         thread_id=context.matching_thread_id,
-        ref_id=context.email_id,
+        ref_id=context.signal_ref_id,
         is_late=is_late,
     )
 
 
-def _suggest_actions(context: EmailContext) -> list[str]:
+def _suggest_actions(context: SignalContext) -> list[str]:
     """Suggest actions based on context. No LLM — rule-based."""
     actions = []
 
@@ -162,7 +162,7 @@ def _suggest_actions(context: EmailContext) -> list[str]:
 
 
 async def compose_smart_nudge(
-    context: EmailContext,
+    context: SignalContext,
     model: str | None = None,
     signal_id: int | None = None,
     is_late: bool = False,
@@ -205,7 +205,7 @@ async def compose_smart_nudge(
     return nudge
 
 
-def _build_nudge_prompt(context: EmailContext) -> str:
+def _build_nudge_prompt(context: SignalContext) -> str:
     """Build a minimal prompt for the local model to assess urgency reason."""
     parts = [
         "Given this email context, write ONE sentence explaining why the user should act on this now.",
@@ -214,7 +214,7 @@ def _build_nudge_prompt(context: EmailContext) -> str:
         f"Sender: {context.sender_name} ({context.contact_org or 'unknown org'})",
         f"Relationship: {context.contact_relationship or 'unknown'}",
         f"Trust: {context.sender_trust or 'unknown'}",
-        f"Summary: {context.summary or context.subject}",
+        f"Summary: {context.summary or context.headline}",
     ]
 
     if context.matching_thread_name:
