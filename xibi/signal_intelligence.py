@@ -330,12 +330,12 @@ def _upsert_contact_core(
                 count_col = "signal_count" if direction == "inbound" else "outbound_count"
                 if contact.organization is None and organization:
                     conn.execute(
-                        f"UPDATE contacts SET last_seen = CURRENT_TIMESTAMP, {count_col} = {count_col} + 1, organization = ? WHERE id = ?",
+                        f"UPDATE contacts SET last_seen = MAX(last_seen, CURRENT_TIMESTAMP), {count_col} = {count_col} + 1, organization = ? WHERE id = ?",
                         (organization, contact_id),
                     )
                 else:
                     conn.execute(
-                        f"UPDATE contacts SET last_seen = CURRENT_TIMESTAMP, {count_col} = {count_col} + 1 WHERE id = ?",
+                        f"UPDATE contacts SET last_seen = MAX(last_seen, CURRENT_TIMESTAMP), {count_col} = {count_col} + 1 WHERE id = ?",
                         (contact_id,),
                     )
         except Exception as e:

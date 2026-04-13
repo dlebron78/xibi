@@ -62,7 +62,7 @@ def create_contact(
                 ON CONFLICT(id) DO UPDATE SET
                     display_name = COALESCE(excluded.display_name, display_name),
                     organization = COALESCE(excluded.organization, organization),
-                    last_seen = CURRENT_TIMESTAMP,
+                    last_seen = MAX(last_seen, CURRENT_TIMESTAMP),
                     signal_count = signal_count + 1
                 """,
                 (contact_id, display_name, email, organization, relationship, discovered_via),

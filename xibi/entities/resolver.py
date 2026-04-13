@@ -66,7 +66,6 @@ def resolve_contact(
 
             if row:
                 contact = Contact.from_row(row)
-                _update_last_seen(conn, contact.id)
                 logger.info(f"Resolved contact {contact.id} via exact_channel match ({channel_type}:{handle})")
                 return contact
 
@@ -88,7 +87,6 @@ def resolve_contact(
 
                     if row:
                         contact = Contact.from_row(row)
-                        _update_last_seen(conn, contact.id)
                         logger.info(
                             f"Resolved contact {contact.id} via cross_channel match ({display_name} @ {domain})"
                         )
@@ -107,7 +105,6 @@ def resolve_contact(
 
                 if len(rows) == 1:
                     contact = Contact.from_row(rows[0])
-                    _update_last_seen(conn, contact.id)
                     logger.info(f"Resolved contact {contact.id} via name_org match ({display_name}, {organization})")
                     return contact
                 elif len(rows) > 1:
@@ -122,7 +119,6 @@ def resolve_contact(
 
                 if len(rows) == 1:
                     contact = Contact.from_row(rows[0])
-                    _update_last_seen(conn, contact.id)
                     logger.info(f"Resolved contact {contact.id} via name match ({display_name})")
                     return contact
                 elif len(rows) > 1:
@@ -135,11 +131,3 @@ def resolve_contact(
     return None
 
 
-def _update_last_seen(conn: sqlite3.Connection, contact_id: str) -> None:
-    try:
-        conn.execute(
-            "UPDATE contacts SET last_seen = CURRENT_TIMESTAMP WHERE id = ?",
-            (contact_id,),
-        )
-    except Exception as e:
-        logger.warning(f"Failed to update last_seen for {contact_id}: {e}")
