@@ -6,6 +6,12 @@
 > **Theme:** Surface calendar data to the classifier — the LLM reasons about what it means
 
 ---
+> **TRR Record**
+> Date: 2026-04-13 | HEAD: a5091b4 | Reviewer: Opus (pipeline-delegated)
+> Verdict: AMEND
+> Findings: C1, C2, H1, H2, S1
+> Open Questions: None
+
 
 ## Context
 
@@ -129,7 +135,7 @@ Logic:
    - `maxResults=20` per calendar
 3. Deduplicate by event ID (shared events appear on both calendars)
 4. For each event, compute `minutes_until` from `start.dateTime`
-5. Extract attendees (email + displayName), filtering out `XIBI_KNOWN_ADDRESSES`
+5. Extract ALL attendees (email + displayName), filtering out `XIBI_KNOWN_ADDRESSES` and organizer ‼️ TRR-S1: Unlike `_extract_attendees()` in calendar_poller.py (which returns only the first external attendee), this function returns ALL external attendees — needed for overlap detection across all meeting participants
 6. Extract `location` from `event.location` (physical address string, or None)
 7. Extract `conference_url` from `event.conferenceData.entryPoints[0].uri` (Zoom/Meet/Teams link, or None)
 8. Tag event via `tag_event(title, description, has_attendees)` — see below
@@ -196,9 +202,9 @@ In `assemble_signal_context()`, after the thread matching section (section c), a
 ```python
 # e) Calendar context
 try:
-    from xibi.heartbeat.calendar_context import fetch_upcoming_events, detect_sender_overlap
+    from xibi.heartbeat.calendar_context import fetch_upcoming_events, detect_sender_overlap, build_next_event_summary
 
-    upcoming = fetch_upcoming_events(lookahead_hours=24)
+    upcoming = upcoming_events if upcoming_events is not None else fetch_upcoming_events(lookahead_hours=24)  # ‼️ TRR-C1: use passed-in or fetch fresh
     ctx.upcoming_events = upcoming
 
     # Busy check
@@ -207,11 +213,20 @@ try:
     )
 
     # Sender overlap
+    upcoming = upcoming_events if upcoming_events is not None else fetch_upcoming_events(lookahead_hours=24)  # ‼️ TRR-C1: use passed-in or fetch fresh
+    ctx.upcoming_events = upcoming
+
+    ctx.calendar_busy_next_2h = any(
+        e.get("minutes_until", 999) <= 120 for e in upcoming
+    )
+
     overlap = detect_sender_overlap(upcoming, ctx.sender_id)
     if overlap:
         ctx.sender_on_calendar = True
         ctx.sender_calendar_event = overlap.get("title")
         ctx.sender_event_minutes_until = overlap.get("minutes_until")
+
+    ctx.next_event_summary = build_next_event_summary(upcoming)  # ‼️ TRR-H1: was never called; field stayed None
 except Exception as e:
     logger.warning(f"Calendar context failed (non-fatal): {e}")
 ```
@@ -220,19 +235,20 @@ except Exception as e:
 
 Also wire into `assemble_batch_signal_context()`: call `fetch_upcoming_events()` **once** at the top of the batch, then pass the result to each individual context assembly. Don't hit the calendar API N times for N emails.
 
+‼️ TRR-C2: Spec previously proposed breaking changes to this function. Actual signature uses `trust_results` (not `sender_trusts`), has no `sender_contact_ids` param, and returns `dict[str, SignalContext]` (not `list`). Add only the new optional param:
+
 ```python
 def assemble_batch_signal_context(
     emails: list[dict],
     db_path: str | Path,
     batch_topics: dict,
     body_summaries: dict,
-    sender_trusts: dict | None = None,
-    sender_contact_ids: dict | None = None,
-    upcoming_events: list[dict] | None = None,  # NEW — pass in to avoid N API calls
-) -> list[SignalContext]:
+    trust_results: dict,      # existing param — keep as-is
+    upcoming_events: list[dict] | None = None,  # NEW — fetch once, share across all contexts ‼️ TRR-H2
+) -> dict[str, SignalContext]:  # existing return type — keep as-is
 ```
 
-If `upcoming_events` is None, fetch once at the top. Pass to each `assemble_signal_context()` call (add optional param there too).
+If `upcoming_events` is None, fetch once at the top. Pass to each `assemble_signal_context()` call via the new `upcoming_events` param added above.
 
 ### Part 4 — Surface Calendar Data in Classification Prompt
 
@@ -394,3 +410,4 @@ if cal_lines:
 - Free/busy conflict detection for scheduling — future step
 - Calendar event updates/cancellations affecting signal re-classification — future enhancement
 - Slack/chat channel calendar context — same architecture, different source adapter
+
