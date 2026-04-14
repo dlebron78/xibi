@@ -596,6 +596,13 @@ class TelegramAdapter:
                         self._save_offset(self.offset)
                         continue
 
+                    # NEW: Handle reactions
+                    message_reaction = update.get("message_reaction")
+                    if message_reaction:
+                        self._handle_reaction(message_reaction)
+                        self._save_offset(self.offset)
+                        continue
+
                     # 2. Handle Messages
                     message = update.get("message")
                     if not message:
@@ -719,4 +726,56 @@ class TelegramAdapter:
                 logger.error(f"Error handling rollover callback: {e}", exc_info=True)
                 self.send_message(chat_id, "Sorry, I couldn't process that rollover action.")
 
-        logger.info("TelegramAdapter poll loop exiting (shutdown requested)")
+    def _handle_reaction(self, message_reaction: dict) -> None:
+        """Handle Telegram emoji reactions."""
+        try:
+            message_id = message_reaction.get("message_id")
+            new_reaction = message_reaction.get("new_reaction", [])
+            if not message_id or not new_reaction:
+                return
+
+            # Note: We need a way to look up signal_id by message_id.
+            # For now, we'll try to find it in access_log if it was a nudge,
+            # or in session_turns if it was a direct reply.
+            signal_id = self._lookup_signal_by_message_id(message_id)
+
+            from xibi.web.redirect import record_engagement_sync
+
+            for reaction in new_reaction:
+                emoji = reaction.get("emoji")
+                if emoji:
+                    record_engagement_sync(
+                        self.db_path,
+                        signal_id=str(signal_id) if signal_id else None,
+                        event_type="reacted",
+                        source="telegram",
+                        metadata={"emoji": emoji, "message_id": message_id},
+                    )
+        except Exception as e:
+            logger.error(f"Error handling reaction: {e}", exc_info=True)
+
+    def _lookup_signal_by_message_id(self, message_id: int) -> int | None:
+        """Attempt to find a signal ID associated with a Telegram message ID.
+
+        # FIXME: This heuristic relies on the undocumented JSON structure in access_log.user_name.
+        # It should be replaced by a dedicated message_id -> signal_id mapping table in step-80.
+        """
+        try:
+            with open_db(self.db_path) as conn:
+                # Check access_log (nudge delivery)
+                # We search for the message_id in the JSON payload stored in user_name
+                cursor = conn.execute(
+                    "SELECT user_name FROM access_log WHERE chat_id LIKE 'tool:%' AND user_name LIKE ?",
+                    (f'%"message_id": {message_id}%',),
+                )
+                row = cursor.fetchone()
+                if row:
+                    try:
+                        payload = json.loads(row[0])
+                        sid = payload.get("signal_id")
+                        return int(sid) if sid is not None else None
+                    except Exception:
+                        pass
+                return None
+        except Exception:
+            return None

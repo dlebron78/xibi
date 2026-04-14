@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+import os
 import sqlite3
 import time
 from datetime import datetime, timedelta
@@ -141,9 +142,7 @@ class HeartbeatPoller:
                     api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
                     break
         if not api_key:
-            import os as _os
-
-            api_key = _os.environ.get("JULES_API_KEY", "")
+            api_key = os.environ.get("JULES_API_KEY", "")
         if not api_key:
             return None
         history_file = Path.home() / ".jules_trigger_state" / "history.jsonl"
@@ -601,6 +600,8 @@ class HeartbeatPoller:
             summarize_email_body,
         )
 
+        base_url = self.config.get("redirect_base_url") or os.environ.get("XIBI_REDIRECT_BASE")
+
         try:
             himalaya_bin = find_himalaya()
         except FileNotFoundError:
@@ -709,6 +710,11 @@ class HeartbeatPoller:
                     sig = item["sig"]
                     summary_data = item.get("summary_data", {})
                     trust = item["trust_assessment"]
+                    deep_link_url = None
+                    if sig["source"] == "email" and sig.get("ref_id"):
+                        # Gmail deep link format
+                        deep_link_url = f"https://mail.google.com/mail/u/0/#inbox/{sig['ref_id']}"
+
                     self.rules.log_signal_with_conn(
                         conn,
                         source=sig["source"],
@@ -724,6 +730,7 @@ class HeartbeatPoller:
                         sender_trust=trust.tier,
                         sender_contact_id=trust.contact_id,
                         classification_reasoning=item.get("reasoning"),
+                        deep_link_url=deep_link_url,
                     )
 
                     if not item["is_new"] or item["verdict"] == "DEFER":
@@ -737,6 +744,8 @@ class HeartbeatPoller:
                     if item["verdict"] in ("CRITICAL", "HIGH", "URGENT"):
                         from xibi.heartbeat.rich_nudge import compose_smart_nudge
 
+                        base_url = self.config.get("redirect_base_url") or os.environ.get("XIBI_REDIRECT_BASE")
+
                         ctx = email_contexts.get(item["email_id"])
                         if ctx and self._nudge_limiter.allow():
                             nudge = await compose_smart_nudge(
@@ -744,6 +753,7 @@ class HeartbeatPoller:
                                 model=self.nudge_model,
                                 signal_id=item.get("signal_id"),
                                 timeout_ms=self.nudge_timeout_ms,
+                                base_url=base_url,
                             )
                             self._broadcast(nudge.text, nudge=nudge)
                             # Store nudge context for the adapter
@@ -799,10 +809,16 @@ class HeartbeatPoller:
 
         msg_lines = ["\U0001f4e5 **Digest Recap**"]
 
+        from xibi.telegram.formatter import format_signal_link
+
+        base_url = self.config.get("redirect_base_url") or os.environ.get("XIBI_REDIRECT_BASE")
+
         # Prepend rate-limited URGENT signals
         if self._digest_overflow:
             for item in self._digest_overflow:
-                msg_lines.append(f"⚡ *Rate-limited URGENT* — {item['topic'] or 'Email'}: {item['preview'][:100]}")
+                topic = item.get("topic") or "Email"
+                linked_topic = format_signal_link(topic, item.get("signal_id"), base_url)
+                msg_lines.append(f"⚡ *Rate-limited URGENT* — {linked_topic}: {item['preview'][:100]}")
             self._digest_overflow = []  # Clear after prepending
 
         # Group by section
@@ -812,12 +828,16 @@ class HeartbeatPoller:
         if critical_high:
             msg_lines.append("\n🚨 *Priority Attention*")
             for item in critical_high[:5]:
-                msg_lines.append(f"• {item['sender']}: {item['subject']} ({item['verdict']})")
+                subject = item["subject"]
+                linked_subject = format_signal_link(subject, item.get("signal_id"), base_url)
+                msg_lines.append(f"• {item['sender']}: {linked_subject} ({item['verdict']})")
 
         if worth_reading:
             msg_lines.append("\n📥 *Worth Reading*")
             for item in worth_reading[:10]:
-                msg_lines.append(f"• {item['sender']}: {item['subject']}")
+                subject = item["subject"]
+                linked_subject = format_signal_link(subject, item.get("signal_id"), base_url)
+                msg_lines.append(f"• {item['sender']}: {linked_subject}")
 
         self._broadcast("\n".join(msg_lines))
 

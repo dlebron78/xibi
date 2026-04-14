@@ -32,6 +32,7 @@ def compose_rich_nudge(
     verdict_reason: str | None = None,
     signal_id: int | None = None,
     is_late: bool = False,
+    base_url: str | None = None,
 ) -> RichNudge:
     """Build a rich nudge from assembled SignalContext.
 
@@ -71,14 +72,25 @@ def compose_rich_nudge(
         lines.append(f"↔️ You've emailed them {context.contact_outbound_count}x")
 
     # WHAT — body summary
+    from xibi.telegram.formatter import format_signal_link
+
+    # If base_url wasn't passed in, fall back to environment variable
+    if not base_url:
+        import os
+
+        base_url = os.environ.get("XIBI_REDIRECT_BASE")
+
     summary = context.summary
+    headline = context.headline
+    linked_headline = format_signal_link(headline, signal_id, base_url)
+
     if summary and summary not in ("[no body content]", "[summary unavailable]"):
         # Truncate summary if too long (Rule 9: Telegram 4096 limit, cap at 3000 here)
         if len(summary) > 3000:
             summary = summary[:2997] + "..."
-        lines.append(f"\n📝 {summary}")
+        lines.append(f"\n📝 {linked_headline}\n{summary}")
     else:
-        lines.append(f"\n📝 Re: {context.headline}")
+        lines.append(f"\n📝 Re: {linked_headline}")
 
     # THREAD — which conversation, priority, deadline
     if context.matching_thread_name:
@@ -167,13 +179,14 @@ async def compose_smart_nudge(
     signal_id: int | None = None,
     is_late: bool = False,
     timeout_ms: int = 3000,
+    base_url: str | None = None,
 ) -> RichNudge:
     """Compose rich nudge with LLM 'why it matters' line.
 
     Falls back to template-only nudge if LLM is unavailable or slow.
     """
     # Start with template nudge
-    nudge = compose_rich_nudge(context, signal_id=signal_id, is_late=is_late)
+    nudge = compose_rich_nudge(context, signal_id=signal_id, is_late=is_late, base_url=base_url)
 
     if not model:
         return nudge

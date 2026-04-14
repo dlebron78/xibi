@@ -1,5 +1,4 @@
-import pytest
-from xibi.heartbeat.classification import parse_classification_response, VALID_TIERS
+from xibi.heartbeat.classification import VALID_TIERS, parse_classification_response
 
 
 def test_parse_tier_with_reasoning():
@@ -39,7 +38,7 @@ def test_parse_lowercase():
 
 
 def test_valid_tiers_set():
-    assert VALID_TIERS == {"CRITICAL", "HIGH", "MEDIUM", "LOW", "NOISE"}
+    assert {"CRITICAL", "HIGH", "MEDIUM", "LOW", "NOISE"} == VALID_TIERS
 
 
 def test_parse_empty():

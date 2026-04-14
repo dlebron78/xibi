@@ -1,15 +1,12 @@
 from __future__ import annotations
 
 import sqlite3
-import time
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from datetime import datetime, timezone
+from unittest.mock import patch
 
 import pytest
 
 from xibi.db import open_db
-from xibi.entities import create_contact
 from xibi.heartbeat.contacts_cleanup import (
     classify_automated_contacts,
     get_unclassified_contacts,
