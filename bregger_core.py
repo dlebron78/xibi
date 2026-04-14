@@ -1565,7 +1565,10 @@ class KeywordRouter:
         _add(r"^(what's running|subagent status|active subagents)$", "subagent_status")
 
         # --- subagent spawn (manual) ------------------------------------------
-        _add(r"^(run|start) (the )?subagent (?P<agent_id>[a-zA-Z0-9_-]+)(?: with input (?P<input>.*))?$", "subagent_spawn")
+        _add(
+            r"^(run|start) (the )?subagent (?P<agent_id>[a-zA-Z0-9_-]+)(?: with input (?P<input>.*))?$",
+            "subagent_spawn",
+        )
 
         # --- reset -----------------------------------------------------------
         _add(r"^(reset|clear|forget|restart|/reset|/clear)$", "reset")
@@ -1666,7 +1669,7 @@ class IntentMapper:
                     "tool": "none",
                     "parameters": {
                         "agent_id": intent_obj["entities"].get("agent_id"),
-                        "input": intent_obj["entities"].get("input")
+                        "input": intent_obj["entities"].get("input"),
                     },
                     "routed_by": "control_plane",
                 }
@@ -1856,6 +1859,7 @@ class BreggerCore:
                         # Capture the first numeric group as `num`
                         def extractor(m):
                             return {"num": m.group(1)} if m.group(1) else None
+
                     # Register regex with router
                     self.control_plane.register(regex, intent, extractor)
                     # Register mapping with intent mapper
@@ -1863,7 +1867,9 @@ class BreggerCore:
                     print(f"🎛️ Registered contract trigger: {intent} ({mapped_skill}:{tool})", flush=True)
 
         # Register Subagent triggers
-        self.control_plane.register(r"^(cancel|stop) (the )?subagent (.*)$", "subagent_cancel", lambda m: {"agent_id": m.group(3)})
+        self.control_plane.register(
+            r"^(cancel|stop) (the )?subagent (.*)$", "subagent_cancel", lambda m: {"agent_id": m.group(3)}
+        )
         self.intent_mapper.register("subagent_cancel", "none", "none")
 
         # Also load user-defined shortcuts from the Ledger (Phase 1.5)
@@ -2686,10 +2692,18 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
 
                             # Hardcoded test-echo agent for validation
                             checklist = [
-                                {"skill_name": "summarize", "model": "haiku", "trust": "L1",
-                                 "prompt": "Summarize the following input in 2 sentences. Respond with JSON {\"summary\": \"...\"}: {input}"},
-                                {"skill_name": "format", "model": "haiku", "trust": "L1",
-                                 "prompt": "Format this summary as a bullet list. Respond with JSON {\"bullets\": [\"...\"]}: {previous_output}"}
+                                {
+                                    "skill_name": "summarize",
+                                    "model": "haiku",
+                                    "trust": "L1",
+                                    "prompt": 'Summarize the following input in 2 sentences. Respond with JSON {"summary": "..."}: {input}',
+                                },
+                                {
+                                    "skill_name": "format",
+                                    "model": "haiku",
+                                    "trust": "L1",
+                                    "prompt": 'Format this summary as a bullet list. Respond with JSON {"bullets": ["..."]}: {previous_output}',
+                                },
                             ]
                             budget = {"max_calls": 10, "max_cost_usd": 0.50, "max_duration_s": 120}
 
@@ -2701,10 +2715,12 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                                     scoped_input={"input": user_input_val},
                                     checklist=checklist,
                                     budget=budget,
-                                    db_path=Path(self.db_path)
+                                    db_path=Path(self.db_path),
                                 )
                                 if run.status == "DONE":
-                                    report = f"Subagent {agent_id} complete!\nOutput: {json.dumps(run.output, indent=2)}"
+                                    report = (
+                                        f"Subagent {agent_id} complete!\nOutput: {json.dumps(run.output, indent=2)}"
+                                    )
                                 else:
                                     report = f"Subagent {agent_id} failed: {run.error_detail}"
                             except Exception as e:
@@ -2731,7 +2747,9 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                                             start = datetime.fromisoformat(r["started_at"])
                                             delta = datetime.utcnow() - start
                                             elapsed = f"{int(delta.total_seconds())}s elapsed"
-                                        lines.append(f"• {r['agent_id']}: {r['status']} ({elapsed}, ${r['actual_cost_usd']:.2f})")
+                                        lines.append(
+                                            f"• {r['agent_id']}: {r['status']} ({elapsed}, ${r['actual_cost_usd']:.2f})"
+                                        )
                                     report = "\n".join(lines)
                         except Exception as e:
                             report = f"Error querying subagent status: {e}"
@@ -2868,11 +2886,12 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                                 conn.row_factory = sqlite3.Row
                                 cursor = conn.execute(
                                     "SELECT id FROM subagent_runs WHERE agent_id LIKE ? AND status IN ('SPAWNED', 'RUNNING') LIMIT 1",
-                                    (f"%{agent_id}%",)
+                                    (f"%{agent_id}%",),
                                 )
                                 row = cursor.fetchone()
                                 if row:
                                     from xibi.subagent.runtime import cancel_subagent
+
                                     cancel_subagent(row["id"], Path(self.db_path))
                                     report = f"Cancelled subagent run for {agent_id}."
                                 else:

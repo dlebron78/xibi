@@ -22,6 +22,7 @@ from xibi.subagent.trust import enforce_trust
 
 logger = logging.getLogger(__name__)
 
+
 def execute_checklist(run: SubagentRun, db_path: Path, checklist: list[dict[str, Any]]) -> SubagentRun:
     """The core execution loop for a subagent run."""
     router = ModelRouter()
@@ -79,20 +80,16 @@ def execute_checklist(run: SubagentRun, db_path: Path, checklist: list[dict[str,
             if previous_outputs:
                 context_str += "Previous step outputs:\n"
                 for j, prev_out in enumerate(previous_outputs):
-                    context_str += f"Step {j+1}: {json.dumps(prev_out)}\n"
+                    context_str += f"Step {j + 1}: {json.dumps(prev_out)}\n"
 
             prompt = f"{context_str}\nTask: Execute skill {step.skill_name}.\n"
             # Add skill specific prompt if available
             if "prompt" in step_cfg:
-                 prompt += f"\nPrompt: {step_cfg['prompt']}"
+                prompt += f"\nPrompt: {step_cfg['prompt']}"
 
             # Call LLM
             t_llm_start = time.monotonic()
-            response = router.call(
-                model=step_cfg.get("model", "haiku"),
-                prompt=prompt,
-                system=system_prompt
-            )
+            response = router.call(model=step_cfg.get("model", "haiku"), prompt=prompt, system=system_prompt)
             duration_ms = int((time.monotonic() - t_llm_start) * 1000)
 
             # Parse structured output (Assuming JSON)
@@ -124,15 +121,18 @@ def execute_checklist(run: SubagentRun, db_path: Path, checklist: list[dict[str,
             update_step(db_path, step)
 
             # Record cost event
-            create_cost_event(db_path, CostEvent(
-                id=str(uuid.uuid4()),
-                run_id=run.id,
-                step_id=step.id,
-                model=response.model_id,
-                input_tokens=response.input_tokens,
-                output_tokens=response.output_tokens,
-                cost_usd=response.cost_usd
-            ))
+            create_cost_event(
+                db_path,
+                CostEvent(
+                    id=str(uuid.uuid4()),
+                    run_id=run.id,
+                    step_id=step.id,
+                    model=response.model_id,
+                    input_tokens=response.input_tokens,
+                    output_tokens=response.output_tokens,
+                    cost_usd=response.cost_usd,
+                ),
+            )
 
             # Update run totals
             run.actual_calls += 1

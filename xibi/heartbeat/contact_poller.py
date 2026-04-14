@@ -51,7 +51,19 @@ def _discover_sent_folder(himalaya_bin: str, db_path: Path) -> str | None:
 
     for folder in SENT_FOLDER_CANDIDATES:
         try:
-            cmd = [himalaya_bin, "--account", SENT_MAIL_ACCOUNT, "--output", "json", "envelope", "list", "--folder", folder, "--page-size", "1"]
+            cmd = [
+                himalaya_bin,
+                "--account",
+                SENT_MAIL_ACCOUNT,
+                "--output",
+                "json",
+                "envelope",
+                "list",
+                "--folder",
+                folder,
+                "--page-size",
+                "1",
+            ]
             res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
             if res.returncode == 0:
                 # Validate output is a JSON array
@@ -87,7 +99,19 @@ def _list_envelopes(
     page: int = 1,
 ) -> list[dict]:
     """List envelopes from a specific folder (or inbox if None)."""
-    cmd = [himalaya_bin, "--account", SENT_MAIL_ACCOUNT, "--output", "json", "envelope", "list", "--page-size", str(page_size), "--page", str(page)]
+    cmd = [
+        himalaya_bin,
+        "--account",
+        SENT_MAIL_ACCOUNT,
+        "--output",
+        "json",
+        "envelope",
+        "list",
+        "--page-size",
+        str(page_size),
+        "--page",
+        str(page),
+    ]
     if folder:
         cmd.extend(["--folder", folder])
 

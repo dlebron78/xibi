@@ -11,8 +11,9 @@ from xibi.subagent.runtime import cancel_subagent, resume_run, spawn_subagent
 
 TEST_CHECKLIST = [
     {"skill_name": "step1", "model": "haiku", "trust": "L1", "prompt": "prompt1"},
-    {"skill_name": "step2", "model": "haiku", "trust": "L2", "prompt": "prompt2"}
+    {"skill_name": "step2", "model": "haiku", "trust": "L2", "prompt": "prompt2"},
 ]
+
 
 class TestSubagent(unittest.TestCase):
     def setUp(self):
@@ -21,14 +22,13 @@ class TestSubagent(unittest.TestCase):
             self.db_path.unlink()
         migrate(self.db_path)
         # Mock config for routing
-        self.config_patcher = patch("xibi.subagent.routing.load_config", return_value={
-            "subagent_models": {
-                "haiku": {"provider": "anthropic", "model_id": "claude-3-haiku-20240307"}
+        self.config_patcher = patch(
+            "xibi.subagent.routing.load_config",
+            return_value={
+                "subagent_models": {"haiku": {"provider": "anthropic", "model_id": "claude-3-haiku-20240307"}},
+                "subagent_pricing": {"claude-3-haiku-20240307": {"input_per_mtok": 0.25, "output_per_mtok": 1.25}},
             },
-            "subagent_pricing": {
-                "claude-3-haiku-20240307": {"input_per_mtok": 0.25, "output_per_mtok": 1.25}
-            }
-        })
+        )
         self.config_patcher.start()
 
     def tearDown(self):
@@ -43,7 +43,7 @@ class TestSubagent(unittest.TestCase):
         mock_anthropic.return_value = mock_client
         mock_client.generate.side_effect = [
             '{"status": "ok", "actions": []}',
-            '{"status": "ok", "actions": [{"tool": "red_tool", "args": {}}]}'
+            '{"status": "ok", "actions": [{"tool": "red_tool", "args": {}}]}',
         ]
         mock_client._last_tokens = (100, 50, 500)
 
@@ -55,7 +55,7 @@ class TestSubagent(unittest.TestCase):
             scoped_input={"foo": "bar"},
             checklist=TEST_CHECKLIST,
             budget={"max_calls": 5, "max_cost_usd": 0.1, "max_duration_s": 60},
-            db_path=self.db_path
+            db_path=self.db_path,
         )
 
         self.assertEqual(run.status, "DONE")
@@ -85,7 +85,7 @@ class TestSubagent(unittest.TestCase):
         # use a real loop that we can interrupt.
         # Simplest is to test cancel_subagent helper.
         with patch("xibi.subagent.runtime.execute_checklist", side_effect=lambda run, db_path, checklist: run):
-             run = spawn_subagent("agent", "manual", {}, {}, TEST_CHECKLIST, {}, self.db_path)
+            run = spawn_subagent("agent", "manual", {}, {}, TEST_CHECKLIST, {}, self.db_path)
 
         cancel_subagent(run.id, self.db_path, reason="Killed")
 
@@ -100,10 +100,7 @@ class TestSubagent(unittest.TestCase):
         mock_anthropic.return_value = mock_client
 
         # First attempt fails at step 2
-        mock_client.generate.side_effect = [
-            '{"step": 1}',
-            RuntimeError("LLM exploded")
-        ]
+        mock_client.generate.side_effect = ['{"step": 1}', RuntimeError("LLM exploded")]
         mock_client._last_tokens = (10, 10, 100)
 
         run = spawn_subagent("resumable", "manual", {}, {}, TEST_CHECKLIST, {}, self.db_path)
@@ -120,6 +117,7 @@ class TestSubagent(unittest.TestCase):
         self.assertEqual(resumed_run.status, "DONE")
         steps = get_steps(self.db_path, run.id)
         self.assertEqual(steps[1].status, "DONE")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -14,8 +14,8 @@ def spawn_subagent(
     trigger: str,
     trigger_context: dict[str, Any],
     scoped_input: dict[str, Any],
-    checklist: list[dict[str, Any]],      # [{skill_name, model, ...}]
-    budget: dict[str, Any],               # {max_calls, max_cost_usd, max_duration_s}
+    checklist: list[dict[str, Any]],  # [{skill_name, model, ...}]
+    budget: dict[str, Any],  # {max_calls, max_cost_usd, max_duration_s}
     db_path: Path,
 ) -> SubagentRun:
     """
@@ -43,12 +43,13 @@ def spawn_subagent(
             step_order=i + 1,
             skill_name=step_cfg["skill_name"],
             status="PENDING",
-            model=step_cfg.get("model")
+            model=step_cfg.get("model"),
         )
         create_step(db_path, step)
 
     # Execute (sequentially for now as per spec)
     return execute_checklist(run, db_path, checklist)
+
 
 def resume_run(run_id: str, db_path: Path, checklist: list[dict[str, Any]]) -> SubagentRun:
     """
@@ -66,8 +67,10 @@ def resume_run(run_id: str, db_path: Path, checklist: list[dict[str, Any]]) -> S
 
     return execute_checklist(run, db_path, checklist)
 
+
 def cancel_subagent(run_id: str, db_path: Path, reason: str = "User cancelled") -> None:
     from xibi.subagent.db import update_run
+
     run = get_run(db_path, run_id)
     if run and run.status in ("SPAWNED", "RUNNING"):
         run.status = "CANCELLED"

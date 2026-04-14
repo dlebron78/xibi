@@ -720,7 +720,7 @@ class ObservationCycle:
                         "SELECT agent_id, status, output, completed_at FROM subagent_runs "
                         "WHERE status IN ('DONE', 'FAILED') AND completed_at > ? "
                         "ORDER BY completed_at DESC",
-                        (since,)
+                        (since,),
                     )
                     completed_runs = cursor.fetchall()
                     if completed_runs:
@@ -756,7 +756,9 @@ class ObservationCycle:
                     if pending_actions:
                         lines.append("PENDING ACTIONS REQUIRING APPROVAL:")
                         for action in pending_actions:
-                            lines.append(f"- [action_id={action['id']}] Tool: {action['tool']} (Run: {action['run_id']})")
+                            lines.append(
+                                f"- [action_id={action['id']}] Tool: {action['tool']} (Run: {action['run_id']})"
+                            )
                             lines.append(f"  Args: {action['args']}")
                         lines.append("")
             except Exception as e:
@@ -1087,12 +1089,14 @@ Example for subagent_spawns:
                             budget=budget,
                             db_path=self.db_path,
                         )
-                        result.actions_taken.append({
-                            "tool": "subagent_spawn",
-                            "input": spawn,
-                            "output": {"run_id": run.id, "status": run.status},
-                            "allowed": True
-                        })
+                        result.actions_taken.append(
+                            {
+                                "tool": "subagent_spawn",
+                                "input": spawn,
+                                "output": {"run_id": run.id, "status": run.status},
+                                "allowed": True,
+                            }
+                        )
                     except Exception as e:
                         logger.error(f"Failed to spawn subagent {agent_id}: {e}")
                         result.errors.append(f"Subagent spawn failed: {e}")

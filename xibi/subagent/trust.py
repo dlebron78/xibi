@@ -6,7 +6,9 @@ from typing import Any
 from xibi.subagent.models import PendingL2Action
 
 
-def enforce_trust(step_output: dict[str, Any], skill_config: dict[str, Any], run_id: str, step_id: str) -> tuple[dict[str, Any], list[PendingL2Action]]:
+def enforce_trust(
+    step_output: dict[str, Any], skill_config: dict[str, Any], run_id: str, step_id: str
+) -> tuple[dict[str, Any], list[PendingL2Action]]:
     """
     Inspect step output for declared actions.
     L1 actions: pass through, record in output.
@@ -34,7 +36,7 @@ def enforce_trust(step_output: dict[str, Any], skill_config: dict[str, Any], run
                 step_id=step_id,
                 tool=action["tool"],
                 args=action.get("args", {}),
-                status="PENDING"
+                status="PENDING",
             )
             parked_actions.append(pending)
 
