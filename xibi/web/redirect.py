@@ -85,6 +85,12 @@ async def handle_redirect(request: web.Request) -> web.Response:
         logger.error(f"❌ Malicious deep link detected for signal {signal_id}: {deep_link_url}")
         return web.Response(status=400, text="Invalid redirect URL")
 
+    # Lowercase the scheme for consistency in redirect HTML
+    if url_lower.startswith("http://"):
+        deep_link_url = "http://" + deep_link_url[7:]
+    elif url_lower.startswith("https://"):
+        deep_link_url = "https://" + deep_link_url[8:]
+
     # Log the engagement event
     await record_engagement(
         db_path=db_path,

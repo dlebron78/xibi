@@ -65,7 +65,7 @@ async def test_redirect_uppercase_bypass(client, db_path):
     resp = await client.get(f"/go/{sid}")
     assert resp.status == 200
     text = await resp.text()
-    assert "url=HTTP://example.com" in text
+    assert "url=http://example.com" in text
 
 
 async def test_redirect_whitespace_payload(client, db_path):
