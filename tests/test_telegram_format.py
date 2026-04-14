@@ -4,28 +4,20 @@ from xibi.telegram.formatter import format_signal_message
 
 
 def test_format_signal_with_link():
-    signal = {
-        "id": 123,
-        "sender": "Sarah",
-        "subject": "Policy update",
-        "deep_link_url": "https://mail.google.com/..."
-    }
+    signal = {"id": 123, "sender": "Sarah", "subject": "Policy update", "deep_link_url": "https://mail.google.com/..."}
     redirect_base = "https://go.xibi.dev"
     formatted = format_signal_message(signal, redirect_base)
     assert "[Policy update](https://go.xibi.dev/go/123)" in formatted
     assert "Sarah emailed about" in formatted
 
+
 def test_format_signal_without_link():
-    signal = {
-        "id": 124,
-        "sender": "Sarah",
-        "subject": "Policy update",
-        "deep_link_url": None
-    }
+    signal = {"id": 124, "sender": "Sarah", "subject": "Policy update", "deep_link_url": None}
     redirect_base = "https://go.xibi.dev"
     formatted = format_signal_message(signal, redirect_base)
     assert "https://go.xibi.dev/go/124" not in formatted
     assert "Sarah emailed about Policy update" in formatted
+
 
 def test_format_digest_multiple_links():
     signals = [
@@ -40,12 +32,13 @@ def test_format_digest_multiple_links():
     assert "[Update 1](https://go.xibi.dev/go/1)" in full_text
     assert "[Update 2](https://go.xibi.dev/go/2)" in full_text
 
+
 def test_format_calendar_link():
     signal = {
         "id": "cal_1",
         "sender": "Calendar",
         "subject": "1:1 with Sarah",
-        "deep_link_url": "https://calendar.google.com/..."
+        "deep_link_url": "https://calendar.google.com/...",
     }
     redirect_base = "https://go.xibi.dev"
     formatted = format_signal_message(signal, redirect_base)

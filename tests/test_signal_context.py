@@ -1,5 +1,4 @@
-import pytest
-from xibi.heartbeat.context_assembly import SignalContext, EmailContext, assemble_signal_context, assemble_email_context
+from xibi.heartbeat.context_assembly import EmailContext, SignalContext, assemble_email_context, assemble_signal_context
 
 
 def test_signal_context_fields():

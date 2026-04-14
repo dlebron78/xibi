@@ -15,6 +15,7 @@ def test_format_signal_link_basic():
     # Assert
     assert result == "[Signal Title](http://example.com/go/123)"
 
+
 def test_format_signal_link_env_fallback(monkeypatch):
     # Setup
     monkeypatch.setenv("XIBI_REDIRECT_BASE", "http://env-example.com")
@@ -27,6 +28,7 @@ def test_format_signal_link_env_fallback(monkeypatch):
     # Assert
     assert result == "[Env Title](http://env-example.com/go/456)"
 
+
 def test_format_signal_link_no_id():
     # Setup
     text = "Plain Text"
@@ -36,6 +38,7 @@ def test_format_signal_link_no_id():
 
     # Assert
     assert result == "Plain Text"
+
 
 def test_format_signal_link_no_base(monkeypatch):
     # Setup
@@ -48,6 +51,7 @@ def test_format_signal_link_no_base(monkeypatch):
 
     # Assert
     assert result == "No Base"
+
 
 def test_format_signal_link_trailing_slash():
     # Setup

@@ -1,11 +1,12 @@
 import unittest
-from unittest.mock import patch, MagicMock
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
+
 from xibi.heartbeat.calendar_context import (
+    build_next_event_summary,
+    detect_sender_overlap,
     fetch_upcoming_events,
     tag_event,
-    detect_sender_overlap,
-    build_next_event_summary,
 )
 
 

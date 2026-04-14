@@ -142,9 +142,7 @@ class HeartbeatPoller:
                     api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
                     break
         if not api_key:
-            import os as _os
-
-            api_key = _os.environ.get("JULES_API_KEY", "")
+            api_key = os.environ.get("JULES_API_KEY", "")
         if not api_key:
             return None
         history_file = Path.home() / ".jules_trigger_state" / "history.jsonl"
@@ -601,6 +599,8 @@ class HeartbeatPoller:
             parse_email_body,
             summarize_email_body,
         )
+
+        base_url = self.config.get("redirect_base_url") or os.environ.get("XIBI_REDIRECT_BASE")
 
         try:
             himalaya_bin = find_himalaya()
