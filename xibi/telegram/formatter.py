@@ -42,8 +42,16 @@ def format_signal_message(signal: dict, base_url: str | None = None) -> str:
     signal_id = signal.get("id")
     has_link = bool(signal.get("deep_link_url"))
 
+    source = signal.get("source", "email")
+
     if has_link and signal_id:
         linked_subject = format_signal_link(subject, signal_id, base_url)
-        return f"{sender} emailed about {linked_subject}"
     else:
-        return f"{sender} emailed about {subject}"
+        linked_subject = subject
+
+    if source == "calendar":
+        time_hint = signal.get("time_until") or ""
+        suffix = f" in {time_hint}" if time_hint else ""
+        return f"📅 Coming up: {linked_subject}{suffix}"
+    else:
+        return f"{sender} emailed about {linked_subject}"

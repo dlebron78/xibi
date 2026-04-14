@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from html import escape as html_escape
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -91,7 +92,7 @@ async def handle_redirect(request: web.Request) -> web.Response:
     # JS interpolation uses json.dumps to prevent XSS
     html = f"""<!DOCTYPE html>
     <html><head>
-        <meta http-equiv="refresh" content="0;url={deep_link_url}">
+        <meta http-equiv="refresh" content="0;url={html_escape(deep_link_url, quote=True)}">
         <script>window.location.replace({json.dumps(deep_link_url)});</script>
     </head><body>Redirecting to native app...</body></html>"""
 
