@@ -87,10 +87,31 @@ def execute_checklist(run: SubagentRun, db_path: Path, checklist: list[dict[str,
             if "prompt" in step_cfg:
                 prompt += f"\nPrompt: {step_cfg['prompt']}"
 
-            # Call LLM
-            t_llm_start = time.monotonic()
-            response = router.call(model=step_cfg.get("model", "haiku"), prompt=prompt, system=system_prompt)
-            duration_ms = int((time.monotonic() - t_llm_start) * 1000)
+            # Call LLM with retries
+            max_retries = 3
+            response = None
+            last_error = None
+            duration_ms = 0
+
+            for attempt in range(max_retries):
+                try:
+                    t_llm_start = time.monotonic()
+                    response = router.call(model=step_cfg.get("model", "haiku"), prompt=prompt, system=system_prompt)
+                    duration_ms = int((time.monotonic() - t_llm_start) * 1000)
+                    break
+                except Exception as e:
+                    last_error = e
+                    if attempt < max_retries - 1:
+                        wait_time = 2**attempt
+                        logger.warning(
+                            f"Step {step.step_order} attempt {attempt + 1} failed: {e}. Retrying in {wait_time}s..."
+                        )
+                        time.sleep(wait_time)
+                    else:
+                        raise e
+
+            if response is None:
+                raise last_error if last_error else RuntimeError("LLM call failed without error")
 
             # Parse structured output (Assuming JSON)
             try:

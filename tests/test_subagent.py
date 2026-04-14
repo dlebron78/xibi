@@ -118,6 +118,60 @@ class TestSubagent(unittest.TestCase):
         steps = get_steps(self.db_path, run.id)
         self.assertEqual(steps[1].status, "DONE")
 
+    @patch("xibi.subagent.routing.AnthropicClient")
+    @patch("time.sleep", return_value=None)  # Fast-forward retries
+    def test_retry_logic(self, mock_sleep, mock_anthropic):
+        mock_client = MagicMock()
+        mock_anthropic.return_value = mock_client
+        mock_client._last_tokens = (10, 10, 100)
+
+        # 1. Test recovery on 3rd attempt
+        mock_client.generate.side_effect = [
+            RuntimeError("Transient error 1"),
+            RuntimeError("Transient error 2"),
+            '{"status": "ok"}',
+        ]
+
+        # Use a single-step checklist to isolate retry logic
+        run = spawn_subagent(
+            "retry-success",
+            "manual",
+            {},
+            {},
+            [{"skill_name": "retry_me", "model": "haiku", "trust": "L1"}],
+            {"max_calls": 5, "max_cost_usd": 0.1, "max_duration_s": 60},
+            self.db_path,
+        )
+
+        self.assertEqual(run.status, "DONE")
+        self.assertEqual(mock_client.generate.call_count, 3)
+        self.assertEqual(mock_sleep.call_count, 2)
+        mock_sleep.assert_any_call(1)
+        mock_sleep.assert_any_call(2)
+
+        # 2. Test exhaustion after 3 attempts
+        mock_client.generate.reset_mock()
+        mock_sleep.reset_mock()
+        mock_client.generate.side_effect = [
+            RuntimeError("Persistent error 1"),
+            RuntimeError("Persistent error 2"),
+            RuntimeError("Persistent error 3"),
+        ]
+
+        run_fail = spawn_subagent(
+            "retry-fail",
+            "manual",
+            {},
+            {},
+            [{"skill_name": "fail_me", "model": "haiku", "trust": "L1"}],
+            {"max_calls": 5, "max_cost_usd": 0.1, "max_duration_s": 60},
+            self.db_path,
+        )
+
+        self.assertEqual(run_fail.status, "FAILED")
+        self.assertEqual(mock_client.generate.call_count, 3)
+        self.assertEqual(mock_sleep.call_count, 2)  # Slept after 1st and 2nd, failed after 3rd
+
 
 if __name__ == "__main__":
     unittest.main()
