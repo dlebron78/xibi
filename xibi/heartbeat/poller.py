@@ -928,6 +928,9 @@ class HeartbeatPoller:
         self._broadcast("\n".join(msg_lines))
 
     def recap_tick(self) -> None:
+        if not self._enable_legacy_digest:
+            logger.debug("Legacy digest disabled — skipping recap tick")
+            return
         logger.info("Running recap tick")
         self.digest_tick(force=True)
 
