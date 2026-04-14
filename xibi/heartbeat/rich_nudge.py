@@ -71,14 +71,24 @@ def compose_rich_nudge(
         lines.append(f"↔️ You've emailed them {context.contact_outbound_count}x")
 
     # WHAT — body summary
+    from xibi.telegram.formatter import format_signal_link
+    import os
+
+    # Assume we might not have a full config here, check env too
+    # The context doesn't have the config, but we can try to get base_url from env.
+    base_url = os.environ.get("XIBI_REDIRECT_BASE")
+
     summary = context.summary
+    headline = context.headline
+    linked_headline = format_signal_link(headline, signal_id, base_url)
+
     if summary and summary not in ("[no body content]", "[summary unavailable]"):
         # Truncate summary if too long (Rule 9: Telegram 4096 limit, cap at 3000 here)
         if len(summary) > 3000:
             summary = summary[:2997] + "..."
-        lines.append(f"\n📝 {summary}")
+        lines.append(f"\n📝 {linked_headline}\n{summary}")
     else:
-        lines.append(f"\n📝 Re: {context.headline}")
+        lines.append(f"\n📝 Re: {linked_headline}")
 
     # THREAD — which conversation, priority, deadline
     if context.matching_thread_name:

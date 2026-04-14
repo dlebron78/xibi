@@ -7,7 +7,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 26  # increment when adding new migrations
+SCHEMA_VERSION = 28  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -57,6 +57,8 @@ class SchemaManager:
             (24, "processed_messages: multi-source schema", self._migration_24),
             (25, "signals: add classification_reasoning column", self._migration_25),
             (26, "signals: add correction_reason column", self._migration_26),
+            (27, "signals: add deep_link_url column", self._migration_27),
+            (28, "engagement: create engagements table", self._migration_28),
         ]
 
         for version, description, func in migrations:
@@ -676,6 +678,27 @@ class SchemaManager:
         """Add correction_reason column to signals table."""
         with contextlib.suppress(sqlite3.OperationalError):
             conn.execute("ALTER TABLE signals ADD COLUMN correction_reason TEXT")
+
+    def _migration_27(self, conn: sqlite3.Connection) -> None:
+        """Add deep_link_url column to signals table."""
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("ALTER TABLE signals ADD COLUMN deep_link_url TEXT")
+
+    def _migration_28(self, conn: sqlite3.Connection) -> None:
+        """Create engagements table for tracking Daniel's behavior."""
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS engagements (
+                id TEXT PRIMARY KEY,
+                signal_id TEXT,
+                event_type TEXT NOT NULL,
+                source TEXT NOT NULL,
+                created_at DATETIME NOT NULL,
+                metadata TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_engagements_signal ON engagements(signal_id);
+            CREATE INDEX IF NOT EXISTS idx_engagements_created ON engagements(created_at);
+            CREATE INDEX IF NOT EXISTS idx_engagements_type ON engagements(event_type);
+        """)
 
 
 def migrate(db_path: Path) -> list[int]:

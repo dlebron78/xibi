@@ -95,6 +95,13 @@ def poll_calendar_signals(
             urgency = _derive_urgency(start_iso)
             attendee_name, attendee_email = _extract_attendees(event)
 
+            # Google Calendar deep link
+            # event_id needs base64 encoding for the eid parameter
+            import base64
+            calendar_id = cal["calendar_id"]
+            eid = base64.b64encode(f"{event_id} {calendar_id}".encode()).decode().rstrip("=")
+            deep_link_url = f"https://calendar.google.com/calendar/event?eid={eid}"
+
             # content_preview: f"{title} at {time} with {attendees}"
             start_time_str = _format_start_time(start_iso)
             attendee_str = f" with {attendee_name}" if attendee_name else ""
@@ -117,6 +124,7 @@ def poll_calendar_signals(
                 "entity_type": "calendar",
                 "entity_text": attendee_name,
                 "env": env,
+                "deep_link_url": deep_link_url,
             }
 
             _log_calendar_signal(db_path, signal)
@@ -149,8 +157,8 @@ def _log_calendar_signal(db_path: Path, sig: dict) -> None:
             """
             INSERT INTO signals (
                 source, ref_id, ref_source, topic_hint, timestamp,
-                content_preview, summary, urgency, entity_type, entity_text, env
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                content_preview, summary, urgency, entity_type, entity_text, env, deep_link_url
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
             (
                 sig["source"],
@@ -164,6 +172,7 @@ def _log_calendar_signal(db_path: Path, sig: dict) -> None:
                 sig["entity_type"],
                 sig["entity_text"],
                 sig["env"],
+                sig.get("deep_link_url"),
             ),
         )
 

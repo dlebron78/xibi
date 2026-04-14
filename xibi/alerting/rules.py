@@ -213,16 +213,29 @@ class RuleEngine:
                     db_watermark = row[0] if row else "1970-01-01 00:00:00"
 
                     # Fetch items since the DB watermark
+                    # Enriched with signal_id and source for deep linking
                     cursor = conn.execute(
                         """
-                        SELECT sender, subject, verdict, timestamp FROM triage_log
-                        WHERE timestamp > ? AND verdict NOT IN ('CRITICAL', 'HIGH', 'URGENT')
-                        ORDER BY timestamp ASC
+                        SELECT tl.sender, tl.subject, tl.verdict, tl.timestamp, s.id as signal_id, s.source
+                        FROM triage_log tl
+                        LEFT JOIN signals s ON tl.email_id = s.ref_id AND s.ref_source = 'email'
+                        WHERE tl.timestamp > ? AND tl.verdict NOT IN ('CRITICAL', 'HIGH', 'URGENT')
+                        ORDER BY tl.timestamp ASC
                         """,
                         (db_watermark,),
                     )
                     rows = cursor.fetchall()
-                    items = [{"sender": r[0], "subject": r[1], "verdict": r[2], "timestamp": r[3]} for r in rows]
+                    items = [
+                        {
+                            "sender": r[0],
+                            "subject": r[1],
+                            "verdict": r[2],
+                            "timestamp": r[3],
+                            "signal_id": r[4],
+                            "source": r[5],
+                        }
+                        for r in rows
+                    ]
 
                     if items:
                         # Advance watermark atomically inside the same transaction
@@ -302,6 +315,7 @@ class RuleEngine:
         sender_trust: str | None = None,
         sender_contact_id: str | None = None,
         classification_reasoning: str | None = None,
+        deep_link_url: str | None = None,
     ) -> None:
         try:
             preview = (content_preview[:277] + "...") if len(content_preview) > 280 else content_preview
@@ -317,8 +331,8 @@ class RuleEngine:
                 with conn:
                     conn.execute(
                         """
-                        INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id, classification_reasoning)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id, classification_reasoning, deep_link_url)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                         (
                             source,
@@ -334,6 +348,7 @@ class RuleEngine:
                             sender_trust,
                             sender_contact_id,
                             classification_reasoning,
+                            deep_link_url,
                         ),
                     )
         except Exception as e:
@@ -389,6 +404,7 @@ class RuleEngine:
         sender_trust: str | None = None,
         sender_contact_id: str | None = None,
         classification_reasoning: str | None = None,
+        deep_link_url: str | None = None,
     ) -> None:
         try:
             preview = (content_preview[:277] + "...") if len(content_preview) > 280 else content_preview
@@ -401,8 +417,8 @@ class RuleEngine:
                     return
             conn.execute(
                 """
-                INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id, classification_reasoning)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id, classification_reasoning, deep_link_url)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     source,
@@ -418,6 +434,7 @@ class RuleEngine:
                     sender_trust,
                     sender_contact_id,
                     classification_reasoning,
+                    deep_link_url,
                 ),
             )
         except Exception as e:

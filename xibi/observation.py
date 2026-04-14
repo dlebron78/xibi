@@ -1244,6 +1244,25 @@ Rules:
                                     """,
                                         (suggested_tier, sig_row["ref_id"], sig_row["ref_id"]),
                                     )
+                                    # NEW: Record engagement for correction
+                                    try:
+                                        from xibi.web.redirect import record_engagement_sync
+
+                                        metadata = {
+                                            "old_tier": sig_row.get("urgency"),
+                                            "new_tier": suggested_tier,
+                                            "reason": flag.get("reason"),
+                                        }
+                                        record_engagement_sync(
+                                            self.db_path,
+                                            signal_id=str(signal_id),
+                                            event_type="correction",
+                                            source="manager_review",
+                                            metadata=metadata,
+                                        )
+                                    except Exception as e:
+                                        logger.error(f"Failed to record correction engagement: {e}")
+
                                     # Signal that we need to send a late nudge
                                     actions.append(
                                         {
