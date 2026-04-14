@@ -92,9 +92,13 @@ def build_priority_context(db_path: Path) -> str | None:
             row = conn.execute("SELECT content FROM priority_context ORDER BY updated_at DESC LIMIT 1").fetchone()
             if row:
                 content = row[0]
-                # Cap to ~500 tokens (approx 2000 chars) to prevent context bloat
+                # Cap to ~500 tokens (approx 2000 chars) to prevent context bloat.
+                # Use sentence-boundary truncation for coherence.
                 if len(content) > 2000:
-                    content = content[:2000] + "... [truncated]"
+                    content = content[:2000]
+                    if "." in content:
+                        content = content.rsplit(".", 1)[0] + "."
+                    content += " [truncated]"
                 return f"CURRENT PRIORITIES (from last review):\n{content}"
     except Exception:
         pass

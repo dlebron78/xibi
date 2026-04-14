@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import xml.sax.saxutils
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -152,10 +153,13 @@ def _gather_review_context(db_path: Path) -> str:
         ).fetchall()
         signals_xml = ["<signals>"]
         for r in rows:
+            topic_hint = xml.sax.saxutils.escape(r["topic_hint"] or "")
+            entity = xml.sax.saxutils.escape(r["entity_text"] or "")
+            content = xml.sax.saxutils.escape(r["content_preview"] or "")
             signals_xml.append(
-                f'  <signal id="{r["id"]}" tier="{r["urgency"]}" topic="{r["topic_hint"]}" action="{r["action_type"]}" direction="{r["direction"]}">'
+                f'  <signal id="{r["id"]}" tier="{r["urgency"]}" topic="{topic_hint}" entity="{entity}" action="{r["action_type"]}" direction="{r["direction"]}">'
             )
-            signals_xml.append(f"    <content>{r['content_preview']}</content>")
+            signals_xml.append(f"    <content>{content}</content>")
             signals_xml.append("  </signal>")
         signals_xml.append("</signals>")
         sections.append("\n".join(signals_xml))
@@ -164,9 +168,11 @@ def _gather_review_context(db_path: Path) -> str:
         rows = conn.execute("SELECT * FROM threads WHERE status = 'active' OR updated_at > ?", (since,)).fetchall()
         threads_xml = ["<threads>"]
         for r in rows:
+            name = xml.sax.saxutils.escape(r["name"] or "")
+            summary = xml.sax.saxutils.escape(r["summary"] or "")
             threads_xml.append(f'  <thread id="{r["id"]}" priority="{r["priority"]}" status="{r["status"]}">')
-            threads_xml.append(f"    <name>{r['name']}</name>")
-            threads_xml.append(f"    <summary>{r['summary']}</summary>")
+            threads_xml.append(f"    <name>{name}</name>")
+            threads_xml.append(f"    <summary>{summary}</summary>")
             threads_xml.append("  </thread>")
         threads_xml.append("</threads>")
         sections.append("\n".join(threads_xml))
@@ -211,8 +217,10 @@ def _gather_review_context(db_path: Path) -> str:
         ).fetchall()
         triage_xml = ["<triage_log>"]
         for r in rows:
-            triage_xml.append(f'  <entry at="{r["timestamp"]}" sender="{r["sender"]}" verdict="{r["verdict"]}">')
-            triage_xml.append(f"    <subject>{r['subject']}</subject>")
+            sender = xml.sax.saxutils.escape(r["sender"] or "")
+            subject = xml.sax.saxutils.escape(r["subject"] or "")
+            triage_xml.append(f'  <entry at="{r["timestamp"]}" sender="{sender}" verdict="{r["verdict"]}">')
+            triage_xml.append(f"    <subject>{subject}</subject>")
             triage_xml.append("  </entry>")
         triage_xml.append("</triage_log>")
         sections.append("\n".join(triage_xml))
@@ -233,12 +241,13 @@ def _gather_review_context(db_path: Path) -> str:
         rows = conn.execute("SELECT * FROM contacts WHERE last_seen > ? LIMIT 50", (since,)).fetchall()
         contacts_xml = ["<contacts>"]
         for r in rows:
-            contacts_xml.append(
-                f'  <contact id="{r["id"]}" relationship="{r["relationship"]}" org="{r["organization"]}">'
-            )
-            contacts_xml.append(f"    <name>{r['display_name']}</name>")
+            name = xml.sax.saxutils.escape(r["display_name"] or "")
+            org = xml.sax.saxutils.escape(r["organization"] or "")
+            notes = xml.sax.saxutils.escape(r["notes"] or "")
+            contacts_xml.append(f'  <contact id="{r["id"]}" relationship="{r["relationship"]}" org="{org}">')
+            contacts_xml.append(f"    <name>{name}</name>")
             if r["notes"]:
-                contacts_xml.append(f"    <notes>{r['notes']}</notes>")
+                contacts_xml.append(f"    <notes>{notes}</notes>")
             contacts_xml.append("  </contact>")
         contacts_xml.append("</contacts>")
         sections.append("\n".join(contacts_xml))
@@ -250,10 +259,12 @@ def _gather_review_context(db_path: Path) -> str:
         upcoming = fetch_upcoming_events(lookahead_hours=48)
         cal_xml = ["<calendar>"]
         for e in upcoming:
+            title = xml.sax.saxutils.escape(e["title"] or "")
+            tags = xml.sax.saxutils.escape(", ".join(e.get("event_tags", [])))
             cal_xml.append(
-                f'  <event title="{e["title"]}" start="{e["start"]}" recurring="{e["recurring"]}" minutes_until="{e.get("minutes_until")}">'
+                f'  <event title="{title}" start="{e["start"]}" recurring="{e["recurring"]}" minutes_until="{e.get("minutes_until")}">'
             )
-            cal_xml.append(f"    <tags>{', '.join(e.get('event_tags', []))}</tags>")
+            cal_xml.append(f"    <tags>{tags}</tags>")
             cal_xml.append("  </event>")
         cal_xml.append("</calendar>")
         sections.append("\n".join(cal_xml))

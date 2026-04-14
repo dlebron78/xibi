@@ -77,8 +77,9 @@ async def handle_redirect(request: web.Request) -> web.Response:
         logger.warning(f"⚠️ Redirect failed for {signal_id}: Signal not found or no deep link")
         return web.Response(status=404, text="Signal not found")
 
-    # Security: Only allow http/https schemes to prevent javascript: or other URI-based XSS
-    if not (deep_link_url.startswith("http://") or deep_link_url.startswith("https://")):
+    # Security: Normalize and validate URL scheme to prevent URI-based XSS (javascript:, data:, etc.)
+    deep_link_url = deep_link_url.strip()
+    if not (deep_link_url.lower().startswith("http://") or deep_link_url.lower().startswith("https://")):
         logger.error(f"❌ Malicious deep link detected for signal {signal_id}: {deep_link_url}")
         return web.Response(status=400, text="Invalid redirect URL")
 

@@ -122,6 +122,8 @@ class HeartbeatPoller:
         self._pending_nudges: list[dict] = []
         self._pending_nudge_context: dict | None = None
         self._enable_legacy_digest = self.config.get("enable_legacy_digest", False)
+        self._timezone_name = self.config.get("timezone", "UTC")
+        self._validate_timezone()
 
         self.scheduler_kernel: ScheduledActionKernel | None
         if self.executor is not None:
@@ -161,6 +163,16 @@ class HeartbeatPoller:
         except Exception as e:
             logger.warning("Failed to init JulesWatcher: %s", e)
             return None
+
+    def _validate_timezone(self) -> None:
+        """Ensure the configured timezone is valid."""
+        import zoneinfo
+
+        try:
+            zoneinfo.ZoneInfo(self._timezone_name)
+        except Exception:
+            logger.warning(f"⚠️ Invalid timezone '{self._timezone_name}' in config. Defaulting review cycle to UTC.")
+            self._timezone_name = "UTC"
 
     def _broadcast(self, text: str, nudge: Any | None = None) -> None:
         """Send nudge via Telegram, or store for headless mode."""
@@ -540,12 +552,18 @@ class HeartbeatPoller:
         # Default to long ago if never run
         return datetime.now() - timedelta(days=1)
 
-    def _should_run_review(self, last_review_time: datetime, now: datetime) -> bool:
+    def _should_run_review(self, last_review_time: datetime, now_utc: datetime) -> bool:
         """Check if we've crossed a scheduled review time since last run."""
+        import zoneinfo
+
+        tz = zoneinfo.ZoneInfo(self._timezone_name)
+        now_local = now_utc.astimezone(tz)
+        last_local = last_review_time.astimezone(tz)
+
         review_schedule = [8, 14, 20]  # hours in local time
         for hour in review_schedule:
-            scheduled = now.replace(hour=hour, minute=0, second=0, microsecond=0)
-            if last_review_time < scheduled <= now:
+            scheduled_local = now_local.replace(hour=hour, minute=0, second=0, microsecond=0)
+            if last_local < scheduled_local <= now_local:
                 return True
         return False
 
