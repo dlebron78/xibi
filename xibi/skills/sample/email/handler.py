@@ -121,6 +121,7 @@ _REALISTIC_INBOX = [
     },
 ]
 
+
 def _use_realistic() -> bool:
     """Check env var — survives dynamic reimport by executor."""
     return os.environ.get("XIBI_TEST_REALISTIC_INBOX") == "1"
@@ -134,7 +135,7 @@ def list_emails(params: dict[str, Any]) -> dict[str, Any]:
 
 def triage_email(params: dict[str, Any]) -> dict[str, Any]:
     if _use_realistic():
-        emails = list(_REALISTIC_INBOX)
+        emails: list[dict[str, Any]] = list(_REALISTIC_INBOX)
         return {
             "status": "ok",
             "env": "dev",
@@ -149,4 +150,15 @@ def triage_email(params: dict[str, Any]) -> dict[str, Any]:
         "urgent": [emails[0]],
         "fyi": [emails[1], emails[3], emails[4]],
         "no-action": [emails[2]],
+    }
+
+
+def send_email(params: dict[str, Any]) -> dict[str, Any]:
+    to = params.get("to", "")
+    subject = params.get("subject", "")
+    return {
+        "status": "ok",
+        "env": "dev",
+        "message": f"Email sent to {to} — subject: '{subject}'",
+        "note": "Dev mode — email was not actually sent.",
     }

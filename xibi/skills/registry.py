@@ -12,6 +12,7 @@ class SkillInfo:
     name: str
     manifest: dict[str, Any]
     path: Path  # directory containing manifest.json
+    source: str = "local"  # "local" | "mcp" — distinguishes hand-authored skills from synthetic MCP injections
 
 
 class SkillRegistry:
@@ -50,15 +51,30 @@ class SkillRegistry:
         tools = skill.manifest.get("tools", [])
         return next((t for t in tools if t.get("name") == tool_name), None)
 
-    def get_tool_min_tier(self, skill_name: str, tool_name: str) -> int:
+    def get_tool_min_effort(self, skill_name: str, tool_name: str) -> int:
         tool_meta = self.get_tool_meta(skill_name, tool_name)
         if tool_meta:
-            res = tool_meta.get("min_tier", 1)
+            res = tool_meta.get("min_effort", 1)
             return int(res) if res is not None else 1
         return 1
 
     def find_skill_for_tool(self, tool_name: str) -> str | None:
         for skill_name, skill_info in self.skills.items():
+            tools = skill_info.manifest.get("tools", [])
+            if any(t.get("name") == tool_name for t in tools):
+                return skill_name
+        return None
+
+    def find_local_skill_for_tool(self, tool_name: str) -> str | None:
+        """Like find_skill_for_tool, but ignores synthetic MCP-injected entries.
+
+        Use this in the executor's dispatch collision check so that an MCP tool
+        registered via register() does not falsely appear as a local-skill match
+        and block the MCP routing path.
+        """
+        for skill_name, skill_info in self.skills.items():
+            if skill_info.source != "local":
+                continue
             tools = skill_info.manifest.get("tools", [])
             if any(t.get("name") == tool_name for t in tools):
                 return skill_name
@@ -72,7 +88,7 @@ class SkillRegistry:
             return
 
         # SkillInfo expects a path. For synthetic skills, we use a dummy path.
-        self.skills[name] = SkillInfo(name=name, manifest=manifest, path=Path("/dev/null"))
+        self.skills[name] = SkillInfo(name=name, manifest=manifest, path=Path("/dev/null"), source="mcp")
 
     def validate(self) -> list[str]:
         warnings = []

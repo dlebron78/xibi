@@ -7,9 +7,9 @@ keyless, private web search and return structured results.
 Returns up to 10 results with title, URL, and snippet.
 """
 
-import urllib.request
-import urllib.parse
 import json
+import urllib.parse
+import urllib.request
 
 # Local SearXNG endpoint — must be running on the NucBox
 _SEARXNG_URL = "http://localhost:8080/search"

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import re
 import sqlite3
 from contextlib import suppress
 from dataclasses import dataclass, field
@@ -41,6 +43,11 @@ class ObservationConfig:
     trigger_threshold: int = 5  # new signals since last cycle to trigger early
     idle_skip: bool = True  # skip if no new signals
     cost_ceiling_daily: float = 5.0  # not enforced this step — stored for future
+    # Manager review settings
+    manager_interval_hours: int = 8  # how often the manager reviews all accumulated work
+    manager_max_threads: int = 50  # max threads to include in manager review dump
+    manager_max_signals: int = 200  # max signals to include in manager review dump
+    manager_lookback_multiplier: float = 1.5  # lookback = interval * multiplier
 
 
 @dataclass
@@ -57,6 +64,7 @@ class ObservationResult:
     degraded: bool = False
     errors: list[str] = field(default_factory=list)
     new_watermark: int = 0
+    review_mode: str = "triage"  # 'triage' (normal) or 'manager' (periodic full review)
 
 
 class ObservationCycle:
@@ -124,6 +132,27 @@ class ObservationCycle:
                     config.trigger_threshold = int(obs_profile["trigger_threshold"])
             if "idle_skip" in obs_profile:
                 config.idle_skip = bool(obs_profile["idle_skip"])
+            if "manager_interval_hours" in obs_profile:
+                with suppress(ValueError, TypeError):
+                    config.manager_interval_hours = int(obs_profile["manager_interval_hours"])
+            if "manager_max_threads" in obs_profile:
+                with suppress(ValueError, TypeError):
+                    config.manager_max_threads = int(obs_profile["manager_max_threads"])
+
+            # Nested manager_review block support
+            manager_review = obs_profile.get("manager_review", {})
+            if "interval_hours" in manager_review:
+                with suppress(ValueError, TypeError):
+                    config.manager_interval_hours = int(manager_review["interval_hours"])
+            if "max_threads" in manager_review:
+                with suppress(ValueError, TypeError):
+                    config.manager_max_threads = int(manager_review["max_threads"])
+            if "max_signals" in manager_review:
+                with suppress(ValueError, TypeError):
+                    config.manager_max_signals = int(manager_review["max_signals"])
+            if "lookback_multiplier" in manager_review:
+                with suppress(ValueError, TypeError):
+                    config.manager_lookback_multiplier = float(manager_review["lookback_multiplier"])
 
             return config
         except Exception as e:
@@ -196,6 +225,55 @@ class ObservationCycle:
             logger.error(f"Error in should_run: {e}", exc_info=True)
             return True, f"error: {e}"
 
+    def _should_run_manager_review(self) -> tuple[bool, str]:
+        """
+        Check whether a manager review cycle is due, independent of new signal count.
+
+        The manager review is time-based: it fires when enough hours have passed since
+        the last manager review cycle. Unlike normal triage, it doesn't care about new
+        signals — it reviews all accumulated threads and their state.
+
+        Returns (should_run, reason).
+        """
+        try:
+            interval_hours = self.config.manager_interval_hours
+
+            with open_db(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                # Look for the last completed manager review specifically
+                cursor = conn.execute(
+                    "SELECT completed_at FROM observation_cycles "
+                    "WHERE completed_at IS NOT NULL AND review_mode = 'manager' "
+                    "ORDER BY id DESC LIMIT 1"
+                )
+                last_manager = cursor.fetchone()
+
+            now = datetime.now(timezone.utc)
+            interval_minutes = interval_hours * 60
+
+            if not last_manager:
+                # Never run a manager review — check if we have threads to review
+                with open_db(self.db_path) as conn:
+                    cursor = conn.execute("SELECT COUNT(*) FROM threads WHERE status = 'active'")
+                    thread_count = cursor.fetchone()[0]
+                if thread_count > 0:
+                    return True, f"manager_initial: {thread_count} active threads, no prior manager review"
+                return False, "manager_skip: no active threads"
+
+            completed_at = datetime.strptime(last_manager["completed_at"], "%Y-%m-%d %H:%M:%S").replace(
+                tzinfo=timezone.utc
+            )
+            elapsed_min = (now - completed_at).total_seconds() / 60
+
+            if elapsed_min >= interval_minutes:
+                return True, f"manager_due: {int(elapsed_min // 60)}h since last manager review"
+
+            return False, f"manager_interval: last manager review {int(elapsed_min)} min ago"
+
+        except Exception as e:
+            logger.warning(f"Error in _should_run_manager_review: {e}", exc_info=True)
+            return False, f"manager_error: {e}"
+
     def run(
         self,
         executor: Any | None = None,
@@ -222,6 +300,12 @@ class ObservationCycle:
         result = ObservationResult(ran=False)
         cycle_id: int | None = None
         try:
+            # --- Decide mode: manager review takes priority over triage ---
+            manager_should, manager_reason = self._should_run_manager_review()
+            if manager_should:
+                return self._run_manager_review(executor, command_layer)
+
+            # --- Normal triage path (existing behavior) ---
             should, reason = self.should_run()
             if not should:
                 result.skip_reason = reason
@@ -230,7 +314,8 @@ class ObservationCycle:
             watermark = self._get_watermark()
             with open_db(self.db_path) as conn, conn:
                 cursor = conn.execute(
-                    "INSERT INTO observation_cycles (started_at, last_signal_id) VALUES (CURRENT_TIMESTAMP, ?)",
+                    "INSERT INTO observation_cycles (started_at, last_signal_id, review_mode) "
+                    "VALUES (CURRENT_TIMESTAMP, ?, 'triage')",
                     (watermark,),
                 )
                 cycle_id = cursor.lastrowid
@@ -255,6 +340,7 @@ class ObservationCycle:
                 result.errors.extend(errors)
             except Exception as e:
                 logger.info(f"Review role failed, falling back to think: {e}")
+                result.errors.append(f"review role failed: {e}")
                 try:
                     actions, errors = self._run_think_role(observation_dump, executor, command_layer)
                     result.role_used = "think"
@@ -263,6 +349,7 @@ class ObservationCycle:
                     result.errors.extend(errors)
                 except Exception as e2:
                     logger.info(f"Think role failed, falling back to reflex: {e2}")
+                    result.errors.append(f"think role failed: {e2}")
                     actions, errors = self._run_reflex_fallback(
                         signals, executor, command_layer, trust_gradient=self.trust_gradient
                     )
@@ -440,6 +527,834 @@ class ObservationCycle:
             "delete_*) are blocked by the command layer. Do not attempt them."
         )
 
+    # ── Manager review methods ──────────────────────────────────────────
+
+    def _build_review_dump(self) -> str:
+        """
+        Build a full-state dump for the manager review. Unlike _build_observation_dump
+        (which shows only new signals since the watermark), this shows ALL active threads
+        with their current state, signal counts, and gaps that need attention.
+
+        The manager sees the big picture — not the latest inbox slice.
+        """
+        try:
+            max_threads = self.config.manager_max_threads
+            max_signals = self.config.manager_max_signals
+
+            now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            lines = [
+                f"MANAGER REVIEW DUMP — {now_str} UTC",
+                "You are reviewing ALL accumulated threads and signals as the manager.",
+                "",
+            ]
+
+            with open_db(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+
+                # All active threads, ordered by signal count descending (busiest first)
+                cursor = conn.execute(
+                    "SELECT id, name, status, signal_count, owner, current_deadline, "
+                    "summary, priority, last_reviewed_at, created_at, updated_at, source_channels "
+                    "FROM threads WHERE status = 'active' "
+                    "ORDER BY signal_count DESC LIMIT ?",
+                    (max_threads,),
+                )
+                threads = [dict(row) for row in cursor.fetchall()]
+
+                # Count threads needing attention
+                null_priority = sum(1 for t in threads if not t.get("priority"))
+                null_summary = sum(1 for t in threads if not t.get("summary"))
+                total_active = len(threads)
+
+            lines.append(
+                f"OVERVIEW: {total_active} active threads, "
+                f"{null_priority} missing priority, {null_summary} missing summary"
+            )
+            lines.append("")
+
+            # Thread details
+            lines.append("THREADS:")
+            for t in threads:
+                priority_str = t["priority"] or "UNSET"
+                owner_str = t["owner"] or "unclear"
+                summary_str = t["summary"] or "(no summary)"
+                deadline_str = f", deadline: {t['current_deadline']}" if t.get("current_deadline") else ""
+                reviewed_str = (
+                    f", last reviewed: {t['last_reviewed_at']}" if t.get("last_reviewed_at") else ", never reviewed"
+                )
+                channels = t.get("source_channels") or "[]"
+
+                lines.append(f"[{t['id']}] {t['name']}")
+                lines.append(
+                    f"  priority={priority_str} | owner={owner_str} | signals={t['signal_count']} | "
+                    f"channels={channels}{deadline_str}{reviewed_str}"
+                )
+                lines.append(f"  summary: {summary_str[:200]}")
+                lines.append("")
+
+            # Signals with gaps (null urgency or action_type) — up to 30
+            with open_db(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+
+                # 1. Fetch current pinned topics
+                pinned = conn.execute("SELECT topic FROM pinned_topics").fetchall()
+                current_pinned = [row["topic"] for row in pinned]
+
+                # 2. Find lookback window for recent signals
+                last_review = conn.execute(
+                    "SELECT completed_at FROM observation_cycles "
+                    "WHERE review_mode = 'manager' AND completed_at IS NOT NULL "
+                    "ORDER BY completed_at DESC LIMIT 1"
+                ).fetchone()
+
+                interval_hours = self.config.manager_interval_hours
+                lookback_multiplier = self.config.manager_lookback_multiplier
+                lookback_hours = interval_hours * lookback_multiplier
+
+                since = last_review["completed_at"] if last_review else None
+                if not since:
+                    # Fallback to lookback hours
+                    since_row = conn.execute("SELECT datetime('now', ?)", (f"-{lookback_hours} hours",)).fetchone()
+                    since = since_row[0]
+
+                # 3. Gap signals (urgency or action_type is NULL)
+                cursor = conn.execute(
+                    """
+                    SELECT id, timestamp, source, topic_hint, entity_text, content_preview,
+                           urgency, action_type, thread_id, summary, sender_trust, sender_contact_id
+                    FROM signals
+                    WHERE (urgency IS NULL OR action_type IS NULL)
+                      AND env = 'production'
+                    ORDER BY id DESC LIMIT 30
+                    """
+                )
+                gap_signals = [dict(row) for row in cursor.fetchall()]
+
+                # 4. Recent signals (all since last review)
+                cursor = conn.execute(
+                    """
+                    SELECT id, timestamp, source, topic_hint, entity_text, content_preview,
+                           urgency, action_type, thread_id, summary, sender_trust, sender_contact_id,
+                           direction, ref_id
+                    FROM signals
+                    WHERE timestamp > ?
+                      AND env = 'production'
+                    ORDER BY timestamp ASC
+                    LIMIT ?
+                    """,
+                    (since, max_signals),
+                )
+                recent_signals = [dict(row) for row in cursor.fetchall()]
+
+                # 5. Batch-fetch contact profiles
+                contact_ids = set()
+                for sig in recent_signals + gap_signals:
+                    if sig.get("sender_contact_id"):
+                        contact_ids.add(sig["sender_contact_id"])
+
+                contacts = {}
+                if contact_ids:
+                    placeholders = ",".join("?" * len(contact_ids))
+                    rows = conn.execute(
+                        f"""
+                        SELECT id, display_name, email, organization, relationship,
+                               signal_count, outbound_count, user_endorsed
+                        FROM contacts
+                        WHERE id IN ({placeholders})
+                        """,
+                        list(contact_ids),
+                    ).fetchall()
+                    for row in rows:
+                        contacts[row["id"]] = dict(row)
+
+            if gap_signals:
+                lines.append(f"SIGNALS WITH GAPS ({len(gap_signals)} shown, urgency or action_type is NULL):")
+                for s in gap_signals:
+                    preview = (s.get("content_preview") or "")[:120]
+                    line = (
+                        f"  [id={s['id']}] {s['timestamp']} | {s['source']} | "
+                        f"urgency={s.get('urgency') or 'NULL'} | action={s.get('action_type') or 'NULL'} | "
+                        f"thread={s.get('thread_id') or 'none'}"
+                    )
+                    lines.append(line)
+                    if s.get("summary"):
+                        lines.append(f"    Summary: {s['summary'][:100]}")
+                    else:
+                        lines.append(f"    Preview: {preview}")
+                lines.append("")
+
+            if recent_signals:
+                lines.append(f"RECENT SIGNALS (since {since}):")
+                for s in recent_signals:
+                    verdict = s.get("urgency") or "unclassified"
+                    line = f"- [{s['timestamp']}] {s['source']}: {s['topic_hint'] or 'no topic'} | verdict: {verdict}"
+                    lines.append(line)
+                    if s.get("summary") and s["summary"] not in ("[no body content]", "[summary unavailable]"):
+                        lines.append(f"  Body: {s['summary'][:100]}")
+                    if s.get("sender_trust"):
+                        lines.append(f"  Sender trust: {s['sender_trust']}")
+                    if s.get("sender_contact_id") and s["sender_contact_id"] in contacts:
+                        c = contacts[s["sender_contact_id"]]
+                        parts = []
+                        if c.get("display_name"):
+                            parts.append(c["display_name"])
+                        if c.get("organization"):
+                            parts.append(f"org: {c['organization']}")
+                        if c.get("relationship") and c["relationship"] != "unknown":
+                            parts.append(c["relationship"])
+                        if c.get("outbound_count", 0) > 0:
+                            parts.append(f"you've emailed them {c['outbound_count']}x")
+                        if parts:
+                            lines.append(f"  Contact: {', '.join(parts)}")
+                lines.append("")
+
+            if current_pinned:
+                lines.append(f"CURRENTLY PINNED TOPICS: {', '.join(current_pinned)}")
+                lines.append("")
+
+            # Recent signal distribution for context
+            with open_db(self.db_path) as conn:
+                cursor = conn.execute(
+                    "SELECT urgency, COUNT(*) as cnt FROM signals WHERE urgency IS NOT NULL GROUP BY urgency"
+                )
+                dist = {row[0]: row[1] for row in cursor.fetchall()}
+            if dist:
+                dist_str = ", ".join(f"{k}: {v}" for k, v in sorted(dist.items()))
+                lines.append(f"SIGNAL DISTRIBUTION: {dist_str}")
+                lines.append("")
+
+            # Sender Trust Distribution
+            with open_db(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute(
+                    """
+                    SELECT sender_trust, COUNT(*) as cnt
+                    FROM signals
+                    WHERE timestamp > datetime('now', '-8 hours') AND sender_trust IS NOT NULL
+                    GROUP BY sender_trust
+                    """
+                )
+                trust_dist = {row["sender_trust"]: row["cnt"] for row in cursor.fetchall()}
+
+                if trust_dist:
+                    lines.append("SENDER TRUST DISTRIBUTION (last 8h):")
+                    for tier in ["ESTABLISHED", "RECOGNIZED", "NAME_MISMATCH", "UNKNOWN"]:
+                        if tier in trust_dist:
+                            lines.append(f"  {tier}: {trust_dist[tier]} signals")
+
+                    # One-line example of NAME_MISMATCH if any
+                    if trust_dist.get("NAME_MISMATCH"):
+                        example = conn.execute(
+                            """
+                            SELECT entity_text, content_preview
+                            FROM signals
+                            WHERE sender_trust = 'NAME_MISMATCH' AND timestamp > datetime('now', '-8 hours')
+                            LIMIT 1
+                            """
+                        ).fetchone()
+                        if example:
+                            lines.append(
+                                f'  Example mismatch: "{example["entity_text"]}" — {example["content_preview"][:60]}...'
+                            )
+                    lines.append("")
+
+            # Active tasks for context
+            lines.append("ACTIVE TASKS:")
+            with open_db(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute(
+                    "SELECT id, goal, status, urgency FROM tasks WHERE status = 'open' "
+                    "ORDER BY created_at DESC LIMIT 10"
+                )
+                for t in cursor.fetchall():
+                    lines.append(f"  [{t['id']}] {t['goal'][:80]} | urgency: {t['urgency']}")
+
+            return "\n".join(lines)
+        except Exception as e:
+            logger.warning(f"Error building review dump: {e}", exc_info=True)
+            return f"Error building review dump: {e}"
+
+    def _build_review_system_prompt(self) -> str:
+        """
+        System prompt for the manager review role. This is fundamentally different from
+        the triage prompt — the manager reviews accumulated state, not new signals.
+        """
+        return """You are the manager reviewer for Xibi, a personal AI assistant.
+You are reviewing all signals received since the last review period.
+
+Your job is to look at the FULL PICTURE and take actions that improve future classification:
+
+## Thread Management
+For each active thread, assess priority:
+- critical = needs attention TODAY
+- high = needs attention THIS WEEK
+- medium = worth tracking
+- low = noise thread, consider resolving
+
+Update summaries for threads that are stale or missing summaries.
+Set owner (me = user needs to act, them = waiting on others, unclear = ambiguous).
+Set deadline if one is mentioned or implied in signal summaries.
+
+## Signal Review
+Look at all recent signals, especially those the real-time classifier may have gotten wrong:
+- ESTABLISHED sender with a direct request classified as MEDIUM → should be HIGH or CRITICAL
+- Pattern of escalating signals from same sender → last one should be HIGH or CRITICAL
+- Signal mentioning a thread with a deadline → should be CRITICAL if deadline is today
+- Unknown sender with no thread context classified as MEDIUM → probably LOW or NOISE
+
+For signals that should be reclassified to CRITICAL, set reclassify=true.
+The system will send a late nudge to the user for these.
+
+## Topic Pinning
+If you notice a topic heating up (multiple senders, increasing urgency, approaching deadline), PIN it.
+Pinned topics cause the real-time classifier to auto-escalate matching emails to URGENT.
+If a previously hot topic has cooled down, UNPIN it.
+
+## Contact Enrichment
+If signal context reveals a sender's organization or relationship that isn't in their contact profile, update it.
+Only set relationship if you're confident: vendor, client, recruiter, colleague.
+
+## Digest
+Write a 3-5 bullet briefing of the most important things the user should know.
+Focus on: what needs action, what's heating up, what changed since last review.
+
+Respond with ONLY valid JSON matching this schema (no markdown, no explanation):
+{
+  "thread_updates": [
+    {
+      "thread_id": "...",
+      "priority": "critical|high|medium|low",
+      "summary": "updated summary text or null",
+      "owner": "me|them|unclear or null",
+      "deadline": "ISO date or null"
+    }
+  ],
+  "signal_flags": [
+    {
+      "signal_id": 123,
+      "suggested_tier": "CRITICAL|HIGH|MEDIUM|LOW|NOISE",
+      "suggested_action_type": "request|reply|fyi|confirmation",
+      "reclassify": false,
+      "reason": "why this was reclassified"
+    }
+  ],
+  "topic_pins": [
+    {
+      "topic": "normalized topic name",
+      "action": "pin|unpin",
+      "reason": "why this topic is hot/cold"
+    }
+  ],
+  "contact_updates": [
+    {
+      "contact_id": "...",
+      "relationship": "vendor|client|recruiter|colleague|unknown or null",
+      "organization": "str or null"
+    }
+  ],
+  "digest": "markdown bullets"
+}
+
+Rules:
+- CALIBRATION: use the full priority range realistically. Across all threads, expect roughly: 5-10% critical, 20-30% high, 40-50% medium, 20-30% low.
+- Keep summaries under 150 characters.
+- CRITICAL: output RAW JSON only. No markdown, no code fences, no explanation. Start your response with { and end with }. Nothing else.
+"""
+
+    def _get_all_active_threads(self) -> list[dict[str, Any]]:
+        """Fetch all active threads ordered by priority (nulls last) then signal_count."""
+        try:
+            with open_db(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.execute(
+                    "SELECT id, name, status, signal_count, owner, current_deadline, "
+                    "summary, priority, last_reviewed_at, source_channels "
+                    "FROM threads WHERE status = 'active' "
+                    "ORDER BY CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 "
+                    "WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, signal_count DESC "
+                    "LIMIT ?",
+                    (self.config.manager_max_threads,),
+                )
+                return [dict(row) for row in cursor.fetchall()]
+        except Exception as e:
+            logger.warning(f"Manager review: failed to fetch threads: {e}", exc_info=True)
+            return []
+
+    def _build_batch_dump(self, threads: list[dict[str, Any]], batch_num: int, total_batches: int) -> str:
+        """Build a compact review dump for a single batch of threads."""
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        lines = [
+            f"MANAGER REVIEW — {now_str} UTC — Batch {batch_num}/{total_batches}",
+            f"Review {len(threads)} threads. Assign priority and summary for each.",
+            "",
+            "THREADS:",
+        ]
+        for t in threads:
+            priority_str = t.get("priority") or "UNSET"
+            owner_str = t.get("owner") or "unclear"
+            summary_str = t.get("summary") or "(no summary)"
+            deadline_str = f", deadline: {t['current_deadline']}" if t.get("current_deadline") else ""
+            lines.append(f"[{t['id']}] {t['name']}")
+            lines.append(f"  priority={priority_str} | owner={owner_str} | signals={t['signal_count']}{deadline_str}")
+            lines.append(f"  summary: {summary_str[:150]}")
+        return "\n".join(lines)
+
+    def _run_manager_review(
+        self,
+        executor: Any | None = None,
+        command_layer: Any | None = None,
+    ) -> ObservationResult:
+        """
+        Run a full manager review cycle. This is a separate path from the normal
+        triage cycle — it reviews all accumulated state, not just new signals.
+
+        Steps:
+        1. Open observation_cycles row with review_mode='manager'.
+        2. Build full-state review dump.
+        3. Call Sonnet (review effort) with the manager system prompt.
+        4. Parse structured JSON response → thread updates + digest.
+        5. Apply updates to DB (priority, summary, last_reviewed_at).
+        6. Fire digest nudge.
+        7. Persist cycle.
+        """
+        result = ObservationResult(ran=False, review_mode="manager")
+        cycle_id: int | None = None
+
+        try:
+            watermark = self._get_watermark()
+            with open_db(self.db_path) as conn, conn:
+                cursor = conn.execute(
+                    "INSERT INTO observation_cycles (started_at, last_signal_id, review_mode) "
+                    "VALUES (CURRENT_TIMESTAMP, ?, 'manager')",
+                    (watermark,),
+                )
+                cycle_id = cursor.lastrowid
+
+            system_prompt = self._build_review_system_prompt()
+            llm = get_model(specialty="text", effort="review", config=self.profile)  # type: ignore[arg-type]
+
+            # Build the enriched review dump
+            review_dump = self._build_review_dump()
+
+            # For now, we use a single large prompt. Sonnet can handle it.
+            # If token counts become an issue, we can implement truncation/batching.
+            all_thread_updates: list[dict[str, Any]] = []
+            all_signal_flags: list[dict[str, Any]] = []
+            all_topic_pins: list[dict[str, Any]] = []
+            all_contact_updates: list[dict[str, Any]] = []
+            digest = ""
+            review_errors: list[str] = []
+
+            try:
+                prompt = f"system: {system_prompt}\n\nuser: {review_dump}"
+                response_text = llm.generate(prompt, max_tokens=16000)
+
+                try:
+                    review_data = json.loads(response_text)
+                except json.JSONDecodeError:
+                    # Strip markdown code fences if present
+                    cleaned = re.sub(r"```(?:json)?\s*|\s*```", "", response_text).strip()
+                    # Extract outermost JSON object: first { to last }
+                    start = cleaned.find("{")
+                    end = cleaned.rfind("}")
+                    if start != -1 and end != -1 and end > start:
+                        try:
+                            review_data = json.loads(cleaned[start : end + 1])
+                        except json.JSONDecodeError as je:
+                            review_errors.append(f"JSON parse failed — {je} — {cleaned[start : start + 120]}")
+                            review_data = {}
+                    else:
+                        review_errors.append(f"No JSON object found — {response_text[:120]}")
+                        review_data = {}
+
+                all_thread_updates = review_data.get("thread_updates", [])
+                all_signal_flags = review_data.get("signal_flags", [])
+                all_topic_pins = review_data.get("topic_pins", [])
+                all_contact_updates = review_data.get("contact_updates", [])
+                digest = review_data.get("digest", "")
+
+            except Exception as e:
+                review_errors.append(f"LLM generate failed: {e}")
+                logger.warning(f"Manager review LLM call failed: {e}")
+
+            # Apply all updates
+            merged = {
+                "thread_updates": all_thread_updates,
+                "signal_flags": all_signal_flags,
+                "topic_pins": all_topic_pins,
+                "contact_updates": all_contact_updates,
+            }
+            updates_applied = self._apply_manager_updates(merged)
+            result.actions_taken = updates_applied
+            result.errors.extend(review_errors)
+
+            # Compose and fire single digest nudge
+            if digest and executor is not None:
+                try:
+                    nudge_output = dispatch(
+                        "nudge",
+                        {
+                            "message": f"📋 Manager Review Digest:\n{digest}",
+                            "thread_id": "manager-review",
+                            "refs": [],
+                            "category": "digest",
+                        },
+                        self.skill_registry,
+                        executor=executor,
+                        command_layer=command_layer,
+                    )
+                    result.actions_taken.append(
+                        {
+                            "tool": "nudge",
+                            "input": {"category": "digest"},
+                            "output": nudge_output,
+                            "allowed": nudge_output.get("status") not in ("blocked", "suppressed"),
+                        }
+                    )
+                except Exception as e:
+                    logger.warning(f"Manager review: failed to send digest nudge: {e}")
+                    result.errors.append(f"Digest nudge failed: {e}")
+
+            # Send late nudges for reclassified signals
+            late_nudges = [a["input"] for a in result.actions_taken if a["tool"] == "late_nudge_queued"]
+            if late_nudges and executor is not None:
+                try:
+                    from xibi.heartbeat.context_assembly import assemble_email_context
+                    from xibi.heartbeat.rich_nudge import compose_rich_nudge
+
+                    rich_late_nudges = []
+                    for n in late_nudges:
+                        # Try to assemble context for the reclassified signal
+                        sig = None
+                        with open_db(self.db_path) as conn:
+                            conn.row_factory = sqlite3.Row
+                            sig = conn.execute(
+                                "SELECT ref_id, ref_source FROM signals WHERE id = ?", (n["signal_id"],)
+                            ).fetchone()
+
+                        if sig and sig["ref_id"] and sig["ref_source"] == "email":
+                            context = assemble_email_context(
+                                email={"id": sig["ref_id"]},
+                                db_path=self.db_path,
+                                summary=n.get("preview"),
+                            )
+                            nudge = compose_rich_nudge(
+                                context,
+                                verdict_reason=n.get("reason"),
+                                signal_id=n["signal_id"],
+                                is_late=True,
+                                base_url=self.profile.get("redirect_base_url") or os.environ.get("XIBI_REDIRECT_BASE"),
+                            )
+                            rich_late_nudges.append(nudge.text)
+                        else:
+                            # Fallback for signals without ref_id
+                            fallback_text = (
+                                f"⚠️ *Late Alert — Manager Reclassified as URGENT*\n"
+                                f"• {n['topic'] or 'Email'}: {n['preview'][:100]}"
+                            )
+                            if n.get("reason"):
+                                fallback_text += f"\n_{n['reason']}_"
+                            rich_late_nudges.append(fallback_text)
+
+                    if rich_late_nudges:
+                        # Send each as a separate message
+                        for nudge_text in rich_late_nudges:
+                            nudge_output = dispatch(
+                                "nudge",
+                                {
+                                    "message": nudge_text,
+                                    "thread_id": "manager-review-late",
+                                    "refs": [],  # ref logic handled in text composition
+                                    "category": "urgent",
+                                },
+                                self.skill_registry,
+                                executor=executor,
+                                command_layer=command_layer,
+                            )
+                            result.actions_taken.append(
+                                {
+                                    "tool": "nudge",
+                                    "input": {"category": "late_urgent"},
+                                    "output": nudge_output,
+                                    "allowed": nudge_output.get("status") not in ("blocked", "suppressed"),
+                                }
+                            )
+                except Exception as e:
+                    logger.warning(f"Manager review: failed to send late nudges: {e}")
+                    result.errors.append(f"Late nudge failed: {e}")
+
+            result.ran = True
+            result.role_used = "review"
+            result.degraded = len(review_errors) > 0
+            result.new_watermark = watermark
+            if cycle_id is not None:
+                self._persist_cycle(cycle_id, result)
+
+            logger.info(
+                f"Manager review complete: {len(all_thread_updates)} thread updates, "
+                f"{len(all_signal_flags)} signal flags, {len(review_errors)} review errors"
+            )
+            return result
+
+        except Exception as e:
+            logger.exception(f"Manager review failed: {e}")
+            result.errors.append(str(e))
+            result.degraded = True
+            result.ran = True  # We tried
+            if cycle_id is not None:
+                with suppress(Exception):
+                    self._persist_cycle(cycle_id, result)
+            return result
+
+    def _apply_manager_updates(self, review_data: dict[str, Any]) -> list[dict[str, Any]]:
+        """
+        Apply thread priority/summary updates and signal flags from the manager review.
+        Returns a list of action records for persistence.
+        """
+        actions: list[dict[str, Any]] = []
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+        # Thread updates
+        thread_updates = review_data.get("thread_updates", [])
+        if thread_updates:
+            try:
+                with open_db(self.db_path) as conn, conn:
+                    for update in thread_updates:
+                        thread_id = update.get("thread_id")
+                        if not thread_id:
+                            continue
+
+                        priority = update.get("priority")
+                        summary = update.get("summary")
+                        owner = update.get("owner")
+                        deadline = update.get("deadline")
+
+                        # Build SET clause dynamically
+                        sets = ["last_reviewed_at = ?"]
+                        params: list[Any] = [now_str]
+
+                        if priority:
+                            sets.append("priority = ?")
+                            params.append(priority)
+                        if summary:
+                            sets.append("summary = ?")
+                            params.append(summary)
+                        if owner:
+                            sets.append("owner = ?")
+                            params.append(owner)
+                        if deadline:
+                            sets.append("current_deadline = ?")
+                            params.append(deadline)
+
+                        sets.append("updated_at = ?")
+                        params.append(now_str)
+                        params.append(thread_id)
+
+                        conn.execute(
+                            f"UPDATE threads SET {', '.join(sets)} WHERE id = ?",
+                            params,
+                        )
+
+                        actions.append(
+                            {
+                                "tool": "manager_thread_update",
+                                "input": {
+                                    "thread_id": thread_id,
+                                    "priority": priority,
+                                    "summary_updated": bool(summary),
+                                    "owner": owner,
+                                    "deadline": deadline,
+                                },
+                                "output": {"status": "ok"},
+                                "allowed": True,
+                            }
+                        )
+            except Exception as e:
+                logger.error(f"Manager review: failed to apply thread updates: {e}", exc_info=True)
+                actions.append(
+                    {
+                        "tool": "manager_thread_update",
+                        "input": {"batch": True},
+                        "output": {"status": "error", "message": str(e)},
+                        "allowed": False,
+                    }
+                )
+
+        # Signal flags — update urgency/action_type for signals the manager flagged
+        signal_flags = review_data.get("signal_flags", [])
+        if signal_flags:
+            try:
+                with open_db(self.db_path) as conn, conn:
+                    for flag in signal_flags:
+                        signal_id = flag.get("signal_id")
+                        if not signal_id:
+                            continue
+
+                        sets = []
+                        params_s: list[Any] = []
+
+                        suggested_tier = flag.get("suggested_tier") or flag.get("suggested_urgency")
+                        if suggested_tier:
+                            # Map legacy lowercase high|medium|low
+                            if suggested_tier == "high":
+                                suggested_tier = "HIGH"
+                            elif suggested_tier == "medium":
+                                suggested_tier = "MEDIUM"
+                            elif suggested_tier == "low":
+                                suggested_tier = "LOW"
+
+                            sets.append("urgency = ?")
+                            params_s.append(suggested_tier)
+
+                        if flag.get("suggested_action_type"):
+                            sets.append("action_type = ?")
+                            params_s.append(flag["suggested_action_type"])
+
+                        if flag.get("reason"):
+                            sets.append("correction_reason = ?")
+                            params_s.append(flag["reason"])
+
+                        if sets:
+                            params_s.append(signal_id)
+                            conn.execute(
+                                f"UPDATE signals SET {', '.join(sets)} WHERE id = ?",
+                                params_s,
+                            )
+
+                            # NEW: retroactive URGENT reclassification
+                            reclassify = flag.get("reclassify") or flag.get("reclassify_urgent")
+                            if reclassify and suggested_tier in ("CRITICAL", "HIGH", "URGENT"):
+                                # Fetch signal details for the nudge
+                                conn.row_factory = sqlite3.Row
+                                sig_row = conn.execute(
+                                    """
+                                    SELECT content_preview, summary, topic_hint, ref_id
+                                    FROM signals WHERE id = ?
+                                """,
+                                    (signal_id,),
+                                ).fetchone()
+
+                                if sig_row:
+                                    # Update triage_log verdict
+                                    conn.execute(
+                                        """
+                                        UPDATE triage_log SET verdict = ?
+                                        WHERE email_id = ?
+                                        AND timestamp = (
+                                            SELECT MAX(timestamp) FROM triage_log WHERE email_id = ?
+                                        )
+                                    """,
+                                        (suggested_tier, sig_row["ref_id"], sig_row["ref_id"]),
+                                    )
+                                    # NEW: Record engagement for correction
+                                    try:
+                                        from xibi.web.redirect import record_engagement_sync
+
+                                        metadata = {
+                                            "old_tier": sig_row.get("urgency"),
+                                            "new_tier": suggested_tier,
+                                            "reason": flag.get("reason"),
+                                        }
+                                        record_engagement_sync(
+                                            self.db_path,
+                                            signal_id=str(signal_id),
+                                            event_type="correction",
+                                            source="manager_review",
+                                            metadata=metadata,
+                                        )
+                                    except Exception as e:
+                                        logger.error(f"Failed to record correction engagement: {e}")
+
+                                    # Signal that we need to send a late nudge
+                                    actions.append(
+                                        {
+                                            "tool": "late_nudge_queued",
+                                            "input": {
+                                                "signal_id": signal_id,
+                                                "preview": sig_row["summary"] or sig_row["content_preview"],
+                                                "topic": sig_row["topic_hint"],
+                                                "reason": flag.get("reason", "Manager review reclassified"),
+                                            },
+                                            "output": {"status": "ok"},
+                                            "allowed": True,
+                                        }
+                                    )
+
+                            actions.append(
+                                {
+                                    "tool": "manager_signal_flag",
+                                    "input": {"signal_id": signal_id},
+                                    "output": {"status": "ok"},
+                                    "allowed": True,
+                                }
+                            )
+            except Exception as e:
+                logger.error(f"Manager review: failed to apply signal flags: {e}", exc_info=True)
+
+        # Topic pins
+        topic_pins = review_data.get("topic_pins", [])
+        if topic_pins:
+            try:
+                with open_db(self.db_path) as conn, conn:
+                    for pin in topic_pins:
+                        topic = pin.get("topic")
+                        if not topic:
+                            continue
+
+                        # Use simple normalization
+                        topic = topic.lower().strip()
+
+                        action = pin.get("action")
+                        if action == "pin":
+                            conn.execute("INSERT OR IGNORE INTO pinned_topics (topic) VALUES (?)", (topic,))
+                            logger.info(f"Manager pinned topic: {topic} — {pin.get('reason', '')}")
+                        elif action == "unpin":
+                            conn.execute("DELETE FROM pinned_topics WHERE topic = ?", (topic,))
+                            logger.info(f"Manager unpinned topic: {topic} — {pin.get('reason', '')}")
+
+                        actions.append(
+                            {"tool": "manager_topic_pin", "input": pin, "output": {"status": "ok"}, "allowed": True}
+                        )
+            except Exception as e:
+                logger.error(f"Manager review: failed to apply topic pins: {e}", exc_info=True)
+
+        # Contact updates
+        contact_updates = review_data.get("contact_updates", [])
+        if contact_updates:
+            try:
+                with open_db(self.db_path) as conn, conn:
+                    for update in contact_updates:
+                        contact_id = update.get("contact_id")
+                        if not contact_id:
+                            continue
+
+                        sets = []
+                        params_c = []
+                        if update.get("relationship"):
+                            sets.append("relationship = ?")
+                            params_c.append(update["relationship"])
+                        if update.get("organization"):
+                            sets.append("organization = ?")
+                            params_c.append(update["organization"])
+
+                        if sets:
+                            params_c.append(contact_id)
+                            conn.execute(f"UPDATE contacts SET {', '.join(sets)} WHERE id = ?", params_c)
+                            actions.append(
+                                {
+                                    "tool": "manager_contact_enrichment",
+                                    "input": update,
+                                    "output": {"status": "ok"},
+                                    "allowed": True,
+                                }
+                            )
+            except Exception as e:
+                logger.error(f"Manager review: failed to apply contact updates: {e}", exc_info=True)
+
+        return actions
+
+    # ── Normal triage methods ─────────────────────────────────────────
+
     def _run_review_role(
         self,
         observation_dump: str,
@@ -605,7 +1520,8 @@ class ObservationCycle:
                         role_used = ?,
                         degraded = ?,
                         last_signal_id = ?,
-                        error_log = ?
+                        error_log = ?,
+                        review_mode = ?
                     WHERE id = ?
                 """,
                     (
@@ -615,6 +1531,7 @@ class ObservationCycle:
                         1 if result.degraded else 0,
                         result.new_watermark,
                         json.dumps(result.errors, default=_json_default) if result.errors else None,
+                        result.review_mode,
                         cycle_id,
                     ),
                 )

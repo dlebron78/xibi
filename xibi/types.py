@@ -17,12 +17,21 @@ class Step:
     duration_ms: int = 0
     parse_warning: str | None = None
     error: XibiError | None = None
+    source: str = "user"  # "user" | "mcp:server_name"
 
     def full_text(self) -> str:
-        """Full detail — injected for the 2 most recent steps."""
-        out = str(self.tool_output)
-        if len(out) > 800:
-            out = out[:800] + "... [truncated]"
+        """Full detail — injected for the most recent steps."""
+        if "handle" in self.tool_output:
+            out = (
+                f"<handle:{self.tool_output['handle']} "
+                f"schema={self.tool_output['schema']} "
+                f"items={self.tool_output.get('item_count', '?')}>"
+                f"\nSummary: {self.tool_output.get('summary', '')}"
+            )
+        else:
+            out = str(self.tool_output)
+            if len(out) > 4000:
+                out = out[:4000] + "... [truncated]"
         return (
             f"Step {self.step_num}:\n"
             f"  Thought: {self.thought}\n"
@@ -32,14 +41,16 @@ class Step:
         )
 
     def one_line_summary(self) -> str:
-        """Compressed one-liner for older steps."""
-        input_summary = json.dumps(self.tool_input, separators=(",", ":"))[:60]
-        if self.tool_output.get("status") == "error":
-            output_hint = f"ERROR: {self.tool_output.get('message', '?')[:60]}"
+        """Compressed summary for older steps — preserves key data."""
+        input_summary = json.dumps(self.tool_input, separators=(",", ":"))[:100]
+        if "handle" in self.tool_output:
+            output_hint = f"<handle:{self.tool_output['handle']} schema={self.tool_output['schema']}>"
+        elif self.tool_output.get("status") == "error":
+            output_hint = f"ERROR: {self.tool_output.get('message', '?')[:120]}"
         elif self.tool_output.get("content"):
-            output_hint = str(self.tool_output["content"])[:80]
+            output_hint = str(self.tool_output["content"])[:400]
         else:
-            output_hint = str(self.tool_output)[:80]
+            output_hint = str(self.tool_output)[:400]
         return f"Step {self.step_num}: {self.tool}({input_summary}) → {output_hint}"
 
 
@@ -47,10 +58,11 @@ class Step:
 class ReActResult:
     answer: str
     steps: list[Step]
-    exit_reason: Literal["finish", "ask_user", "max_steps", "timeout", "error"]
+    exit_reason: Literal["finish", "ask_user", "max_steps", "timeout", "error", "partial"]
     duration_ms: int
     error_summary: list[XibiError] = field(default_factory=list)
     trace_id: str | None = None
+    degraded: bool = False
 
     def user_facing_failure_message(self) -> str:
         """

@@ -10,56 +10,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import bregger_heartbeat
 from skills.memory.tools import archive, recall, remember
+from xibi.db import init_workdir
 
 
 @pytest.fixture
 def fresh_db():
     """Provides a fresh, isolated SQLite DB inside a temporary directory."""
     with TemporaryDirectory() as temp_dir:
-        db_path = Path(temp_dir) / "data" / "bregger.db"
-        db_path.parent.mkdir()
-
-        # Initialize basic schema needed for these tests
-        with sqlite3.connect(db_path) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS ledger (
-                    id TEXT PRIMARY KEY,
-                    category TEXT,
-                    content TEXT,
-                    entity TEXT,
-                    status TEXT,
-                    due TEXT,
-                    notes TEXT,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    decay_days INTEGER
-                )
-            """)
-
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS signals (
-                    id TEXT PRIMARY KEY,
-                    source TEXT,
-                    topic_hint TEXT,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    env TEXT DEFAULT 'production'
-                )
-            """)
-
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS beliefs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    key TEXT UNIQUE,
-                    value TEXT,
-                    type TEXT,
-                    visibility TEXT,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    valid_from DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    valid_until DATETIME
-                )
-            """)
-            conn.commit()
-
+        workdir = Path(temp_dir)
+        init_workdir(workdir)
+        db_path = workdir / "data" / "xibi.db"
         yield {"db_path": db_path, "workdir": temp_dir}
 
 
@@ -143,13 +103,13 @@ def test_get_active_threads_pure_sql(fresh_db):
     with sqlite3.connect(db_path) as conn:
         # 3 signals for Topic A
         for _ in range(3):
-            conn.execute("INSERT INTO signals (id, topic_hint) VALUES (lower(hex(randomblob(4))), 'Topic_A')")
+            conn.execute("INSERT INTO signals (source, content_preview, topic_hint) VALUES ('email', 'p', 'Topic_A')")
         # 1 signal for Topic B (should be ignored, count <= 1)
-        conn.execute("INSERT INTO signals (id, topic_hint) VALUES (lower(hex(randomblob(4))), 'Topic_B')")
+        conn.execute("INSERT INTO signals (source, content_preview, topic_hint) VALUES ('email', 'p', 'Topic_B')")
         # 2 signals for Topic C, but they were 10 days ago (should be ignored)
         for _ in range(2):
             conn.execute(
-                "INSERT INTO signals (id, topic_hint, timestamp) VALUES (lower(hex(randomblob(4))), 'Topic_C', datetime('now', '-10 days'))"
+                "INSERT INTO signals (source, content_preview, topic_hint, timestamp) VALUES ('email', 'p', 'Topic_C', datetime('now', '-10 days'))"
             )
         conn.commit()
 
@@ -194,4 +154,4 @@ def test_archive_tool_no_match(fresh_db):
     workdir = fresh_db["workdir"]
     res = archive.run({"query": "pizza", "_workdir": workdir})
     assert res["status"] == "success"
-    assert "couldn't find any active beliefs" in res["message"]
+    assert "couldn't find any active memory" in res["message"]

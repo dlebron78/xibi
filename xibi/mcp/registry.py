@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from xibi.mcp.client import MCPClient, MCPServerConfig
 
@@ -12,11 +12,34 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _annotations_to_tier(annotations: dict) -> str:
+    """
+    Map MCP ToolAnnotations to Xibi permission tier.
+
+    Spec defaults (when absent): readOnlyHint=False, destructiveHint=True.
+    These defaults are deliberately conservative — an unannotated tool is
+    assumed destructive.
+
+    IMPORTANT: Annotations are untrusted hints. A malicious server can lie.
+    This mapping provides a *better default* than blanket RED, but the user
+    can still override per-server in config.
+    """
+    read_only = annotations.get("readOnlyHint", False)
+    destructive = annotations.get("destructiveHint", True)
+
+    if read_only:
+        return "GREEN"
+    if not destructive:
+        return "YELLOW"
+    return "RED"
+
+
 class MCPServerRegistry:
     def __init__(self, config: Config, skill_registry: SkillRegistry) -> None:
         self.config = config
         self.skill_registry = skill_registry
         self.clients: dict[str, MCPClient] = {}
+        self.injectable_resources: dict[str, list[str]] = {}  # server_name -> list of URIs
 
     def initialize_all(self) -> None:
         """
@@ -64,6 +87,10 @@ class MCPServerRegistry:
                 mcp_tools = client.initialize()
                 self.clients[name] = client
 
+                # Handle injectable resources
+                if "inject_resources" in server_conf:
+                    self.injectable_resources[name] = server_conf["inject_resources"]
+
                 synthetic_tools = []
                 for tool in mcp_tools:
                     final_name = tool.name
@@ -73,6 +100,14 @@ class MCPServerRegistry:
 
                     all_tool_names.add(final_name)
 
+                    config_tier = server_conf.get("tier_override")
+                    tier = config_tier or _annotations_to_tier(tool.annotations)
+
+                    logger.info(
+                        f"  tool '{final_name}': tier={tier} "
+                        f"(source={'config override' if config_tier else 'annotations' if tool.annotations else 'default'})"
+                    )
+
                     synthetic_tools.append(
                         {
                             "name": final_name,
@@ -81,9 +116,10 @@ class MCPServerRegistry:
                             "inputSchema": tool.input_schema,
                             "source": "mcp",
                             "server": name,
-                            "tier": "RED",  # ALL MCP tools default to RED
+                            "tier": tier,
                             "output_type": "raw",  # Standard for MCP
                             "skill": f"mcp_{name}",
+                            "annotations": tool.annotations,
                         }
                     )
 
@@ -104,6 +140,23 @@ class MCPServerRegistry:
 
     def get_client(self, server_name: str) -> MCPClient | None:
         return self.clients.get(server_name)
+
+    async def get_all_injectable_resources(self) -> list[dict[str, Any]]:
+        """
+        Gathers all resources marked for injection across all servers.
+        Returns a list of contents: [{"uri": uri, "content": text, "server": server_name}]
+        """
+        all_contents = []
+        for server_name, uris in self.injectable_resources.items():
+            client = self.get_client(server_name)
+            if not client:
+                continue
+            for uri in uris:
+                res = await client.read_resource(uri)
+                if res.get("status") == "ok":
+                    for content in res.get("contents", []):
+                        all_contents.append({"uri": uri, "content": content.get("text", ""), "server": server_name})
+        return all_contents
 
     def shutdown_all(self) -> None:
         """Close all subprocess clients cleanly."""

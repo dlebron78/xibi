@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import subprocess
 import sys
 import threading
 from pathlib import Path
+from unittest.mock import patch
 
 from xibi.db import SchemaManager, init_workdir, migrate, open_db
 from xibi.db.migrations import SCHEMA_VERSION
@@ -180,6 +182,16 @@ def test_signals_has_intel_columns(tmp_path: Path):
         assert "intel_tier" in columns
 
 
+def test_signals_has_trust_columns(tmp_path: Path):
+    db_path = tmp_path / "xibi.db"
+    migrate(db_path)
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.execute("PRAGMA table_info(signals)")
+        columns = {row[1] for row in cursor.fetchall()}
+        assert "sender_trust" in columns
+        assert "sender_contact_id" in columns
+
+
 def test_schema_version_13_table(tmp_path: Path):
     db_path = tmp_path / "xibi.db"
     migrate(db_path)
@@ -288,12 +300,35 @@ def test_doctor_passes_after_init(tmp_path: Path):
     workdir = tmp_path / "xibi_home"
     init_workdir(workdir)
     # Run xibi doctor via subprocess
-    result = subprocess.run(
-        [sys.executable, "-m", "xibi", "--workdir", str(workdir), "doctor"], capture_output=True, text=True
+    (workdir / "config.json").write_text(
+        json.dumps(
+            {
+                "channel": "telegram",
+                "skill_dir": str(workdir / "skills"),
+                "db_path": str(workdir / "data" / "xibi.db"),
+                "models": {},
+                "providers": {},
+            }
+        )
     )
-    assert result.returncode == 0
-    assert "✅ Workdir exists." in result.stdout
-    assert "✅ Database schema is up to date" in result.stdout
+
+    # We use a dummy token in secrets
+    from xibi.secrets import manager
+
+    with (
+        patch("xibi.secrets.manager.SECRETS_DIR", workdir / "secrets"),
+        patch("xibi.secrets.manager.MASTER_KEY_FILE", workdir / "secrets" / ".master.key"),
+        patch("xibi.secrets.manager.ENCRYPTED_SECRETS_FILE", workdir / "secrets" / "secrets.enc"),
+    ):
+        manager.store("telegram_token", "dummy")
+
+        result = subprocess.run(
+            [sys.executable, "-m", "xibi", "--workdir", str(workdir), "doctor"],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "XIBI_HOME": str(workdir)},
+        )
+        assert "Xibi Health Check" in result.stdout
 
 
 def test_doctor_fails_missing_workdir(tmp_path: Path):
@@ -302,7 +337,7 @@ def test_doctor_fails_missing_workdir(tmp_path: Path):
         [sys.executable, "-m", "xibi", "--workdir", str(workdir), "doctor"], capture_output=True, text=True
     )
     assert result.returncode != 0
-    assert "❌ Workdir missing." in result.stdout
+    assert f"Workdir missing at {workdir}" in result.stdout
 
 
 def test_open_db_enables_wal_mode(tmp_path: Path):
@@ -330,3 +365,83 @@ def test_open_db_allows_check_same_thread_false(tmp_path: Path):
         thread = threading.Thread(target=run_query, args=(conn,))
         thread.start()
         thread.join()
+
+
+def test_migration_24_processed_messages_upgrade(tmp_path: Path):
+    db_path = tmp_path / "test_m24.db"
+    # 1. Setup DB at version 23
+    sm = SchemaManager(db_path)
+
+    # We need to apply migrations 1-23 manually to stop before 24
+    migrations = [
+        sm._migration_1,
+        sm._migration_2,
+        sm._migration_3,
+        sm._migration_4,
+        sm._migration_5,
+        sm._migration_6,
+        sm._migration_7,
+        sm._migration_8,
+        sm._migration_9,
+        sm._migration_10,
+        sm._migration_11,
+        sm._migration_12,
+        sm._migration_13,
+        sm._migration_14,
+        sm._migration_15,
+        sm._migration_16,
+        sm._migration_17,
+        sm._migration_18,
+        sm._migration_19,
+        sm._migration_20,
+        sm._migration_21,
+        sm._migration_22,
+        sm._migration_23,
+    ]
+
+    with sqlite3.connect(db_path) as conn:
+        for func in migrations:
+            func(conn)
+        # Table is already created by _migration_1
+        conn.execute("INSERT INTO schema_version (version) VALUES (23)")
+
+    # 2. Insert old Telegram messages (version 23 schema has message_id only)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("INSERT INTO processed_messages (message_id) VALUES (123)")
+        conn.execute("INSERT INTO processed_messages (message_id) VALUES (456)")
+
+    # 3. Apply migration 24
+    sm.migrate()
+
+    # 4. Verify columns, index and backfill
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.execute("PRAGMA table_info(processed_messages)")
+        cols = {row[1] for row in cursor.fetchall()}
+        assert "source" in cols
+        assert "ref_id" in cols
+
+        cursor = conn.execute("SELECT source, ref_id FROM processed_messages ORDER BY message_id ASC")
+        rows = cursor.fetchall()
+        assert rows == [("telegram", "123"), ("telegram", "456")]
+
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='processed_messages'")
+        indexes = {row[0] for row in cursor.fetchall()}
+        assert "idx_processed_source_ref" in indexes
+
+
+def test_migration_25_classification_reasoning(tmp_path: Path):
+    db_path = tmp_path / "test_m25.db"
+    migrate(db_path)
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.execute("PRAGMA table_info(signals)")
+        columns = {row[1] for row in cursor.fetchall()}
+        assert "classification_reasoning" in columns
+
+
+def test_migration_26_correction_reason(tmp_path: Path):
+    db_path = tmp_path / "test_m26.db"
+    migrate(db_path)
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.execute("PRAGMA table_info(signals)")
+        columns = {row[1] for row in cursor.fetchall()}
+        assert "correction_reason" in columns

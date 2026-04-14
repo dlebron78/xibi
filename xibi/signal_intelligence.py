@@ -6,10 +6,13 @@ import logging
 import re
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from xibi.db import open_db
+from xibi.entities import create_contact, upsert_contact_channel
+from xibi.entities.resolver import resolve_contact
 from xibi.router import Config, get_model
 from xibi.trust.gradient import FailureType
 
@@ -17,6 +20,26 @@ if TYPE_CHECKING:
     from xibi.trust.gradient import TrustGradient
 
 logger = logging.getLogger(__name__)
+
+
+def is_duplicate_signal(ref_source: str, ref_id: str, db_path: Path, window_hours: int = 72) -> bool:
+    """
+    Return True if a signal with this (ref_source, ref_id) was logged within window_hours.
+    Default 72h window prevents job listing signal spam across multiple poll cycles.
+    """
+    if not ref_id:
+        return False
+    try:
+        with open_db(db_path) as conn:
+            cutoff = (datetime.utcnow() - timedelta(hours=window_hours)).isoformat()
+            row = conn.execute(
+                "SELECT id FROM signals WHERE ref_source = ? AND ref_id = ? AND timestamp > ?",
+                (ref_source, ref_id, cutoff),
+            ).fetchone()
+            return row is not None
+    except Exception as e:
+        logger.error(f"is_duplicate_signal failed: {e}", exc_info=True)
+        return False
 
 
 @dataclass
@@ -246,46 +269,138 @@ def assign_threads(signals: list[dict], intels: list[SignalIntel], db_path: Path
     return intels
 
 
-def upsert_contact(email: str, display_name: str, organization: str | None, db_path: Path) -> str:
-    """Upsert a contact. Returns the contact_id."""
-    contact_id = "contact-" + hashlib.md5(email.lower().encode()).hexdigest()[:8]
-    try:
-        with open_db(db_path) as conn, conn:
-            conn.row_factory = sqlite3.Row
-            existing = conn.execute("SELECT organization FROM contacts WHERE id = ?", (contact_id,)).fetchone()
+def upsert_contact(
+    email: str,
+    display_name: str,
+    organization: str | None,
+    db_path: Path,
+    config: Config | None = None,
+) -> str:
+    """Upsert an inbound contact. Returns the contact_id."""
+    return _upsert_contact_core(
+        email=email,
+        display_name=display_name,
+        organization=organization,
+        db_path=db_path,
+        direction="inbound",
+        config=config,
+    )
 
-            if existing:
-                if existing["organization"] is None and organization:
+
+def upsert_outbound_contact(
+    email: str,
+    display_name: str,
+    db_path: Path,
+    config: Config | None = None,
+) -> str:
+    """Upsert an outbound contact. Returns the contact_id."""
+    return _upsert_contact_core(
+        email=email,
+        display_name=display_name,
+        organization=None,
+        db_path=db_path,
+        direction="outbound",
+        config=config,
+    )
+
+
+def _upsert_contact_core(
+    email: str,
+    display_name: str,
+    organization: str | None,
+    db_path: Path,
+    direction: str,  # 'inbound' | 'outbound'
+    config: Config | None = None,
+    channel_type: str = "email",
+    activity_date: str | None = None,
+) -> str:
+    """Core contact upsert logic. Handles both directions and ensures channel rows."""
+    db_str = str(db_path)
+    contact = resolve_contact(
+        handle=email,
+        channel_type=channel_type,
+        display_name=display_name,
+        organization=organization,
+        db_path=db_str,
+        activity_date=activity_date,
+    )
+
+    if contact:
+        contact_id = contact.id
+        try:
+            with open_db(db_path) as conn, conn:
+                count_col = "signal_count" if direction == "inbound" else "outbound_count"
+                last_seen_val = activity_date if activity_date else datetime.utcnow().isoformat()
+
+                if contact.organization is None and organization:
                     conn.execute(
-                        """
-                        UPDATE contacts SET
-                            last_seen = CURRENT_TIMESTAMP,
-                            signal_count = signal_count + 1,
-                            organization = ?
-                        WHERE id = ?
-                    """,
-                        (organization, contact_id),
+                        f"UPDATE contacts SET last_seen = MAX(COALESCE(last_seen, '0001-01-01'), ?), {count_col} = {count_col} + 1, organization = ? WHERE id = ?",
+                        (last_seen_val, organization, contact_id),
                     )
                 else:
                     conn.execute(
-                        """
-                        UPDATE contacts SET
-                            last_seen = CURRENT_TIMESTAMP,
-                            signal_count = signal_count + 1
-                        WHERE id = ?
-                    """,
+                        f"UPDATE contacts SET last_seen = MAX(COALESCE(last_seen, '0001-01-01'), ?), {count_col} = {count_col} + 1 WHERE id = ?",
+                        (last_seen_val, contact_id),
+                    )
+        except Exception as e:
+            logger.error(f"_upsert_contact_core (update) failed: {e}")
+    else:
+        relationship: str
+        # Domain-based relationship inference
+        relationship = "unknown"
+        domain = email.split("@")[-1].lower() if "@" in email and channel_type == "email" else ""
+
+        if domain:
+            # Check owner's domain
+            owner_domain = ""
+            if config:
+                owner_domain_raw = config.get("email_from")
+                if owner_domain_raw:
+                    owner_domain = str(owner_domain_raw).split("@")[-1].lower()
+
+            if domain == owner_domain:
+                relationship = "colleague"
+            else:
+                try:
+                    with open_db(db_path) as conn:
+                        row = conn.execute(
+                            "SELECT COUNT(*) FROM contact_channels WHERE channel_type='email' AND handle LIKE '%@' || ?",
+                            (domain,),
+                        ).fetchone()
+                        if row and row[0] >= 3:
+                            relationship = "org_known"
+                except Exception:
+                    pass
+
+        discovered_via = "email_inbound" if direction == "inbound" else "email_outbound"
+
+        _contact_id = create_contact(
+            display_name=display_name,
+            email=email if channel_type == "email" else None,
+            organization=organization,
+            discovered_via=discovered_via,
+            relationship=relationship,
+            db_path=db_str,
+        )
+
+        if not _contact_id:
+            contact_id = f"contact-{hashlib.md5(email.lower().encode()).hexdigest()[:8]}"
+        else:
+            contact_id = _contact_id
+
+        # Fix counts if outbound (create_contact defaults to signal_count=1, outbound_count=0)
+        if direction == "outbound":
+            try:
+                with open_db(db_path) as conn, conn:
+                    conn.execute(
+                        "UPDATE contacts SET signal_count = 0, outbound_count = 1 WHERE id = ?",
                         (contact_id,),
                     )
-            else:
-                conn.execute(
-                    """
-                    INSERT INTO contacts (id, display_name, email, organization, relationship, signal_count)
-                    VALUES (?, ?, ?, ?, 'unknown', 1)
-                """,
-                    (contact_id, display_name, email, organization),
-                )
-    except Exception as e:
-        logger.error(f"upsert_contact failed: {e}")
+            except Exception as e:
+                logger.error(f"_upsert_contact_core (fix outbound) failed: {e}")
+
+    # Ensure channel row exists (create_contact handles it, but we re-verify/update)
+    upsert_contact_channel(contact_id, email, channel_type, verified=1, db_path=db_str)
 
     return contact_id
 
@@ -369,7 +484,8 @@ def enrich_signals(
         for sig in signals:
             entity = sig.get("entity_text", "")
             if entity and "@" in entity:
-                upsert_contact(entity, entity, None, db_path)
+                # Use display_name = entity (address) if name not available in tier-0/1
+                upsert_contact(entity, entity, sig.get("entity_org"), db_path, config=config)
 
         # Write back to DB
         with open_db(db_path) as conn, conn:

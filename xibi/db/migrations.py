@@ -7,7 +7,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 16  # increment when adding new migrations
+SCHEMA_VERSION = 29  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -47,6 +47,19 @@ class SchemaManager:
             (14, "radiant audit results", self._migration_14),
             (15, "session turns source column", self._migration_15),
             (16, "inference events trace_id", self._migration_16),
+            (17, "access_log extensions", self._migration_17),
+            (18, "contacts extensions + contact_channels table", self._migration_18),
+            (19, "manager review: thread priority + review tracking", self._migration_19),
+            (20, "belief_summaries table for session compression", self._migration_20),
+            (21, "universal action scheduler tables", self._migration_21),
+            (22, "checklist templates and instances", self._migration_22),
+            (23, "signals: add sender_trust and sender_contact_id", self._migration_23),
+            (24, "processed_messages: multi-source schema", self._migration_24),
+            (25, "signals: add classification_reasoning column", self._migration_25),
+            (26, "signals: add correction_reason column", self._migration_26),
+            (27, "signals: add deep_link_url column", self._migration_27),
+            (28, "engagement: create engagements table", self._migration_28),
+            (29, "chief of staff: priority_context and review_traces", self._migration_29),
         ]
 
         for version, description, func in migrations:
@@ -100,7 +113,8 @@ class SchemaManager:
                 status      TEXT,
                 due         TEXT,
                 notes       TEXT,
-                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                decay_days  INTEGER
             );
 
             CREATE TABLE IF NOT EXISTS traces (
@@ -419,6 +433,289 @@ class SchemaManager:
         conn.executescript("""
             ALTER TABLE inference_events ADD COLUMN trace_id TEXT;
             CREATE INDEX IF NOT EXISTS idx_inference_events_trace ON inference_events(trace_id);
+        """)
+
+    def _migration_17(self, conn: sqlite3.Connection) -> None:
+        # Idempotent addition of columns to access_log
+        new_cols = [
+            ("prev_step_source", "TEXT"),
+            ("source_bumped", "INTEGER NOT NULL DEFAULT 0"),
+            ("base_tier", "TEXT"),
+            ("effective_tier", "TEXT"),
+        ]
+        for col_name, col_type in new_cols:
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute(f"ALTER TABLE access_log ADD COLUMN {col_name} {col_type}")
+
+    def _migration_18(self, conn: sqlite3.Connection) -> None:
+        """Chief of Staff pipeline: signal summaries, contact extensions, sender trust."""
+
+        # --- Step 67 & 69: Signal summaries & Sender trust ---
+        signal_cols = [
+            ("summary", "TEXT"),  # LLM-generated body summary
+            ("summary_model", "TEXT"),  # e.g. "gemma4:e4b"
+            ("summary_ms", "INTEGER"),  # summarization latency in ms
+            ("sender_trust", "TEXT"),  # 'ESTABLISHED' | 'RECOGNIZED' | 'UNKNOWN' | 'NAME_MISMATCH'
+            ("sender_contact_id", "TEXT"),  # FK to contacts(id)
+        ]
+        for col_name, col_type in signal_cols:
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute(f"ALTER TABLE signals ADD COLUMN {col_name} {col_type}")
+
+        # --- Step 68: Extend contacts for outbound tracking ---
+        contact_cols = [
+            ("phone", "TEXT"),
+            ("title", "TEXT"),
+            ("outbound_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("user_endorsed", "INTEGER NOT NULL DEFAULT 0"),
+            ("discovered_via", "TEXT"),
+            ("tags", "TEXT NOT NULL DEFAULT '[]'"),
+            ("notes", "TEXT"),
+        ]
+        for col_name, col_type in contact_cols:
+            try:
+                conn.execute(f"ALTER TABLE contacts ADD COLUMN {col_name} {col_type}")
+            except sqlite3.OperationalError as e:
+                if "duplicate column name" in str(e).lower():
+                    continue
+                logger.error(f"Migration 18 failed to add column {col_name}: {e}")
+                raise
+
+        # --- Step 68: Multi-channel identity ---
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS contact_channels (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                contact_id   TEXT NOT NULL REFERENCES contacts(id),
+                channel_type TEXT NOT NULL,
+                handle       TEXT NOT NULL,
+                display_name TEXT,
+                verified     INTEGER NOT NULL DEFAULT 0,
+                created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                first_seen   DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_seen    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(channel_type, handle)
+            );
+        """)
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_cc_handle ON contact_channels(channel_type, handle);")
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_cc_contact ON contact_channels(contact_id);")
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_contact_channels_lookup ON contact_channels(channel_type, handle);"
+            )
+
+        # Extend session_entities table
+        try:
+            conn.execute("ALTER TABLE session_entities ADD COLUMN contact_id TEXT")
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e).lower():
+                logger.error(f"Migration 18 failed to add contact_id to session_entities: {e}")
+                raise
+
+    def _migration_19(self, conn: sqlite3.Connection) -> None:
+        import contextlib
+
+        # Thread priority + last_reviewed_at for manager review pattern
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("ALTER TABLE threads ADD COLUMN priority TEXT DEFAULT NULL")
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("ALTER TABLE threads ADD COLUMN last_reviewed_at DATETIME DEFAULT NULL")
+        # Track whether an observation cycle was a manager review vs normal triage
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("ALTER TABLE observation_cycles ADD COLUMN review_mode TEXT DEFAULT 'triage'")
+
+    def _migration_20(self, conn: sqlite3.Connection) -> None:
+        sql_path = Path(__file__).parent / "migrations" / "0020_belief_summaries.sql"
+        if sql_path.exists():
+            conn.executescript(sql_path.read_text())
+        else:
+            # Fallback if file missing
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS sessions (
+                    id TEXT PRIMARY KEY,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS belief_summaries (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    turn_range TEXT,
+                    source TEXT DEFAULT 'llm_compression',
+                    FOREIGN KEY(session_id) REFERENCES sessions(id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_belief_summaries_session ON belief_summaries(session_id);
+            """)
+
+    def _migration_21(self, conn: sqlite3.Connection) -> None:
+        sql_path = Path(__file__).parent / "migrations" / "0021_scheduled_actions.sql"
+        if sql_path.exists():
+            conn.executescript(sql_path.read_text())
+        else:
+            # Fallback if file missing
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS scheduled_actions (
+                    id              TEXT PRIMARY KEY,
+                    name            TEXT NOT NULL,
+                    trigger_type    TEXT NOT NULL,
+                    trigger_config  TEXT NOT NULL,
+                    action_type     TEXT NOT NULL,
+                    action_config   TEXT NOT NULL,
+                    enabled         INTEGER NOT NULL DEFAULT 1,
+                    active_from     DATETIME,
+                    active_until    DATETIME,
+                    last_run_at     DATETIME,
+                    next_run_at     DATETIME NOT NULL,
+                    last_status     TEXT,
+                    last_error      TEXT,
+                    run_count       INTEGER NOT NULL DEFAULT 0,
+                    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                    created_by      TEXT NOT NULL,
+                    created_via     TEXT,
+                    trust_tier      TEXT NOT NULL DEFAULT 'green',
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_scheduled_actions_due ON scheduled_actions(enabled, next_run_at);
+                CREATE TABLE IF NOT EXISTS scheduled_action_runs (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    action_id       TEXT NOT NULL,
+                    started_at      DATETIME NOT NULL,
+                    finished_at     DATETIME,
+                    status          TEXT NOT NULL,
+                    duration_ms     INTEGER,
+                    output_preview  TEXT,
+                    error           TEXT,
+                    trace_id        TEXT,
+                    FOREIGN KEY (action_id) REFERENCES scheduled_actions(id) ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_scheduled_action_runs_action ON scheduled_action_runs(action_id, started_at DESC);
+            """)
+
+    def _migration_22(self, conn: sqlite3.Connection) -> None:
+        sql_path = Path(__file__).parent / "migrations" / "0022_checklists.sql"
+        if sql_path.exists():
+            conn.executescript(sql_path.read_text())
+        else:
+            conn.executescript("""
+                CREATE TABLE IF NOT EXISTS checklist_templates (
+                    id                  TEXT PRIMARY KEY,
+                    name                TEXT NOT NULL,
+                    description         TEXT,
+                    recurrence          TEXT,
+                    rollover_policy     TEXT NOT NULL DEFAULT 'confirm',
+                    nudge_config        TEXT DEFAULT NULL,
+                    created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at          DATETIME DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE IF NOT EXISTS checklist_template_items (
+                    id                  TEXT PRIMARY KEY,
+                    template_id         TEXT NOT NULL,
+                    position            INTEGER NOT NULL,
+                    label               TEXT NOT NULL,
+                    item_type           TEXT NOT NULL DEFAULT 'human',
+                    action_ref          TEXT,
+                    deadline_offset_seconds INTEGER,
+                    FOREIGN KEY (template_id) REFERENCES checklist_templates(id) ON DELETE CASCADE
+                );
+                CREATE TABLE IF NOT EXISTS checklist_instances (
+                    id                  TEXT PRIMARY KEY,
+                    template_id         TEXT NOT NULL,
+                    created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    closed_at           DATETIME,
+                    status              TEXT NOT NULL DEFAULT 'open',
+                    FOREIGN KEY (template_id) REFERENCES checklist_templates(id)
+                );
+                CREATE TABLE IF NOT EXISTS checklist_instance_items (
+                    id                  TEXT PRIMARY KEY,
+                    instance_id         TEXT NOT NULL,
+                    template_item_id    TEXT NOT NULL,
+                    label               TEXT NOT NULL,
+                    position            INTEGER NOT NULL,
+                    completed_at        DATETIME,
+                    deadline_at         DATETIME,
+                    deadline_action_ids TEXT DEFAULT '[]',
+                    rollover_prompted_at DATETIME,
+                    FOREIGN KEY (instance_id) REFERENCES checklist_instances(id) ON DELETE CASCADE
+                );
+            """)
+
+    def _migration_23(self, conn: sqlite3.Connection) -> None:
+        """Add sender_trust and sender_contact_id to signals."""
+        new_cols = [
+            ("sender_trust", "TEXT"),
+            ("sender_contact_id", "TEXT"),
+        ]
+        for col_name, col_type in new_cols:
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute(f"ALTER TABLE signals ADD COLUMN {col_name} {col_type}")
+
+    def _migration_24(self, conn: sqlite3.Connection) -> None:
+        """Upgrade processed_messages to multi-source schema."""
+        # Add source and ref_id columns to existing table
+        for col_name, col_type in [("source", "TEXT"), ("ref_id", "TEXT")]:
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute(f"ALTER TABLE processed_messages ADD COLUMN {col_name} {col_type}")
+
+        # Create unique index for multi-source dedup
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_processed_source_ref ON processed_messages (source, ref_id)"
+        )
+
+        # Backfill existing Telegram rows
+        conn.execute("""
+            UPDATE processed_messages
+            SET source = 'telegram', ref_id = CAST(message_id AS TEXT)
+            WHERE source IS NULL
+        """)
+
+    def _migration_25(self, conn: sqlite3.Connection) -> None:
+        """Add classification_reasoning column to signals table."""
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("ALTER TABLE signals ADD COLUMN classification_reasoning TEXT")
+
+    def _migration_26(self, conn: sqlite3.Connection) -> None:
+        """Add correction_reason column to signals table."""
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("ALTER TABLE signals ADD COLUMN correction_reason TEXT")
+
+    def _migration_27(self, conn: sqlite3.Connection) -> None:
+        """Add deep_link_url column to signals table."""
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("ALTER TABLE signals ADD COLUMN deep_link_url TEXT")
+
+    def _migration_28(self, conn: sqlite3.Connection) -> None:
+        """Create engagements table for tracking Daniel's behavior."""
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS engagements (
+                id TEXT PRIMARY KEY,
+                signal_id TEXT,
+                event_type TEXT NOT NULL,
+                source TEXT NOT NULL,
+                created_at DATETIME NOT NULL,
+                metadata TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_engagements_signal ON engagements(signal_id);
+            CREATE INDEX IF NOT EXISTS idx_engagements_created ON engagements(created_at);
+            CREATE INDEX IF NOT EXISTS idx_engagements_type ON engagements(event_type);
+        """)
+
+    def _migration_29(self, conn: sqlite3.Connection) -> None:
+        """Chief of Staff: priority_context and review_traces."""
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS priority_context (
+                id INTEGER PRIMARY KEY,
+                content TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS review_traces (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                reasoning TEXT,
+                output_json TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
         """)
 
 

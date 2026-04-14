@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -10,23 +11,27 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import date
+import uuid
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from xibi.command_layer import CommandLayer
 from xibi.db import open_db
 from xibi.executor import Executor
 from xibi.react import run as react_run
-from xibi.router import Config
+from xibi.router import Config, get_model
+from xibi.routing.chitchat import is_chitchat
 from xibi.routing.control_plane import ControlPlaneRouter
 from xibi.routing.shadow import ShadowMatcher
 from xibi.session import SessionContext
 from xibi.skills.registry import SkillRegistry
+from xibi.tracing import Tracer
 from xibi.types import ReActResult
 
 logger = logging.getLogger(__name__)
 
-NUDGE_DELAY = 10.0
+TYPING_INTERVAL = 4.0  # Telegram typing status expires after ~5s
 
 
 def _safe_filename(file_name: str) -> str:
@@ -125,7 +130,7 @@ class TelegramAdapter:
         self.llm_routing_classifier = llm_routing_classifier
         self._pending_attachments: dict[int, str] = {}
         self._sessions: dict[int, SessionContext] = {}
-        # Per-chat nudge state: {chat_id: {"nudge_sent": bool, "nudge_timer": Timer | None}}
+        # Per-chat typing state: {chat_id: {"stop": threading.Event, "timer": Timer | None}}
         self._active_chats: dict[int, dict] = {}
         self._mock_sent: bool = False
 
@@ -139,14 +144,16 @@ class TelegramAdapter:
 
     def _is_already_processed(self, conn: sqlite3.Connection, message_id: int) -> bool:
         """Return True if this Telegram message_id has already been handled."""
+        # Primary check via PRIMARY KEY (message_id) for speed and backward compatibility
         row = conn.execute("SELECT 1 FROM processed_messages WHERE message_id = ?", (message_id,)).fetchone()
         return row is not None
 
     def _mark_processed(self, conn: sqlite3.Connection, message_id: int) -> None:
         """Record that this Telegram message_id has been handled (idempotency gate)."""
+        # Populate both old and new columns to maintain compatibility
         conn.execute(
-            "INSERT OR IGNORE INTO processed_messages (message_id) VALUES (?)",
-            (message_id,),
+            "INSERT OR IGNORE INTO processed_messages (message_id, source, ref_id) VALUES (?, 'telegram', ?)",
+            (message_id, str(message_id)),
         )
 
     def _purge_old_processed_messages(self) -> None:
@@ -210,18 +217,19 @@ class TelegramAdapter:
             return {"ok": True, "result": []}
         return {"ok": True}
 
-    def send_message(self, chat_id: int, text: str) -> dict:
+    def send_message(self, chat_id: int, text: str, reply_markup: dict | None = None) -> dict:
         logger.info(f"Outgoing message to {chat_id}: {text}")
         params = {"chat_id": chat_id, "text": text}
+        if reply_markup:
+            params["reply_markup"] = reply_markup
         return self._api_call("sendMessage", params)
 
-    def _nudge_callback(self, chat_id: int) -> None:
-        state = self._active_chats.get(chat_id)
-        if state is None or state["nudge_sent"]:
-            return
-
-        self.send_message(chat_id, "🤔 Still working on it…")
-        state["nudge_sent"] = True
+    def _typing_loop(self, chat_id: int, stop_event: threading.Event) -> None:
+        """Send 'typing' indicator every few seconds until stopped."""
+        while not stop_event.is_set():
+            with contextlib.suppress(Exception):
+                self._api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
+            stop_event.wait(TYPING_INTERVAL)
 
     def _download_file(self, file_id: str, chat_id: int) -> str | None:
         try:
@@ -297,12 +305,66 @@ class TelegramAdapter:
         except Exception:
             return "user"
 
+    def _get_decision_review(self) -> str:
+        """Query access_log for recent source-bumped or blocked actions since last interactive session."""
+        try:
+            # Query for actions in the last 24 hours that were bumped or blocked.
+            # source_bumped=1 OR (authorized=0 AND block_reason NOT NULL)
+            # The schema has 'authorized', 'block_reason' is in user_name payload for now.
+            # Wait, the migration added effective_tier but not block_reason to columns.
+            # Let's query based on source_bumped=1 and actions in the last hour as a heuristic for 'while away'.
+            # A better way is to track the last session timestamp.
+
+            # Simple heuristic: last 24h, source_bumped = 1
+            query = """
+                SELECT chat_id, user_name, timestamp, prev_step_source, effective_tier
+                FROM access_log
+                WHERE source_bumped = 1
+                AND timestamp > datetime('now', '-24 hours')
+                ORDER BY timestamp DESC
+                LIMIT 5
+            """
+
+            items = []
+            with open_db(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute(query).fetchall()
+                for r in rows:
+                    tool_name = r["chat_id"].replace("tool:", "")
+                    try:
+                        payload = json.loads(r["user_name"])
+                        # Extract target from tool_input if available
+                        tool_input = payload.get("tool_input", {})
+                        target = (
+                            tool_input.get("to")
+                            or tool_input.get("recipient")
+                            or tool_input.get("thread_id")
+                            or "external"
+                        )
+
+                        status = "Bumped to confirmation"
+                        if r["effective_tier"] == "red":
+                            status = "Held for review"
+
+                        reason = f"triggered by {r['prev_step_source']}"
+                        items.append(f"- {status}: {tool_name} to {target} ({reason})")
+                    except Exception:
+                        items.append(f"- Action: {tool_name} (bumped due to external source)")
+
+            if not items:
+                return ""
+
+            return "While you were away:\n" + "\n".join(items) + "\nAnything you'd like me to act on?"
+        except Exception as e:
+            logger.warning(f"Failed to generate decision review: {e}")
+            return ""
+
     def _handle_text(self, chat_id: int, user_text: str) -> None:
         """Handle core engine interaction and response sending."""
-        self._api_call("sendChatAction", {"chat_id": chat_id, "action": "typing"})
-        timer = threading.Timer(NUDGE_DELAY, self._nudge_callback, args=(chat_id,))
-        self._active_chats[chat_id] = {"nudge_sent": False, "nudge_timer": timer}
-        timer.start()
+        stop_event = threading.Event()
+        typing_thread = threading.Thread(target=self._typing_loop, args=(chat_id, stop_event), daemon=True)
+        self._active_chats[chat_id] = {"stop": stop_event, "thread": typing_thread}
+        typing_thread.start()
 
         pending_path = self._pending_attachments.get(chat_id)
 
@@ -310,19 +372,161 @@ class TelegramAdapter:
             response = None
 
             session = self._get_session(chat_id)
-            result = react_run(
-                user_text,
-                self.config,
-                self.skill_registry.get_skill_manifests(),
-                executor=self.executor,
-                control_plane=self.control_plane,
-                shadow=self.shadow,
-                session_context=session,
-                llm_routing_classifier=self.llm_routing_classifier,
+
+            # Decision review logic: if session is new or > 30 min since last turn
+            is_new_or_stale = False
+            with open_db(self.db_path) as conn:
+                last_turn = conn.execute(
+                    "SELECT created_at FROM session_turns WHERE session_id = ? ORDER BY created_at DESC LIMIT 1",
+                    (session.session_id,),
+                ).fetchone()
+                if not last_turn:
+                    is_new_or_stale = True
+                else:
+                    last_time = datetime.fromisoformat(last_turn[0])
+                    if datetime.utcnow() - last_time > timedelta(minutes=30):
+                        is_new_or_stale = True
+
+            review_text = ""
+            if is_new_or_stale:
+                review_text = self._get_decision_review()
+
+            # Checklist commands
+            if user_text.strip().startswith("/checklists"):
+                from xibi.checklists.api import list_checklists
+
+                res = list_checklists(str(self.db_path))
+                if not res["instances"]:
+                    self.send_message(chat_id, "No open checklists.")
+                else:
+                    lines = ["Open Checklists:"]
+                    for inst in res["instances"]:
+                        lines.append(
+                            f"- {inst['template_name']} ({inst['completed_count']}/{inst['item_count']}) `[task:{inst['instance_id']}]`"
+                        )
+                    self.send_message(chat_id, "\n".join(lines))
+                # Do not use return here, it will cause the poll loop to exit
+                # Instead, set response = True to skip further processing
+                response = "CHECKLIST_HANDLED"
+
+            elif user_text.strip().startswith("/checklist"):
+                parts = user_text.strip().split()
+                if len(parts) < 2:
+                    self.send_message(chat_id, "Usage: /checklist <instance_id>")
+                else:
+                    instance_id = parts[1]
+                    from xibi.checklists.api import get_checklist
+
+                    try:
+                        res = get_checklist(str(self.db_path), instance_id)
+                        lines = [f"Checklist: {res['template_name']}", f"Status: {res['status']}", ""]
+                        for item in res["items"]:
+                            status = "✅" if item["completed_at"] else ("❌" if item["is_overdue"] else "⬜")
+                            lines.append(f"{item['position']}. {status} {item['label']}")
+                        self.send_message(chat_id, "\n".join(lines))
+                    except ValueError as e:
+                        self.send_message(chat_id, str(e))
+                response = "CHECKLIST_HANDLED"
+
+            elif user_text.strip().startswith("/check") or user_text.strip().startswith("/uncheck"):
+                cmd = user_text.strip().split()
+                if len(cmd) < 3:
+                    self.send_message(chat_id, f"Usage: {cmd[0]} <instance_id> <position>")
+                else:
+                    instance_id = cmd[1]
+                    try:
+                        position = int(cmd[2])
+                        status = "done" if cmd[0] == "/check" else "undone"
+                        from xibi.checklists.api import update_checklist_item
+
+                        res = update_checklist_item(str(self.db_path), instance_id, position=position, status=status)
+                        self.send_message(chat_id, f"Updated '{res['item_label']}' to {res['status']}.")
+                    except (ValueError, IndexError) as e:
+                        self.send_message(chat_id, f"Error: {e}")
+                response = "CHECKLIST_HANDLED"
+
+            if response == "CHECKLIST_HANDLED":
+                return
+
+            # /resolve command: manual thread resolution
+            if user_text.strip().startswith("/resolve"):
+                parts = user_text.strip().split(maxsplit=1)
+                thread_id = parts[1].strip() if len(parts) > 1 else ""
+                if not thread_id:
+                    self.send_message(chat_id, "Usage: /resolve <thread_id>")
+                    return
+                reply = CommandLayer(str(self.db_path), self.config.get("profile", {})).resolve_thread(thread_id)
+                self.send_message(chat_id, reply)
+                return
+
+            # Chitchat fast-path: skip ReAct for conversational acknowledgements
+            if is_chitchat(user_text):
+                try:
+                    llm = get_model("text", "fast", config=self.config)
+                    chitchat_response = llm.generate(
+                        user_text,
+                        system=(
+                            "You are a helpful personal assistant. "
+                            "Respond warmly and naturally in 1–2 sentences. "
+                            "Do not start with 'I', 'Certainly', or 'Of course'."
+                        ),
+                    )
+
+                    # Tracing (optional, best-effort)
+                    try:
+                        from xibi.tracing import Span
+
+                        tracer = Tracer(self.db_path)
+                        tracer.emit(
+                            Span(
+                                trace_id=f"chitchat-{uuid.uuid4().hex[:8]}",
+                                span_id=uuid.uuid4().hex[:8],
+                                parent_span_id=None,
+                                operation="chitchat_response",
+                                component="telegram",
+                                start_ms=int(time.time() * 1000),
+                                duration_ms=0,
+                                status="ok",
+                                attributes={"query": user_text[:100], "exit_reason": "chitchat"},
+                            )
+                        )
+                    except Exception:
+                        pass
+
+                    session.add_chitchat_turn(user_text, chitchat_response)
+                    if chitchat_response:
+                        if review_text:
+                            chitchat_response = f"{review_text}\n\n{chitchat_response}"
+                        self.send_message(chat_id, chitchat_response)
+                    return  # Success — skip react_run entirely
+                except Exception:
+                    logger.warning("Chitchat fast-path failed — falling through to ReAct", exc_info=True)
+
+            from typing import cast
+
+            result = cast(
+                ReActResult,
+                react_run(
+                    user_text,
+                    self.config,
+                    self.skill_registry.get_skill_manifests(),
+                    executor=self.executor,
+                    control_plane=self.control_plane,
+                    shadow=self.shadow,
+                    session_context=session,
+                    tracer=Tracer(self.db_path),
+                    llm_routing_classifier=self.llm_routing_classifier,
+                    react_format=str(self.config.get("react_format", "json")),
+                ),
             )
             if result.answer:
-                response = result.answer
-            elif result.exit_reason in ("error", "timeout", "max_steps"):
+                if getattr(result, "degraded", False) is True:
+                    response = (
+                        "⚠️ I ran into trouble completing this — here's what I managed to gather:\n\n" + result.answer
+                    )
+                else:
+                    response = result.answer
+            elif result.exit_reason in ("error", "timeout", "max_steps", "partial"):
                 response = result.user_facing_failure_message()
             else:
                 response = "I didn't get an answer. Try rephrasing?"
@@ -347,6 +551,8 @@ class TelegramAdapter:
                 threading.Thread(target=_add_turn_safe, daemon=True).start()
 
             if response:
+                if review_text:
+                    response = f"{review_text}\n\n{response}"
                 self.send_message(chat_id, response)
 
             # Clear attachment if processing was successful
@@ -360,8 +566,8 @@ class TelegramAdapter:
             self.send_message(chat_id, "Sorry, I had a brain fart. Please try again.")
         finally:
             state = self._active_chats.pop(chat_id, None)
-            if state and state["nudge_timer"]:
-                state["nudge_timer"].cancel()
+            if state and state["stop"]:
+                state["stop"].set()
 
     def poll(self) -> None:
         from xibi.shutdown import is_shutdown_requested
@@ -382,6 +588,22 @@ class TelegramAdapter:
             if updates.get("ok"):
                 for update in updates.get("result", []):
                     self.offset = update["update_id"] + 1
+
+                    # 1. Handle Callback Queries (inline buttons)
+                    callback_query = update.get("callback_query")
+                    if callback_query:
+                        self._handle_callback(callback_query)
+                        self._save_offset(self.offset)
+                        continue
+
+                    # NEW: Handle reactions
+                    message_reaction = update.get("message_reaction")
+                    if message_reaction:
+                        self._handle_reaction(message_reaction)
+                        self._save_offset(self.offset)
+                        continue
+
+                    # 2. Handle Messages
                     message = update.get("message")
                     if not message:
                         self._save_offset(self.offset)
@@ -392,8 +614,6 @@ class TelegramAdapter:
                     user_name = message.get("from", {}).get("first_name")
 
                     # --- Idempotency gate: skip already-processed messages ---
-                    # Deduplication by message_id rather than offset so that a
-                    # crash-restart cannot skip or re-deliver the same message.
                     try:
                         with open_db(self.db_path) as _idem_conn:
                             if self._is_already_processed(_idem_conn, message_id):
@@ -402,13 +622,11 @@ class TelegramAdapter:
                                 continue
                     except Exception as _idem_err:
                         logger.warning(f"Idempotency check failed for message_id={message_id}: {_idem_err}")
-                        # Fall through: process the message and try to mark it below
 
                     if not self._is_authorized(str(chat_id)):
                         logger.warning(f"Unauthorized access attempt from chat_id={chat_id}")
                         self._log_access_attempt(chat_id, authorized=False, user_name=user_name)
                         self.send_message(chat_id, "Sorry, I'm a personal assistant. I don't talk to strangers.")
-                        # Still mark as processed to avoid re-sending the rejection
                         try:
                             with open_db(self.db_path) as _conn, _conn:
                                 self._mark_processed(_conn, message_id)
@@ -474,4 +692,90 @@ class TelegramAdapter:
 
             time.sleep(1)
 
-        logger.info("TelegramAdapter poll loop exiting (shutdown requested)")
+    def _handle_callback(self, callback_query: dict) -> None:
+        """Handle inline button clicks."""
+        data = callback_query.get("data", "")
+        chat_id = callback_query.get("message", {}).get("chat", {}).get("id")
+        callback_query_id = callback_query.get("id")
+
+        if not data or not chat_id:
+            return
+
+        # Acknowledge callback
+        self._api_call("answerCallbackQuery", {"callback_query_id": callback_query_id})
+
+        if data.startswith("checklist_rollover_"):
+            # Format: checklist_rollover_ACTION:ITEM_ID
+            try:
+                action_part = data[len("checklist_rollover_") :]
+                action, item_id = action_part.split(":", 1)
+
+                from xibi.checklists.lifecycle import handle_rollover_callback
+
+                reply = handle_rollover_callback(action, item_id, self.db_path)
+                self.send_message(chat_id, reply)
+
+                # Optionally edit the original message to remove buttons
+                message_id = callback_query.get("message", {}).get("message_id")
+                if message_id:
+                    self._api_call(
+                        "editMessageReplyMarkup",
+                        {"chat_id": chat_id, "message_id": message_id, "reply_markup": {"inline_keyboard": []}},
+                    )
+            except Exception as e:
+                logger.error(f"Error handling rollover callback: {e}", exc_info=True)
+                self.send_message(chat_id, "Sorry, I couldn't process that rollover action.")
+
+    def _handle_reaction(self, message_reaction: dict) -> None:
+        """Handle Telegram emoji reactions."""
+        try:
+            message_id = message_reaction.get("message_id")
+            new_reaction = message_reaction.get("new_reaction", [])
+            if not message_id or not new_reaction:
+                return
+
+            # Note: We need a way to look up signal_id by message_id.
+            # For now, we'll try to find it in access_log if it was a nudge,
+            # or in session_turns if it was a direct reply.
+            signal_id = self._lookup_signal_by_message_id(message_id)
+
+            from xibi.web.redirect import record_engagement_sync
+
+            for reaction in new_reaction:
+                emoji = reaction.get("emoji")
+                if emoji:
+                    record_engagement_sync(
+                        self.db_path,
+                        signal_id=str(signal_id) if signal_id else None,
+                        event_type="reacted",
+                        source="telegram",
+                        metadata={"emoji": emoji, "message_id": message_id},
+                    )
+        except Exception as e:
+            logger.error(f"Error handling reaction: {e}", exc_info=True)
+
+    def _lookup_signal_by_message_id(self, message_id: int) -> int | None:
+        """Attempt to find a signal ID associated with a Telegram message ID.
+
+        # FIXME: This heuristic relies on the undocumented JSON structure in access_log.user_name.
+        # It should be replaced by a dedicated message_id -> signal_id mapping table in step-80.
+        """
+        try:
+            with open_db(self.db_path) as conn:
+                # Check access_log (nudge delivery)
+                # We search for the message_id in the JSON payload stored in user_name
+                cursor = conn.execute(
+                    "SELECT user_name FROM access_log WHERE chat_id LIKE 'tool:%' AND user_name LIKE ?",
+                    (f'%"message_id": {message_id}%',),
+                )
+                row = cursor.fetchone()
+                if row:
+                    try:
+                        payload = json.loads(row[0])
+                        sid = payload.get("signal_id")
+                        return int(sid) if sid is not None else None
+                    except Exception:
+                        pass
+                return None
+        except Exception:
+            return None

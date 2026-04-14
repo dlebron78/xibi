@@ -26,6 +26,24 @@
       ],
       "input_schema": {},
       "output_type": "raw"
+    },
+    {
+      "name": "send_email",
+      "description": "Compose and send an email",
+      "examples": [
+        "send an email to the team",
+        "draft and send an email",
+        "email someone",
+        "reply to this email",
+        "write an email about the standup"
+      ],
+      "input_schema": {
+        "to": {"type": "string", "description": "Recipient address or name"},
+        "subject": {"type": "string", "description": "Email subject line"},
+        "body": {"type": "string", "description": "Email body text"}
+      },
+      "output_type": "action",
+      "risk": "irreversible"
     }
   ]
 }

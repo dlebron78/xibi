@@ -1,0 +1,65 @@
+{
+  "name": "nudge",
+  "description": "Send proactive notifications to the operator via Telegram",
+  "tools": [
+    {
+      "name": "nudge",
+      "description": "Surface important information to the operator via Telegram. Used by the observation cycle when it detects something worth notifying about.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "The notification message to send"
+          },
+          "thread_id": {
+            "type": "integer",
+            "description": "Optional thread ID this nudge relates to"
+          },
+          "refs": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Signal reference IDs that triggered this nudge"
+          },
+          "category": {
+            "type": "string",
+            "enum": ["urgent", "info", "digest", "alert"],
+            "default": "info",
+            "description": "Notification category for priority/formatting"
+          }
+        },
+        "required": ["message"]
+      },
+      "output_type": "action",
+      "timeout_secs": 10,
+      "tier": "YELLOW",
+      "access": "operator"
+    },
+    {
+      "name": "send_document",
+      "description": "Upload a local file to the operator via Telegram as a document attachment. Use this when the operator asks for results 'as a file', 'as a CSV', 'as a download', or any time text-only delivery would be lossy or truncated. The file must already exist on disk — write it first via the filesystem MCP or another tool, then call send_document with the path.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "file_path": {
+            "type": "string",
+            "description": "Absolute path (or ~-expanded path) to the file on the local filesystem"
+          },
+          "caption": {
+            "type": "string",
+            "description": "Optional caption text shown beneath the document in Telegram (max 1024 chars)"
+          },
+          "chat_id": {
+            "type": "integer",
+            "description": "Optional override for target chat. Defaults to the configured operator chat."
+          }
+        },
+        "required": ["file_path"]
+      },
+      "output_type": "action",
+      "timeout_secs": 30,
+      "tier": "YELLOW",
+      "access": "operator"
+    }
+  ]
+}

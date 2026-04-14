@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from xibi.errors import ErrorCategory, XibiError
+from xibi.handles import HandleStore, _is_large_collection
 from xibi.router import (
     Config,
     clear_trace_context,
@@ -16,6 +17,7 @@ from xibi.router import (
     set_last_parse_status,
     set_trace_context,
 )
+from xibi.tools import resolve_tier
 from xibi.tracing import Span, Tracer
 from xibi.trust.gradient import FailureType, TrustGradient
 
@@ -29,6 +31,276 @@ if TYPE_CHECKING:
 from xibi.types import ReActResult, Step
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_handles_in_input(tool_input: dict, store: HandleStore | None) -> dict:
+    if store is None:
+        return tool_input
+    resolved = {}
+    for k, v in tool_input.items():
+        if isinstance(v, str) and re.match(r"^h_[a-f0-9]{4,6}$", v):
+            resolved[k] = store.get(v)  # raises XibiError on miss
+        else:
+            resolved[k] = v
+    return resolved
+
+
+def _maybe_wrap_in_handle(tool: str, output: Any, store: HandleStore | None) -> Any:
+    if store is None:
+        return output
+
+    # Only wrap dictionaries that aren't errors, suppressed, or already wrapped
+    if not isinstance(output, dict):
+        return output
+
+    status = output.get("status")
+    if status in ("error", "suppressed", "blocked") or "handle" in output:
+        return output
+
+    serialized = json.dumps(output, separators=(",", ":"), default=str)
+    if len(serialized) < 2048 and not _is_large_collection(output):
+        return output  # small enough to inline; no handle
+
+    handle = store.create(tool, output)
+    return {
+        "status": "ok",
+        "handle": handle.handle_id,
+        "schema": handle.schema,
+        "summary": handle.summary,
+        "item_count": handle.item_count,
+    }
+
+
+def _format_observation_for_user(output: Any) -> str:
+    """Cheap, deterministic formatter. Pure Python — no LLM call."""
+    if output is None:
+        return ""
+    if isinstance(output, str):
+        return output[:2000] + ("…" if len(output) > 2000 else "")
+    if isinstance(output, list):
+        return _render_list_for_user(output[:20])
+    if isinstance(output, dict):
+        return _render_dict_for_user(output)
+    return str(output)[:2000]
+
+
+def _render_dict_for_user(d: dict) -> str:
+    # Prefer common content fields when present
+    for key in ("content", "answer", "message", "text", "summary"):
+        v = d.get(key)
+        if isinstance(v, str) and v:
+            return v[:2000] + ("…" if len(v) > 2000 else "")
+        if isinstance(v, list) and v:
+            return _render_list_for_user(v[:20])
+    # Otherwise stringify top-level fields, skipping noisy keys
+    skip = {"status", "_xibi_error"}
+    parts: list[str] = []
+    for k, v in d.items():
+        if k in skip:
+            continue
+        sv = str(v)
+        if len(sv) > 200:
+            sv = sv[:200] + "…"
+        parts.append(f"- {k}: {sv}")
+        if len(parts) >= 12:
+            break
+    if not parts:
+        return str(d)[:2000]
+    return "\n".join(parts)
+
+
+def _render_list_for_user(items: list) -> str:
+    lines: list[str] = []
+    for i, item in enumerate(items, start=1):
+        if isinstance(item, dict):
+            # Pull a few likely-useful keys
+            label = (
+                item.get("title")
+                or item.get("name")
+                or item.get("subject")
+                or item.get("summary")
+                or str(list(item.values())[0])[:80]
+                if item
+                else ""
+            )
+            extra_bits: list[str] = []
+            for k in ("company", "url", "link", "date", "from", "location"):
+                if k in item and item[k]:
+                    extra_bits.append(f"{k}={str(item[k])[:80]}")
+            extras = " (" + ", ".join(extra_bits) + ")" if extra_bits else ""
+            lines.append(f"{i}. {str(label)[:200]}{extras}")
+        else:
+            lines.append(f"{i}. {str(item)[:200]}")
+    return "\n".join(lines)
+
+
+def _build_partial_answer(scratchpad: list[Any], reason: str) -> str | None:
+    """Extract useful observations from the scratchpad and format them as a
+    degraded answer. Returns None if nothing salvageable exists.
+
+    Pure Python. No model call. Deterministic. Operates on Step objects whose
+    tool_output is a dict and whose error attribute may be set.
+    """
+    useful: list[tuple[str, str]] = []
+    for entry in scratchpad:
+        # Skip steps with errors or empty outputs
+        if getattr(entry, "error", None) is not None:
+            continue
+        tool_output = getattr(entry, "tool_output", None)
+        if not tool_output:
+            continue
+        if isinstance(tool_output, dict) and tool_output.get("status") == "error":
+            continue
+        formatted = _format_observation_for_user(tool_output)
+        if not formatted.strip():
+            continue
+        tool = getattr(entry, "tool", "tool") or "tool"
+        # Skip control-plane tools that aren't user-relevant
+        if tool in ("finish", "ask_user", "error"):
+            continue
+        useful.append((tool, formatted))
+
+    if not useful:
+        return None
+
+    lines = [
+        f"I couldn't complete this task cleanly ({reason}), but here's what I gathered:",
+        "",
+    ]
+    for i, (tool, formatted) in enumerate(useful[-5:], start=1):
+        lines.append(f"**{i}. From `{tool}`:**")
+        lines.append(formatted)
+        lines.append("")
+    return "\n".join(lines)
+
+
+_FINISH_TOOL = {
+    "name": "finish",
+    "description": (
+        "Call this when you have a complete answer for the user. Pass the final answer in the 'answer' field."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"answer": {"type": "string", "description": "The complete response to send to the user."}},
+        "required": ["answer"],
+    },
+}
+
+_ASK_USER_TOOL = {
+    "name": "ask_user",
+    "description": (
+        "Call this when you need more information from the user to complete the task. "
+        "Pass your question in the 'question' field."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {"question": {"type": "string", "description": "What you need to know from the user."}},
+        "required": ["question"],
+    },
+}
+
+
+def _build_native_tools(skill_registry: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Build tool schema list for generate_with_tools().
+
+    Flattens skill manifests into individual tool schemas, normalising the parameters
+    key so generate_with_tools() can forward them to Ollama. Appends finish and
+    ask_user as first-class callable tools.
+    """
+    tools = []
+    for skill in skill_registry:
+        for tool in skill.get("tools", []):
+            # Normalise: Ollama expects 'parameters'; manifests may use 'inputSchema'
+            schema = (
+                tool.get("parameters")
+                or tool.get("inputSchema")
+                or {
+                    "type": "object",
+                    "properties": {},
+                }
+            )
+            tools.append(
+                {
+                    "name": tool["name"],
+                    "description": tool.get("description", ""),
+                    "parameters": schema,
+                }
+            )
+    tools.append(_FINISH_TOOL)
+    tools.append(_ASK_USER_TOOL)
+    return tools
+
+
+def _native_step(
+    llm: Any,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
+    system: str,
+) -> tuple[str, dict[str, Any], str]:
+    """Call the model with tool schemas, return (tool_name, tool_input, content).
+
+    Handles three response shapes:
+    - tool_calls present: use the first tool call
+    - no tool_calls, content non-empty: treat as finish
+    - no tool_calls, content empty: return ("error", {}, "No response")
+
+    Never raises from model responses — errors are returned as ("error", {...}, "").
+    """
+    try:
+        result = llm.generate_with_tools(messages, tools, system=system)
+    except Exception as e:
+        return ("error", {"message": str(e)}, "")
+
+    tool_calls = result.get("tool_calls", [])
+    content = result.get("content", "") or ""
+
+    if tool_calls:
+        tc = tool_calls[0]  # Always act on the first tool call
+        return (tc.get("name", "error"), tc.get("arguments", {}), content)
+
+    if content.strip():
+        # Model responded with text only — treat as finish
+        return ("finish", {"answer": content.strip()}, content.strip())
+
+    return ("error", {"message": "Model returned empty response"}, "")
+
+
+def _init_native_messages(query: str, context: str) -> list[dict[str, Any]]:
+    """Build the initial message list: one user turn with query + context."""
+    user_content = query
+    if context and context.strip():
+        user_content = f"{context}\n\n{query}"
+    return [{"role": "user", "content": user_content}]
+
+
+def _append_native_tool_result(
+    messages: list[dict[str, Any]],
+    tool_name: str,
+    tool_input: dict[str, Any],
+    tool_output: dict[str, Any],
+    content: str,
+) -> None:
+    """Append the assistant's tool call and the tool result to the message list.
+
+    Mutates `messages` in place.
+
+    Ollama chat format for a tool round-trip:
+      assistant message: {"role": "assistant", "tool_calls": [...], "content": ""}
+      tool result:       {"role": "tool", "content": "<json string of output>"}
+    """
+    messages.append(
+        {
+            "role": "assistant",
+            "content": content or "",
+            "tool_calls": [{"function": {"name": tool_name, "arguments": tool_input}}],
+        }
+    )
+    messages.append(
+        {
+            "role": "tool",
+            "content": json.dumps(tool_output),
+        }
+    )
 
 
 def _flatten_tools(skill_registry: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -46,10 +318,11 @@ def _flatten_tools(skill_registry: list[dict[str, Any]]) -> list[dict[str, Any]]
 
 
 def compress_scratchpad(scratchpad: list[Step]) -> str:
-    """Last 2 steps full detail, older steps one-liners."""
+    """Last 4 steps full detail, older steps compressed summaries."""
+    full_steps = 4
     lines = []
     for i, step in enumerate(scratchpad):
-        if i >= len(scratchpad) - 2:
+        if i >= len(scratchpad) - full_steps:
             lines.append(step.full_text())
         else:
             lines.append(step.one_line_summary())
@@ -98,8 +371,13 @@ def dispatch(
     skill_registry: list[dict[str, Any]],
     executor: Executor | None = None,
     command_layer: CommandLayer | None = None,
-) -> dict[str, Any]:
+    prev_step_source: str | None = None,
+    handle_store: HandleStore | None = None,
+) -> Any:
     """Invoke a tool from the registry."""
+    # 0. Resolve handles in input
+    resolved_input = _resolve_handles_in_input(tool_input, handle_store)
+
     if command_layer is not None:
         # Resolve the tool's manifest_schema from skill_registry
         # skill_registry is a list of skill manifests, each having a 'tools' list
@@ -114,7 +392,7 @@ def dispatch(
 
         manifest_schema = tool_manifest.get("inputSchema") if tool_manifest else None
 
-        result = command_layer.check(tool_name, tool_input, manifest_schema)
+        result = command_layer.check(tool_name, resolved_input, manifest_schema, prev_step_source=prev_step_source)
         if not result.allowed:
             if result.validation_errors:
                 return {"status": "error", "message": result.retry_hint, "retry": True}
@@ -124,14 +402,23 @@ def dispatch(
                 return {"status": "blocked", "message": result.block_reason}
 
         output = (
-            executor.execute(tool_name, tool_input) if executor is not None else {"status": "ok", "message": "stub"}
+            executor.execute(tool_name, resolved_input) if executor is not None else {"status": "ok", "message": "stub"}
         )
         if result.allowed and result.audit_required:
-            command_layer.audit(tool_name, tool_input, output)
-        return output
+            command_layer.audit(
+                tool_name,
+                resolved_input,
+                output,
+                prev_step_source=prev_step_source,
+                source_bumped=result.source_bumped,
+                base_tier=str(resolve_tier(tool_name, command_layer.profile)),
+                effective_tier=str(result.tier),
+            )
+        return _maybe_wrap_in_handle(tool_name, output, handle_store)
 
     if executor is not None:
-        return executor.execute(tool_name, tool_input)
+        output = executor.execute(tool_name, resolved_input)
+        return _maybe_wrap_in_handle(tool_name, output, handle_store)
 
     # Fallback: stub path (retained for backward compat with Step 02 tests)
     tool_manifest = next((t for t in skill_registry if t.get("name") == tool_name), None)
@@ -249,14 +536,42 @@ def _parse_xml_response(response_text: str) -> dict[str, Any]:
     return {"thought": thought, "tool": tool, "tool_input": tool_input}
 
 
+def _parse_text_response(response_text: str) -> dict[str, Any]:
+    """Bregger-style plain-text: Thought / Action / Action Input."""
+    thought_m = re.search(r"Thought:\s*(.+?)(?=\nAction:|\Z)", response_text, re.DOTALL)
+    action_m = re.search(r"Action:\s*(\S+)", response_text)
+    input_m = re.search(r"Action Input:\s*(\{.+?\}|\[.+?\])", response_text, re.DOTALL)
+    thought = thought_m.group(1).strip() if thought_m else response_text[:200]
+    action = action_m.group(1).strip().lower() if action_m else "finish"
+    tool_input: dict[str, Any] = {}
+    if input_m:
+        try:
+            tool_input = json.loads(input_m.group(1))
+        except Exception:
+            raw = input_m.group(1)[:300]
+            for kv in re.finditer(r'"(\w+)"\s*:\s*"([^"]*)"', raw):
+                tool_input[kv.group(1)] = kv.group(2)
+            if not tool_input:
+                tool_input = {"raw": raw}
+    if action == "finish":
+        ans = tool_input.get("final_answer") or tool_input.get("answer") or thought
+        return {"thought": thought, "tool": "finish", "tool_input": {"answer": ans}}
+    if action in ("ask_user", "ask"):
+        q = tool_input.get("question") or thought
+        return {"thought": thought, "tool": "ask_user", "tool_input": {"question": q}}
+    return {"thought": thought, "tool": action, "tool_input": tool_input}
+
+
 def _parse_llm_response(response_text: str, react_format: str = "json") -> dict[str, Any]:
     """Route to the appropriate parser based on format."""
     if react_format == "xml":
         return _parse_xml_response(response_text)
+    if react_format == "text":
+        return _parse_text_response(response_text)
     return _parse_json_response(response_text)
 
 
-def run(
+async def _run_async(
     query: str,
     config: Config,
     skill_registry: list[dict[str, Any]],
@@ -276,6 +591,7 @@ def run(
     react_format: str = "json",
 ) -> ReActResult:
     start_time = time.time()
+    handle_store = HandleStore()  # per-run, lives until function returns
 
     _tracer = tracer  # May be None — all emit() calls are guarded
     _run_trace_id = trace_id or (_tracer.new_trace_id() if _tracer else None)
@@ -399,6 +715,35 @@ def run(
 
     _tools_block = f"Available tools: {json.dumps(_flatten_tools(skill_registry))}"
 
+    # Auto-detection fallback
+    if react_format == "native" and not getattr(llm, "supports_tool_calling", lambda: False)():
+        logger.warning(
+            "react_format='native' requested but model %s does not support tool calling. Falling back to json format.",
+            getattr(llm, "model", "unknown"),
+        )
+        react_format = "json"
+
+    _native_messages: list[dict[str, Any]] = []
+    _native_tools: list[dict[str, Any]] = []
+    _handle_instructions = (
+        "\nCHECKLISTS\n"
+        "Use checklist tools for recurring routines, weekly reports, or multi-step planning tasks.\n"
+        "You can mark items done via position or fuzzy label match.\n"
+        "\nHANDLES — large tool outputs\n"
+        "Some tools return outputs containing a `handle` field that looks like this:\n"
+        '  {"status": "ok", "handle": "h_a4f1", "schema": "list[dict] (25 items)", "summary": "...", "item_count": 25}\n'
+        "This means the full data is stored out-of-band and you have a reference to it. "
+        "To use the data, pass the handle string as a parameter to any tool that accepts it. Example:\n"
+        '  write_file(filepath="jobs.md", handle="h_a4f1")\n'
+        '  transform_data(handle="h_a4f1", operations=[{"op": "sort", "args": {"field": "salary", "order": "desc"}}])\n'
+        "Do NOT try to read the bytes of a handle directly. Do NOT include handle IDs in prose responses to the user — "
+        "they are internal references and will look like noise. The handle is valid only for the current run.\n"
+    )
+
+    if react_format == "native":
+        _native_messages = _init_native_messages(query, context)
+        _native_tools = _build_native_tools(skill_registry)
+
     if react_format == "xml":
         _format_instructions = (
             "Instructions:\n"
@@ -421,7 +766,19 @@ def run(
             "   <thought>I already have this information from earlier.</thought>\n"
             "   <tool>finish</tool>\n"
             "   <answer>your answer</answer>\n"
-        )
+        ) + _handle_instructions
+    elif react_format == "text":
+        _format_instructions = (
+            "Instructions:\n"
+            "Respond in this exact format:\n\n"
+            "Thought: <your reasoning>\n"
+            "Action: <tool_name>\n"
+            'Action Input: {"param": "value"}\n\n'
+            "Special actions:\n"
+            '- Final answer: Action: finish, Action Input: {"final_answer": "your response"}\n'
+            '- Ask user: Action: ask_user, Action Input: {"question": "..."}\n'
+            "IMPORTANT: If answer is already in context, go directly to finish.\n"
+        ) + _handle_instructions
     else:
         _format_instructions = (
             "Instructions:\n"
@@ -429,15 +786,19 @@ def run(
             "2. Special tools:\n"
             '   - "finish": Use when you have the final answer. Input: {"answer": "..."}\n'
             '   - "ask_user": Use when you need more information. Input: {"question": "..."}\n'
+        ) + _handle_instructions
+
+    if react_format == "native":
+        system_prompt = (
+            (f"{context_block}\n\n" if context_block else "") + ("\n".join(_identity_lines)) + _handle_instructions
+        )
+    else:
+        system_prompt = (f"{context_block}\n\n" if context_block else "") + (
+            "\n".join(_identity_lines) + f"\n\n{_tools_block}\n\n{_format_instructions}"
         )
 
-    system_prompt = (f"{context_block}\n\n" if context_block else "") + (
-        "\n".join(_identity_lines) + "\n\n"
-        f"{_tools_block}\n\n"
-        f"{_format_instructions}"
-    )
-
     for step_num in range(1, max_steps + 1):
+        error_obj: XibiError | None = None
         elapsed = time.time() - start_time
         if elapsed > max_secs:
             # Timeout — transient failure
@@ -449,61 +810,91 @@ def run(
             clear_trace_context()
             return res
 
-        # Construct prompt
-        compressed_pad = compress_scratchpad(scratchpad)
-        _step_label = "Next Step (XML):" if react_format == "xml" else "Next Step (JSON):"
-        prompt = f"Original Query: {query}\nContext: {context}\nScratchpad:\n{compressed_pad}\n\n{_step_label}"
-
         step_start_time = time.time()
+
         try:
-            response_text = llm.generate(prompt, system=system_prompt)
-            try:
-                parsed = _parse_llm_response(response_text, react_format)
-                set_last_parse_status("ok")
-                # Parse succeeded — record success
-                trust.record_success(_trust_specialty, _trust_effort)
-                parse_warning = None
-                error = None
-            except Exception:
-                # Recovery attempt
-                try:
-                    if react_format == "xml":
-                        recovery_hint = "Invalid response. Please respond with ONLY the XML tags: <thought>, <tool>, and <tool_input> or <answer>."
-                    else:
-                        recovery_hint = "Invalid JSON received. Please respond with ONLY the JSON object."
-                    recovery_prompt = f"{prompt}\n\n{recovery_hint}"
-                    response_text = llm.generate(recovery_prompt, system=system_prompt, recovery_attempt=True)
-                    parsed = _parse_llm_response(response_text, react_format)
-                    set_last_parse_status("recovered")
-                    # Recovered parse — still a success (LLM produced valid JSON on retry)
-                    trust.record_success(_trust_specialty, _trust_effort)
-                    parse_warning = "Recovered from invalid JSON"
-                    error = None
-                except Exception as inner_e:
-                    set_last_parse_status("failed")
-                    # Persistent failure — LLM could not produce parseable JSON
-                    trust.record_failure(_trust_specialty, _trust_effort, FailureType.PERSISTENT)
-                    parsed = {"thought": f"Failed to parse LLM response: {str(inner_e)}", "tool": "error"}
-                    parse_warning = "Failed to parse JSON"
-                    error = XibiError(
+            if react_format == "native":
+                tool_name, tool_input, content = _native_step(llm, _native_messages, _native_tools, system_prompt)
+
+                if tool_name == "error":
+                    # Handle same as json mode parse error
+                    error_obj = XibiError(
                         category=ErrorCategory.PARSE_FAILURE,
                         message="I had trouble understanding the response. Retrying.",
                         component="router",
-                        detail=str(inner_e),
+                        detail=tool_input.get("message", "Unknown native error"),
                     )
+                    step = Step(
+                        step_num=step_num,
+                        thought=content or "Encountered an error",
+                        tool="error",
+                        tool_input=tool_input,
+                        duration_ms=int((time.time() - step_start_time) * 1000),
+                        error=error_obj,
+                    )
+                else:
+                    step = Step(
+                        step_num=step_num,
+                        thought=content or (f"Calling {tool_name}" if tool_name not in ("finish", "ask_user") else ""),
+                        tool=tool_name,
+                        tool_input=tool_input,
+                        duration_ms=int((time.time() - step_start_time) * 1000),
+                    )
+            else:
+                # Construct prompt for traditional formats
+                compressed_pad = compress_scratchpad(scratchpad)
+                _step_label = "Next Step (XML):" if react_format == "xml" else "Next Step (JSON):"
+                prompt = f"Original Query: {query}\nContext: {context}\nScratchpad:\n{compressed_pad}\n\n{_step_label}"
 
-            step = Step(
-                step_num=step_num,
-                thought=parsed.get("thought", ""),
-                tool=parsed.get("tool", ""),
-                tool_input=parsed.get("tool_input", {}),
-                duration_ms=int((time.time() - step_start_time) * 1000),
-                parse_warning=parse_warning,
-                error=error,
-            )
+                response_text = llm.generate(prompt, system=system_prompt)
+                try:
+                    parsed = _parse_llm_response(response_text, react_format)
+                    set_last_parse_status("ok")
+                    # Parse succeeded — record success
+                    trust.record_success(_trust_specialty, _trust_effort)
+                    parse_warning = None
+                    error_obj = None
+                except Exception:
+                    # Recovery attempt
+                    try:
+                        if react_format == "xml":
+                            recovery_hint = "Invalid response. Please respond with ONLY the XML tags: <thought>, <tool>, and <tool_input> or <answer>."
+                        else:
+                            recovery_hint = "Invalid JSON received. Please respond with ONLY the JSON object."
+                        recovery_prompt = f"{prompt}\n\n{recovery_hint}"
+                        response_text = llm.generate(recovery_prompt, system=system_prompt, recovery_attempt=True)
+                        parsed = _parse_llm_response(response_text, react_format)
+                        set_last_parse_status("recovered")
+                        # Recovered parse — still a success (LLM produced valid JSON on retry)
+                        trust.record_success(_trust_specialty, _trust_effort)
+                        parse_warning = "Recovered from invalid JSON"
+                        error_obj = None
+                    except Exception as inner_e:
+                        set_last_parse_status("failed")
+                        # Persistent failure — LLM could not produce parseable JSON
+                        trust.record_failure(_trust_specialty, _trust_effort, FailureType.PERSISTENT)
+                        parsed = {"thought": f"Failed to parse LLM response: {str(inner_e)}", "tool": "error"}
+                        parse_warning = "Failed to parse JSON"
+                        error_obj = XibiError(
+                            category=ErrorCategory.PARSE_FAILURE,
+                            message="I had trouble understanding the response. Retrying.",
+                            component="router",
+                            detail=str(inner_e),
+                        )
 
+                step = Step(
+                    step_num=step_num,
+                    thought=parsed.get("thought", ""),
+                    tool=parsed.get("tool", ""),
+                    tool_input=parsed.get("tool_input", {}),
+                    duration_ms=int((time.time() - step_start_time) * 1000),
+                    parse_warning=parse_warning,
+                    error=error_obj,
+                )
+
+            # Common handling for tool dispatch and loop control
             if step.tool == "finish":
-                scratchpad.append(step)
+                # PSEUDO-TOOL: NOT appended to scratchpad
                 res = ReActResult(
                     answer=step.tool_input.get("answer", ""),
                     steps=scratchpad,
@@ -517,7 +908,7 @@ def run(
                 return res
 
             if step.tool == "ask_user":
-                scratchpad.append(step)
+                # PSEUDO-TOOL: NOT appended to scratchpad
                 res = ReActResult(
                     answer=step.tool_input.get("question", ""),
                     steps=scratchpad,
@@ -552,10 +943,49 @@ def run(
                 step.tool_output = {"status": "error", "message": "Parse failure"}
                 tool_output = step.tool_output
             else:
+                # Determine the source of the content that led to this tool call.
+                # If the previous step was a tool that read external content, its
+                # source tag propagates forward as context for tier resolution.
+                prev_step_source = None
+                if len(scratchpad) > 0:
+                    prev = scratchpad[-1]
+                    prev_step_source = getattr(prev, "source", None)
+
                 tool_output = dispatch(
-                    step.tool, step.tool_input, skill_registry, executor=executor, command_layer=command_layer
+                    step.tool,
+                    step.tool_input,
+                    skill_registry,
+                    executor=executor,
+                    command_layer=command_layer,
+                    prev_step_source=prev_step_source,
+                    handle_store=handle_store,
                 )
                 step.tool_output = tool_output
+
+                # Tag the current step with its source.
+                # 1. Check tool_output for explicit source metadata.
+                # 2. If executor has skill info, check if it's marked as external_source.
+                # 3. If it's an MCP tool, the executor knows the server name.
+                if tool_output.get("source"):
+                    step.source = tool_output["source"]
+                elif executor:
+                    skill_name = executor.registry.find_skill_for_tool(step.tool)
+                    if skill_name:
+                        skill_info = executor.registry.skills[skill_name]
+                        if skill_info.manifest.get("external_source"):
+                            # Use skill name as source if no more specific info
+                            step.source = skill_name
+                        elif skill_name.startswith("mcp_"):
+                            step.source = f"mcp:{skill_name[4:]}"
+                    elif executor.mcp_executor and executor.mcp_executor.can_handle(step.tool):
+                        # Should have been caught by skill_name.startswith("mcp_") if registered,
+                        # but check mcp_executor directly for robustness.
+                        for skill in executor.mcp_executor.registry.skill_registry.get_skill_manifests():
+                            if skill.get("name", "").startswith("mcp_"):
+                                for t in skill.get("tools", []):
+                                    if t.get("name") == step.tool:
+                                        step.source = f"mcp:{t.get('server', 'unknown')}"
+                                        break
                 step.duration_ms = int((time.time() - step_start_time) * 1000)  # now includes tool time
 
                 if tool_output.get("_xibi_error"):
@@ -573,6 +1003,10 @@ def run(
                         message=tool_output["error"],
                         component=step.tool,
                     )
+
+            if react_format == "native":
+                _append_native_tool_result(_native_messages, step.tool, step.tool_input, tool_output, content)
+                trust.record_success(_trust_specialty, _trust_effort)
 
             scratchpad.append(step)
 
@@ -613,14 +1047,22 @@ def run(
             if step.tool == "error" or tool_output.get("status") == "error":
                 consecutive_errors += 1
                 if consecutive_errors >= 3:
+                    partial = _build_partial_answer(scratchpad, "3 consecutive tool failures")
                     res = ReActResult(
-                        answer="",
+                        answer=partial or "",
                         steps=scratchpad,
-                        exit_reason="error",
+                        exit_reason="partial" if partial is not None else "error",
                         duration_ms=int((time.time() - start_time) * 1000),
+                        degraded=True,
                     )
                     res.error_summary = [s.error for s in scratchpad if s.error is not None]
                     res.trace_id = _run_trace_id
+                    if partial is not None:
+                        logger.warning(
+                            "run %s degraded: exiting with partial answer after %d consecutive errors",
+                            _run_trace_id,
+                            consecutive_errors,
+                        )
                     _emit_run_span(res)
                     clear_trace_context()
                     return res
@@ -631,24 +1073,56 @@ def run(
             # Catch specific recoverable errors only — KeyboardInterrupt and SystemExit propagate
             failure_type = FailureType.PERSISTENT if isinstance(e, XibiError) else FailureType.TRANSIENT
             trust.record_failure(_trust_specialty, _trust_effort, failure_type)
-            # Handle unexpected LLM errors
+            # Graceful degradation: salvage scratchpad observations into a partial answer.
+            reason = e.user_message() if isinstance(e, XibiError) else f"{type(e).__name__}: {e}"
+            partial = _build_partial_answer(scratchpad, reason)
             res = ReActResult(
-                answer="", steps=scratchpad, exit_reason="error", duration_ms=int((time.time() - start_time) * 1000)
+                answer=partial or "",
+                steps=scratchpad,
+                exit_reason="partial" if partial is not None else "error",
+                duration_ms=int((time.time() - start_time) * 1000),
+                degraded=True,
             )
             if isinstance(e, XibiError):
                 res.error_summary = [e]
             else:
                 res.error_summary = [s.error for s in scratchpad if s.error is not None]
             res.trace_id = _run_trace_id
+            if partial is not None:
+                logger.warning(
+                    "run %s degraded: exiting with partial answer after %s",
+                    _run_trace_id,
+                    type(e).__name__,
+                )
             _emit_run_span(res)
             clear_trace_context()
             return res
 
+    # Max-steps exhausted: try graceful degradation before giving up.
+    partial = _build_partial_answer(scratchpad, "max reasoning steps reached")
     res = ReActResult(
-        answer="", steps=scratchpad, exit_reason="max_steps", duration_ms=int((time.time() - start_time) * 1000)
+        answer=partial or "",
+        steps=scratchpad,
+        exit_reason="partial" if partial is not None else "max_steps",
+        duration_ms=int((time.time() - start_time) * 1000),
+        degraded=partial is not None,
     )
     res.error_summary = [s.error for s in scratchpad if s.error is not None]
     res.trace_id = _run_trace_id
+    if partial is not None:
+        logger.warning("run %s degraded: exiting with partial answer at max_steps", _run_trace_id)
     _emit_run_span(res)
     clear_trace_context()
     return res
+
+
+def run(*args: Any, **kwargs: Any) -> ReActResult:
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+        # Already inside an async context — return the coroutine for the caller to await.
+        return _run_async(*args, **kwargs)  # type: ignore[return-value]
+    except RuntimeError:
+        # No running event loop — run synchronously with a fresh loop each time.
+        return asyncio.run(_run_async(*args, **kwargs))

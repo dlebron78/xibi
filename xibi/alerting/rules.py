@@ -7,7 +7,10 @@ import sqlite3
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from xibi.heartbeat.sender_trust import TrustAssessment
 
 from xibi.db import open_db
 
@@ -72,6 +75,13 @@ class RuleEngine:
                         content_preview TEXT,
                         ref_id         TEXT,
                         ref_source     TEXT,
+                        summary        TEXT,
+                        summary_model  TEXT,
+                        summary_ms     INTEGER,
+                        sender_trust   TEXT,
+                        sender_contact_id TEXT,
+                        classification_reasoning TEXT,
+                        deep_link_url  TEXT,
                         timestamp      DATETIME DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
@@ -99,7 +109,12 @@ class RuleEngine:
     def load_rules(self, rule_type: str) -> list[dict[str, Any]]:
         return [r for r in self._rule_cache if r["type"] == rule_type]
 
-    def evaluate_email(self, email: dict[str, Any], rules: list[dict[str, Any]]) -> str | None:
+    def evaluate_email(
+        self,
+        email: dict[str, Any],
+        rules: list[dict[str, Any]],
+        sender_trust: TrustAssessment | None = None,
+    ) -> str | None:
         for rule in rules:
             cond = rule["condition"]
             field = cond.get("field", "subject")
@@ -121,6 +136,21 @@ class RuleEngine:
                     sender = sender.get("name") or sender.get("addr", "unknown")
                 subject = email.get("subject", "No Subject")
                 res = msg.replace("{from}", str(sender)).replace("{subject}", str(subject))
+
+                if sender_trust:
+                    trust_line = ""
+                    if sender_trust.tier == "ESTABLISHED":
+                        trust_line = f"✅ Known contact ({sender_trust.detail})"
+                    elif sender_trust.tier == "RECOGNIZED":
+                        trust_line = f"📨 Seen before ({sender_trust.detail})"
+                    elif sender_trust.tier == "UNKNOWN":
+                        trust_line = f"⚠️ First-time sender ({sender_trust.detail})"
+                    elif sender_trust.tier == "NAME_MISMATCH":
+                        trust_line = f"🔶 Name mismatch ({sender_trust.detail})"
+
+                    if trust_line:
+                        res = f"{trust_line}\n{res}"
+
                 return str(res)
         return None
 
@@ -154,7 +184,7 @@ class RuleEngine:
                 cursor = conn.execute(
                     """
                     SELECT sender, subject, verdict, timestamp FROM triage_log
-                    WHERE timestamp > ? AND verdict != 'URGENT'
+                    WHERE timestamp > ? AND verdict NOT IN ('CRITICAL', 'HIGH', 'URGENT')
                     ORDER BY timestamp ASC
                 """,
                     (self._watermark_cache,),
@@ -184,16 +214,29 @@ class RuleEngine:
                     db_watermark = row[0] if row else "1970-01-01 00:00:00"
 
                     # Fetch items since the DB watermark
+                    # Enriched with signal_id and source for deep linking
                     cursor = conn.execute(
                         """
-                        SELECT sender, subject, verdict, timestamp FROM triage_log
-                        WHERE timestamp > ? AND verdict != 'URGENT'
-                        ORDER BY timestamp ASC
+                        SELECT tl.sender, tl.subject, tl.verdict, tl.timestamp, s.id as signal_id, s.source
+                        FROM triage_log tl
+                        LEFT JOIN signals s ON tl.email_id = s.ref_id AND s.ref_source = 'email'
+                        WHERE tl.timestamp > ? AND tl.verdict NOT IN ('CRITICAL', 'HIGH', 'URGENT')
+                        ORDER BY tl.timestamp ASC
                         """,
                         (db_watermark,),
                     )
                     rows = cursor.fetchall()
-                    items = [{"sender": r[0], "subject": r[1], "verdict": r[2], "timestamp": r[3]} for r in rows]
+                    items = [
+                        {
+                            "sender": r[0],
+                            "subject": r[1],
+                            "verdict": r[2],
+                            "timestamp": r[3],
+                            "signal_id": r[4],
+                            "source": r[5],
+                        }
+                        for r in rows
+                    ]
 
                     if items:
                         # Advance watermark atomically inside the same transaction
@@ -267,6 +310,13 @@ class RuleEngine:
         content_preview: str,
         ref_id: str | None,
         ref_source: str | None,
+        summary: str | None = None,
+        summary_model: str | None = None,
+        summary_ms: int | None = None,
+        sender_trust: str | None = None,
+        sender_contact_id: str | None = None,
+        classification_reasoning: str | None = None,
+        deep_link_url: str | None = None,
     ) -> None:
         try:
             preview = (content_preview[:277] + "...") if len(content_preview) > 280 else content_preview
@@ -282,10 +332,25 @@ class RuleEngine:
                 with conn:
                     conn.execute(
                         """
-                        INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id, classification_reasoning, deep_link_url)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                        (source, topic_hint, entity_text, entity_type, preview, str(ref_id), ref_source),
+                        (
+                            source,
+                            topic_hint,
+                            entity_text,
+                            entity_type,
+                            preview,
+                            str(ref_id),
+                            ref_source,
+                            summary,
+                            summary_model,
+                            summary_ms,
+                            sender_trust,
+                            sender_contact_id,
+                            classification_reasoning,
+                            deep_link_url,
+                        ),
                     )
         except Exception as e:
             logger.warning(f"Failed to log signal: {e}", exc_info=True)
@@ -334,6 +399,13 @@ class RuleEngine:
         content_preview: str,
         ref_id: str | None,
         ref_source: str | None,
+        summary: str | None = None,
+        summary_model: str | None = None,
+        summary_ms: int | None = None,
+        sender_trust: str | None = None,
+        sender_contact_id: str | None = None,
+        classification_reasoning: str | None = None,
+        deep_link_url: str | None = None,
     ) -> None:
         try:
             preview = (content_preview[:277] + "...") if len(content_preview) > 280 else content_preview
@@ -346,10 +418,25 @@ class RuleEngine:
                     return
             conn.execute(
                 """
-                INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id, classification_reasoning, deep_link_url)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (source, topic_hint, entity_text, entity_type, preview, str(ref_id), ref_source),
+                (
+                    source,
+                    topic_hint,
+                    entity_text,
+                    entity_type,
+                    preview,
+                    str(ref_id),
+                    ref_source,
+                    summary,
+                    summary_model,
+                    summary_ms,
+                    sender_trust,
+                    sender_contact_id,
+                    classification_reasoning,
+                    deep_link_url,
+                ),
             )
         except Exception as e:
             logger.warning(f"Failed to log signal: {e}", exc_info=True)
@@ -376,7 +463,7 @@ class RuleEngine:
             cursor = conn.execute(
                 """
                 SELECT sender, subject, verdict, timestamp FROM triage_log
-                WHERE timestamp > ? AND verdict != 'URGENT'
+                WHERE timestamp > ? AND verdict NOT IN ('CRITICAL', 'HIGH', 'URGENT')
                 ORDER BY timestamp ASC
                 """,
                 (self._watermark_cache,),

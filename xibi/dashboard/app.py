@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import psutil
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, render_template, request
 
 import xibi.db
 from xibi.dashboard import queries
@@ -96,6 +96,23 @@ def create_app(config: DashboardConfig) -> Flask:
     def get_db_conn() -> AbstractContextManager[sqlite3.Connection]:
         return xibi.db.open_db(app.config["DB_PATH"])  # type: ignore[return-value]
 
+    def _load_secrets(workdir: Any) -> dict:
+        """Load secrets.env from ~/.xibi/secrets.env, return key→value dict."""
+        import os
+
+        secrets_path = os.path.expanduser("~/.xibi/secrets.env")
+        result: dict = {}
+        try:
+            with open(secrets_path) as sf:
+                for line in sf:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        k, _, v = line.partition("=")
+                        result[k.strip()] = v.strip()
+        except FileNotFoundError:
+            pass
+        return result
+
     @app.route("/health")
     def health_full() -> Any:
         # We need a Config object. Since create_app doesn't take it, but the health check needs it,
@@ -107,12 +124,12 @@ def create_app(config: DashboardConfig) -> Flask:
         workdir = app.config["DB_PATH"].parent.parent
         config_path = workdir / "config.json"
         try:
-            config = load_config(str(config_path)) if config_path.exists() else load_config()
+            cfg = load_config(str(config_path)) if config_path.exists() else load_config()
         except Exception:
             # If config is missing or invalid, get_system_health will report it via LLM check
-            config = {"models": {}, "providers": {}}  # type: ignore
+            cfg = {"models": {}, "providers": {}}  # type: ignore
 
-        report = get_system_health(app.config["DB_PATH"], config)
+        report = get_system_health(app.config["DB_PATH"], cfg)
         return jsonify(report)
 
     @app.route("/api/health")
@@ -178,8 +195,12 @@ def create_app(config: DashboardConfig) -> Flask:
     @app.route("/api/signals")
     def signals() -> Any:
         with get_db_conn() as conn:
-            data = queries.get_recent_signals(conn)
-            return jsonify(data)
+            return jsonify(
+                {
+                    "signals": queries.get_recent_signals(conn),
+                    "active_threads": queries.get_active_threads(conn),
+                }
+            )
 
     @app.route("/api/signal_pipeline")
     def signal_pipeline() -> Any:
@@ -211,6 +232,166 @@ def create_app(config: DashboardConfig) -> Flask:
     def cycles() -> Any:
         with get_db_conn() as conn:
             return jsonify(queries.get_observation_cycles(conn))
+
+    @app.route("/api/checklists")
+    def checklists() -> Any:
+        with get_db_conn() as conn:
+            return jsonify(queries.get_checklists(conn))
+
+    @app.route("/api/config/models", methods=["GET"])
+    def get_model_config() -> Any:
+        """Return current model assignments for all effort levels."""
+        from xibi.router import load_config
+
+        workdir = app.config["DB_PATH"].parent.parent
+        config_path = workdir / "config.json"
+        try:
+            try:
+                cfg = load_config(str(config_path)) if config_path.exists() else load_config()
+            except Exception:
+                # Config may reference providers not yet in providers section — read raw
+                import json as _json
+
+                with open(config_path) as _f:
+                    cfg = _json.load(_f)
+            models = cfg.get("models", {}).get("text", {})
+            providers = set(cfg.get("providers", {}).keys())
+            # Also detect cloud providers from secrets.env API keys
+            secrets = _load_secrets(workdir)
+            if secrets.get("GOOGLE_API_KEY") or secrets.get("GEMINI_API_KEY"):
+                providers.add("gemini")
+            if secrets.get("OPENAI_API_KEY"):
+                providers.add("openai")
+            if secrets.get("ANTHROPIC_API_KEY"):
+                providers.add("anthropic")
+            result: dict[str, Any] = {"assignments": {}, "available_providers": sorted(providers)}
+            for effort in ["fast", "think", "review"]:
+                role_config: Any = models.get(effort, {})
+                result["assignments"][effort] = {
+                    "provider": role_config.get("provider", ""),
+                    "model": role_config.get("model", ""),
+                    "options": role_config.get("options", {}),
+                    "fallback": role_config.get("fallback"),
+                }
+            return jsonify(result)
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/config/models", methods=["PUT"])
+    def update_model_config() -> Any:
+        """Update model assignment for a single effort level. Restarts heartbeat."""
+        import json as json_mod
+        import subprocess
+
+        workdir = app.config["DB_PATH"].parent.parent
+        config_path = workdir / "config.json"
+        data = request.get_json()
+        effort = data.get("effort")
+        if effort not in ("fast", "think", "review"):
+            return jsonify({"error": f"Invalid effort level: {effort}"}), 400
+        provider = data.get("provider")
+        model_name = data.get("model")
+        if not provider or not model_name:
+            return jsonify({"error": "provider and model are required"}), 400
+        try:
+            with open(config_path) as f:
+                cfg = json_mod.load(f)
+            # Accept providers from config.json OR secrets.env
+            secrets = _load_secrets(workdir)
+            known_providers = set(cfg.get("providers", {}).keys())
+            if secrets.get("GOOGLE_API_KEY") or secrets.get("GEMINI_API_KEY"):
+                known_providers.add("gemini")
+            if secrets.get("OPENAI_API_KEY"):
+                known_providers.add("openai")
+            if secrets.get("ANTHROPIC_API_KEY"):
+                known_providers.add("anthropic")
+            if provider not in known_providers:
+                return jsonify({"error": f"Unknown provider: {provider}"}), 400
+            cfg.setdefault("models", {}).setdefault("text", {})
+            role_config = cfg["models"]["text"].get(effort, {})
+            role_config["provider"] = provider
+            role_config["model"] = model_name
+            if "options" in data:
+                role_config["options"] = data["options"]
+            if "fallback" not in role_config:
+                defaults = {"fast": "think", "think": None, "review": None}
+                role_config["fallback"] = defaults.get(effort)
+            cfg["models"]["text"][effort] = role_config
+            # Ensure provider exists in providers section (required by load_config validation)
+            provider_defaults = {
+                "anthropic": {"api_key_env": "ANTHROPIC_API_KEY"},
+                "openai": {"api_key_env": "OPENAI_API_KEY"},
+                "gemini": {"api_key_env": "GEMINI_API_KEY"},
+            }
+            if provider not in cfg.get("providers", {}):
+                cfg.setdefault("providers", {})[provider] = provider_defaults.get(provider, {})
+            with open(config_path, "w") as f:
+                json_mod.dump(cfg, f, indent=2)
+            restart_msg = "not attempted"
+            try:
+                result = subprocess.run(
+                    ["systemctl", "--user", "restart", "xibi-heartbeat"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                restart_msg = "restarted" if result.returncode == 0 else f"failed: {result.stderr}"
+            except subprocess.TimeoutExpired:
+                restart_msg = "restart initiated (timeout waiting)"
+            except Exception as e:
+                restart_msg = f"error: {e}"
+            return jsonify({"status": "ok", "updated": {effort: role_config}, "heartbeat_restart": restart_msg})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    @app.route("/api/config/available_models", methods=["GET"])
+    def get_available_models() -> Any:
+        """List models available from each provider."""
+        import json as json_mod
+
+        workdir = app.config["DB_PATH"].parent.parent
+        config_path = workdir / "config.json"
+        with open(config_path) as f:
+            cfg = json_mod.load(f)
+        providers = cfg.get("providers", {})
+        secrets = _load_secrets(workdir)
+        available: dict[str, Any] = {}
+        if "ollama" in providers:
+            try:
+                import requests as req
+
+                base_url = providers["ollama"].get("base_url", "http://localhost:11434")
+                resp = req.get(f"{base_url}/api/tags", timeout=5)
+                if resp.status_code == 200:
+                    models = resp.json().get("models", [])
+                    available["ollama"] = [{"name": m["name"], "size": m.get("size", 0)} for m in models]
+            except Exception as e:
+                available["ollama"] = {"error": str(e)}
+        if secrets.get("GOOGLE_API_KEY") or secrets.get("GEMINI_API_KEY"):
+            # Suggestions only — user can type any valid model name in the UI
+            available["gemini"] = [
+                {"name": "gemini-3.1-pro-preview"},
+                {"name": "gemini-3-flash-preview"},
+                {"name": "gemini-3.1-flash-lite-preview"},
+                {"name": "gemini-2.5-pro"},
+                {"name": "gemini-2.5-flash"},
+            ]
+        if secrets.get("ANTHROPIC_API_KEY"):
+            available["anthropic"] = [
+                {"name": "claude-opus-4-6"},
+                {"name": "claude-sonnet-4-6"},
+                {"name": "claude-haiku-4-5-20251001"},
+            ]
+        if secrets.get("OPENAI_API_KEY"):
+            available["openai"] = [
+                {"name": "gpt-5.4"},
+                {"name": "gpt-5.4-mini"},
+                {"name": "gpt-5.4-nano"},
+                {"name": "gpt-5.4-pro"},
+                {"name": "o3"},
+                {"name": "o4-mini"},
+            ]
+        return jsonify(available)
 
     @app.route("/")
     def index() -> str:

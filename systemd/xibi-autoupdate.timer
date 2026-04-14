@@ -1,0 +1,11 @@
+[Unit]
+Description=Xibi Auto-Deploy Timer (every 5 minutes)
+Requires=xibi-autoupdate.service
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

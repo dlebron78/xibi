@@ -1,18 +1,14 @@
-import os
-import subprocess
 import json
+import os
 import shutil
-from typing import Tuple, Optional, Any, Dict
+import subprocess
 
 
 def _find_himalaya():
     himalaya_bin = shutil.which("himalaya")
     if not himalaya_bin:
         local_path = os.path.join(os.path.expanduser("~"), ".local", "bin", "himalaya")
-        if subprocess.run(["test", "-x", local_path]).returncode == 0:
-            himalaya_bin = local_path
-        else:
-            himalaya_bin = "himalaya"
+        himalaya_bin = local_path if subprocess.run(["test", "-x", local_path]).returncode == 0 else "himalaya"
     return himalaya_bin
 
 
@@ -56,7 +52,7 @@ def _match_by_subject(emails: list, query: str):
     return best if best_score > 0 else (emails[0] if emails else None)
 
 
-def _read_email(himalaya_bin: str, email_id: str) -> Tuple[Optional[str], Optional[str]]:
+def _read_email(himalaya_bin: str, email_id: str) -> tuple[str | None, str | None]:
     """Fetch the raw RFC 5322 content of an email."""
     try:
         # We use 'message export --full' to get the raw RFC 5322 content (headers + body)
@@ -74,7 +70,7 @@ def _read_email(himalaya_bin: str, email_id: str) -> Tuple[Optional[str], Option
         return None, str(e)
 
 
-def run(params: Dict):
+def run(params: dict):
     """
     Fetch and return the content of a specific email.
 

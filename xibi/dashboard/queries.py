@@ -223,27 +223,127 @@ def get_circuit_breaker_states(db_path: Path) -> list[dict]:
     ]
 
 
-def get_signal_pipeline(conn: sqlite3.Connection, days: int = 7) -> dict[str, int]:
-    """Return signal counts by classification for the last 7 days."""
+def get_active_threads(conn: sqlite3.Connection, limit: int = 20) -> list[dict]:
+    """
+    Return active threads from the threads table.
+
+    Returns:
+    [{"name": str, "status": str, "owner": str, "signal_count": int,
+      "priority": str|None, "summary": str|None}, ...]
+
+    Threads are sorted by priority (critical→high→medium→low→unset) then
+    signal_count DESC. Returns [] if the threads table doesn't exist.
+    """
+    cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='threads'")
+    if not cursor.fetchone():
+        return []
+
+    # Check if priority column exists (migration 19)
+    col_cursor = conn.execute("PRAGMA table_info(threads)")
+    cols = {row[1] for row in col_cursor.fetchall()}
+    has_priority = "priority" in cols
+    has_summary = "summary" in cols
+
+    priority_order = (
+        "CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END"
+    )
+
+    if has_priority and has_summary:
+        cursor = conn.execute(
+            f"SELECT name, status, owner, signal_count, priority, summary "
+            f"FROM threads WHERE status = 'active' "
+            f"ORDER BY {priority_order}, signal_count DESC LIMIT ?",
+            (limit,),
+        )
+        return [
+            {"name": r[0], "status": r[1], "owner": r[2], "signal_count": r[3], "priority": r[4], "summary": r[5]}
+            for r in cursor.fetchall()
+        ]
+    elif has_priority:
+        cursor = conn.execute(
+            f"SELECT name, status, owner, signal_count, priority "
+            f"FROM threads WHERE status = 'active' "
+            f"ORDER BY {priority_order}, signal_count DESC LIMIT ?",
+            (limit,),
+        )
+        return [
+            {"name": r[0], "status": r[1], "owner": r[2], "signal_count": r[3], "priority": r[4], "summary": None}
+            for r in cursor.fetchall()
+        ]
+    else:
+        cursor = conn.execute(
+            "SELECT name, status, owner, signal_count FROM threads WHERE status = 'active' "
+            "ORDER BY signal_count DESC LIMIT ?",
+            (limit,),
+        )
+        return [
+            {"name": r[0], "status": r[1], "owner": r[2], "signal_count": r[3], "priority": None, "summary": None}
+            for r in cursor.fetchall()
+        ]
+
+
+def get_signal_pipeline(conn: sqlite3.Connection, days: int = 7) -> dict:
+    """
+    Return signal counts broken down by source, urgency, and action_type.
+
+    Returns:
+    {
+        "by_source": {"email": 12, "calendar": 3, "jobs": 8, "github:dlebron78/xibi": 2, ...},
+        "by_urgency": {"high": 4, "medium": 11, "low": 5, "normal": 5},
+        "by_action_type": {"fyi": 15, "action_needed": 5, "request": 3, ...},
+        "total": 25
+    }
+    If signals table doesn't exist, return {"by_source": {}, "by_urgency": {}, "by_action_type": {}, "total": 0}
+    """
+    cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='signals'")
+    if not cursor.fetchone():
+        return {"by_source": {}, "by_urgency": {}, "by_action_type": {}, "total": 0}
+
     cursor = conn.execute("PRAGMA table_info(signals)")
-    columns = [info[1] for info in cursor.fetchall()]
+    cols = {info[1] for info in cursor.fetchall()}
 
-    if "classification" not in columns:
-        return {}
+    # Use COALESCE(created_at, timestamp) if both exist, otherwise whatever exists
+    if "created_at" in cols and "timestamp" in cols:
+        date_expr = "COALESCE(created_at, timestamp)"
+    elif "created_at" in cols:
+        date_expr = "created_at"
+    elif "timestamp" in cols:
+        date_expr = "timestamp"
+    else:
+        return {"by_source": {}, "by_urgency": {}, "by_action_type": {}, "total": 0}
 
-    created_at_col = "timestamp" if "timestamp" in columns else "created_at"
     cutoff = (datetime.utcnow() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
 
-    cursor = conn.execute(
-        f"""
-        SELECT classification, COUNT(*)
-        FROM signals
-        WHERE {created_at_col} >= ?
-        GROUP BY classification
-    """,
-        (cutoff,),
-    )
-    return {r[0]: r[1] for r in cursor.fetchall()}
+    result = {"by_source": {}, "by_urgency": {}, "by_action_type": {}, "total": 0}
+
+    # Total count
+    cursor = conn.execute(f"SELECT COUNT(*) FROM signals WHERE {date_expr} >= ?", (cutoff,))
+    result["total"] = cursor.fetchone()[0]
+
+    if result["total"] == 0:
+        return result
+
+    # By source
+    cursor = conn.execute(f"SELECT source, COUNT(*) FROM signals WHERE {date_expr} >= ? GROUP BY source", (cutoff,))
+    result["by_source"] = {r[0]: r[1] for r in cursor.fetchall()}
+
+    # By urgency
+    if "urgency" in cols:
+        cursor = conn.execute(
+            f"SELECT COALESCE(urgency, 'unknown'), COUNT(*) FROM signals WHERE {date_expr} >= ? GROUP BY 1",
+            (cutoff,),
+        )
+        result["by_urgency"] = {r[0]: r[1] for r in cursor.fetchall()}
+
+    # By action_type
+    if "action_type" in cols:
+        cursor = conn.execute(
+            f"SELECT COALESCE(action_type, 'unknown'), COUNT(*) FROM signals WHERE {date_expr} >= ? GROUP BY 1",
+            (cutoff,),
+        )
+        result["by_action_type"] = {r[0]: r[1] for r in cursor.fetchall()}
+
+    return result
 
 
 def get_inference_stats(conn: sqlite3.Connection) -> dict:
@@ -520,3 +620,45 @@ def get_observation_cycles(conn: sqlite3.Connection, limit: int = 10) -> list[di
             }
         )
     return results
+
+
+def get_checklists(conn: sqlite3.Connection) -> dict:
+    """Return all open checklist instances and templates."""
+    cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='checklist_instances'")
+    if not cursor.fetchone():
+        return {"instances": []}
+
+    cursor = conn.execute(
+        """
+        SELECT i.id, t.name, i.created_at, i.status
+        FROM checklist_instances i
+        JOIN checklist_templates t ON i.template_id = t.id
+        WHERE i.status = 'open'
+        ORDER BY i.created_at DESC
+        """
+    )
+    instances = []
+    for row in cursor.fetchall():
+        instance_id = row[0]
+        # Get counts for this instance
+        counts = conn.execute(
+            """
+            SELECT COUNT(*) as total, COUNT(completed_at) as completed
+            FROM checklist_instance_items
+            WHERE instance_id = ?
+            """,
+            (instance_id,),
+        ).fetchone()
+
+        instances.append(
+            {
+                "instance_id": instance_id,
+                "template_name": row[1],
+                "created_at": row[2],
+                "status": row[3],
+                "item_count": counts[0],
+                "completed_count": counts[1],
+            }
+        )
+
+    return {"instances": instances}

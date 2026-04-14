@@ -12,27 +12,40 @@ Run:
   python3 bregger_heartbeat.py ~/.bregger/config.json
 """
 
+import importlib.util
+import json
 import os
 import re
-import sys
-import json
-import time
 import sqlite3
-import importlib.util
-import urllib.request
+import sys
+import time
 import urllib.error
+import urllib.request
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING
+
+from xibi.heartbeat.classification import build_classification_prompt, build_fallback_prompt
+
+if TYPE_CHECKING:
+    from xibi.heartbeat.context_assembly import SignalContext
 
 # Add project root to sys.path to allow importing from the root
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__))))
+import contextlib
+
 from bregger_utils import (
-    normalize_topic as _normalize_topic,
-    inference_lock,
-    get_active_threads as _get_active_threads,
-    get_pinned_topics as _get_pinned_topics,
     ensure_signals_schema,
+    inference_lock,
+)
+from bregger_utils import (
+    get_active_threads as _get_active_threads,
+)
+from bregger_utils import (
+    get_pinned_topics as _get_pinned_topics,
+)
+from xibi.heartbeat.sender_trust import (
+    assess_sender_trust,
 )
 
 # ---------------------------------------------------------------------------
@@ -65,7 +78,7 @@ class TelegramNotifier:
                     data=payload,
                     headers={"Content-Type": "application/json"},
                 )
-                with urllib.request.urlopen(req, timeout=10) as r:
+                with urllib.request.urlopen(req, timeout=10):
                     pass
             except Exception as e:
                 print(f"⚠️ Heartbeat: failed to notify chat {chat_id}: {e}", flush=True)
@@ -183,11 +196,11 @@ class RuleEngine:
             watermark = self._watermark_cache
 
             with sqlite3.connect(self.db_path) as conn:
-                # Query triage_log (excluding URGENT as they were alerted immediately)
+                # Query triage_log (excluding CRITICAL/HIGH/URGENT as they were alerted immediately)
                 cursor = conn.execute(
                     """
-                    SELECT sender, subject, verdict, timestamp FROM triage_log 
-                    WHERE timestamp > ? AND verdict != 'URGENT'
+                    SELECT sender, subject, verdict, timestamp FROM triage_log
+                    WHERE timestamp > ? AND verdict NOT IN ('CRITICAL', 'HIGH', 'URGENT')
                     ORDER BY timestamp ASC
                 """,
                     (watermark,),
@@ -262,7 +275,22 @@ class RuleEngine:
             print(f"⚠️ Failed to load triage rules: {e}", flush=True)
         return rules
 
-    def log_signal(self, source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source):
+    def log_signal(
+        self,
+        source,
+        topic_hint,
+        entity_text,
+        entity_type,
+        content_preview,
+        ref_id,
+        ref_source,
+        summary=None,
+        summary_model=None,
+        summary_ms=None,
+        sender_trust=None,
+        sender_contact_id=None,
+        classification_reasoning=None,
+    ):
         """Insert a signal into the signals table."""
         try:
             preview = (content_preview[:277] + "...") if len(content_preview) > 280 else content_preview
@@ -280,10 +308,24 @@ class RuleEngine:
 
                 conn.execute(
                     """
-                    INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, env)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 'production')
+                    INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id, classification_reasoning, env)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'production')
                 """,
-                    (source, topic_hint, entity_text, entity_type, preview, str(ref_id), ref_source),
+                    (
+                        source,
+                        topic_hint,
+                        entity_text,
+                        entity_type,
+                        preview,
+                        str(ref_id),
+                        ref_source,
+                        summary,
+                        summary_model,
+                        summary_ms,
+                        sender_trust,
+                        sender_contact_id,
+                        classification_reasoning,
+                    ),
                 )
         except Exception as e:
             print(f"⚠️ Heartbeat: Failed to log signal: {e}", flush=True)
@@ -302,18 +344,21 @@ class RuleEngine:
         topic = "_".join(words[:2]) if words else None
 
         # Entity candidates: look for project/org patterns in ORIGINAL subject
-        # Brackets [Afya-fit] often contain the most reliable metadata.
+        # Brackets often contain the most reliable metadata.
         entity_text = None
         entity_type = None
 
         m = re.search(r"\[(.*?)\]", subject)  # Check original for brackets
         if m:
-            entity_text = m.group(1).split("/")[0]  # e.g. [Afya-fit/...] -> Afya-fit
-            entity_type = "project" if "-" in entity_text or "afya" in entity_text.lower() else "org"
+            entity_text = m.group(1).split("/")[0]
+            # Simple heuristic for project vs org
+            entity_type = "project" if "-" in entity_text else "org"
 
         return topic, entity_text, entity_type
 
-    def evaluate_email(self, email: dict, rules: list[dict]) -> str | None:
+    def evaluate_email(
+        self, email: dict, rules: list[dict], sender_trust=None, classification_reasoning=None
+    ) -> str | None:
         """
         Returns the alert message if any rule matches, else None.
         email is a dict with keys: from, subject, date, id
@@ -335,6 +380,21 @@ class RuleEngine:
                     if isinstance(v, dict):
                         v = v.get("name") or v.get("addr", str(v))
                     msg = msg.replace(f"{{{k}}}", str(v))
+
+                if sender_trust:
+                    trust_line = ""
+                    if sender_trust.tier == "ESTABLISHED":
+                        trust_line = f"✅ Known contact ({sender_trust.detail})"
+                    elif sender_trust.tier == "RECOGNIZED":
+                        trust_line = f"📨 Seen before ({sender_trust.detail})"
+                    elif sender_trust.tier == "UNKNOWN":
+                        trust_line = f"⚠️ First-time sender ({sender_trust.detail})"
+                    elif sender_trust.tier == "NAME_MISMATCH":
+                        trust_line = f"🔶 Name mismatch ({sender_trust.detail})"
+
+                    if trust_line:
+                        msg = f"{trust_line}\n{msg}"
+
                 return msg
         return None
 
@@ -414,10 +474,9 @@ def _batch_extract_topics(emails: list[dict], model: str = "llama3.2:latest") ->
         req = urllib.request.Request(
             "http://localhost:11434/api/generate", data=payload, headers={"Content-Type": "application/json"}
         )
-        with inference_lock:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                resp = json.loads(r.read())
-                raw = resp.get("response", "").strip()
+        with inference_lock, urllib.request.urlopen(req, timeout=30) as r:
+            resp = json.loads(r.read())
+            raw = resp.get("response", "").strip()
 
         # Parse JSON — handle markdown fences
         if raw.startswith("```"):
@@ -478,25 +537,50 @@ def _extract_sender(email: dict) -> str:
     return str(raw) if raw else "Unknown"
 
 
-def classify_email(email: dict, model: str = "llama3.2:latest") -> str:
-    """Ask Ollama to classify email as URGENT, DIGEST, or NOISE."""
-    # Note: We removed the is_ollama_busy guard here to ensure we don't
-    # fall back to DIGEST/dumps. Ollama will queue these internally.
+def _extract_sender_addr(email: dict) -> str:
+    """Extract just the email address from a himalaya envelope sender field."""
+    sender = email.get("from", {})
+    if isinstance(sender, dict):
+        return (sender.get("addr") or "").strip().lower()
+    # Fall back to parsing "Name <addr>" format
+    raw = str(sender)
+    if "<" in raw and ">" in raw:
+        return raw.split("<")[1].split(">")[0].strip().lower()
+    return raw.strip().lower()
 
-    sender = _extract_sender(email)
-    prompt = (
-        f"From: {sender}\n"
-        f"Subject: {email.get('subject', 'No Subject')}\n\n"
-        "Classify this email for a personal assistant triage. Answer with exactly one word:\n"
-        "URGENT - High priority. Human-to-human messages, travel, security, fraud, or direct replies.\n"
-        "DIGEST - Medium priority. Newsletters you actively read, job alerts, or meaningful updates you care about.\n"
-        "NOISE - Low priority. Automated marketing, coupons, social media notifications, bulk receipts, or junk.\n\n"
-        "Strict Rule: If it looks like a mass-email or automated notification, it is NOISE unless it's clearly an update you requested.\n\n"
-        "Verdict:"
-    )
+
+def _extract_sender_name(email: dict) -> str:
+    """Extract just the display name from a himalaya envelope sender field."""
+    sender = email.get("from", {})
+    if isinstance(sender, dict):
+        return (sender.get("name") or "").strip()
+    raw = str(sender)
+    if "<" in raw:
+        return raw.split("<")[0].strip().strip('"')
+    return ""
+
+
+def classify_signal(
+    signal: dict,
+    model: str = "gemma4:e4b",
+    context: "SignalContext | None" = None,
+) -> tuple[str, str | None]:
+    """Ask Ollama to classify signal as CRITICAL, HIGH, MEDIUM, LOW, or NOISE."""
+    from xibi.heartbeat.classification import parse_classification_response
+
+    prompt = build_classification_prompt(signal, context) if context else build_fallback_prompt(signal)
 
     payload = json.dumps(
-        {"model": model, "prompt": prompt, "stream": False, "options": {"num_predict": 10, "temperature": 0}}
+        {
+            "model": model,
+            "prompt": prompt,
+            "stream": False,
+            "think": False,  # TOP LEVEL — critical for gemma4
+            "options": {
+                "num_predict": 30,  # enough for TIER: reasoning
+                "temperature": 0,  # deterministic
+            },
+        }
     ).encode()
 
     try:
@@ -504,18 +588,17 @@ def classify_email(email: dict, model: str = "llama3.2:latest") -> str:
         req = urllib.request.Request(
             "http://localhost:11434/api/generate", data=payload, headers={"Content-Type": "application/json"}
         )
-        with inference_lock:
-            with urllib.request.urlopen(req, timeout=15) as r:
-                resp = json.loads(r.read())
-                verdict = resp.get("response", "").strip().upper()
-                if "URGENT" in verdict:
-                    return "URGENT"
-                if "NOISE" in verdict:
-                    return "NOISE"
-                return "DIGEST"
+        with inference_lock, urllib.request.urlopen(req, timeout=15) as r:
+            resp = json.loads(r.read())
+            raw = resp.get("response", "").strip()
+            return parse_classification_response(raw)
     except Exception as e:
         print(f"⚠️ Classification error: {e}", flush=True)
-        return "DIGEST"  # Default to digest on error
+        return "MEDIUM", None  # Default to MEDIUM on error
+
+
+# Deprecated alias — will be removed in step-77
+classify_email = classify_signal
 
 
 def _should_escalate(
@@ -524,22 +607,21 @@ def _should_escalate(
     subject: str,
     priority_topics: list,
 ) -> tuple:
-    """Pure function: decide whether a DIGEST verdict should escalate to URGENT.
+    """Pure function: decide whether a verdict should escalate based on thread match.
 
-    Phase 2.2 — Cross-Channel Relevance. Extracted from tick() so it can be
-    tested directly without wiring up a full heartbeat tick.
+    LOW -> MEDIUM, MEDIUM -> HIGH for active thread/pinned topic match.
+    CRITICAL stays CRITICAL.
 
     Args:
-        verdict:         Current classification ("URGENT", "DIGEST", "NOISE").
+        verdict:         Current classification ("CRITICAL", "HIGH", "MEDIUM", "LOW", "NOISE").
         topic:           Normalized topic string extracted from the email.
         subject:         Original email subject line.
-        priority_topics: Combined list of active threads + pinned topics
-                         (pre-loaded once per tick, not fetched here).
+        priority_topics: Combined list of active threads + pinned topics.
 
     Returns:
         (new_verdict, new_subject) — verdict is unchanged unless escalated.
     """
-    if verdict != "DIGEST" or not topic:
+    if verdict not in ("MEDIUM", "LOW", "DIGEST") or not topic:
         return verdict, subject
 
     norm_topic = _normalize_topic(topic)
@@ -548,8 +630,13 @@ def _should_escalate(
     if matching:
         prefix = "📌 [Pinned Topic" if matching.get("pinned") else "🔥 [Active Thread"
         new_subject = f"{prefix}: {topic}] {subject}"
-        print(f"🚀 Escalating DIGEST→URGENT for active thread: {topic}", flush=True)
-        return "URGENT", new_subject
+
+        # Escalate
+        ESC_MAP = {"LOW": "MEDIUM", "MEDIUM": "HIGH", "DIGEST": "URGENT"}
+        new_verdict = ESC_MAP.get(verdict, verdict)
+
+        print(f"🚀 Escalating {verdict}→{new_verdict} for active thread: {topic}", flush=True)
+        return new_verdict, new_subject
 
     return verdict, subject
 
@@ -563,8 +650,8 @@ def _synthesize_digest(items: list[dict], model: str = "llama3.2:latest") -> str
     digest_lines = []
     noise_senders = []
     for item in items:
-        if item["verdict"] == "DIGEST":
-            digest_lines.append(f"- {item['sender']}: {item['subject']}")
+        if item["verdict"] in ("MEDIUM", "LOW", "DIGEST"):
+            digest_lines.append(f"- {item['sender']}: {item['subject']} ({item['verdict']})")
         else:
             noise_senders.append(item["sender"])
 
@@ -586,13 +673,12 @@ def _synthesize_digest(items: list[dict], model: str = "llama3.2:latest") -> str
         req = urllib.request.Request(
             "http://localhost:11434/api/generate", data=payload, headers={"Content-Type": "application/json"}
         )
-        with inference_lock:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                resp = json.loads(r.read())
-                summary = resp.get("response", "").strip()
-                if summary:
-                    return f"📥 **Inbox Recap**\n\n{summary}"
-                return ""
+        with inference_lock, urllib.request.urlopen(req, timeout=30) as r:
+            resp = json.loads(r.read())
+            summary = resp.get("response", "").strip()
+            if summary:
+                return f"📥 **Inbox Recap**\n\n{summary}"
+            return ""
     except Exception as e:
         print(f"⚠️ [synthesize_digest] LLM synthesis failed: {e}", flush=True)
         return ""  # Fallback
@@ -796,7 +882,7 @@ _DEADLINE_WORDS = {
 }
 
 
-def should_propose(entity: str, topic: str, freq: int) -> Optional[dict]:
+def should_propose(entity: str, topic: str, freq: int) -> dict | None:
     """Deterministic rule engine for V1 proposals."""
     if freq >= 5:
         return {"goal": f"Follow up with {entity} about {topic}", "urgency": "normal"}
@@ -805,7 +891,7 @@ def should_propose(entity: str, topic: str, freq: int) -> Optional[dict]:
     return None
 
 
-def _synthesize_reflection(patterns: list[dict], beliefs: list[dict], model: str = "llama3.2:latest") -> Optional[dict]:
+def _synthesize_reflection(patterns: list[dict], beliefs: list[dict], model: str = "llama3.2:latest") -> dict | None:
     """
     LLM-based reflection synthesis (Phase 1.75 Fix 3).
     Given signal frequency patterns and user beliefs, ask the model what's
@@ -850,13 +936,12 @@ def _synthesize_reflection(patterns: list[dict], beliefs: list[dict], model: str
         req = urllib.request.Request(
             "http://localhost:11434/api/generate", data=payload, headers={"Content-Type": "application/json"}
         )
-        with inference_lock:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                resp = json.loads(r.read())
-                raw = resp.get("response", "").strip()
+        with inference_lock, urllib.request.urlopen(req, timeout=30) as r:
+            resp = json.loads(r.read())
+            raw = resp.get("response", "").strip()
 
         if "NONE" in raw.upper() and len(raw) < 20:
-            print(f"🧠 [reflect] LLM says nothing worth surfacing", flush=True)
+            print("🧠 [reflect] LLM says nothing worth surfacing", flush=True)
             return None
 
         # Parse JSON
@@ -877,7 +962,9 @@ def _synthesize_reflection(patterns: list[dict], beliefs: list[dict], model: str
 
 def reflect(notifier: TelegramNotifier, db_path: Path, model: str = "llama3.2:latest"):
     """Reflection loop: detect signal patterns → LLM synthesis → propose tasks (gated by user)."""
-    import time, uuid, json
+    import json
+    import time
+    import uuid
 
     t0 = time.time()
     trace_id = f"reflect_{uuid.uuid4().hex[:8]}"
@@ -912,15 +999,13 @@ def reflect(notifier: TelegramNotifier, db_path: Path, model: str = "llama3.2:la
 
             # Step 2: Load beliefs for context
             beliefs = []
-            try:
+            with contextlib.suppress(Exception):
                 beliefs = [
                     dict(r)
                     for r in conn.execute(
                         "SELECT key, value FROM beliefs WHERE valid_until IS NULL LIMIT 10"
                     ).fetchall()
                 ]
-            except Exception:
-                pass
 
             # Step 3: LLM synthesis (Phase 1.75 Fix 3)
             # Feed patterns + beliefs to the model. Falls back to frequency rules on failure.
@@ -1040,10 +1125,15 @@ def reflect(notifier: TelegramNotifier, db_path: Path, model: str = "llama3.2:la
 
 
 def tick(
-    skills_dir: Path, db_path: Path, notifier: TelegramNotifier, rules: RuleEngine, model: str = "llama3.2:latest"
+    skills_dir: Path,
+    db_path: Path,
+    notifier: TelegramNotifier,
+    rules: RuleEngine,
+    model: str = "llama3.2:latest",
+    env: str = "production",
 ):
     if is_quiet_hours():
-        print(f"🌙 Quiet hours — skipping heartbeat tick", flush=True)
+        print("🌙 Quiet hours — skipping heartbeat tick", flush=True)
         return
 
     print(f"💓 Heartbeat tick at {datetime.now().strftime('%H:%M')}", flush=True)
@@ -1062,6 +1152,62 @@ def tick(
     # Falls back to regex if LLM fails (Rule 16 — graceful degradation).
     batch_topics = _batch_extract_topics(emails, model=model)
 
+    # ── Batch Email Body Summarization ──────────────────────────
+    # Fetch bodies and generate LLM summaries for all emails in this tick.
+    # Runs BEFORE the per-email loop so summaries are available when logging signals.
+    from xibi.heartbeat.email_body import (
+        compact_body,
+        fetch_raw_email,
+        find_himalaya,
+        parse_email_body,
+        summarize_email_body,
+    )
+
+    try:
+        himalaya_bin = find_himalaya()
+    except FileNotFoundError as e:
+        print(f"⚠️ {e} Skipping body summarization for this tick.", flush=True)
+        himalaya_bin = None
+
+    body_summaries = {}  # email_id -> {status, summary, model, duration_ms}
+    _summary_start = time.time()
+
+    if himalaya_bin:
+        for email in emails:
+            eid = str(email.get("id", ""))
+            if not eid:
+                continue
+
+            # 1. Fetch raw RFC 5322
+            raw, err = fetch_raw_email(himalaya_bin, eid)
+            if err or not raw:
+                body_summaries[eid] = {"status": "fetch_error", "summary": "[no body content]", "error": err}
+                continue
+
+            # 2. Parse MIME → text body
+            body = parse_email_body(raw)
+            if not body or len(body.strip()) < 20:
+                body_summaries[eid] = {"status": "empty", "summary": "[no body content]"}
+                continue
+
+            # 3. Compact (strip signatures, disclaimers, truncate)
+            compacted = compact_body(body)
+
+            # 4. LLM summarize
+            sender = _extract_sender(email)
+            subject = email.get("subject", "No Subject")
+            result = summarize_email_body(compacted, sender, subject, model=model)
+            body_summaries[eid] = result
+
+        _summary_elapsed = int((time.time() - _summary_start) * 1000)
+        if emails:
+            print(
+                f"📝 Summarized {len([v for v in body_summaries.values() if v.get('status') == 'success'])}/{len(emails)} emails in {_summary_elapsed}ms",
+                flush=True,
+            )
+            if _summary_elapsed > 45000:
+                print(f"⚠️ Summarization budget exceeded: {_summary_elapsed}ms for {len(emails)} emails", flush=True)
+
     # ── Pre-load cross-channel data (Phase 2.2 — hoisted above loop) ────
     # Fetched once per tick, not per DIGEST email. Prevents N×2 SQL queries
     # inside the loop when multiple emails are DIGEST in the same tick.
@@ -1072,6 +1218,8 @@ def tick(
     # ── Log batch extraction metrics to traces (Rule 15 — Observability) ──
     _llm_extracted = 0
     _regex_fallback = 0
+
+    email_contexts = {}  # email_id -> EmailContext
 
     for email in emails:
         email_id = str(email.get("id", ""))
@@ -1090,18 +1238,28 @@ def tick(
             topic, entity_text, entity_type = rules.extract_topic_from_subject(subject)
             _regex_fallback += 1
 
-        rules.log_signal(
-            source="email",
-            topic_hint=topic,
+        summary_data = body_summaries.get(email_id, {})
+        summary_text = summary_data.get("summary")
+
+        # Sender trust assessment
+        sender_addr = _extract_sender_addr(email)
+        sender_name = _extract_sender_name(email)
+        trust = assess_sender_trust(sender_addr, sender_name, db_path)
+
+        # ── Context Assembly (Step 70) ─────────────────────────────
+        from xibi.heartbeat.context_assembly import assemble_signal_context
+
+        ctx = assemble_signal_context(
+            email=email,
+            db_path=db_path,
+            topic=topic,
             entity_text=entity_text,
             entity_type=entity_type,
-            content_preview=f"{sender}: {subject}",
-            ref_id=email_id,
-            ref_source="email",
+            summary=summary_text,
+            sender_trust=trust.tier,
+            sender_contact_id=trust.contact_id,
         )
-
-        if not email_id or email_id in seen:
-            continue  # Skip triage/alerts for already-seen emails
+        email_contexts[email_id] = ctx
 
         # ── User-declared triage rules
         sender_lower = sender.lower()
@@ -1124,10 +1282,45 @@ def tick(
                     break
 
         # Determine if we should ping or digest — skip LLM if rule or pre-filter matched
-        verdict = rule_verdict if rule_verdict else classify_email(email, model=model)
+        ctx = email_contexts.get(email_id)
+        reasoning = None
+        is_new = email_id and email_id not in seen
+
+        if is_new:
+            if rule_verdict:
+                verdict = rule_verdict
+            else:
+                verdict, reasoning = classify_signal(email, model=model, context=ctx)
+        else:
+            verdict = "DEFER"  # placeholder, skipped below
+
+        rules.log_signal(
+            source="email",
+            topic_hint=topic,
+            entity_text=entity_text,
+            entity_type=entity_type,
+            content_preview=f"{sender}: {subject}",
+            ref_id=email_id,
+            ref_source="email",
+            summary=summary_text,
+            summary_model=summary_data.get("model"),
+            summary_ms=summary_data.get("duration_ms"),
+            sender_trust=trust.tier,
+            sender_contact_id=trust.contact_id,
+            classification_reasoning=reasoning,
+        )
+
+        if not is_new:
+            continue  # Skip triage/alerts for already-seen emails
+
+        if ctx:
+            print(
+                f"📋 {email_id}: {verdict} | trust={ctx.sender_trust} thread={ctx.matching_thread_name or 'none'} signals_7d={ctx.sender_signals_7d}",
+                flush=True,
+            )
 
         # ── Cross-Channel Escalation Check ──
-        if verdict == "DIGEST" and topic:
+        if verdict in ("MEDIUM", "LOW", "DIGEST") and topic:
             verdict, subject = _should_escalate(verdict, topic, subject, tick_priority_topics)
 
         rules.log_triage(email_id, sender, subject, verdict)
@@ -1136,11 +1329,13 @@ def tick(
             print(f"⏳ Ollama busy, deferring triage for {email_id}", flush=True)
             continue  # Try again next tick (we won't mark as seen)
 
-        if verdict == "URGENT":
-            alert = rules.evaluate_email(email, email_rules)
+        if verdict in ("CRITICAL", "HIGH", "URGENT"):
+            alert = rules.evaluate_email(email, email_rules, sender_trust=trust, classification_reasoning=reasoning)
             if alert:
+                if reasoning:
+                    alert += f"\n💡 _{reasoning}_"
                 notifier.send(alert)
-                print(f"📬 URGENT: Alert sent for email {email_id}", flush=True)
+                print(f"📬 {verdict}: Alert sent for email {email_id}", flush=True)
         else:
             # DIGEST or NOISE (both go to triage_log, which is now the queue)
             print(f"📥 {verdict}: Logged email {email_id}", flush=True)
@@ -1172,6 +1367,44 @@ def tick(
         except Exception:
             pass
 
+    # ── Calendar Signals ──────────────────────────────────────────
+    try:
+        from xibi.heartbeat.calendar_poller import poll_calendar_signals
+
+        calendar_signals = poll_calendar_signals(db_path=db_path, env=env)
+        if calendar_signals:
+            print(f"📅 {len(calendar_signals)} new calendar signal(s)", flush=True)
+            for sig in calendar_signals:
+                if sig.get("urgency") == "URGENT":
+                    # Extract title and derive delta for the nudge
+                    title = sig.get("topic_hint", "Meeting")
+                    start_iso = sig.get("timestamp")
+                    delta_min = 0
+                    try:
+                        from datetime import timezone
+
+                        start = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+                        delta_min = int((start - datetime.now(timezone.utc)).total_seconds() / 60)
+                    except Exception:
+                        pass
+
+                    attendee = sig.get("entity_text")
+                    # content_preview already has formatted time and attendees,
+                    # but we use a specific nudge format per spec
+                    msg = f"📅 Starting in {delta_min} min: {title}"
+                    if attendee:
+                        msg += f"\nwith {attendee}"
+
+                    # Try to extract location from preview if it has (@ ...)
+                    if "(@ " in sig.get("content_preview", ""):
+                        loc = sig["content_preview"].split("(@ ")[1].rstrip(")")
+                        msg += f"\n@ {loc}"
+
+                    notifier.send(msg)
+                    print(f"📅 URGENT: {title} in {delta_min}min", flush=True)
+    except Exception as e:
+        print(f"⚠️ calendar_poller error: {e}", flush=True)
+
     # --- Reflection Loop ----------------------------------------------------
     # Run intelligence cycle after emails have been ingested
     reflect(notifier, db_path, model=model)
@@ -1190,7 +1423,8 @@ def digest_tick(notifier: TelegramNotifier, rules: RuleEngine, model: str = "lla
         return
 
     # Filter out pure noise for hourly updates unless force=True
-    has_notable = any(i["verdict"] == "DIGEST" for i in items)
+    # Notable = anything not NOISE
+    has_notable = any(i["verdict"] not in ("NOISE", "DEFER") for i in items)
     if not has_notable and not force:
         print(f"🔇 Skipping hourly digest: {len(items)} items are all NOISE", flush=True)
         return
@@ -1203,7 +1437,7 @@ def digest_tick(notifier: TelegramNotifier, rules: RuleEngine, model: str = "lla
     if not summary:
         # Fallback to Quick Mode
         lines = ["📥 **Email recap** *(quick mode)*"]
-        notable = [i for i in items if i["verdict"] == "DIGEST"]
+        notable = [i for i in items if i["verdict"] in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "DIGEST")]
         noise = [i["sender"] for i in items if i["verdict"] == "NOISE"]
 
         if notable:
@@ -1227,7 +1461,7 @@ def _run_memory_decay(db_path: Path):
     try:
         with sqlite3.connect(db_path) as conn:
             cursor = conn.execute("""
-                UPDATE ledger 
+                UPDATE ledger
                 SET status = 'expired'
                 WHERE decay_days IS NOT NULL
                   AND (status IS NULL OR status != 'expired')
@@ -1305,13 +1539,12 @@ def _synthesize_threads(threads: list, model: str) -> str:
         req = urllib.request.Request(
             "http://localhost:11434/api/generate", data=payload, headers={"Content-Type": "application/json"}
         )
-        with inference_lock:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                resp = json.loads(r.read())
-                summary = resp.get("response", "").strip()
-                if summary:
-                    return f"🧠 **Active Threads**\n\n{summary}"
-                return ""
+        with inference_lock, urllib.request.urlopen(req, timeout=30) as r:
+            resp = json.loads(r.read())
+            summary = resp.get("response", "").strip()
+            if summary:
+                return f"🧠 **Active Threads**\n\n{summary}"
+            return ""
     except Exception as e:
         print(f"⚠️ [synthesize_threads] LLM synthesis failed: {e}", flush=True)
         return ""
@@ -1414,6 +1647,18 @@ def main():
     rules = RuleEngine(db_path)
     rules._ensure_triage_tables()
 
+    env = config.get("env", "production")
+
+    # ── Migration Guard (Roberto Cutover) ───────────────────────
+    try:
+        from xibi.heartbeat.migration import stamp_roberto_cutover
+
+        stamped = stamp_roberto_cutover(db_path, env=env)
+        if stamped > 0:
+            print(f"✅ roberto_cutover: stamped {stamped} recent email(s) as processed", flush=True)
+    except Exception as e:
+        print(f"⚠️ Migration guard error: {e}", flush=True)
+
     interval_secs = POLL_INTERVAL_MINUTES * 60
     ticks_per_hour = 60 // POLL_INTERVAL_MINUTES
     tick_count = 0
@@ -1427,7 +1672,7 @@ def main():
 
     while True:
         try:
-            tick(skills_dir, db_path, notifier, rules, model=triage_model)
+            tick(skills_dir, db_path, notifier, rules, model=triage_model, env=env)
 
             # Run digest summary every ~1 hour
             tick_count += 1

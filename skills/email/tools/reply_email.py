@@ -1,11 +1,11 @@
-import sys
-import os
 import json
+import os
+import re
+import shutil
 import sqlite3
 import subprocess
-import shutil
+import sys
 import uuid
-import re
 from pathlib import Path
 
 
@@ -21,10 +21,7 @@ def _find_himalaya():
     himalaya_bin = shutil.which("himalaya")
     if not himalaya_bin:
         local_path = os.path.join(os.path.expanduser("~"), ".local", "bin", "himalaya")
-        if subprocess.run(["test", "-x", local_path]).returncode == 0:
-            himalaya_bin = local_path
-        else:
-            himalaya_bin = "himalaya"
+        himalaya_bin = local_path if subprocess.run(["test", "-x", local_path]).returncode == 0 else "himalaya"
     return himalaya_bin
 
 
@@ -59,7 +56,6 @@ def run(params):
         }
 
     # ── Fetch the original email metadata ──────────────────────────────────
-    import sys
 
     sys.path.insert(0, str(Path(__file__).parents[3]))
     from skills.email.tools.summarize_email import run as summarize_run
@@ -148,5 +144,6 @@ def run(params):
             "body": body,
             "in_reply_to": message_id,
             "draft_id": draft_id,
+            "_workdir": workdir,  # Needed for send_smtp to find the DB for tracking
         },
     }

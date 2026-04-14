@@ -18,7 +18,24 @@ def temp_db(tmp_path):
             chat_id     TEXT NOT NULL,
             authorized  INTEGER NOT NULL,
             timestamp   DATETIME DEFAULT CURRENT_TIMESTAMP,
-            user_name   TEXT
+            user_name   TEXT,
+            prev_step_source TEXT,
+            source_bumped INTEGER NOT NULL DEFAULT 0,
+            base_tier   TEXT,
+            effective_tier TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS session_turns (
+            turn_id     TEXT PRIMARY KEY,
+            session_id  TEXT NOT NULL,
+            query       TEXT NOT NULL,
+            answer      TEXT NOT NULL,
+            tools_called TEXT NOT NULL DEFAULT '[]',
+            exit_reason TEXT NOT NULL DEFAULT 'finish',
+            summary     TEXT NOT NULL DEFAULT '',
+            created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+            source      TEXT NOT NULL DEFAULT 'user'
         )
     """)
     conn.commit()
@@ -42,14 +59,14 @@ def test_yellow_tool_allowed_sets_audit_required():
 
 def test_red_tool_blocked_non_interactive():
     layer = CommandLayer(interactive=False)
-    result = layer.check("send_email", {"recipient": "a@b.com", "subject": "hi"})
+    result = layer.check("send_email", {"recipient": "user@example.com", "subject": "hi"})
     assert result.allowed is False
     assert result.block_reason != ""
 
 
 def test_red_tool_allowed_interactive():
     layer = CommandLayer(interactive=True)
-    result = layer.check("send_email", {"recipient": "a@b.com", "subject": "hi"})
+    result = layer.check("send_email", {"recipient": "user@example.com", "subject": "hi"})
     assert result.allowed is True
 
 
@@ -146,7 +163,7 @@ def test_dispatch_with_command_layer_blocks_red_non_interactive():
     layer = CommandLayer(interactive=False)
 
     # Red tool, non-interactive
-    tool_input = {"recipient": "a@b.com", "subject": "hi"}
+    tool_input = {"recipient": "user@example.com", "subject": "hi"}
     response = dispatch("send_email", tool_input, skill_registry, executor=mock_executor, command_layer=layer)
 
     assert response["status"] == "blocked"

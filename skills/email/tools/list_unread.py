@@ -1,7 +1,7 @@
-import os
-import subprocess
 import json
+import os
 import shutil
+import subprocess
 from datetime import datetime, timedelta
 
 PAGE_SIZE = 5
@@ -66,10 +66,7 @@ def format_page(emails: list, offset: int, total_unread: int) -> str:
 
     body = "\n\n".join(lines)
 
-    if total_unread > page_end:
-        footer = '\n\n↓ Reply "more" for next 5'
-    else:
-        footer = ""
+    footer = '\n\n↓ Reply "more" for next 5' if total_unread > page_end else ""
 
     return header + "\n\n" + body + footer
 
@@ -81,10 +78,7 @@ def run(params):
     if not himalaya_bin:
         home = os.path.expanduser("~")
         local_path = os.path.join(home, ".local", "bin", "himalaya")
-        if subprocess.run(["test", "-x", local_path]).returncode == 0:
-            himalaya_bin = local_path
-        else:
-            himalaya_bin = "himalaya"
+        himalaya_bin = local_path if subprocess.run(["test", "-x", local_path]).returncode == 0 else "himalaya"
 
     cmd = [
         himalaya_bin,

@@ -1,19 +1,22 @@
 {
   "name": "search",
-  "description": "Search the web",
+  "description": "Search the web for external information not available in email, calendar, or chat",
   "tools": [
     {
       "name": "web_search",
-      "description": "Search the web for information",
-      "examples": [
-        "search for",
-        "look up",
-        "find information about",
-        "what is",
-        "who is",
-        "how does"
-      ],
-      "input_schema": {"query": {"type": "string"}},
+      "description": "Searches the web for external information. Use when the user asks about topics NOT available in their email, calendar, or chat — such as general knowledge, public information, documentation, or news. Do NOT use web_search when the answer can be found in the user's email (use list_emails or triage_email), calendar (use list_events), or team chat (use list_messages or search_messages). Do NOT fabricate search results — if you cannot find the information, say so clearly.",
+      "examples": ["search for","look up","find information about","what is","who is","how does"],
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "The search query. Be specific — use keywords that clearly describe what you're looking for."
+          }
+        },
+        "required": ["query"],
+        "additionalProperties": false
+      },
       "output_type": "raw"
     }
   ]

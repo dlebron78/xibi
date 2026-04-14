@@ -1,6 +1,6 @@
+import json
 import os
 import re
-import json
 import sqlite3
 import uuid
 from pathlib import Path

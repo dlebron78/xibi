@@ -1,0 +1,127 @@
+{
+  "name": "checklists",
+  "description": "Human-driven recurring checklists for routines, reports, and planning.",
+  "version": "1.0.0",
+  "tools": [
+    {
+      "name": "list_checklists",
+      "description": "List all currently open checklist instances with their completion status.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "get_checklist",
+      "description": "Get the detailed state of a specific checklist instance, including all items.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "instance_id": {
+            "type": "string",
+            "description": "The UUID of the checklist instance."
+          }
+        },
+        "required": ["instance_id"]
+      }
+    },
+    {
+      "name": "update_checklist_item",
+      "description": "Mark a checklist item as done or undone. Provide either the item's position (index) or a fuzzy label hint.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "instance_id": {
+            "type": "string",
+            "description": "The UUID of the checklist instance."
+          },
+          "position": {
+            "type": "integer",
+            "description": "The 0-based index of the item."
+          },
+          "label_hint": {
+            "type": "string",
+            "description": "A natural language fragment matching the item label (e.g., 'email')."
+          },
+          "status": {
+            "type": "string",
+            "enum": ["done", "undone"],
+            "default": "done",
+            "description": "The target status of the item."
+          }
+        },
+        "required": ["instance_id"]
+      }
+    },
+    {
+      "name": "create_checklist_template",
+      "description": "Create a new recurring checklist template.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The name of the checklist (e.g., 'Monday Morning Routine')."
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional detailed description of the checklist's purpose."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "label": { "type": "string" },
+                "deadline_offset_seconds": { "type": "integer" }
+              },
+              "required": ["label"]
+            },
+            "description": "List of items in the checklist template."
+          },
+          "recurrence": {
+            "type": "object",
+            "properties": {
+              "trigger_type": { "type": "string", "enum": ["cron", "interval"] },
+              "trigger_config": { "type": "object" }
+            },
+            "description": "Optional recurrence configuration for automatic instantiation."
+          },
+          "rollover_policy": {
+            "type": "string",
+            "enum": ["expire", "roll_forward", "nag", "confirm"],
+            "default": "confirm",
+            "description": "Policy for handling open items when a new instance is created."
+          },
+          "nudge_config": {
+            "type": "object",
+            "properties": {
+              "disable_warning_24h": { "type": "boolean" },
+              "disable_deadline": { "type": "boolean" },
+              "disable_nag_post_deadline": { "type": "boolean" }
+            },
+            "description": "Configuration to customize or disable deadline nudges."
+          }
+        },
+        "required": ["name", "items"]
+      }
+    },
+    {
+      "name": "instantiate_checklist",
+      "description": "Create an active checklist instance from an existing template. Use this when the user wants to start a new list (e.g., 'create a shopping list', 'start my morning routine'). Provide either template_id or template_name.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "template_id": {
+            "type": "string",
+            "description": "The UUID of the checklist template."
+          },
+          "template_name": {
+            "type": "string",
+            "description": "A name or partial name to look up the template (case-insensitive)."
+          }
+        }
+      }
+    }
+  ]
+}

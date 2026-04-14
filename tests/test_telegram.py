@@ -52,30 +52,38 @@ def test_init_requires_token(monkeypatch):
         TelegramAdapter(config={}, skill_registry=MagicMock())
 
 
-def test_init_reads_env_token(monkeypatch):
+def test_init_reads_env_token(monkeypatch, tmp_path):
     monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "env-token")
-    adapter = TelegramAdapter(config={}, skill_registry=MagicMock())
+    db_path = tmp_path / "xibi.db"
+    migrate(db_path)
+    adapter = TelegramAdapter(config={}, skill_registry=MagicMock(), db_path=db_path)
     assert adapter.token == "env-token"
 
 
-def test_init_empty_allowlist_denies_all_legacy(monkeypatch):
+def test_init_empty_allowlist_denies_all_legacy(monkeypatch, tmp_path):
     monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "test-token")
     monkeypatch.setenv("XIBI_TELEGRAM_ALLOWED_CHAT_IDS", "")
-    adapter = TelegramAdapter(config={}, skill_registry=MagicMock(), allowed_chats=[])
+    db_path = tmp_path / "xibi.db"
+    migrate(db_path)
+    adapter = TelegramAdapter(config={}, skill_registry=MagicMock(), allowed_chats=[], db_path=db_path)
     assert adapter.is_authorized(999) is False
 
 
-def test_init_allowlist_filters(monkeypatch):
+def test_init_allowlist_filters(monkeypatch, tmp_path):
     monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "test-token")
     monkeypatch.setenv("XIBI_TELEGRAM_ALLOWED_CHAT_IDS", "123")
-    adapter = TelegramAdapter(config={}, skill_registry=MagicMock(), allowed_chats=["123"])
+    db_path = tmp_path / "xibi.db"
+    migrate(db_path)
+    adapter = TelegramAdapter(config={}, skill_registry=MagicMock(), allowed_chats=["123"], db_path=db_path)
     assert adapter.is_authorized(123) is True
     assert adapter.is_authorized(456) is False
 
 
-def test_send_message_calls_api(monkeypatch):
+def test_send_message_calls_api(monkeypatch, tmp_path):
     monkeypatch.setenv("XIBI_TELEGRAM_TOKEN", "test-token")
-    adapter = TelegramAdapter(config={}, skill_registry=MagicMock())
+    db_path = tmp_path / "xibi.db"
+    migrate(db_path)
+    adapter = TelegramAdapter(config={}, skill_registry=MagicMock(), db_path=db_path)
     adapter._api_call = MagicMock(return_value={"ok": True})
 
     adapter.send_message(123, "Hello")
@@ -255,7 +263,10 @@ def test_mark_processed_idempotent(tmp_path, monkeypatch):
         adapter._mark_processed(conn, 7)
         adapter._mark_processed(conn, 7)  # Should not raise
     with sqlite3.connect(db_path) as conn:
-        row = conn.execute("SELECT COUNT(*) FROM processed_messages WHERE message_id=7").fetchone()
+        # Check both columns for full compatibility
+        row = conn.execute(
+            "SELECT COUNT(*) FROM processed_messages WHERE message_id=7 AND source='telegram' AND ref_id='7'"
+        ).fetchone()
         assert row[0] == 1
 
 
@@ -316,8 +327,12 @@ def test_purge_old_processed_messages(tmp_path, monkeypatch):
 
     with sqlite3.connect(db_path) as conn:
         # Insert an old row and a recent row
-        conn.execute("INSERT INTO processed_messages (message_id, processed_at) VALUES (1, datetime('now', '-8 days'))")
-        conn.execute("INSERT INTO processed_messages (message_id, processed_at) VALUES (2, datetime('now', '-1 day'))")
+        conn.execute(
+            "INSERT INTO processed_messages (message_id, source, ref_id, processed_at) VALUES (1, 'telegram', '1', datetime('now', '-8 days'))"
+        )
+        conn.execute(
+            "INSERT INTO processed_messages (message_id, source, ref_id, processed_at) VALUES (2, 'telegram', '2', datetime('now', '-1 day'))"
+        )
 
     adapter._purge_old_processed_messages()
 

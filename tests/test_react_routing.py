@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from xibi.channels.telegram import TelegramAdapter
+from xibi.db.migrations import migrate
 from xibi.react import run as react_run
 from xibi.routing.llm_classifier import LLMRoutingDecision
 from xibi.routing.shadow import ShadowMatch
@@ -166,27 +167,35 @@ class TestReActRouting(unittest.TestCase):
         mock_registry = MagicMock()
         mock_registry.get_skill_manifests.return_value = self.skill_registry
 
-        with patch.dict(
-            "os.environ",
-            {
-                "XIBI_TELEGRAM_TOKEN": "test_token",
-                "XIBI_TELEGRAM_ALLOWED_CHAT_IDS": "123",
-                "XIBI_SYNC_SESSION": "1",
-            },
-        ):
-            adapter = TelegramAdapter(
-                config=self.config,
-                skill_registry=mock_registry,
-                llm_routing_classifier=mock_classifier,
-            )
+        import tempfile
+        from pathlib import Path
 
-            # Mock _api_call to avoid real Telegram calls
-            adapter._api_call = MagicMock(return_value={"ok": True})
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            db_path = Path(tmp_dir) / "test_routing.db"
+            migrate(db_path)
 
-            # Trigger _handle_text
-            adapter._handle_text(123, "test query")
+            with patch.dict(
+                "os.environ",
+                {
+                    "XIBI_TELEGRAM_TOKEN": "test_token",
+                    "XIBI_TELEGRAM_ALLOWED_CHAT_IDS": "123",
+                    "XIBI_SYNC_SESSION": "1",
+                },
+            ):
+                adapter = TelegramAdapter(
+                    config=self.config,
+                    skill_registry=mock_registry,
+                    llm_routing_classifier=mock_classifier,
+                    db_path=db_path,
+                )
 
-            # Check if react_run was called with the classifier
-            mock_react_run.assert_called()
-            args, kwargs = mock_react_run.call_args
-            self.assertEqual(kwargs.get("llm_routing_classifier"), mock_classifier)
+                # Mock _api_call to avoid real Telegram calls
+                adapter._api_call = MagicMock(return_value={"ok": True})
+
+                # Trigger _handle_text
+                adapter._handle_text(123, "test query")
+
+                # Check if react_run was called with the classifier
+                mock_react_run.assert_called()
+                args, kwargs = mock_react_run.call_args
+                self.assertEqual(kwargs.get("llm_routing_classifier"), mock_classifier)

@@ -1,49 +1,48 @@
-import sqlite3
 import os
 from pathlib import Path
 
+from xibi.db import open_db
+
 
 def run(params):
-    """Search and recall items from the memory ledger."""
+    """Search and recall items from the memory ledger and beliefs."""
     category = params.get("category")
     query = params.get("query")
 
-    workdir = params.get("_workdir") or os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.bregger"))
-    db_path = Path(workdir) / "data" / "bregger.db"
-
-    if not db_path.exists():
-        return {"status": "error", "message": f"Database not found at {db_path}"}
+    workdir = Path(params.get("_workdir") or os.environ.get("XIBI_WORKDIR", "~/.xibi")).expanduser()
+    db_path = workdir / "data" / "xibi.db"
 
     try:
-        with sqlite3.connect(db_path) as conn:
-            sql = "SELECT category, content, entity, status, due, notes, created_at FROM ledger"
-            conditions = []
-            args = []
+        with open_db(db_path) as conn:
+            results = []
 
-            if category:
-                conditions.append("category = ?")
-                args.append(category)
-
-            conditions.append("(status IS NULL OR status != 'expired')")
-
+            # 1. Search ledger (explicit remember calls)
             if query:
-                conditions.append("(content LIKE ? OR entity LIKE ? OR notes LIKE ?)")
-                q = f"%{query}%"
-                args.extend([q, q, q])
+                q_pat = f"%{query}%"
+                ledger_rows = conn.execute(
+                    """
+                    SELECT 'ledger' AS src, category, content, entity, status, due, notes, created_at
+                    FROM ledger
+                    WHERE (status IS NULL OR status != 'expired')
+                      AND (content LIKE ? OR entity LIKE ? OR notes LIKE ?)
+                    ORDER BY created_at DESC LIMIT 15
+                    """,
+                    (q_pat, q_pat, q_pat),
+                ).fetchall()
+            else:
+                ledger_rows = conn.execute(
+                    """
+                    SELECT 'ledger' AS src, category, content, entity, status, due, notes, created_at
+                    FROM ledger
+                    WHERE (status IS NULL OR status != 'expired')
+                    ORDER BY created_at DESC LIMIT 15
+                    """
+                ).fetchall()
 
-            if conditions:
-                sql += " WHERE " + " AND ".join(conditions)
-            sql += " ORDER BY created_at DESC LIMIT 20"
-
-            cursor = conn.execute(sql, args)
-            rows = cursor.fetchall()
-
-            if not rows:
-                return {"status": "success", "message": "Nothing found in memory.", "items": []}
-
-            items = []
-            for cat, content, entity, status, due, notes, created in rows:
-                item = {"category": cat, "content": content}
+            for src, cat, content, entity, status, due, notes, created in ledger_rows:
+                if category and cat != category:
+                    continue
+                item = {"source": src, "category": cat, "content": content, "stored_at": created}
                 if entity:
                     item["entity"] = entity
                 if status:
@@ -52,9 +51,59 @@ def run(params):
                     item["due"] = due
                 if notes:
                     item["notes"] = notes
-                item["stored_at"] = created
-                items.append(item)
+                results.append(item)
 
-            return {"status": "success", "message": f"Found {len(items)} items in memory.", "items": items}
+            # 2. Search beliefs (session-compressed memories + explicit user facts)
+            # Exclude system markers (type = 'session_compression_marker')
+            # valid_until IS NULL means the belief is currently active.
+            if query:
+                q_pat = f"%{query}%"
+                belief_rows = conn.execute(
+                    """
+                    SELECT 'belief' AS src, key, value, type, valid_from, updated_at
+                    FROM beliefs
+                    WHERE (valid_until IS NULL OR valid_until > CURRENT_TIMESTAMP)
+                      AND type != 'session_compression_marker'
+                      AND (key LIKE ? OR value LIKE ?)
+                    ORDER BY updated_at DESC LIMIT 15
+                    """,
+                    (q_pat, q_pat),
+                ).fetchall()
+            else:
+                belief_rows = conn.execute(
+                    """
+                    SELECT 'belief' AS src, key, value, type, valid_from, updated_at
+                    FROM beliefs
+                    WHERE (valid_until IS NULL OR valid_until > CURRENT_TIMESTAMP)
+                      AND type != 'session_compression_marker'
+                    ORDER BY updated_at DESC LIMIT 15
+                    """
+                ).fetchall()
+
+            for src, key, value, b_type, valid_from, updated_at in belief_rows:
+                # If a specific category was requested, filter beliefs by type
+                # 'preference', 'fact', 'contact', 'interest' are written as passive_memory/session_memory
+                # This is a loose mapping as beliefs don't have 'category' strictly.
+                item = {
+                    "source": src,
+                    "key": key,
+                    "content": value,
+                    "type": b_type,
+                    "stored_at": updated_at or valid_from,
+                }
+                results.append(item)
+
+            # Sort by stored_at descending
+            results.sort(key=lambda x: x["stored_at"], reverse=True)
+            results = results[:20]
+
+            if not results:
+                return {"status": "success", "message": "Nothing found in memory.", "items": []}
+
+            return {
+                "status": "success",
+                "message": f"Found {len(results)} items in memory.",
+                "items": results,
+            }
     except Exception as e:
         return {"status": "error", "message": str(e)}

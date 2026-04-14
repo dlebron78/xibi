@@ -1,26 +1,30 @@
-import os
-import sys
-import re
-import json
-import sqlite3
 import calendar
-import time
-import urllib.request
-import urllib.error
-import uuid
 import importlib.util
+import json
+import os
+import re
+import sqlite3
+import sys
 import threading
-from pathlib import Path
-from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
-from collections import deque, defaultdict
+import time
+import urllib.error
+import urllib.request
+import uuid
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any
+
 from bregger_utils import (
-    inference_lock,
-    normalize_topic as _normalize_topic,
-    get_active_threads as _get_active_threads_shared,
-    get_pinned_topics as _get_pinned_topics_shared,
     ensure_signals_schema,
+    inference_lock,
+)
+from bregger_utils import (
+    get_active_threads as _get_active_threads_shared,
+)
+from bregger_utils import (
+    get_pinned_topics as _get_pinned_topics_shared,
 )
 
 try:
@@ -32,7 +36,6 @@ except ImportError:
     _PSUTIL_OK = False
 
 from bregger_shadow import ShadowMatcher
-
 
 # ---------------------------------------------------------------------------
 # Token sink — thread-local storage for LLM token metadata
@@ -73,15 +76,15 @@ class Step:
     step_num: int
     thought: str = ""
     tool: str = ""
-    tool_input: Dict = field(default_factory=dict)
-    tool_output: Dict = field(default_factory=dict)
-    raw_prompt: Optional[str] = None
-    signal: Optional[Dict] = None  # Extracted topic/entity
+    tool_input: dict = field(default_factory=dict)
+    tool_output: dict = field(default_factory=dict)
+    raw_prompt: str | None = None
+    signal: dict | None = None  # Extracted topic/entity
     duration_ms: int = 0
     timestamp: str = ""
     escalated: bool = False
     escalation_source: str = ""
-    parse_warning: Optional[str] = None  # Set when generate_step had to recover from a parse error
+    parse_warning: str | None = None  # Set when generate_step had to recover from a parse error
 
     def full_text(self) -> str:
         """Full detail for recent steps injected into next prompt."""
@@ -117,7 +120,7 @@ class Step:
 # ---------------------------------------------------------------------------
 
 
-def compress_scratchpad(scratchpad: List["Step"], current_step: int) -> str:
+def compress_scratchpad(scratchpad: list["Step"], current_step: int) -> str:
     """Progressive compression: full detail for recent 2 steps, one-liners for older."""
     result = []
     for step in scratchpad:
@@ -128,7 +131,7 @@ def compress_scratchpad(scratchpad: List["Step"], current_step: int) -> str:
     return "\n\n".join(result) if result else "No steps taken yet."
 
 
-def is_repeat(step: "Step", scratchpad: List["Step"]) -> bool:
+def is_repeat(step: "Step", scratchpad: list["Step"]) -> bool:
     """Return True if this step closely duplicates a previous one (>60% word overlap)."""
     curr_words = set(json.dumps(step.tool_input).lower().split())
     if not curr_words:
@@ -151,7 +154,7 @@ _CONFIRMATION_RE = re.compile(
 _NEGATION_RE = re.compile(r"^\s*(no\b|nope|nah|never|cancel|stop|don't|do\s+not|don't)\b", re.IGNORECASE)
 
 
-def _resolve_relative_time(token: str) -> Optional[str]:
+def _resolve_relative_time(token: str) -> str | None:
     """Resolve a semantic time token into a YYYY-MM-DD string.
     Supported:
     - 1w_ago, 2w_ago, ... 6w_ago
@@ -317,7 +320,7 @@ class SkillRegistry:
 
         for manifest_path in self.skills_dir.glob("*/manifest.json"):
             try:
-                with open(manifest_path, "r") as f:
+                with open(manifest_path) as f:
                     manifest = json.load(f)
 
                 skill_name = manifest.get("name")
@@ -327,7 +330,7 @@ class SkillRegistry:
             except Exception as e:
                 print(f"⚠️ Error loading skill from {manifest_path}: {e}", flush=True)
 
-    def get_skill_manifests(self) -> List[Dict[str, Any]]:
+    def get_skill_manifests(self) -> list[dict[str, Any]]:
         """Return all skill manifests for the LLM to use during Planning."""
         return [skill["manifest"] for skill in self.skills.values()]
 
@@ -355,17 +358,17 @@ class SkillRegistry:
                         f"⚠️  Skill {name}, Tool {tname}: 'irreversible' risk requires output_type 'action'", flush=True
                     )
 
-    def get_tool_min_tier(self, skill_name: str, tool_name: str) -> int:
+    def get_tool_min_effort(self, skill_name: str, tool_name: str) -> int:
         """Helper to check if a tool requires a minimum inference tier."""
         skill = self.skills.get(skill_name)
         if not skill:
             return 1
         for tool in skill["manifest"].get("tools", []):
             if tool.get("name") == tool_name:
-                return tool.get("min_tier", 1)
+                return tool.get("min_effort", 1)
         return 1
 
-    def get_tool_meta(self, skill_name: str, tool_name: str) -> Optional[Dict[str, Any]]:
+    def get_tool_meta(self, skill_name: str, tool_name: str) -> dict[str, Any] | None:
         """Return the full tool manifest dict for a given skill+tool, or None."""
         skill = self.skills.get(skill_name)
         if not skill:
@@ -440,7 +443,8 @@ class OllamaProvider(LLMProvider):
                 # Track GPU hang events in signals table (Rule 15 — observability)
                 if e.code == 500:
                     try:
-                        import sqlite3 as _sqlite3, os as _os
+                        import os as _os
+                        import sqlite3 as _sqlite3
 
                         _workdir = _os.environ.get("BREGGER_WORKDIR", _os.path.expanduser("~/.bregger"))
                         _db = _os.path.join(_workdir, "data", "bregger.db")
@@ -489,15 +493,14 @@ class GeminiProvider(LLMProvider):
             url, data=json.dumps(payload).encode("utf-8"), headers={"Content-Type": "application/json"}
         )
 
-        with inference_lock:
-            with urllib.request.urlopen(req, timeout=120) as response:
-                res_data = json.loads(response.read().decode("utf-8"))
-                try:
-                    # Gemini response path: candidates[0].content.parts[0].text
-                    return res_data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                except (KeyError, IndexError):
-                    error_msg = res_data.get("error", {}).get("message", "Unknown Gemini error")
-                    raise Exception(f"Gemini API Error: {error_msg}")
+        with inference_lock, urllib.request.urlopen(req, timeout=120) as response:
+            res_data = json.loads(response.read().decode("utf-8"))
+            try:
+                # Gemini response path: candidates[0].content.parts[0].text
+                return res_data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            except (KeyError, IndexError):
+                error_msg = res_data.get("error", {}).get("message", "Unknown Gemini error")
+                raise Exception(f"Gemini API Error: {error_msg}")
 
 
 class BreggerRouter:
@@ -643,7 +646,7 @@ What is your next step?"""
         "remember": {"category": "action", "description": "Store a fact, preference, or rule in long-term memory."},
     }
 
-    def __init__(self, config: Dict):
+    def __init__(self, config: dict):
         self.config = config
         self.llm_conf = config.get("llm", {})
 
@@ -669,11 +672,11 @@ What is your next step?"""
     def generate_plan(
         self,
         user_input: str,
-        manifests: List[Dict],
+        manifests: list[dict],
         context: str = "",
         assistant_name: str = "Bregger",
         assistant_persona: str = "",
-    ) -> Dict:
+    ) -> dict:
         """Call LLM to generate a structured plan."""
         prompt = f"User Input: {user_input}\n\nOutput JSON Plan:"
         system = self.SYSTEM_PROMPT.format(
@@ -693,8 +696,8 @@ What is your next step?"""
     def generate_step(
         self,
         original_request: str,
-        scratchpad: List[Step],
-        manifests: List[Dict],
+        scratchpad: list[Step],
+        manifests: list[dict],
         context: str = "",
         step_num: int = 1,
         assistant_name: str = "Bregger",
@@ -780,7 +783,7 @@ What is your next step?"""
         except Exception as e:
             import traceback
 
-            print(f"🔴 GENERATE_STEP EXCEPTION:", flush=True)
+            print("🔴 GENERATE_STEP EXCEPTION:", flush=True)
             traceback.print_exc()
             return Step(
                 step_num=step_num,
@@ -826,7 +829,7 @@ What is your next step?"""
             )
             return s
 
-        _parse_warning: Optional[str] = None
+        _parse_warning: str | None = None
         if input_m:
             try:
                 tool_input = json.loads(input_m.group(1))
@@ -885,7 +888,7 @@ What is your next step?"""
             parse_warning=_parse_warning,
         )
 
-    def _compress_scratchpad(self, scratchpad: List["Step"], current_step: int) -> str:
+    def _compress_scratchpad(self, scratchpad: list["Step"], current_step: int) -> str:
         """Progressive compression with intelligent data densification instead of blind truncation."""
         result = []
         for step in scratchpad:
@@ -1025,7 +1028,7 @@ What is your next step?"""
         if tool == "list_unread":
             inner = data.get("data") if isinstance(data, dict) and "data" in data else data
             if isinstance(inner, list):
-                from datetime import datetime, timezone
+                from datetime import datetime
 
                 def _friendly_date(date_str: str) -> str:
                     if not date_str:
@@ -1196,7 +1199,7 @@ What is your next step?"""
         except:
             return str(data)
 
-    def generate_report(self, user_input: str, plan: Dict, results: Any, context: str = "") -> str:
+    def generate_report(self, user_input: str, plan: dict, results: Any, context: str = "") -> str:
         """Call Ollama to format tool results into a nice message (The 'R' in P-D-A-R)."""
         # Defensive guard: if results is not a dict (e.g. string from a buggy path), wrap it
         if not isinstance(results, dict):
@@ -1253,10 +1256,10 @@ What is your next step?"""
             # Standardize: remove repeated legacy prefixes (case-insensitive)
             text = re.sub(r"^((Bregger|Assistant|AI|System):\s*)+", "", text, flags=re.IGNORECASE)
             return text
-        except Exception as e:
+        except Exception:
             import traceback
 
-            print(f"🔴 GENERATE_REPORT EXCEPTION:", flush=True)
+            print("🔴 GENERATE_REPORT EXCEPTION:", flush=True)
             traceback.print_exc()
             return f"Action complete: {results.get('message', str(results))}"
 
@@ -1267,9 +1270,9 @@ class BreggerExecutive:
     def __init__(self, registry: SkillRegistry):
         self.registry = registry
 
-    def validate_plan(self, plan: Dict) -> bool:
+    def validate_plan(self, plan: dict) -> bool:
         """Check if the plan matches registered skills and tools."""
-        intent = plan.get("intent")
+        plan.get("intent")
         skill_name = plan.get("skill")
         tool_name = plan.get("tool")
 
@@ -1296,7 +1299,7 @@ class BreggerExecutive:
         tool_exists = any(t["name"] == tool_name for t in manifest.get("tools", []))
         return tool_exists
 
-    def execute_plan(self, plan: Dict, beliefs: Optional[Dict] = None) -> Any:
+    def execute_plan(self, plan: dict, beliefs: dict | None = None) -> Any:
         """Dynamically load and run the skill's Python code."""
         skill_name = plan.get("skill")
         tool_name = plan.get("tool")
@@ -1392,7 +1395,7 @@ class MockRouter:
     """A deterministic router for testing without a live LLM."""
 
     def __init__(self):
-        self._step_sequence: List[Step] = []  # scripted steps for ReAct tests
+        self._step_sequence: list[Step] = []  # scripted steps for ReAct tests
         self._step_idx = 0
         self.providers = {}
         self.default_provider = "mock"
@@ -1403,12 +1406,12 @@ class MockRouter:
     def generate(self, prompt, system="", json_format=False):
         return "MOCK SUMMARY: This is a compacted history summary."
 
-    def set_step_sequence(self, steps: List[Step]):
+    def set_step_sequence(self, steps: list[Step]):
         """Inject a scripted step sequence for ReAct loop tests."""
         self._step_sequence = steps
         self._step_idx = 0
 
-    def generate_plan(self, user_input: str, manifests: List[Dict], context: str = "") -> Dict:
+    def generate_plan(self, user_input: str, manifests: list[dict], context: str = "") -> dict:
         user_input = user_input.lower()
         if "email" in user_input:
             return {"skill": "email", "tool": "list_unread", "parameters": {"count": 3}, "intent": "check_email"}
@@ -1421,8 +1424,8 @@ class MockRouter:
     def generate_step(
         self,
         original_request: str,
-        scratchpad: List[Step],
-        manifests: List[Dict],
+        scratchpad: list[Step],
+        manifests: list[dict],
         context: str = "",
         step_num: int = 1,
         assistant_name: str = "Bregger",
@@ -1442,7 +1445,7 @@ class MockRouter:
             tool_input={"final_answer": "Done."},
         )
 
-    def generate_report(self, user_input: str, plan: Dict, results: Any, context: str = "") -> str:
+    def generate_report(self, user_input: str, plan: dict, results: Any, context: str = "") -> str:
         """Mock renderer."""
         if plan.get("intent") == "greet":
             # Guard against missing startup context
@@ -1463,14 +1466,14 @@ class Caretaker:
     def __init__(self, db_path: Path):
         self.db_path = db_path
 
-    def check_pulse(self) -> Optional[Dict[str, Any]]:
+    def check_pulse(self) -> dict[str, Any] | None:
         """Scan traces and beliefs to find reasons to nudge the user."""
         try:
             with sqlite3.connect(self.db_path) as conn:
                 # Find recent failed traces (last 1 hour)
                 cursor = conn.execute("""
-                    SELECT intent, plan FROM traces 
-                    WHERE status='failed' 
+                    SELECT intent, plan FROM traces
+                    WHERE status='failed'
                     AND created_at > datetime('now', '-1 hour')
                     LIMIT 1
                 """)
@@ -1591,7 +1594,7 @@ class KeywordRouter:
 
     # ---- public API ---------------------------------------------------------
 
-    def match(self, raw_text: str) -> Optional[Dict[str, Any]]:
+    def match(self, raw_text: str) -> dict[str, Any] | None:
         """Return an intent object or None."""
         text = normalize_input(raw_text)
         if not text:
@@ -1636,7 +1639,7 @@ class IntentMapper:
         """Register a dynamic intent mapping."""
         self._dynamic_map[intent] = {"skill": skill, "tool": tool}
 
-    def to_plan(self, intent_obj: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def to_plan(self, intent_obj: dict[str, Any]) -> dict[str, Any] | None:
         intent = intent_obj["intent"]
 
         # Check static map first
@@ -1703,10 +1706,10 @@ class IntentMapper:
         if intent in self._dynamic_map:
             mapping = self._dynamic_map[intent]
 
-            # min_tier check (Phase 9): If tool requires Tier 3+, skip Tier 1 path
+            # min_effort check (Phase 9): If tool requires Tier 3+, skip Tier 1 path
             if self.registry:
-                min_tier = self.registry.get_tool_min_tier(mapping["skill"], mapping["tool"])
-                if min_tier >= 3:
+                min_effort = self.registry.get_tool_min_effort(mapping["skill"], mapping["tool"])
+                if min_effort >= 3:
                     return None
 
             # Capture regex groups as parameters
@@ -1733,7 +1736,7 @@ class BreggerCore:
     """The central engine for P-D-A-R."""
 
     def __init__(self, config_path: str):
-        with open(config_path, "r") as f:
+        with open(config_path) as f:
             self.config = json.load(f)
         # Priority: config["assistant"]["workdir"] > BREGGER_WORKDIR env var > ~/.bregger
         env_workdir = os.environ.get("BREGGER_WORKDIR")
@@ -1780,7 +1783,7 @@ class BreggerCore:
         self._prewarm_memory()
 
         # ReAct state
-        self._pending_action: Optional[Dict] = None  # confirmation gate
+        self._pending_action: dict | None = None  # confirmation gate
         self.step_callback = None  # injected by channel adapter
         self._inference_active = False  # contention guard
 
@@ -1826,7 +1829,8 @@ class BreggerCore:
                     extractor = None
                     if intent == "email_open":
                         # Capture the first numeric group as `num`
-                        extractor = lambda m: {"num": m.group(1)} if m.group(1) else None
+                        def extractor(m):
+                            return {"num": m.group(1)} if m.group(1) else None
                     # Register regex with router
                     self.control_plane.register(regex, intent, extractor)
                     # Register mapping with intent mapper
@@ -1889,7 +1893,7 @@ class BreggerCore:
         goal: str,
         exit_type: str,
         urgency: str,
-        due: Optional[str],
+        due: str | None,
         context_compressed: str,
         scratchpad_json: str,
         trace_id: str,
@@ -1926,8 +1930,6 @@ class BreggerCore:
 
     def _resume_task(self, task_id: str, user_input: str) -> str:
         """Resume a task by restoring its scratchpad and re-entering the process_query loop."""
-        import json
-        import dataclasses
 
         task = None
         try:
@@ -1974,7 +1976,7 @@ class BreggerCore:
             task.get("goal", ""), force_react=True, _resume_scratchpad=[pseudo_step], trace_id=resume_trace
         )
 
-    def _get_awaiting_task(self) -> Optional[dict]:
+    def _get_awaiting_task(self) -> dict | None:
         """Get the single task in awaiting_reply state (the active slot)."""
         try:
             with sqlite3.connect(self.db_path) as conn:
@@ -2010,7 +2012,7 @@ class BreggerCore:
                 conn.execute(
                     "UPDATE tasks SET status='expired', updated_at=CURRENT_TIMESTAMP WHERE status='awaiting_reply' AND updated_at < datetime('now', '-1 day')"
                 )
-        except Exception as e:
+        except Exception:
             pass
 
     def _ensure_tasks_table(self):
@@ -2173,7 +2175,7 @@ class BreggerCore:
             with sqlite3.connect(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 query = """
-                    SELECT topic_hint, COUNT(*) as mentions, 
+                    SELECT topic_hint, COUNT(*) as mentions,
                            COUNT(DISTINCT source) as channels,
                            MAX(timestamp) as last_seen
                     FROM signals
@@ -2189,7 +2191,7 @@ class BreggerCore:
             print(f"⚠️ Failed to get active threads: {e}", flush=True)
             return []
 
-    def _extract_passive_memory(self, user_input: str, final_answer: str, scratchpad: List[Step]):
+    def _extract_passive_memory(self, user_input: str, final_answer: str, scratchpad: list[Step]):
         """Async LLM pass to extract and persist durable facts to the Ledger."""
         pm_id = f"pm_{str(uuid.uuid4())[:8]}"
         self.log_trace(pm_id, "passive_memory", {"status": "started"})
@@ -2360,7 +2362,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
             with sqlite3.connect(self.db_path) as conn:
                 # 1. Pre-warm traces (Working Memory)
                 cursor = conn.execute("""
-                    SELECT intent, status, created_at FROM traces 
+                    SELECT intent, status, created_at FROM traces
                     WHERE status = 'completed' AND intent != 'fallback' AND intent != 'none'
                     ORDER BY created_at DESC LIMIT 3
                 """)
@@ -2414,7 +2416,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
             lines.append(f"- {ts}: {trace['intent']} ({trace['status']})")
         return "\n".join(lines)
 
-    def _compact_history(self, history_rows: List[tuple]) -> str:
+    def _compact_history(self, history_rows: list[tuple]) -> str:
         """
         Compress session history when it grows long to prevent syntax drift and context overflow.
         Keeps the last 2 turns verbatim, summarizes the rest if above threshold.
@@ -2584,8 +2586,8 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
         self,
         user_input: str,
         force_react: bool = False,
-        _resume_scratchpad: Optional[List["Step"]] = None,
-        trace_id: Optional[str] = None,
+        _resume_scratchpad: list["Step"] | None = None,
+        trace_id: str | None = None,
     ):
         trace_id = trace_id or str(uuid.uuid4())
         t0 = time.time()
@@ -2598,7 +2600,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
         if force_react:
             mode = "react"
             intent_obj = None
-            print(f"🧩 MODE: react (force_react)", flush=True)
+            print("🧩 MODE: react (force_react)", flush=True)
         else:
             mode = self.classifier.classify(
                 user_input,
@@ -2759,7 +2761,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                         except Exception as e:
                             report = f"⚠️ Failed to clear traces: {e}"
                     elif plan.get("intent") == "email_more":
-                        from skills.email.tools.list_unread import format_page, PAGE_SIZE
+                        from skills.email.tools.list_unread import PAGE_SIZE, format_page
 
                         if not self._cached_unread:
                             report = '📬 No email list cached. Say "check email" first.'
@@ -2974,7 +2976,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
             )
             self.router.default_provider = "gemini"
 
-        scratchpad: List[Step] = _resume_scratchpad or []
+        scratchpad: list[Step] = _resume_scratchpad or []
         consecutive_errors = 0
         retry_counts = defaultdict(int)
         step_telemetry = []  # Collect lightweight step data for the DB
@@ -3219,11 +3221,11 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                 consecutive_errors += 1
                 continue
 
-            # 5. Layer 1 escalation: min_tier routing
+            # 5. Layer 1 escalation: min_effort routing
             current_tier = 3
-            min_tier = tool_meta.get("min_tier", 3)
+            min_effort = tool_meta.get("min_effort", 3)
             cloud_cfg = self.config.get("cloud", {})
-            if min_tier > current_tier and cloud_cfg.get("enabled"):
+            if min_effort > current_tier and cloud_cfg.get("enabled"):
                 # Cloud escalation — V1 stub (cloud not yet wired)
                 step.tool_output = {
                     "error": "Cloud escalation not yet enabled.",
@@ -3525,7 +3527,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
 
     # ── ReAct Helper Methods ──────────────────────────────────────────
 
-    def _get_tool_meta(self, tool_name: str) -> Optional[Dict]:
+    def _get_tool_meta(self, tool_name: str) -> dict | None:
         """Find a tool's manifest entry across all skills, attaching the skill name."""
         for skill_name, skill_info in self.registry.skills.items():
             for t in skill_info["manifest"].get("tools", []):
@@ -3533,7 +3535,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                     return {**t, "skill": skill_name}
         return None
 
-    def _available_tools_summary(self) -> List[str]:
+    def _available_tools_summary(self) -> list[str]:
         """Return a compact list of available tool names + descriptions."""
         tools = []
         for skill_info in self.registry.skills.values():
@@ -3543,14 +3545,14 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                 tools.append(f"{t['name']}: {t.get('description', '')[:60]}")
         return tools
 
-    def _truncate_output(self, step: Step, tool_meta: Dict) -> None:
+    def _truncate_output(self, step: Step, tool_meta: dict) -> None:
         """Truncate tool output to max_output_size bytes (in-place)."""
         max_size = tool_meta.get("max_output_size", 2048)
         content = step.tool_output.get("content")
         if content and isinstance(content, str) and len(content) > max_size:
             step.tool_output["content"] = content[:max_size] + "\n... [truncated]"
 
-    def _validate_tool_input(self, tool_name: str, params: Dict, tool_meta: Dict) -> Optional[Dict]:
+    def _validate_tool_input(self, tool_name: str, params: dict, tool_meta: dict) -> dict | None:
         """Run lightweight pre-execution input validation. Returns error dict or None.
 
         Phase 1: Generic JSON-Schema type enforcement (string vs list mismatch).
@@ -3659,7 +3661,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
             lines.append(f"• **{skill_name}**: {', '.join(tools) if tools else 'no tools'}")
         return "\n".join(lines)
 
-    def _log_control_plane_metric(self, trace_id: str, raw: str, normalized: str, intent_obj: Dict, latency_ms: int):
+    def _log_control_plane_metric(self, trace_id: str, raw: str, normalized: str, intent_obj: dict, latency_ms: int):
         """Log metrics for every control plane match."""
         metric = {
             "raw_input": raw[:200],
@@ -3680,7 +3682,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
         except Exception as e:
             print(f"⚠️ [metrics] Failed to log control plane metric: {e}", flush=True)
 
-    def log_trace(self, trace_id: str, intent: str, plan: Dict, status: str = "pending"):
+    def log_trace(self, trace_id: str, intent: str, plan: dict, status: str = "pending"):
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 """
@@ -3691,14 +3693,14 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
             )
 
     def update_trace(
-        self, trace_id: str, act_results: Any, status: str, steps_detail: List[Dict] = None, request_meta: Dict = None
+        self, trace_id: str, act_results: Any, status: str, steps_detail: list[dict] = None, request_meta: dict = None
     ):
         with sqlite3.connect(self.db_path) as conn:
             if steps_detail is not None:
                 meta = request_meta or {}
                 conn.execute(
                     """
-                    UPDATE traces 
+                    UPDATE traces
                     SET act_results = ?, status = ?, steps_detail = ?,
                         route = ?, model = ?, raw_prompt = ?, started_at = ?, total_ms = ?,
                         step_count = ?, total_prompt_tokens = ?,
@@ -3730,7 +3732,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
             else:
                 conn.execute(
                     """
-                    UPDATE traces 
+                    UPDATE traces
                     SET act_results = ?, status = ?
                     WHERE id = ?
                 """,
@@ -3748,7 +3750,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                     if intent != "fallback" and intent != "none":
                         self._tool_cache.append({"intent": intent, "status": status, "timestamp": timestamp})
 
-    def _update_trace_shadow(self, trace_id: str, data: Dict):
+    def _update_trace_shadow(self, trace_id: str, data: dict):
         """Log shadow tier 2 prediction and grade the matched phrase."""
         if trace_id == "local":
             return

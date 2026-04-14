@@ -3,12 +3,13 @@ add_event — Create a new event on Google Calendar.
 Tagged irreversible in manifest — confirmation gate fires automatically.
 """
 
-import json
-import re
-from datetime import datetime, timedelta
-import zoneinfo
+from datetime import timedelta
 
-from _google_auth import gcal_request
+try:
+    from _google_auth import gcal_request, load_calendar_config, resolve_calendar_id
+except ImportError:
+    from ._google_auth import gcal_request, load_calendar_config, resolve_calendar_id
+
 from bregger_utils import parse_semantic_datetime
 
 
@@ -43,8 +44,16 @@ def run(params: dict) -> dict:
         "end": {"dateTime": end_dt, "timeZone": timezone},
     }
 
+    # Resolve calendar ID from label or use default
+    calendar_label = params.get("calendar_id")
+    if not calendar_label:
+        config = load_calendar_config()
+        calendar_label = config[0]["label"]
+
+    calendar_id = resolve_calendar_id(calendar_label)
+
     try:
-        resp = gcal_request("/calendars/primary/events", method="POST", body=event_body)
+        resp = gcal_request(f"/calendars/{calendar_id}/events", method="POST", body=event_body)
     except RuntimeError as e:
         return {"status": "error", "message": str(e)}
 

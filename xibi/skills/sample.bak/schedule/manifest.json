@@ -1,0 +1,31 @@
+{
+  "name": "schedule",
+  "description": "Manage your calendar",
+  "tools": [
+    {
+      "name": "list_events",
+      "description": "List upcoming calendar events",
+      "examples": [
+        "what's on my calendar",
+        "what do I have today",
+        "show my schedule",
+        "upcoming meetings",
+        "what's next on my agenda"
+      ],
+      "input_schema": {"days_ahead": {"type": "integer", "default": 1}},
+      "output_type": "raw"
+    },
+    {
+      "name": "add_event",
+      "description": "Add an event to the calendar",
+      "examples": [
+        "schedule a meeting",
+        "add an event",
+        "put something on my calendar",
+        "book a time"
+      ],
+      "input_schema": {"title": {"type": "string"}, "time": {"type": "string"}},
+      "output_type": "action"
+    }
+  ]
+}

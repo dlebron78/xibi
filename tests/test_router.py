@@ -312,16 +312,16 @@ def test_gemini_client_generate_with_timeout(mock_genai):
     assert res == "response"
 
 
-def test_openai_client_not_implemented():
-    """Covers OpenAIClient stub __init__ (line 156)."""
-    with pytest.raises(NotImplementedError):
-        OpenAIClient("openai", "gpt-4", {}, "fake-key")
+def test_openai_client_requires_api_key():
+    """OpenAIClient raises RuntimeError when api_key is None."""
+    with pytest.raises(RuntimeError):
+        OpenAIClient("openai", "gpt-4", {}, None)
 
 
-def test_anthropic_client_not_implemented():
-    """Covers AnthropicClient stub __init__ (line 171)."""
-    with pytest.raises(NotImplementedError):
-        AnthropicClient("anthropic", "claude-3", {}, "fake-key")
+def test_anthropic_client_requires_api_key():
+    """AnthropicClient raises RuntimeError when api_key is None."""
+    with pytest.raises(RuntimeError):
+        AnthropicClient("anthropic", "claude-3", {}, None)
 
 
 def test_groq_client_not_implemented():

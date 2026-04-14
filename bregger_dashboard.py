@@ -5,14 +5,16 @@ Serves a tiny Flask app that queries bregger.db and provides JSON endpoints
 for a Chart.js frontend. Runs on the NucBox on port 8081 (Tailscale only).
 """
 
-import sqlite3
 import json
-import psutil
-from datetime import datetime, timedelta
-from contextlib import contextmanager
-import sys
 import os
+import sqlite3
+import sys
+from contextlib import contextmanager, suppress
+from datetime import datetime, timedelta
+
+import psutil
 from flask import Flask, jsonify, render_template, request
+
 from bregger_utils import normalize_topic
 
 # Make sure bregger_core can be imported if running from the deployment dir
@@ -99,7 +101,7 @@ def api_trends():
             cursor = conn.execute(
                 """
                 SELECT created_at, total_ms, overall_tok_per_sec, ram_end_pct, step_count, status
-                FROM traces 
+                FROM traces
                 WHERE created_at > ? AND status IN ('completed', 'error')
                 ORDER BY created_at ASC
             """,
@@ -138,14 +140,14 @@ def api_errors():
         with get_db() as conn:
             # Requires SQLite 3.38+ for json_extract `->>` operator
             cursor = conn.execute("""
-                SELECT 
-                    je.value->>'error' as err_msg, 
+                SELECT
+                    je.value->>'error' as err_msg,
                     je.value->>'tool' as tool,
-                    COUNT(*) as freq 
-                FROM traces, json_each(steps_detail) je 
-                WHERE je.value->>'error' IS NOT NULL 
-                GROUP BY err_msg, tool 
-                ORDER BY freq DESC 
+                    COUNT(*) as freq
+                FROM traces, json_each(steps_detail) je
+                WHERE je.value->>'error' IS NOT NULL
+                GROUP BY err_msg, tool
+                ORDER BY freq DESC
                 LIMIT 10
             """)
             rows = cursor.fetchall()
@@ -164,9 +166,9 @@ def api_recent():
             cursor = conn.execute(
                 """
                 SELECT *
-                FROM traces 
+                FROM traces
                 WHERE intent NOT IN ('react_finish', 'passive_memory', 'control_plane_metric')
-                ORDER BY created_at DESC 
+                ORDER BY created_at DESC
                 LIMIT ? OFFSET ?
             """,
                 (limit, offset),
@@ -294,7 +296,7 @@ def api_signals():
 
             # Combine them: Pinned first, then active
             final_threads = pinned + [
-                t for t in active_threads if not t.get("pinned", False) or t in pinned == False
+                t for t in active_threads if not t.get("pinned", False) or t in pinned is False
             ]  # keep existing pinned
             # Deduplicate by normalized topic to be safe
             seen = set()
@@ -355,10 +357,8 @@ def api_signal_pipeline():
 
             batch_rows = []
             for r in cursor.fetchall():
-                try:
+                with suppress(Exception):
                     batch_rows.append(json.loads(r["plan"]))
-                except Exception:
-                    pass
 
             total_ticks = len(batch_rows)
             total_emails = sum(b.get("total_emails", 0) for b in batch_rows)
@@ -465,7 +465,7 @@ def api_config():
         )
 
         if os.path.exists(config_path):
-            with open(config_path, "r") as f:
+            with open(config_path) as f:
                 config = json.load(f)
         else:
             config = {}

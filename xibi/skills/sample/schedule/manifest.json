@@ -17,15 +17,48 @@
     },
     {
       "name": "add_event",
-      "description": "Add an event to the calendar",
+      "description": "Add a new event to the calendar",
       "examples": [
         "schedule a meeting",
         "add an event",
         "put something on my calendar",
-        "book a time"
+        "book a time",
+        "block time for a call"
       ],
       "input_schema": {"title": {"type": "string"}, "time": {"type": "string"}},
       "output_type": "action"
+    },
+    {
+      "name": "update_event",
+      "description": "Update or reschedule an existing calendar event — change its time, title, or details",
+      "examples": [
+        "move the 2pm meeting to 3pm",
+        "reschedule my standup",
+        "change the time of an event",
+        "push back the call by an hour",
+        "rename a calendar event"
+      ],
+      "input_schema": {
+        "event_id": {"type": "string", "description": "ID of the event to update (optional if title is clear)"},
+        "title": {"type": "string", "description": "New title for the event (optional)"},
+        "time": {"type": "string", "description": "New time for the event (optional)"}
+      },
+      "output_type": "action"
+    },
+    {
+      "name": "delete_event",
+      "description": "Delete or cancel a calendar event",
+      "examples": [
+        "cancel my 3pm meeting",
+        "delete the standup",
+        "remove an event from my calendar"
+      ],
+      "input_schema": {
+        "event_id": {"type": "string", "description": "ID of the event to delete (optional if title is clear)"},
+        "title": {"type": "string", "description": "Title of the event to delete"}
+      },
+      "output_type": "action",
+      "risk": "irreversible"
     }
   ]
 }

@@ -1,10 +1,10 @@
+import mimetypes
 import os
 import smtplib
-import mimetypes
+from email import encoders
+from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.mime.base import MIMEBase
-from email import encoders
 
 # ── SMTP config (pulled from env, falls back to Gmail defaults) ──────────────
 SMTP_HOST = os.environ.get("BREGGER_SMTP_HOST", "smtp.gmail.com")
@@ -83,6 +83,44 @@ def run(params):
     }
 
 
+def _track_outbound(to: str, db_path: str):
+    """Track outbound email metrics and endorsement."""
+    if not db_path:
+        return
+    from pathlib import Path
+
+    from xibi.db import open_db
+    from xibi.entities import create_contact, upsert_contact_channel
+    from xibi.entities.resolver import resolve_contact
+
+    contact = resolve_contact(to, "email", db_path=db_path)
+    if contact:
+        contact_id = contact.id
+        try:
+            with open_db(Path(db_path)) as conn, conn:
+                conn.execute(
+                    "UPDATE contacts SET outbound_count = outbound_count + 1, user_endorsed = 1 WHERE id = ?",
+                    (contact_id,),
+                )
+        except Exception:
+            pass
+    else:
+        contact_id = create_contact(
+            display_name=to, email=to, discovered_via="email_outbound", relationship="unknown", db_path=db_path
+        )
+        if contact_id:
+            try:
+                with open_db(Path(db_path)) as conn, conn:
+                    conn.execute(
+                        "UPDATE contacts SET outbound_count = 1, user_endorsed = 1 WHERE id = ?", (contact_id,)
+                    )
+            except Exception:
+                pass
+
+    if contact_id:
+        upsert_contact_channel(contact_id, to, "email", verified=1, db_path=db_path)
+
+
 def send_smtp(payload: dict) -> dict:
     """Phase 2: Actually send the email via SMTP.
     Called by bregger_core.py after the user confirms. Never called by the LLM.
@@ -130,6 +168,11 @@ def send_smtp(payload: dict) -> dict:
             server.sendmail(SMTP_USER, all_recipients, msg.as_string())
 
         cc_note = f" (CC: {cc})" if cc else ""
+        # Track outbound metrics
+        _workdir = payload.get("_workdir") or os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.bregger"))
+        db_path = os.path.join(_workdir, "data", "bregger.db")
+        _track_outbound(to, db_path)
+
         if attached_filename:
             return {
                 "status": "success",

@@ -8,9 +8,11 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from xibi.db import open_db
+from xibi.entities import create_contact
+from xibi.entities.resolver import resolve_contact
 from xibi.router import get_model
 
 if TYPE_CHECKING:
@@ -40,11 +42,12 @@ class SessionEntity:
     source_turn_id: str
     source_tool: str
     confidence: float
+    contact_id: str | None = None
 
 
 class SessionContext:
-    FULL_WINDOW = 2  # Last N turns injected in full detail
-    SUMMARY_WINDOW = 4  # Turns 3-6 injected as one-liner summaries
+    FULL_WINDOW = 4  # Last N turns injected in full detail
+    SUMMARY_WINDOW = 6  # Older turns injected as data-preserving summaries
     COMPRESS_WINDOW = 8  # max turns to read during compression
     MAX_BELIEFS = 5  # max beliefs to extract per session
 
@@ -201,10 +204,21 @@ Exchanges:
         # Phase 2: Extract entities from tool outputs
         tool_outputs = [step.tool_output for step in result.steps if step.tool_output]
         if tool_outputs:
-            self.extract_entities(turn, tool_outputs)
+            entities = self.extract_entities(turn, tool_outputs)
+            self.bridge_to_contacts(entities, str(self.db_path))
 
         self.summarise_old_turns()
         return turn
+
+    def add_chitchat_turn(self, query: str, answer: str) -> None:
+        """Store a chitchat turn that bypassed the ReAct loop."""
+        with open_db(self.db_path) as conn, conn:
+            conn.execute(
+                """INSERT INTO session_turns
+                   (turn_id, session_id, query, answer, tools_called, exit_reason, summary, source)
+                   VALUES (?, ?, ?, ?, '[]', 'chitchat', '', 'user')""",
+                (str(uuid.uuid4()), self.session_id, query, answer),
+            )
 
     def _get_session_memories(self) -> str:
         """
@@ -283,10 +297,10 @@ Exchanges:
                 lines.append(f"User: {turn.query}")
                 lines.append(f"Xibi: {turn.answer}")
                 if turn.tools_called:
-                    lines.append(f"Tools used: {', '.join(turn.tools_called)}")
+                    lines.append(f"Tools used: {', '.join(t for t in turn.tools_called if t)}")
             else:
-                # Summary
-                summary = turn.summary or f"User asked about {turn.query[:50]}..."
+                # Summary — fallback to answer excerpt if summary not yet written
+                summary = turn.summary or f"Q: {turn.query[:80]} → A: {turn.answer[:200]}"
                 lines.append(f"[{len(turns) - 1 - i} turns ago] {summary}")
 
         # Append entities
@@ -296,7 +310,42 @@ Exchanges:
             # Group by type for cleaner display
             by_type: dict[str, list[str]] = {}
             for e in entities:
-                by_type.setdefault(e.entity_type.capitalize(), []).append(e.value)
+                context_str = e.value
+                if e.entity_type == "person" and e.contact_id:
+                    try:
+                        with open_db(self.db_path) as conn:
+                            conn.row_factory = sqlite3.Row
+                            contact = conn.execute("SELECT * FROM contacts WHERE id = ?", (e.contact_id,)).fetchone()
+                            if contact:
+                                last_seen = "unknown"
+                                if contact["last_seen"]:
+                                    try:
+                                        ls_dt = datetime.fromisoformat(contact["last_seen"])
+                                        delta = datetime.utcnow() - ls_dt
+                                        if delta < timedelta(hours=1):
+                                            last_seen = "just now"
+                                        elif delta < timedelta(days=1):
+                                            last_seen = f"{int(delta.total_seconds() // 3600)}h ago"
+                                        elif delta < timedelta(days=2):
+                                            last_seen = "yesterday"
+                                        else:
+                                            last_seen = f"{delta.days}d ago"
+                                    except Exception:
+                                        last_seen = contact["last_seen"]
+
+                                rel_info = (
+                                    f"{contact['relationship']} at {contact['organization']}"
+                                    if contact["organization"]
+                                    else contact["relationship"]
+                                )
+                                freq_info = "frequent contact" if contact["signal_count"] > 10 else "occasional contact"
+                                context_str = f"{e.value} ({rel_info}, {freq_info}, last seen {last_seen})"
+                    except Exception:
+                        pass
+                elif e.entity_type == "person":
+                    context_str = f"{e.value} (unknown — first mention)"
+
+                by_type.setdefault(e.entity_type.capitalize(), []).append(context_str)
 
             for etype, values in by_type.items():
                 unique_values = sorted(list(set(values)))
@@ -307,7 +356,32 @@ Exchanges:
         if memories:
             lines.append(memories)
 
+        # Append belief summaries (compressed old turns)
+        summaries = self._get_belief_summaries()
+        if summaries:
+            lines.insert(0, summaries + "\n")
+
         return "\n".join(lines)
+
+    def _get_belief_summaries(self) -> str:
+        """Fetch belief_summaries for this session."""
+        try:
+            with open_db(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute(
+                    "SELECT summary FROM belief_summaries WHERE session_id = ? ORDER BY created_at ASC",
+                    (self.session_id,),
+                ).fetchall()
+                if not rows:
+                    return ""
+
+                parts = ["Summary of earlier conversation:"]
+                for r in rows:
+                    parts.append(r["summary"])
+                return "\n".join(parts)
+        except Exception as e:
+            logger.debug("Failed to fetch belief summaries: %s", e)
+            return ""
 
     def is_continuation(self, query: str) -> bool:
         # Signal 1: Markers
@@ -357,7 +431,12 @@ Exchanges:
         # Phase 2+3: LLM call then write — one new connection per row to avoid long holds.
         llm = get_model(specialty="text", effort="fast", config=self.config)
         for row in row_data:
-            prompt = f"Summarise this exchange in one sentence: Q: {row['query']} A: {row['answer']}"
+            prompt = (
+                "Summarise this exchange in 2-3 sentences. "
+                "IMPORTANT: preserve every specific name, number, date, and key fact — "
+                "these will be the only record available in future turns.\n\n"
+                f"Q: {row['query']}\nA: {row['answer'][:600]}"
+            )
             try:
                 summary = llm.generate(prompt).strip()
                 # Clean up quotes if model adds them
@@ -472,6 +551,78 @@ Skip generic words. Confidence > 0.7 only."""
                 source_turn_id=r["turn_id"],
                 source_tool=r["source_tool"],
                 confidence=r["confidence"],
+                contact_id=cast(dict[str, Any], dict(r)).get("contact_id"),
             )
             for r in rows
         ]
+
+    def bridge_to_contacts(self, entities: list[SessionEntity], db_path: str) -> None:
+        """Link person entities to contacts and create partial contacts if needed."""
+        try:
+            org_entities = [e.value for e in entities if e.entity_type == "org"]
+
+            for entity in entities:
+                if entity.entity_type != "person":
+                    continue
+
+                # 1. Resolve contact
+                # Check for name match first
+                contact = resolve_contact(
+                    handle=entity.value,
+                    channel_type="session",
+                    display_name=entity.value,
+                    db_path=db_path,
+                )
+
+                # If not found, try with associated orgs from the same batch
+                if not contact:
+                    for org in org_entities:
+                        contact = resolve_contact(
+                            handle=entity.value,
+                            channel_type="session",
+                            display_name=entity.value,
+                            organization=org,
+                            db_path=db_path,
+                        )
+                        if contact:
+                            break
+
+                if contact:
+                    # Link found contact
+                    entity.contact_id = cast(str, contact.id)
+                    with open_db(self.db_path) as conn, conn:
+                        conn.execute(
+                            "UPDATE session_entities SET contact_id = ? WHERE session_id = ? AND entity_type = 'person' AND value = ?",
+                            (contact.id, self.session_id, entity.value),
+                        )
+                else:
+                    # 2. Try partial contact creation
+                    # Check if this person appears in 2+ sessions
+                    try:
+                        with open_db(self.db_path) as conn:
+                            res_count = conn.execute(
+                                "SELECT COUNT(DISTINCT session_id) FROM session_entities WHERE entity_type = 'person' AND value = ?",
+                                (entity.value,),
+                            ).fetchone()
+                            session_count = res_count[0] if res_count else 0
+
+                            if session_count >= 2:
+                                partial_org = org_entities[0] if org_entities else None
+                                new_contact_id_res = create_contact(
+                                    display_name=entity.value,
+                                    organization=partial_org,
+                                    discovered_via="session_mention",
+                                    relationship="unknown",
+                                    db_path=db_path,
+                                )
+                                if new_contact_id_res:
+                                    entity.contact_id = cast(str, new_contact_id_res)
+                                    with conn:
+                                        conn.execute(
+                                            "UPDATE session_entities SET contact_id = ? WHERE session_id = ? AND entity_type = 'person' AND value = ?",
+                                            (new_contact_id_res, self.session_id, entity.value),
+                                        )
+                    except Exception as e:
+                        logger.error(f"Failed partial contact creation: {e}")
+        except Exception:
+            logger.warning("bridge_to_contacts failed — continuing without contact enrichment", exc_info=True)

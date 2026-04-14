@@ -70,22 +70,22 @@ def test_get_tool_meta_not_found(tmp_path):
     assert registry.get_tool_meta("unknown", "tool") is None
 
 
-def test_get_tool_min_tier_default(tmp_path):
+def test_get_tool_min_effort_default(tmp_path):
     skill_dir = tmp_path / "skill1"
     skill_dir.mkdir()
     manifest = {"name": "skill1", "tools": [{"name": "tool1"}]}
     (skill_dir / "manifest.json").write_text(json.dumps(manifest))
     registry = SkillRegistry(tmp_path)
-    assert registry.get_tool_min_tier("skill1", "tool1") == 1
+    assert registry.get_tool_min_effort("skill1", "tool1") == 1
 
 
-def test_get_tool_min_tier_explicit(tmp_path):
+def test_get_tool_min_effort_explicit(tmp_path):
     skill_dir = tmp_path / "skill1"
     skill_dir.mkdir()
-    manifest = {"name": "skill1", "tools": [{"name": "tool1", "min_tier": 2}]}
+    manifest = {"name": "skill1", "tools": [{"name": "tool1", "min_effort": 2}]}
     (skill_dir / "manifest.json").write_text(json.dumps(manifest))
     registry = SkillRegistry(tmp_path)
-    assert registry.get_tool_min_tier("skill1", "tool1") == 2
+    assert registry.get_tool_min_effort("skill1", "tool1") == 2
 
 
 def test_find_skill_for_tool_found(tmp_path):

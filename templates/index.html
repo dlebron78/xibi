@@ -25,6 +25,21 @@
             </div>
         </div>
 
+        <!-- Model Chips + Edit trigger -->
+        <div class="flex items-center gap-3 -mt-4 mb-2">
+            <span class="text-[10px] text-slate-600 uppercase tracking-widest font-bold">Models</span>
+            <div id="model-chips" class="flex gap-2 flex-wrap">
+                <span class="text-slate-600 text-xs">Loading…</span>
+            </div>
+            <button onclick="openModelModal()"
+                class="ml-auto text-[10px] font-bold uppercase tracking-wider text-slate-500 hover:text-blue-400 transition-colors flex items-center gap-1 px-2 py-1 rounded border border-slate-700 hover:border-blue-500/50">
+                <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z"/>
+                </svg>
+                Edit
+            </button>
+        </div>
+
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <!-- Inference Cost Panel -->
             <div class="panel lg:col-span-1">
@@ -171,6 +186,28 @@
                 </div>
             </div>
         </div>
+
+    </div>
+
+
+    <!-- Model Config Modal -->
+    <div id="model-modal" class="fixed inset-0 z-50 hidden">
+        <div class="absolute inset-0 bg-black/70 backdrop-blur-sm" onclick="closeModelModal()"></div>
+        <div class="absolute inset-0 flex items-center justify-center p-4">
+            <div class="relative bg-slate-900 border border-slate-700 rounded-xl shadow-2xl w-full max-w-2xl">
+                <div class="flex items-center justify-between px-6 py-4 border-b border-slate-700">
+                    <h2 class="text-lg font-semibold text-blue-300">Model Configuration</h2>
+                    <button onclick="closeModelModal()" class="text-slate-500 hover:text-slate-200 transition-colors text-xl leading-none">&times;</button>
+                </div>
+                <div class="px-6 py-5 space-y-5" id="modal-assignments">
+                    <div class="text-slate-500 text-sm">Loading…</div>
+                </div>
+                <div class="px-6 py-4 border-t border-slate-700 flex justify-end">
+                    <span id="modal-global-status" class="text-xs text-slate-500 mr-auto self-center"></span>
+                    <button onclick="closeModelModal()" class="text-sm text-slate-400 hover:text-slate-200 px-4 py-1.5 rounded border border-slate-600 hover:border-slate-400 transition-colors">Close</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -185,6 +222,7 @@
         }
 
         async function init() {
+            loadModelConfig();
             refreshHealth();
             refreshInference();
             refreshTrust();
@@ -395,26 +433,103 @@
                 ${data.error_count > 0 ? `<div class="bg-red-900/20 px-2 py-1 rounded border border-red-900/50 text-red-400 font-bold">ERRORS: ${data.error_count}</div>` : ''}
             `;
 
-            container.innerHTML = data.spans.map(s => {
+            // Store spans for click handler
+            window._lastSpans = data.spans;
+
+            container.innerHTML = data.spans.map((s, idx) => {
                 const width = Math.max(0.5, (s.duration_ms / data.total_duration_ms) * 100);
                 const left = (s.offset_ms / data.total_duration_ms) * 100;
-                let color = 'bg-blue-500';
-                if (s.component === 'tool') color = 'bg-amber-500';
-                else if (s.component === 'llm') color = 'bg-purple-500';
+
+                // Color by component
+                let color = 'bg-blue-600';
+                if (s.component === 'executor') color = 'bg-amber-500';
+                else if (s.component === 'router') color = 'bg-purple-500';
                 else if (s.component === 'db') color = 'bg-emerald-500';
+                else if (s.component === 'react' && s.operation === 'react.step') color = 'bg-orange-500';
+                else if (s.component === 'react') color = 'bg-blue-400';
 
                 const border = s.status !== 'ok' ? 'border-2 border-red-500' : '';
 
+                const attrs = s.attributes || {};
+                const tool = attrs.tool || '';
+                const hasDetail = !!(attrs.thought || attrs.tool_input || attrs.tool_output || attrs.raw_response_preview);
+
+                // Label: show tool name if present
+                let label = s.operation;
+                if (tool) label = s.operation.replace('react.step', 'step') + ' → ' + tool;
+                if (s.operation === 'tool.dispatch' && tool) label = 'tool → ' + tool;
+
+                const clickable = hasDetail ? 'cursor-pointer' : '';
+                const chevron = hasDetail ? '<span class="ml-1 text-slate-600 group-hover:text-slate-400">▸</span>' : '';
+
                 return `
-                    <div class="flex items-center text-[10px] group">
-                        <div class="w-32 truncate pr-2 text-slate-500 font-mono group-hover:text-slate-300 transition-colors" title="${s.operation}">${s.operation}</div>
-                        <div class="flex-1 bg-slate-800/50 h-3 relative rounded-full overflow-hidden">
-                            <div class="absolute h-full ${color} ${border} rounded-full" style="left: ${left}%; width: ${width}%; min-width: 2px;" title="${s.operation}: ${s.duration_ms}ms"></div>
+                    <div class="space-y-0">
+                        <div class="flex items-center text-[10px] group ${clickable}" onclick="toggleSpanDetail(${idx})">
+                            <div class="w-40 truncate pr-2 text-slate-500 font-mono group-hover:text-slate-300 transition-colors flex items-center" title="${s.operation}">
+                                ${label}${chevron}
+                            </div>
+                            <div class="flex-1 bg-slate-800/50 h-3 relative rounded-full overflow-hidden">
+                                <div class="absolute h-full ${color} ${border} rounded-full" style="left: ${left}%; width: ${width}%; min-width: 2px;" title="${label}: ${s.duration_ms}ms"></div>
+                            </div>
+                            <div class="w-14 text-right text-slate-600 font-mono ml-2">${s.duration_ms}ms</div>
                         </div>
-                        <div class="w-12 text-right text-slate-600 font-mono ml-2">${s.duration_ms}ms</div>
+                        <div id="span-detail-${idx}" class="hidden ml-40 mt-1 mb-2 bg-slate-900 border border-slate-700/50 rounded p-3 text-[10px] space-y-2"></div>
                     </div>
                 `;
             }).join('');
+        }
+
+        function toggleSpanDetail(idx) {
+            const el = document.getElementById('span-detail-' + idx);
+            if (!el) return;
+            if (!el.classList.contains('hidden')) {
+                el.classList.add('hidden');
+                return;
+            }
+            const s = (window._lastSpans || [])[idx];
+            if (!s) return;
+            const attrs = s.attributes || {};
+            let html = '';
+
+            if (attrs.thought) {
+                html += '<div>'
+                    + '<div class="text-slate-500 uppercase tracking-wider font-bold mb-1">Thought</div>'
+                    + '<div class="text-slate-300 leading-relaxed whitespace-pre-wrap">' + escHtml(attrs.thought) + '</div>'
+                    + '</div>';
+            }
+            if (attrs.tool_input) {
+                let inp = attrs.tool_input;
+                try { inp = JSON.stringify(JSON.parse(inp), null, 2); } catch(e) {}
+                html += '<div>'
+                    + '<div class="text-amber-400/80 uppercase tracking-wider font-bold mb-1">Tool Input</div>'
+                    + '<pre class="text-slate-300 font-mono whitespace-pre-wrap overflow-x-auto">' + escHtml(inp) + '</pre>'
+                    + '</div>';
+            }
+            if (attrs.tool_output) {
+                let out = attrs.tool_output;
+                try { out = JSON.stringify(JSON.parse(out), null, 2); } catch(e) {}
+                html += '<div>'
+                    + '<div class="text-emerald-400/80 uppercase tracking-wider font-bold mb-1">Tool Output</div>'
+                    + '<pre class="text-slate-300 font-mono whitespace-pre-wrap overflow-x-auto max-h-48">' + escHtml(out) + '</pre>'
+                    + '</div>';
+            }
+            if (attrs.raw_response_preview && !attrs.thought) {
+                html += '<div>'
+                    + '<div class="text-purple-400/80 uppercase tracking-wider font-bold mb-1">LLM Response</div>'
+                    + '<pre class="text-slate-300 font-mono whitespace-pre-wrap">' + escHtml(attrs.raw_response_preview) + '</pre>'
+                    + '</div>';
+            }
+            if (!html) return;
+            el.innerHTML = html;
+            el.classList.remove('hidden');
+        }
+
+        function escHtml(str) {
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
         }
 
         async function refreshCycles() {
@@ -452,22 +567,232 @@
 
         async function refreshSignals() {
             const [pipeline, signals] = await Promise.all([fetchData('/api/signal_pipeline'), fetchData('/api/signals')]);
-            if (pipeline) {
+            if (pipeline && pipeline.total !== undefined) {
                 const container = document.getElementById('signal-stats');
-                container.innerHTML = Object.entries(pipeline).map(([cls, count]) => `
-                    <div class="bg-slate-800/50 p-3 rounded text-center border border-slate-700/50">
-                        <div class="text-[10px] text-slate-500 font-bold uppercase tracking-tighter mb-1">${cls}</div>
-                        <div class="text-xl font-mono font-bold text-emerald-400">${count}</div>
-                    </div>
-                `).join('');
+                // Render by_source as primary stat boxes
+                const sourceEntries = Object.entries(pipeline.by_source || {}).slice(0, 6);
+                if (sourceEntries.length === 0) {
+                    container.innerHTML = '<div class="text-slate-500 text-xs col-span-full text-center py-2">No signals in last 7 days</div>';
+                } else {
+                    container.innerHTML = sourceEntries.map(([src, count]) => `
+                        <div class="bg-slate-800/50 p-3 rounded text-center border border-slate-700/50">
+                            <div class="text-[10px] text-slate-500 font-bold uppercase tracking-tighter mb-1">${src.split(':')[0]}</div>
+                            <div class="text-xl font-mono font-bold text-emerald-400">${count}</div>
+                        </div>
+                    `).join('');
+                }
             }
             if (signals && signals.active_threads) {
                 const container = document.getElementById('active-threads');
-                container.innerHTML = signals.active_threads.map(t => `
-                    <div class="bg-indigo-900/30 border border-indigo-500/30 px-3 py-1 rounded-full text-[10px] font-bold text-indigo-300 uppercase tracking-wide">
-                        ${t.topic} <span class="ml-1 text-indigo-500">${t.count}</span>
+                if (signals.active_threads.length === 0) {
+                    container.innerHTML = '<div class="text-slate-500 text-xs">No active threads</div>';
+                } else {
+                    const priorityStyle = {
+                        critical: 'bg-red-900/40 border-red-500/50 text-red-300',
+                        high:     'bg-orange-900/40 border-orange-500/50 text-orange-300',
+                        medium:   'bg-yellow-900/30 border-yellow-500/40 text-yellow-300',
+                        low:      'bg-slate-800/40 border-slate-600/40 text-slate-400',
+                    };
+                    const priorityDot = {
+                        critical: '🔴',
+                        high:     '🟠',
+                        medium:   '🟡',
+                        low:      '⚪',
+                    };
+                    container.innerHTML = signals.active_threads.map(t => {
+                        const p = t.priority || null;
+                        const style = p ? priorityStyle[p] : 'bg-indigo-900/30 border-indigo-500/30 text-indigo-300';
+                        const dot = p ? (priorityDot[p] + ' ') : '';
+                        const tooltip = t.summary ? ` title="${t.summary.replace(/"/g, '&quot;')}"` : '';
+                        return `<div class="border px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide cursor-default ${style}"${tooltip}>
+                            ${dot}${t.name} <span class="ml-1 opacity-60">${t.signal_count}</span>
+                        </div>`;
+                    }).join('');
+                }
+            }
+        }
+
+        // ── Model config ──────────────────────────────────────────────────────
+
+        let _availableModels = {};
+        const EFFORT_COLORS = { fast: 'text-blue-400', think: 'text-purple-400', review: 'text-pink-400' };
+
+        async function loadModelConfig() {
+            const [config, models] = await Promise.all([
+                fetchData('/api/config/models'),
+                fetchData('/api/config/available_models'),
+            ]);
+            if (!config) return;
+            _availableModels = models || {};
+
+            // Render compact chips at the top
+            const chips = document.getElementById('model-chips');
+            const efforts = ['fast', 'think', 'review'];
+            chips.innerHTML = efforts.map(effort => {
+                const a = (config.assignments || {})[effort] || {};
+                const label = a.model ? `${a.model}` : '—';
+                const sublabel = a.provider ? a.provider : '';
+                const color = EFFORT_COLORS[effort] || 'text-slate-400';
+                return `<div class="bg-slate-800 border border-slate-700 rounded px-3 py-1 flex items-center gap-2 text-[11px]">
+                    <span class="font-bold uppercase tracking-wider ${color}">${effort}</span>
+                    <span class="text-slate-400 font-mono truncate max-w-[140px]" title="${label}">${label}</span>
+                    ${sublabel ? `<span class="text-slate-600">${sublabel}</span>` : ''}
+                </div>`;
+            }).join('');
+
+            // Pre-populate modal form (hidden until opened)
+            renderModalForm(config, _availableModels);
+        }
+
+        function renderModalForm(config, models) {
+            const container = document.getElementById('modal-assignments');
+            const efforts = ['fast', 'think', 'review'];
+            container.innerHTML = efforts.map(effort => {
+                const a = (config.assignments || {})[effort] || {};
+                const providers = config.available_providers || [];
+                const provOpts = providers.map(p =>
+                    '<option value="' + p + '"' + (p === a.provider ? ' selected' : '') + '>' + p + '</option>'
+                ).join('');
+                const optJson = JSON.stringify(a.options || {});
+                const color = EFFORT_COLORS[effort] || 'text-slate-400';
+                const currentProvider = a.provider || '';
+                const currentModel = a.model || '';
+                const isOllama = currentProvider === 'ollama';
+                const provModels = (models[currentProvider] || []);
+
+                // Ollama gets a live dropdown; cloud providers get free-text + datalist
+                let modelInput;
+                if (isOllama) {
+                    const modelOpts = provModels.map(m => {
+                        const n = m.name || m;
+                        return '<option value="' + n + '"' + (n === currentModel ? ' selected' : '') + '>' + n + '</option>';
+                    }).join('');
+                    modelInput = '<select id="modal-model-' + effort + '"'
+                        + ' class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-sm text-slate-200 focus:border-blue-500 focus:outline-none">'
+                        + modelOpts + '</select>';
+                } else {
+                    const datalistId = 'dl-' + effort;
+                    const suggestions = provModels.map(m => '<option value="' + (m.name || m) + '">').join('');
+                    modelInput = '<input type="text" id="modal-model-' + effort + '" value="' + currentModel + '"'
+                        + ' list="' + datalistId + '" autocomplete="off" placeholder="Type or pick a model…"'
+                        + ' class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-sm font-mono text-slate-200 focus:border-blue-500 focus:outline-none" />'
+                        + '<datalist id="' + datalistId + '">' + suggestions + '</datalist>';
+                }
+
+                return `<div class="border border-slate-700/50 rounded-lg p-4">
+                    <div class="flex items-center justify-between mb-3">
+                        <span class="text-sm font-bold uppercase tracking-wider ${color}">${effort}</span>
+                        <span class="text-[10px] text-slate-600" id="modal-save-status-${effort}"></span>
                     </div>
-                `).join('');
+                    <div class="grid grid-cols-2 gap-3 mb-3">
+                        <div>
+                            <label class="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">Provider</label>
+                            <select id="modal-provider-${effort}" onchange="onModalProviderChange('${effort}')"
+                                class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-sm text-slate-200 focus:border-blue-500 focus:outline-none">
+                                ${provOpts}
+                            </select>
+                        </div>
+                        <div>
+                            <label class="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">Model</label>
+                            ${modelInput}
+                        </div>
+                    </div>
+                    <div class="flex gap-3 items-end">
+                        <div class="flex-1">
+                            <label class="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">Options (JSON)</label>
+                            <input type="text" id="modal-options-${effort}" value='${optJson}'
+                                class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-xs font-mono text-slate-300 focus:border-blue-500 focus:outline-none" />
+                        </div>
+                        <button onclick="saveModalModel('${effort}')"
+                            class="bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold py-1.5 px-5 rounded transition-colors whitespace-nowrap">
+                            Save
+                        </button>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        async function openModelModal() {
+            // Refresh data when opening
+            const [config, models] = await Promise.all([
+                fetchData('/api/config/models'),
+                fetchData('/api/config/available_models'),
+            ]);
+            if (config) {
+                _availableModels = models || {};
+                renderModalForm(config, _availableModels);
+            }
+            document.getElementById('model-modal').classList.remove('hidden');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeModelModal() {
+            document.getElementById('model-modal').classList.add('hidden');
+            document.body.style.overflow = '';
+        }
+
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Escape') closeModelModal();
+        });
+
+        async function onModalProviderChange(effort) {
+            if (!Object.keys(_availableModels).length) {
+                _availableModels = await fetchData('/api/config/available_models') || {};
+            }
+            const provider = document.getElementById('modal-provider-' + effort).value;
+            const models = _availableModels[provider] || [];
+            const modelEl = document.getElementById('modal-model-' + effort);
+            const modelContainer = modelEl.parentElement;
+
+            if (provider === 'ollama') {
+                // Replace with dropdown for ollama (live list)
+                const opts = models.map(m => '<option value="' + (m.name||m) + '">' + (m.name||m) + '</option>').join('');
+                modelContainer.innerHTML = '<label class="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">Model</label>'
+                    + '<select id="modal-model-' + effort + '" class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-sm text-slate-200 focus:border-blue-500 focus:outline-none">'
+                    + opts + '</select>';
+            } else {
+                // Replace with text input + datalist for cloud providers
+                const datalistId = 'dl-' + effort;
+                const suggestions = models.map(m => '<option value="' + (m.name||m) + '">').join('');
+                modelContainer.innerHTML = '<label class="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">Model</label>'
+                    + '<input type="text" id="modal-model-' + effort + '" list="' + datalistId + '" autocomplete="off" placeholder="Type or pick a model…"'
+                    + ' class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-sm font-mono text-slate-200 focus:border-blue-500 focus:outline-none" />'
+                    + '<datalist id="' + datalistId + '">' + suggestions + '</datalist>';
+            }
+        }
+
+        async function saveModalModel(effort) {
+            const provider = document.getElementById('modal-provider-' + effort).value;
+            const model = document.getElementById('modal-model-' + effort).value;
+            const optStr = document.getElementById('modal-options-' + effort).value;
+            const status = document.getElementById('modal-save-status-' + effort);
+            let options = {};
+            try { options = JSON.parse(optStr || '{}'); } catch(e) {
+                status.textContent = 'Invalid JSON';
+                status.className = 'text-[10px] text-red-400';
+                return;
+            }
+            status.textContent = 'Saving…';
+            status.className = 'text-[10px] text-yellow-400';
+            try {
+                const res = await fetch('/api/config/models', {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({effort, provider, model, options}),
+                });
+                const result = await res.json();
+                if (result.status === 'ok') {
+                    status.textContent = 'Saved';
+                    status.className = 'text-[10px] text-emerald-400';
+                    // Refresh chips
+                    loadModelConfig();
+                } else {
+                    status.textContent = result.error;
+                    status.className = 'text-[10px] text-red-400';
+                }
+            } catch(e) {
+                status.textContent = 'Network error';
+                status.className = 'text-[10px] text-red-400';
             }
         }
 

@@ -68,6 +68,33 @@ class Executor:
         self.config = config or {}
         self.db_path = self.config.get("db_path") or Path.home() / ".xibi" / "data" / "xibi.db"
         self.mcp_executor = MCPExecutor(mcp_registry) if mcp_registry else None
+        self._register_core_skills()
+
+    def _register_core_skills(self) -> None:
+        """
+        Ensure core tools are always available in the registry regardless of
+        what the user's skills_dir contains.
+
+        Core tools are loaded from the bundled xibi/skills/sample/ directory.
+        If a core tool is already in the registry (user has their own version),
+        the user's version takes precedence — we do not overwrite.
+        """
+        try:
+            import xibi.skills as _skills_pkg
+
+            sample_dir = Path(_skills_pkg.__file__).parent / "sample"
+            if not sample_dir.exists():
+                logger.warning("core skills dir not found: %s", sample_dir)
+                return
+
+            core_registry = SkillRegistry(sample_dir)
+
+            for skill_name, skill_info in core_registry.skills.items():
+                if skill_name not in self.registry.skills:
+                    self.registry.skills[skill_name] = skill_info
+                    logger.debug("executor: registered core skill '%s' from %s", skill_name, skill_info.path)
+        except Exception as e:
+            logger.warning("executor: failed to register core skills: %s", e)
 
     def execute(self, tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
         # Filter out pseudo-tools
@@ -83,8 +110,15 @@ class Executor:
         server_name = ""
         result: dict[str, Any] = {}
 
-        # 1. Resolve skill
-        skill_name = tool_name if tool_name in self.registry.skills else self.registry.find_skill_for_tool(tool_name)
+        # 1. Resolve skill — use find_local_skill_for_tool so that synthetic MCP-injected
+        # registry entries (source="mcp", path="/dev/null") are not mistaken for real local
+        # skills and do not falsely trigger the collision warning or the local-file loader.
+        local_skill_name = self.registry.find_local_skill_for_tool(tool_name)
+        skill_name = (
+            tool_name
+            if (tool_name in self.registry.skills and self.registry.skills[tool_name].source == "local")
+            else local_skill_name
+        )
 
         # MCP check
         mcp_match = self.mcp_executor.can_handle(tool_name) if self.mcp_executor else False
@@ -201,24 +235,41 @@ class Executor:
             if result.get("circuit_open"):
                 error_attr = "circuit_open"
 
+            operation = f"tools/call {tool_name}" if is_mcp else "tool.dispatch"
+            attributes = {
+                "tool": tool_name,
+                "source": "mcp" if is_mcp else "native",
+                "server": server_name,  # empty string for native tools
+                "input_preview": input_preview,
+                "output_preview": str(output_text)[:400],
+                "error": error_attr,
+            }
+
+            if is_mcp:
+                attributes.update(
+                    {
+                        "mcp.method.name": "tools/call",
+                        "gen_ai.tool.name": tool_name,
+                        "gen_ai.operation.name": "execute_tool",
+                        "mcp.protocol.version": "2025-11-25",
+                    }
+                )
+                if self.mcp_executor:
+                    client = self.mcp_executor.registry.get_client(server_name)
+                    if client:
+                        attributes["mcp.session.id"] = client.session_id
+
             tracer.emit(
                 Span(
                     trace_id=ctx["trace_id"],
                     span_id=tracer.new_span_id(),
                     parent_span_id=ctx.get("parent_span_id"),
-                    operation="tool.dispatch",
+                    operation=operation,
                     component="mcp" if is_mcp else "executor",
                     start_ms=start_ms,
                     duration_ms=duration_ms,
                     status="error" if result.get("status") == "error" else "ok",
-                    attributes={
-                        "tool": tool_name,
-                        "source": "mcp" if is_mcp else "native",
-                        "server": server_name,  # empty string for native tools
-                        "input_preview": input_preview,
-                        "output_preview": str(output_text)[:400],
-                        "error": error_attr,
-                    },
+                    attributes=attributes,
                 )
             )
         except Exception:
@@ -308,6 +359,13 @@ class LocalHandlerExecutor(Executor):
         sys.path.insert(0, skill_dir)
 
         try:
+            # Prepare params
+            params = tool_input.copy()
+            if self.workdir:
+                params["_workdir"] = str(self.workdir)
+            params["_db_path"] = str(self.db_path)
+            params["_config"] = self.config
+
             # Dynamic import and invoke
             spec = importlib.util.spec_from_file_location(f"xibi.skills.{skill_info.name}.handler", handler_file)
             if spec is None or spec.loader is None:
@@ -320,11 +378,6 @@ class LocalHandlerExecutor(Executor):
                 return {"status": "error", "message": f"Unknown tool: {tool_name}"}
 
             handler_func = getattr(module, tool_name)
-
-            # Prepare params
-            params = tool_input.copy()
-            if self.workdir:
-                params["_workdir"] = str(self.workdir)
 
             result = handler_func(params)
             if isinstance(result, dict):

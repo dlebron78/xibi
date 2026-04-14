@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 from pathlib import Path
@@ -224,7 +225,7 @@ def test_shadow_stats_with_data(client, db_path: Path):
 def test_signals_empty(client):
     response = client.get("/api/signals")
     assert response.status_code == 200
-    assert response.get_json() == []
+    assert response.get_json() == {"signals": [], "active_threads": []}
 
 
 def test_signals_data(client, db_path: Path):
@@ -246,37 +247,47 @@ def test_signals_data(client, db_path: Path):
     response = client.get("/api/signals")
     assert response.status_code == 200
     data = response.get_json()
-    assert len(data) == 3
-    assert data[0]["classification"] == "URGENT"
+    assert len(data["signals"]) == 3
+    assert data["signals"][0]["classification"] == "URGENT"
 
 
 def test_signal_pipeline_empty(client):
     response = client.get("/api/signal_pipeline")
     assert response.status_code == 200
-    assert response.get_json() == {}
+    assert response.get_json() == {"by_source": {}, "by_urgency": {}, "by_action_type": {}, "total": 0}
 
 
 def test_signal_pipeline_grouped(client, db_path: Path):
+    # The new implementation uses by_urgency if classification/urgency column exists
+    # In the fixture, signals table has 'classification' column but not 'urgency'
+    # Actually get_signal_pipeline rewrite uses 'urgency' and 'action_type' columns specifically.
+    # Let's check the fixture again.
+    # classification is there, but get_signal_pipeline(conn) checks for urgency.
+
     with sqlite3.connect(db_path) as conn:
+        # Add urgency column if missing (fixture only has classification)
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("ALTER TABLE signals ADD COLUMN urgency TEXT")
+
         conn.execute(
-            "INSERT INTO signals (source, classification, content_preview) VALUES (?, ?, ?)",
-            ("email", "URGENT", "pre1"),
+            "INSERT INTO signals (source, urgency, content_preview) VALUES (?, ?, ?)",
+            ("email", "high", "pre1"),
         )
         conn.execute(
-            "INSERT INTO signals (source, classification, content_preview) VALUES (?, ?, ?)",
-            ("email", "URGENT", "pre2"),
+            "INSERT INTO signals (source, urgency, content_preview) VALUES (?, ?, ?)",
+            ("email", "high", "pre2"),
         )
         conn.execute(
-            "INSERT INTO signals (source, classification, content_preview) VALUES (?, ?, ?)",
-            ("email", "DIGEST", "pre3"),
+            "INSERT INTO signals (source, urgency, content_preview) VALUES (?, ?, ?)",
+            ("email", "normal", "pre3"),
         )
         conn.commit()
 
     response = client.get("/api/signal_pipeline")
     assert response.status_code == 200
     data = response.get_json()
-    assert data["URGENT"] == 2
-    assert data["DIGEST"] == 1
+    assert data["by_urgency"]["high"] == 2
+    assert data["by_urgency"]["normal"] == 1
 
 
 def test_root_serves_html(client):

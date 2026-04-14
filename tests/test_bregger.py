@@ -289,6 +289,9 @@ class TestWorkingMemory:
 class TestConversationRecall:
     def test_recall_empty_history(self, core):
         from skills.memory.tools import recall_conversation
+        from xibi.db import init_workdir
+
+        init_workdir(Path(core.db_path.parent.parent))
 
         # Test empty
         res = recall_conversation.run({"query": "apple", "_workdir": core.db_path.parent.parent.as_posix()})
@@ -298,9 +301,14 @@ class TestConversationRecall:
     def test_recall_keyword_match(self, core):
         import sqlite3
 
+        from xibi.db import init_workdir
+
+        init_workdir(Path(core.db_path.parent.parent))
+
         from skills.memory.tools import recall_conversation
 
-        with sqlite3.connect(core.db_path) as conn:
+        db_path = core.db_path.parent / "xibi.db"
+        with sqlite3.connect(db_path) as conn:
             conn.execute(
                 "INSERT INTO conversation_history (user_message, bot_response, created_at) VALUES ('hello apple', 'hi', '2024-01-01 10:00:00')"
             )
@@ -316,9 +324,14 @@ class TestConversationRecall:
     def test_recall_limit(self, core):
         import sqlite3
 
+        from xibi.db import init_workdir
+
+        init_workdir(Path(core.db_path.parent.parent))
+
         from skills.memory.tools import recall_conversation
 
-        with sqlite3.connect(core.db_path) as conn:
+        db_path = core.db_path.parent / "xibi.db"
+        with sqlite3.connect(db_path) as conn:
             for i in range(15):
                 conn.execute(
                     f"INSERT INTO conversation_history (user_message, bot_response, created_at) VALUES ('test orange {i}', 'hi', '2024-01-01 10:00:00')"
@@ -332,6 +345,10 @@ class TestConversationRecall:
 
     def test_recall_no_match(self, core):
         import sqlite3
+
+        from xibi.db import init_workdir
+
+        init_workdir(Path(core.db_path.parent.parent))
 
         from skills.memory.tools import recall_conversation
 
@@ -347,16 +364,22 @@ class TestConversationRecall:
 
 class TestMemorySkill:
     def _db(self, tmp_workdir):
-        return tmp_workdir / "data" / "bregger.db"
+        return tmp_workdir / "data" / "xibi.db"
 
     def test_remember_basic(self, tmp_workdir):
         from skills.memory.tools import remember
+        from xibi.db import init_workdir
+
+        init_workdir(tmp_workdir)
 
         result = remember.run({"content": "buy milk", "_workdir": str(tmp_workdir)})
         assert result["status"] == "success", result.get("message")
 
     def test_remember_with_category(self, tmp_workdir):
         from skills.memory.tools import remember
+        from xibi.db import init_workdir
+
+        init_workdir(tmp_workdir)
 
         result = remember.run({"content": "Call Bob", "category": "task", "_workdir": str(tmp_workdir)})
         assert result["status"] == "success"
@@ -368,6 +391,9 @@ class TestMemorySkill:
 
     def test_recall_all(self, tmp_workdir):
         from skills.memory.tools import recall, remember
+        from xibi.db import init_workdir
+
+        init_workdir(tmp_workdir)
 
         remember.run({"content": "item one", "_workdir": str(tmp_workdir)})
         remember.run({"content": "item two", "_workdir": str(tmp_workdir)})
@@ -377,14 +403,20 @@ class TestMemorySkill:
 
     def test_recall_by_category(self, tmp_workdir):
         from skills.memory.tools import recall, remember
+        from xibi.db import init_workdir
 
-        remember.run({"content": "design spec", "category": "idea"})
-        remember.run({"content": "grocery run", "category": "task"})
-        result = recall.run({"category": "idea"})
+        init_workdir(tmp_workdir)
+
+        remember.run({"content": "design spec", "category": "idea", "_workdir": str(tmp_workdir)})
+        remember.run({"content": "grocery run", "category": "task", "_workdir": str(tmp_workdir)})
+        result = recall.run({"category": "idea", "_workdir": str(tmp_workdir)})
         assert all(i["category"] == "idea" for i in result["items"])
 
     def test_recall_by_keyword(self, tmp_workdir):
         from skills.memory.tools import recall, remember
+        from xibi.db import init_workdir
+
+        init_workdir(tmp_workdir)
 
         remember.run({"content": "order milk from store", "_workdir": str(tmp_workdir)})
         result = recall.run({"query": "milk", "_workdir": str(tmp_workdir)})
@@ -392,8 +424,11 @@ class TestMemorySkill:
 
     def test_recall_empty(self, tmp_workdir):
         from skills.memory.tools import recall
+        from xibi.db import init_workdir
 
-        result = recall.run({"query": "xyznonexistent99"})
+        init_workdir(tmp_workdir)
+
+        result = recall.run({"query": "xyznonexistent99", "_workdir": str(tmp_workdir)})
         assert result["status"] == "success"
         assert result["items"] == []
 
@@ -791,13 +826,13 @@ class TestUnifiedMemorySignals:
         # Mock an email about presentation
         email = {"id": "123", "from": "boss@acme.com", "subject": "presentation deck", "body": "where is it"}
 
-        # Monkeypatch check_email, classify_email, and is_quiet_hours just for this test
+        # Monkeypatch check_email, classify_signal, and is_quiet_hours just for this test
         original_check = bregger_heartbeat.check_email
-        original_classify = bregger_heartbeat.classify_email
+        original_classify = bregger_heartbeat.classify_signal
         original_quiet = bregger_heartbeat.is_quiet_hours
         try:
             bregger_heartbeat.check_email = lambda *args: [email]
-            bregger_heartbeat.classify_email = lambda *args, **kwargs: "DIGEST"
+            bregger_heartbeat.classify_signal = lambda *args, **kwargs: ("MEDIUM", "Reason")
             bregger_heartbeat.is_quiet_hours = lambda: False
 
             # We mock TelegramNotifier
@@ -808,18 +843,18 @@ class TestUnifiedMemorySignals:
             # Call tick which processes all unread emails
             bregger_heartbeat.tick(core.db_path.parent.parent, core.db_path, MockNotifier(), rules, "gemma2:9b")
 
-            # Now verify triage_log has URGENT
+            # Now verify triage_log has HIGH
             with sqlite3.connect(core.db_path) as conn:
                 row = conn.execute("SELECT verdict, subject FROM triage_log WHERE email_id='123'").fetchone()
 
             assert row is not None
-            assert row[0] == "URGENT"
+            assert row[0] == "HIGH"
             assert "🔥" in row[1]
             assert "presentation" in row[1]
 
         finally:
             bregger_heartbeat.check_email = original_check
-            bregger_heartbeat.classify_email = original_classify
+            bregger_heartbeat.classify_signal = original_classify
             bregger_heartbeat.is_quiet_hours = original_quiet
 
     def test_pinned_topics_escalation(self, core):
@@ -840,13 +875,13 @@ class TestUnifiedMemorySignals:
             "body": "are you available",
         }
 
-        # Monkeypatch check_email and classify_email
+        # Monkeypatch check_email and classify_signal
         original_check = bregger_heartbeat.check_email
-        original_classify = bregger_heartbeat.classify_email
+        original_classify = bregger_heartbeat.classify_signal
         original_quiet = bregger_heartbeat.is_quiet_hours
         try:
             bregger_heartbeat.check_email = lambda *args: [email]
-            bregger_heartbeat.classify_email = lambda *args, **kwargs: "DIGEST"
+            bregger_heartbeat.classify_signal = lambda *args, **kwargs: ("MEDIUM", "Reason")
             bregger_heartbeat.is_quiet_hours = lambda: False
 
             class MockNotifier:
@@ -870,13 +905,13 @@ class TestUnifiedMemorySignals:
                 row = conn.execute("SELECT verdict, subject FROM triage_log WHERE email_id='124'").fetchone()
 
             assert row is not None
-            assert row[0] == "URGENT"
+            assert row[0] == "HIGH"
             assert "📌" in row[1]
             assert "jetblue" in row[1]
 
         finally:
             bregger_heartbeat.check_email = original_check
-            bregger_heartbeat.classify_email = original_classify
+            bregger_heartbeat.classify_signal = original_classify
             bregger_heartbeat.is_quiet_hours = original_quiet
 
     def test_topic_normalization(self):
@@ -964,13 +999,13 @@ class TestSkillContract:
         assert plan["skill"] == "test_skill"
         assert plan["tool"] == "test_tool"
 
-    def test_intent_mapper_min_tier(self, tmp_path):
+    def test_intent_mapper_min_effort(self, tmp_path):
 
         from bregger_core import IntentMapper
 
         # Mock registry with a Tier 3 tool
         class MockRegistry:
-            def get_tool_min_tier(self, s, t):
+            def get_tool_min_effort(self, s, t):
                 return 3 if t == "complex_tool" else 1
 
         mapper = IntentMapper(MockRegistry())

@@ -1,0 +1,24 @@
+admin_user_id: null
+channel: telegram
+db_path: MagicMock/mock.workdir/140600069325264/data/xibi.db
+models:
+  text:
+    fast:
+      model: valid-model
+      provider: ollama
+    review:
+      model: valid-model
+      provider: ollama
+    think:
+      model: valid-model
+      provider: ollama
+providers:
+  anthropic:
+    api_key_env: ANTHROPIC_API_KEY
+  groq:
+    api_key_env: GROQ_API_KEY
+  ollama:
+    base_url: http://localhost:11434
+  openai:
+    api_key_env: OPENAI_API_KEY
+skill_dir: MagicMock/mock.workdir/140600069325264/skills
