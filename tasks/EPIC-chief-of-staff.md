@@ -2,7 +2,7 @@
 
 > **Owner:** Daniel LeBron
 > **Created:** 2026-04-10
-> **Status:** In Progress — All 7 blocks specced, Blocks 1-3 merged, Block 4 in progress
+> **Status:** Complete — All 7 blocks implemented and merged (steps 67-80). Backlog items remain for future enhancement.
 > **Canonical doc:** `xibi-chief-of-staff-epic.docx` (repo root)
 
 ---
@@ -33,10 +33,10 @@ Two layers running in parallel:
 | 1 | Email Body Fetch + Summarize | — | DONE (step-67) |
 | 2 | Sent Mail Polling + Contact Population | — | DONE (step-68) |
 | 3 | Sender Trust Assessment | Block 2 | DONE (step-69) |
-| 4 | Context-Aware Classification | Blocks 1, 3 | IN PROGRESS (step-70 pending TRR, step-71 in Jules) |
-| 5 | Manager Review Enrichment | Blocks 1, 2, 3 | SPECCED (step-72 pending TRR) |
-| 6 | CRITICAL Signal → Rich Nudge | Blocks 4, 5 | SPECCED (step-73 pending TRR) |
-| 7 | Structured Action from Nudge | Block 6 | SPECCED (step-74 pending TRR) |
+| 4 | Context-Aware Classification | Blocks 1, 3 | DONE (steps 70, 71, 76, 78, 80) |
+| 5 | Manager Review Enrichment | Blocks 1, 2, 3 | DONE (steps 72, 80) |
+| 6 | CRITICAL Signal → Rich Nudge | Blocks 4, 5 | DONE (step-73, plus review cycle communication in step-80) |
+| 7 | Structured Action from Nudge | Block 6 | DONE (step-74, plus existing Roberto conversation + reply_email) |
 
 ## Phases
 
