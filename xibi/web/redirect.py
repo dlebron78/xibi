@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
-from html import escape as html_escape
 import logging
 import uuid
 from datetime import datetime, timezone
+from html import escape as html_escape
 from pathlib import Path
 from typing import Any
 

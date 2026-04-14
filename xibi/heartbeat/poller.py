@@ -16,9 +16,9 @@ from xibi.channels.sheets import SheetsExporter
 from xibi.channels.telegram import TelegramAdapter
 from xibi.command_layer import CommandLayer
 from xibi.heartbeat.classification import build_classification_prompt
-from xibi.heartbeat.review_cycle import run_review_cycle, execute_review
 from xibi.heartbeat.contact_poller import backfill_contacts, find_himalaya, poll_sent_folder
 from xibi.heartbeat.extractors import SignalExtractorRegistry
+from xibi.heartbeat.review_cycle import execute_review, run_review_cycle
 from xibi.heartbeat.sender_trust import (
     _extract_sender_addr,
     _extract_sender_name,

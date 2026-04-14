@@ -44,10 +44,7 @@ def format_signal_message(signal: dict, base_url: str | None = None) -> str:
 
     source = signal.get("source", "email")
 
-    if has_link and signal_id:
-        linked_subject = format_signal_link(subject, signal_id, base_url)
-    else:
-        linked_subject = subject
+    linked_subject = format_signal_link(subject, signal_id, base_url) if has_link and signal_id else subject
 
     if source == "calendar":
         time_hint = signal.get("time_until") or ""

@@ -1,8 +1,10 @@
+
 import pytest
-from pathlib import Path
+
+from xibi.db import open_db
 from xibi.heartbeat.classification import build_classification_prompt, build_priority_context
 from xibi.heartbeat.context_assembly import SignalContext
-from xibi.db import open_db
+
 
 @pytest.fixture
 def db_path(tmp_path):

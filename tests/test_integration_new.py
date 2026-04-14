@@ -1,7 +1,8 @@
-import pytest
-from datetime import datetime, timedelta
-from xibi.heartbeat.poller import HeartbeatPoller
+from datetime import datetime
 from unittest.mock import MagicMock
+
+from xibi.heartbeat.poller import HeartbeatPoller
+
 
 def test_review_cycle_scheduling():
     poller = HeartbeatPoller(skills_dir=None, db_path=None, adapter=None, rules=None, allowed_chat_ids=[])

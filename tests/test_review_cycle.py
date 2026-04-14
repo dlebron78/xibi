@@ -1,11 +1,10 @@
-import pytest
-import sqlite3
-from pathlib import Path
 from unittest.mock import MagicMock, patch
-from xibi.heartbeat.review_cycle import (
-    ReviewOutput, _parse_review_response, execute_review, run_review_cycle
-)
+
+import pytest
+
 from xibi.db import open_db
+from xibi.heartbeat.review_cycle import ReviewOutput, _parse_review_response, execute_review, run_review_cycle
+
 
 @pytest.fixture
 def db_path(tmp_path):
