@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from xibi.telegram.formatter import format_signal_message
 
+
 def test_format_signal_with_link():
     signal = {
         "id": 123,

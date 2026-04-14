@@ -17,6 +17,7 @@ dependencies = [
     "PyYAML>=6.0",
     "jsonschema>=4.20",
     "cryptography>=42.0",
+    "aiohttp>=3.9",
 ]
 
 [project.scripts]

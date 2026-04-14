@@ -654,7 +654,7 @@ class TelegramAdapter:
                                 user_text = f"{caption} [attachment saved at {local_path}]"
                                 self._handle_text(chat_id, user_text)
                             else:
-                                fname = os.basename(local_path)
+                                fname = os.path.basename(local_path)
                                 self.send_message(
                                     chat_id,
                                     f"Got it! I've saved '{fname}'. Now just tell me what to do with it.",
@@ -768,7 +768,8 @@ class TelegramAdapter:
                 if row:
                     try:
                         payload = json.loads(row[0])
-                        return payload.get("signal_id")
+                        sid = payload.get("signal_id")
+                        return int(sid) if sid is not None else None
                     except Exception:
                         pass
                 return None

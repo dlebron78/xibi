@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import os
-import pytest
 from xibi.telegram.formatter import format_signal_link
+
 
 def test_format_signal_link_basic():
     # Setup

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import base64
-import json
 import sqlite3
+
 import pytest
-from pathlib import Path
-from xibi.heartbeat.poller import HeartbeatPoller
-from xibi.heartbeat.calendar_poller import poll_calendar_signals
+
 from xibi.db import migrate
+from xibi.heartbeat.calendar_poller import poll_calendar_signals
+
 
 @pytest.fixture
 def db_path(tmp_path):
@@ -57,7 +57,6 @@ def test_calendar_signal_deep_link(db_path, monkeypatch):
     signals = poll_calendar_signals(db_path)
     assert len(signals) == 1
 
-    import base64
     expected_eid = base64.b64encode(b"evt789 cal456").decode().rstrip("=")
     assert signals[0]["deep_link_url"] == f"https://calendar.google.com/calendar/event?eid={expected_eid}"
 

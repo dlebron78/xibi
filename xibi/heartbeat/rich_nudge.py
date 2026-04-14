@@ -71,8 +71,9 @@ def compose_rich_nudge(
         lines.append(f"↔️ You've emailed them {context.contact_outbound_count}x")
 
     # WHAT — body summary
-    from xibi.telegram.formatter import format_signal_link
     import os
+
+    from xibi.telegram.formatter import format_signal_link
 
     # Assume we might not have a full config here, check env too
     # The context doesn't have the config, but we can try to get base_url from env.

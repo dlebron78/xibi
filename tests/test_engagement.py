@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from pathlib import Path
+
 import pytest
-from aiohttp import web
-from xibi.web.redirect import create_app, record_engagement_sync
+
 from xibi.db import migrate
+from xibi.web.redirect import create_app, record_engagement_sync
+
 
 @pytest.fixture
 def db_path(tmp_path):
