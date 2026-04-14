@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Subagents — Xibi Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/milligram/1.4.1/milligram.min.css">
+    <style>
+        body { padding: 2rem; background: #f4f5f7; }
+        .container { max-width: 1200px; background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .status-pill { padding: 0.2rem 0.6rem; border-radius: 4px; font-size: 0.8rem; font-weight: bold; }
+        .status-DONE { background: #e3f9e5; color: #1f7a1f; }
+        .status-RUNNING { background: #eef2ff; color: #3730a3; }
+        .status-FAILED { background: #fff1f2; color: #be123c; }
+        .status-CANCELLED { background: #f3f4f6; color: #4b5563; }
+        .status-SPAWNED { background: #fffbeb; color: #92400e; }
+        .status-TIMEOUT { background: #fff7ed; color: #c2410c; }
+        table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+        th, td { text-align: left; padding: 1rem; border-bottom: 1px solid #eee; }
+        .cost-card { text-align: center; padding: 1rem; background: #f8fafc; border-radius: 4px; margin-bottom: 1rem; }
+        .cost-card h4 { margin: 0; color: #64748b; font-size: 0.9rem; text-transform: uppercase; }
+        .cost-card div { font-size: 1.5rem; font-weight: bold; color: #0f172a; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+        #run-detail { display: none; margin-top: 2rem; padding-top: 2rem; border-top: 2px solid #eee; }
+        .step-item { border: 1px solid #eee; padding: 1rem; border-radius: 4px; margin-bottom: 0.5rem; }
+        pre { background: #f8fafc; padding: 1rem; font-size: 0.8rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Subagent Runtime</h1>
+        <p><a href="/">← Back to Overview</a></p>
+
+        <div class="grid" id="summary-grid">
+            <div class="cost-card"><h4>Active</h4><div id="active-count">-</div></div>
+            <div class="cost-card"><h4>Today (Done)</h4><div id="done-count">-</div></div>
+            <div class="cost-card"><h4>Cost Today</h4><div id="cost-today">-</div></div>
+            <div class="cost-card"><h4>Cost 7d</h4><div id="cost-7d">-</div></div>
+        </div>
+
+        <h3>Recent Runs</h3>
+        <table>
+            <thead>
+                <tr>
+                    <th>Agent</th>
+                    <th>Status</th>
+                    <th>Trigger</th>
+                    <th>Started</th>
+                    <th>Cost</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="runs-table-body">
+                <!-- Data will be loaded here -->
+            </tbody>
+        </table>
+
+        <div id="run-detail">
+            <h2 id="detail-title">Run Detail</h2>
+            <p>ID: <span id="detail-id"></span> | Trigger: <span id="detail-trigger"></span></p>
+            <div id="checklist-view">
+                <!-- Steps will be loaded here -->
+            </div>
+            <button class="button button-outline" onclick="document.getElementById('run-detail').style.display='none'">Close Detail</button>
+        </div>
+    </div>
+
+    <script>
+        async function loadSummary() {
+            const res = await fetch('/api/subagent_summary');
+            const data = await res.json();
+            document.getElementById('active-count').innerText = data.active_runs;
+            document.getElementById('done-count').innerText = data.completed_today;
+            document.getElementById('cost-today').innerText = `$${data.cost_today_usd.toFixed(4)}`;
+            document.getElementById('cost-7d').innerText = `$${data.cost_7d_usd.toFixed(4)}`;
+        }
+
+        async function loadRuns() {
+            const res = await fetch('/api/subagent_runs');
+            const data = await res.json();
+            const body = document.getElementById('runs-table-body');
+            body.innerHTML = '';
+
+            data.forEach(run => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><strong>${run.agent_id}</strong></td>
+                    <td><span class="status-pill status-${run.status}">${run.status}</span></td>
+                    <td>${run.trigger}</td>
+                    <td>${run.started_at ? run.started_at.split('T')[1].substring(0, 5) : 'pending'}</td>
+                    <td>$${run.actual_cost_usd.toFixed(4)}</td>
+                    <td><button class="button button-clear" onclick="viewDetail('${run.id}')">View</button></td>
+                `;
+                body.appendChild(tr);
+            });
+        }
+
+        async function viewDetail(runId) {
+            const res = await fetch(`/api/subagent_run/${runId}`);
+            const data = await res.json();
+            const detail = document.getElementById('run-detail');
+            detail.style.display = 'block';
+
+            document.getElementById('detail-title').innerText = `Run: ${data.run.agent_id}`;
+            document.getElementById('detail-id').innerText = data.run.id;
+            document.getElementById('detail-trigger').innerText = data.run.trigger;
+
+            const checklist = document.getElementById('checklist-view');
+            checklist.innerHTML = '<h3>Checklist</h3>';
+
+            data.steps.forEach(step => {
+                const div = document.createElement('div');
+                div.className = 'step-item';
+                div.innerHTML = `
+                    <div style="display:flex; justify-content:space-between">
+                        <strong>Step ${step.step_order}: ${step.skill_name}</strong>
+                        <span class="status-pill status-${step.status}">${step.status}</span>
+                    </div>
+                    <p style="font-size:0.8rem; color:#666">Model: ${step.model || 'pending'} | Cost: $${step.cost_usd.toFixed(4)} | ${step.duration_ms}ms</p>
+                    <pre>${JSON.stringify(step.output_data, null, 2)}</pre>
+                `;
+                checklist.appendChild(div);
+            });
+
+            detail.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // Initial load
+        loadSummary();
+        loadRuns();
+
+        // Refresh every 10s
+        setInterval(() => {
+            loadSummary();
+            loadRuns();
+        }, 10000);
+    </script>
+</body>
+</html>

@@ -7,7 +7,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 29  # increment when adding new migrations
+SCHEMA_VERSION = 33  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -60,6 +60,10 @@ class SchemaManager:
             (27, "signals: add deep_link_url column", self._migration_27),
             (28, "engagement: create engagements table", self._migration_28),
             (29, "chief of staff: priority_context and review_traces", self._migration_29),
+            (30, "subagent: subagent_runs table", self._migration_30),
+            (31, "subagent: subagent_checklist_steps table", self._migration_31),
+            (32, "subagent: pending_l2_actions table", self._migration_32),
+            (33, "subagent: subagent_cost_events table", self._migration_33),
         ]
 
         for version, description, func in migrations:
@@ -715,6 +719,86 @@ class SchemaManager:
                 reasoning TEXT,
                 output_json TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+        """)
+
+    def _migration_30(self, conn: sqlite3.Connection) -> None:
+        """Subagent: subagent_runs table."""
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS subagent_runs (
+                id          TEXT PRIMARY KEY,   -- UUID
+                agent_id    TEXT NOT NULL,      -- e.g. "career-ops", "test-echo"
+                status      TEXT NOT NULL,      -- SPAWNED | RUNNING | DONE | FAILED | TIMEOUT | CANCELLED
+                trigger     TEXT NOT NULL,      -- "review_cycle" | "scheduled" | "telegram" | "manual"
+                trigger_context TEXT,           -- JSON: who triggered, why, input params
+                scoped_input    TEXT,           -- JSON: the bounded context the agent receives
+                output          TEXT,           -- JSON: structured result (null until DONE)
+                error_detail    TEXT,           -- Actual error message on FAILED
+                started_at      TEXT,
+                completed_at    TEXT,
+                cancelled_reason TEXT,
+                budget_max_calls    INTEGER,    -- Hard limit: max LLM calls
+                budget_max_cost_usd REAL,       -- Hard limit: max spend
+                budget_max_duration_s INTEGER,  -- Hard limit: max wall-clock seconds
+                actual_calls        INTEGER DEFAULT 0,
+                actual_cost_usd     REAL DEFAULT 0.0,
+                actual_input_tokens  INTEGER DEFAULT 0,
+                actual_output_tokens INTEGER DEFAULT 0,
+                created_at  TEXT NOT NULL
+            );
+        """)
+
+    def _migration_31(self, conn: sqlite3.Connection) -> None:
+        """Subagent: subagent_checklist_steps table."""
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS subagent_checklist_steps (
+                id          TEXT PRIMARY KEY,   -- UUID
+                run_id      TEXT NOT NULL REFERENCES subagent_runs(id),
+                step_order  INTEGER NOT NULL,
+                skill_name  TEXT NOT NULL,      -- e.g. "scan", "triage", "evaluate"
+                status      TEXT NOT NULL,      -- PENDING | RUNNING | DONE | FAILED | SKIPPED
+                model       TEXT,               -- Model used (from manifest)
+                input_data  TEXT,               -- JSON: input to this step
+                output_data TEXT,               -- JSON: output (persisted for checkpoint/resume)
+                error_detail TEXT,
+                started_at  TEXT,
+                completed_at TEXT,
+                input_tokens  INTEGER DEFAULT 0,
+                output_tokens INTEGER DEFAULT 0,
+                cost_usd      REAL DEFAULT 0.0,
+                duration_ms   INTEGER DEFAULT 0
+            );
+        """)
+
+    def _migration_32(self, conn: sqlite3.Connection) -> None:
+        """Subagent: pending_l2_actions table."""
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS pending_l2_actions (
+                id          TEXT PRIMARY KEY,
+                run_id      TEXT NOT NULL REFERENCES subagent_runs(id),
+                step_id     TEXT REFERENCES subagent_checklist_steps(id),
+                tool        TEXT NOT NULL,       -- tool name (consistent with tools.py dispatch)
+                args        TEXT NOT NULL,       -- JSON: full action args
+                status      TEXT NOT NULL DEFAULT 'PENDING',  -- PENDING | APPROVED | REJECTED
+                reviewed_by TEXT,               -- who approved/rejected (telegram | dashboard)
+                reviewed_at TEXT,
+                created_at  TEXT NOT NULL
+            );
+        """)
+
+    def _migration_33(self, conn: sqlite3.Connection) -> None:
+        """Subagent: subagent_cost_events table."""
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS subagent_cost_events (
+                id          TEXT PRIMARY KEY,
+                run_id      TEXT NOT NULL REFERENCES subagent_runs(id),
+                step_id     TEXT REFERENCES subagent_checklist_steps(id),
+                model       TEXT NOT NULL,
+                provider    TEXT NOT NULL DEFAULT 'anthropic',
+                input_tokens  INTEGER NOT NULL,
+                output_tokens INTEGER NOT NULL,
+                cost_usd      REAL NOT NULL,
+                timestamp     TEXT NOT NULL
             );
         """)
 

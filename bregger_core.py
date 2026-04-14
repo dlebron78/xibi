@@ -1561,6 +1561,15 @@ class KeywordRouter:
         # --- status_check -----------------------------------------------------
         _add(r"^(status|ping|are you up|system status|health check)$", "status_check")
 
+        # --- subagent status --------------------------------------------------
+        _add(r"^(what's running|subagent status|active subagents)$", "subagent_status")
+
+        # --- subagent spawn (manual) ------------------------------------------
+        _add(
+            r"^(run|start) (the )?subagent (?P<agent_id>[a-zA-Z0-9_-]+)(?: with input (?P<input>.*))?$",
+            "subagent_spawn",
+        )
+
         # --- reset -----------------------------------------------------------
         _add(r"^(reset|clear|forget|restart|/reset|/clear)$", "reset")
 
@@ -1648,6 +1657,25 @@ class IntentMapper:
             if intent == "status_check":
                 return {
                     "intent": "status_check",
+                    "skill": "none",
+                    "tool": "none",
+                    "parameters": {},
+                    "routed_by": "control_plane",
+                }
+            if intent == "subagent_spawn":
+                return {
+                    "intent": "subagent_spawn",
+                    "skill": "none",
+                    "tool": "none",
+                    "parameters": {
+                        "agent_id": intent_obj["entities"].get("agent_id"),
+                        "input": intent_obj["entities"].get("input"),
+                    },
+                    "routed_by": "control_plane",
+                }
+            if intent == "subagent_status":
+                return {
+                    "intent": "subagent_status",
                     "skill": "none",
                     "tool": "none",
                     "parameters": {},
@@ -1831,11 +1859,18 @@ class BreggerCore:
                         # Capture the first numeric group as `num`
                         def extractor(m):
                             return {"num": m.group(1)} if m.group(1) else None
+
                     # Register regex with router
                     self.control_plane.register(regex, intent, extractor)
                     # Register mapping with intent mapper
                     self.intent_mapper.register(intent, mapped_skill, tool)
                     print(f"🎛️ Registered contract trigger: {intent} ({mapped_skill}:{tool})", flush=True)
+
+        # Register Subagent triggers
+        self.control_plane.register(
+            r"^(cancel|stop) (the )?subagent (.*)$", "subagent_cancel", lambda m: {"agent_id": m.group(3)}
+        )
+        self.intent_mapper.register("subagent_cancel", "none", "none")
 
         # Also load user-defined shortcuts from the Ledger (Phase 1.5)
         try:
@@ -2648,6 +2683,76 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                     elif plan.get("intent") == "reset":
                         self.reset_state()
                         report = "State cleared. I've forgotten our recent conversation and any pending actions. How can I help you start fresh?"
+                    elif plan.get("intent") == "subagent_spawn":
+                        agent_id = plan["parameters"].get("agent_id")
+                        user_input_val = plan["parameters"].get("input") or ""
+
+                        if agent_id == "test-echo":
+                            from xibi.subagent.runtime import spawn_subagent
+
+                            # Hardcoded test-echo agent for validation
+                            checklist = [
+                                {
+                                    "skill_name": "summarize",
+                                    "model": "haiku",
+                                    "trust": "L1",
+                                    "prompt": 'Summarize the following input in 2 sentences. Respond with JSON {"summary": "..."}: {input}',
+                                },
+                                {
+                                    "skill_name": "format",
+                                    "model": "haiku",
+                                    "trust": "L1",
+                                    "prompt": 'Format this summary as a bullet list. Respond with JSON {"bullets": ["..."]}: {previous_output}',
+                                },
+                            ]
+                            budget = {"max_calls": 10, "max_cost_usd": 0.50, "max_duration_s": 120}
+
+                            try:
+                                run = spawn_subagent(
+                                    agent_id=agent_id,
+                                    trigger="telegram",
+                                    trigger_context={"user": "telegram"},
+                                    scoped_input={"input": user_input_val},
+                                    checklist=checklist,
+                                    budget=budget,
+                                    db_path=Path(self.db_path),
+                                )
+                                if run.status == "DONE":
+                                    report = (
+                                        f"Subagent {agent_id} complete!\nOutput: {json.dumps(run.output, indent=2)}"
+                                    )
+                                else:
+                                    report = f"Subagent {agent_id} failed: {run.error_detail}"
+                            except Exception as e:
+                                report = f"Failed to spawn subagent {agent_id}: {e}"
+                        else:
+                            report = f"Unknown subagent: {agent_id}. Currently only 'test-echo' is supported."
+                    elif plan.get("intent") == "subagent_status":
+                        try:
+                            with sqlite3.connect(self.db_path) as conn:
+                                conn.row_factory = sqlite3.Row
+                                cursor = conn.execute(
+                                    "SELECT agent_id, status, started_at, actual_cost_usd FROM subagent_runs "
+                                    "WHERE status IN ('SPAWNED', 'RUNNING') ORDER BY created_at DESC"
+                                )
+                                active = cursor.fetchall()
+
+                                if not active:
+                                    report = "No active subagent runs."
+                                else:
+                                    lines = ["Active subagent runs:"]
+                                    for r in active:
+                                        elapsed = "just started"
+                                        if r["started_at"]:
+                                            start = datetime.fromisoformat(r["started_at"])
+                                            delta = datetime.utcnow() - start
+                                            elapsed = f"{int(delta.total_seconds())}s elapsed"
+                                        lines.append(
+                                            f"• {r['agent_id']}: {r['status']} ({elapsed}, ${r['actual_cost_usd']:.2f})"
+                                        )
+                                    report = "\n".join(lines)
+                        except Exception as e:
+                            report = f"Error querying subagent status: {e}"
                     elif plan.get("intent") == "update_assistant_name":
                         new_name = plan["parameters"]["assistant_name"]
                         self._pending_action = plan
@@ -2774,6 +2879,25 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                                 page = self._cached_unread[next_offset : next_offset + PAGE_SIZE]
                                 report = format_page(page, next_offset, len(self._cached_unread))
 
+                    elif plan.get("intent") == "subagent_cancel":
+                        agent_id = plan["parameters"].get("agent_id")
+                        try:
+                            with sqlite3.connect(self.db_path) as conn:
+                                conn.row_factory = sqlite3.Row
+                                cursor = conn.execute(
+                                    "SELECT id FROM subagent_runs WHERE agent_id LIKE ? AND status IN ('SPAWNED', 'RUNNING') LIMIT 1",
+                                    (f"%{agent_id}%",),
+                                )
+                                row = cursor.fetchone()
+                                if row:
+                                    from xibi.subagent.runtime import cancel_subagent
+
+                                    cancel_subagent(row["id"], Path(self.db_path))
+                                    report = f"Cancelled subagent run for {agent_id}."
+                                else:
+                                    report = f"No active subagent found for '{agent_id}'."
+                        except Exception as e:
+                            report = f"Error cancelling subagent: {e}"
                     elif plan.get("intent") == "email_open":
                         num = plan["parameters"].get("num")
                         if not self._cached_unread:

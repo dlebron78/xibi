@@ -498,6 +498,7 @@ def test_digest_tick_with_items(tmp_path):
 
 def test_recap_tick_delegates(tmp_path):
     hp = _make_hp(tmp_path)
+    hp._enable_legacy_digest = True
     with patch.object(hp, "digest_tick") as mock_dt:
         hp.recap_tick()
         mock_dt.assert_called_once_with(force=True)

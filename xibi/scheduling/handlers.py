@@ -109,3 +109,26 @@ def _internal_hook(action_config: dict, ctx: ExecutionContext) -> HandlerResult:
         return hook_fn(action_config.get("args", {}), ctx)
     except Exception as e:
         return HandlerResult("error", "", f"Hook error: {str(e)}")
+
+
+@register_handler("subagent_spawn")
+def handle_subagent_spawn(action_config: dict, ctx: ExecutionContext) -> HandlerResult:
+    from xibi.subagent.runtime import spawn_subagent
+
+    try:
+        run = spawn_subagent(
+            agent_id=action_config["agent_id"],
+            trigger="scheduled",
+            trigger_context={"action_id": ctx.action_id},
+            scoped_input=action_config.get("scoped_input", {}),
+            checklist=action_config.get("skills", []),
+            budget=action_config.get("budget", {}),
+            db_path=ctx.db_path,
+        )
+        return HandlerResult(
+            status="success" if run.status == "DONE" else "error",
+            output_preview=f"Run {run.id} status: {run.status}. Output: {str(run.output)[:200]}",
+            error=run.error_detail,
+        )
+    except Exception as e:
+        return HandlerResult("error", "", f"Spawn failed: {e}")

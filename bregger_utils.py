@@ -3,10 +3,14 @@ bregger_utils.py — Shared utilities for the Bregger framework.
 """
 
 import sqlite3
+import threading
 from datetime import datetime
 from pathlib import Path
 
-from xibi.router import inference_lock
+# Shared lock ensuring only one LLM call runs at a time across all
+# threads (chat, heartbeat, passive memory). Background threads queue
+# behind active chat inference.
+inference_lock = threading.RLock()
 
 
 def normalize_topic(topic: str | None) -> str | None:

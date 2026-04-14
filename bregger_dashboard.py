@@ -455,6 +455,102 @@ def api_template():
     return jsonify({"template": SYSTEM_PROMPT})
 
 
+@app.route("/api/subagent_summary")
+def api_subagent_summary():
+    try:
+        with get_db() as conn:
+            active = conn.execute(
+                "SELECT COUNT(*) FROM subagent_runs WHERE status IN ('SPAWNED', 'RUNNING')"
+            ).fetchone()[0]
+            completed_today = conn.execute(
+                "SELECT COUNT(*) FROM subagent_runs WHERE status = 'DONE' AND date(completed_at) = date('now')"
+            ).fetchone()[0]
+            failed_today = conn.execute(
+                "SELECT COUNT(*) FROM subagent_runs WHERE status = 'FAILED' AND date(completed_at) = date('now')"
+            ).fetchone()[0]
+            cost_today = (
+                conn.execute(
+                    "SELECT SUM(cost_usd) FROM subagent_cost_events WHERE date(timestamp) = date('now')"
+                ).fetchone()[0]
+                or 0.0
+            )
+            cost_7d = (
+                conn.execute(
+                    "SELECT SUM(cost_usd) FROM subagent_cost_events WHERE timestamp > datetime('now', '-7 days')"
+                ).fetchone()[0]
+                or 0.0
+            )
+
+            return jsonify(
+                {
+                    "active_runs": active,
+                    "completed_today": completed_today,
+                    "failed_today": failed_today,
+                    "cost_today_usd": round(cost_today, 4),
+                    "cost_7d_usd": round(cost_7d, 4),
+                }
+            )
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/subagent_runs")
+def api_subagent_runs():
+    try:
+        limit = request.args.get("limit", default=20, type=int)
+        with get_db() as conn:
+            cursor = conn.execute("SELECT * FROM subagent_runs ORDER BY created_at DESC LIMIT ?", (limit,))
+            return jsonify([dict(row) for row in cursor.fetchall()])
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/subagent_run/<run_id>")
+def api_subagent_run(run_id):
+    try:
+        with get_db() as conn:
+            run = conn.execute("SELECT * FROM subagent_runs WHERE id = ?", (run_id,)).fetchone()
+            if not run:
+                return jsonify({"status": "error", "message": "Run not found"}), 404
+
+            steps = conn.execute(
+                "SELECT * FROM subagent_checklist_steps WHERE run_id = ? ORDER BY step_order ASC", (run_id,)
+            ).fetchall()
+
+            return jsonify({"run": dict(run), "steps": [dict(s) for s in steps]})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/api/subagent_cost_breakdown")
+def api_subagent_cost_breakdown():
+    try:
+        with get_db() as conn:
+            # Per agent
+            agent_costs = conn.execute(
+                "SELECT r.agent_id, SUM(ce.cost_usd) as total_cost "
+                "FROM subagent_cost_events ce JOIN subagent_runs r ON ce.run_id = r.id "
+                "GROUP BY r.agent_id ORDER BY total_cost DESC"
+            ).fetchall()
+
+            # Per model
+            model_costs = conn.execute(
+                "SELECT model, SUM(cost_usd) as total_cost "
+                "FROM subagent_cost_events GROUP BY model ORDER BY total_cost DESC"
+            ).fetchall()
+
+            return jsonify(
+                {"per_agent": [dict(row) for row in agent_costs], "per_model": [dict(row) for row in model_costs]}
+            )
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/subagents")
+def subagents_page():
+    return render_template("subagents.html")
+
+
 @app.route("/api/config", methods=["GET", "POST"])
 def api_config():
     """GET current escalation threshold or POST to update it."""
