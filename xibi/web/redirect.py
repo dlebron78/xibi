@@ -77,6 +77,11 @@ async def handle_redirect(request: web.Request) -> web.Response:
         logger.warning(f"⚠️ Redirect failed for {signal_id}: Signal not found or no deep link")
         return web.Response(status=404, text="Signal not found")
 
+    # Security: Only allow http/https schemes to prevent javascript: or other URI-based XSS
+    if not (deep_link_url.startswith("http://") or deep_link_url.startswith("https://")):
+        logger.error(f"❌ Malicious deep link detected for signal {signal_id}: {deep_link_url}")
+        return web.Response(status=400, text="Invalid redirect URL")
+
     # Log the engagement event
     await record_engagement(
         db_path=db_path,

@@ -91,7 +91,11 @@ def build_priority_context(db_path: Path) -> str | None:
         with open_db(db_path) as conn:
             row = conn.execute("SELECT content FROM priority_context ORDER BY updated_at DESC LIMIT 1").fetchone()
             if row:
-                return f"CURRENT PRIORITIES (from last review):\n{row[0]}"
+                content = row[0]
+                # Cap to ~500 tokens (approx 2000 chars) to prevent context bloat
+                if len(content) > 2000:
+                    content = content[:2000] + "... [truncated]"
+                return f"CURRENT PRIORITIES (from last review):\n{content}"
     except Exception:
         pass
     return None

@@ -118,6 +118,7 @@ async def run_review_cycle(db_path: Path, config: dict) -> ReviewOutput:
 
     # 2. Call LLM (Opus effort)
     from typing import cast
+
     from xibi.router import Config
 
     llm = get_model(specialty="text", effort="review", config=cast(Config, config))
