@@ -44,7 +44,7 @@ xibi/subagent/
 
 ### Data Model
 
-Three new tables:
+Four new tables (migrations 30–33):
 
 ```sql
 -- A single subagent execution
@@ -89,7 +89,22 @@ CREATE TABLE subagent_checklist_steps (
     duration_ms   INTEGER DEFAULT 0
 );
 
+-- L2 actions parked for manager approval (NOT in signals table — structured payloads)
+-- Migration 32
+CREATE TABLE pending_l2_actions (
+    id          TEXT PRIMARY KEY,
+    run_id      TEXT NOT NULL REFERENCES subagent_runs(id),
+    step_id     TEXT REFERENCES subagent_checklist_steps(id),
+    tool        TEXT NOT NULL,       -- tool name (consistent with tools.py dispatch)
+    args        TEXT NOT NULL,       -- JSON: full action args
+    status      TEXT NOT NULL DEFAULT 'PENDING',  -- PENDING | APPROVED | REJECTED
+    reviewed_by TEXT,               -- who approved/rejected (telegram | dashboard)
+    reviewed_at TEXT,
+    created_at  TEXT NOT NULL
+);
+
 -- Granular cost events per LLM call (feeds dashboard rollups)
+-- Migration 33
 CREATE TABLE subagent_cost_events (
     id          TEXT PRIMARY KEY,
     run_id      TEXT NOT NULL REFERENCES subagent_runs(id),
@@ -147,7 +162,10 @@ for each step in checklist:
     assemble step prompt:
         agent system prompt (from manifest SKILL.md)
         + scoped_input (injected context, never interpolated into scratchpad)
-        + output of previous steps (chained)
+        + output of previous steps (chained as JSON string):
+            for step N, inject output_data from steps 1..N-1 as:
+            "Previous step outputs:\nStep 1 (summarize): <json.dumps(step1.output_data)>\n..."
+            output_data is loaded from DB as parsed dict, then re-serialized to string for prompt
         + user config (profile.yml, injected at spawn)
     
     route to cloud model (per manifest model declaration)
@@ -181,7 +199,7 @@ class ModelRouter:
         """
 ```
 
-**Model mapping** lives in `config.json`, not code:
+**Model mapping** lives in `config.json` at top level (not nested under a profile section), not code:
 
 ```json
 {
@@ -216,7 +234,11 @@ def enforce_trust(step_output: dict, skill_config: dict) -> TrustResult:
     """
 ```
 
-L2 actions are parked using the existing signals/review queue infrastructure. When the review cycle runs next, it sees parked L2 actions alongside regular signals and can approve/reject them. Approved L2 actions are routed to the existing command execution layer (which already handles RED-tier confirmation).
+L2 actions are parked in a new **`pending_l2_actions`** table (migration 33 — see Data Model section). This is NOT the signals table; signals are notification-shaped and would lose action structure. The `pending_l2_actions` table stores the full structured action payload (tool name, args, run_id, step_id, timestamp, status: PENDING/APPROVED/REJECTED).
+
+When the review cycle runs next, it queries `pending_l2_actions WHERE status='PENDING'` and injects these as a structured block in the manager's context, separate from signals. The manager can approve or reject each. Approved L2 actions are routed to the existing command execution layer (which already handles RED-tier confirmation).
+
+**Action identification:** An "action" in step output is any dict containing a `tool` key (consistent with existing `tools.py` PermissionTier dispatch pattern). Jules must check each item in `step_output.get("actions", [])` against the manifest's declared trust level. If the manifest declares `"trust": "L2"` for a skill, ALL actions from that step are parked.
 
 ### Cost Tracking (`cost.py`)
 
@@ -296,7 +318,12 @@ In `xibi/observation.py`, the manager review's output schema gains a new field:
 }
 ```
 
-When the review cycle completes and produces `subagent_spawns`, the observation cycle calls `spawn_subagent()` for each. The next review cycle reads completed subagent output from `subagent_runs WHERE status='DONE'`.
+**Manager system prompt extension:** Jules must add a new instruction block to the manager system prompt in `xibi/observation.py` (currently ~lines 758-862) explicitly instructing the manager to emit `subagent_spawns` when it decides delegation is appropriate. Without this, the LLM will not generate this field. The schema above should be included in the prompt as a JSON example.
+
+**Observation cycle integration (explicit steps):**
+1. After `run_manager_review()` returns, parse the LLM output for the `subagent_spawns` field.
+2. For each entry, call `spawn_subagent(agent_id, trigger="review_cycle", trigger_context={review_id}, scoped_input=entry["scoped_input"], ...)`.
+3. On the NEXT review cycle tick, before calling the manager, query `subagent_runs WHERE status='DONE' AND created_at > last_review_at` and inject completed run summaries into the signal dump as a dedicated section: `"Completed subagent runs since last review: [...]"`. This is the mechanism by which the manager learns about subagent results — they become data in the next signal dump, not a direct callback.
 
 ### 2. Scheduled Actions → Subagent Spawn
 
@@ -316,6 +343,23 @@ New action type `"subagent_spawn"` in the scheduling kernel. Config:
 ```
 
 Integrates with existing `scheduled_actions` infrastructure (step-59). Manageable in real time via Telegram ("pause the career scan", "run it now").
+
+**Handler registration:** In `xibi/scheduling/handlers.py`, add:
+```python
+@register_handler("subagent_spawn")
+def handle_subagent_spawn(action: ScheduledAction, db_path: Path) -> None:
+    cfg = action.action_config
+    spawn_subagent(
+        agent_id=cfg["agent_id"],
+        trigger="scheduled",
+        trigger_context={"action_id": action.id},
+        scoped_input=cfg.get("scoped_input", {}),
+        checklist=cfg.get("skills", []),
+        budget=cfg["budget"],
+        db_path=db_path,
+    )
+```
+This follows the existing `@register_handler` decorator pattern in that file.
 
 ### 3. Telegram → Subagent Spawn
 
@@ -427,11 +471,13 @@ TEST_AGENT = {
 
 The test agent proves: spawn → checklist execution → model routing → cost tracking → checkpoint → output collection → dashboard visibility. It's cheap (Haiku, 2 steps) and verifiable.
 
+**Note:** `test-echo` is temporary scaffolding — a hardcoded Python dict for runtime validation only. It does NOT represent the production pattern for domain agents. Step-82 (Block 2) introduces the manifest-driven agent registry; at that point, test-echo is replaced by a proper `test-echo/SKILL.md` manifest and removed from code.
+
 ---
 
 ## Implementation Order
 
-1. **Schema + models** — migrations, data classes, `open_db` integration
+1. **Schema + models** — migrations 30-33 (subagent_runs, subagent_checklist_steps, pending_l2_actions, subagent_cost_events), data classes, `open_db` integration. Current SCHEMA_VERSION is 29; next migrations are 30-33.
 2. **Model router** — config-driven mapping, cost computation, wrap existing AnthropicClient
 3. **Checklist executor** — step-by-step execution, checkpoint/resume, budget enforcement
 4. **Trust enforcement** — L1 pass-through, L2 interception and parking
@@ -470,22 +516,47 @@ The test agent proves: spawn → checklist execution → model routing → cost 
 
 ---
 
+---
+
 ## TRR Record
 
 > **Date:** 2026-04-14
-> **Reviewer:** Opus (Cowork) — note: same session authored the spec; flagged for transparency
-> **Verdict:** PASS — all pre-flight checks clear, no architectural blockers
+> **Reviewer:** Opus (independent — pipeline automated run, separate session from spec author)
+> **Verdict:** AMEND — Several specificity gaps and one architecture hazard fixed inline above
 
-| # | Check | Result | Notes |
-|---|-------|--------|-------|
-| 1 | `AnthropicClient` in `xibi/router.py` | PASS | Tracks input/output tokens, logs to `inference_events` table |
-| 2 | Manager review dump in `xibi/observation.py` | PASS | Extending output schema with `subagent_spawns` is a JSON field addition |
-| 3 | `ScheduledActionKernel` in `xibi/scheduling/` | PASS | Adding `subagent_spawn` action type = new handler + dispatch route |
-| 4 | `awaiting_task` routing in `bregger_core.py` | PASS | Task confirmation flow proven in existing nudge/command layers |
-| 5 | Flask dashboard in `bregger_dashboard.py` | PASS | Adding `/subagents` routes is template extension |
-| 6 | `open_db()` in `xibi/db/__init__.py` | PASS | 29 migrations exist; adding 3 new tables via migrations 30-32 is standard |
-| 7 | `PermissionTier` in `xibi/tools.py` | PASS | GREEN/YELLOW/RED maps to L1/L2 trust enforcement |
-| 8 | `xibi/subagent/` module available | PASS | No existing files; namespace is clean |
-| 9 | Table name conflicts | PASS | No existing `subagent_*` tables in migrations |
+### Findings Applied (AMEND)
 
-**Risk assessment:** Low. All integration points are proven infrastructure. The largest implementation surface is the checklist executor + budget enforcement loop, which is new code but has no external dependencies beyond the existing AnthropicClient.
+[TRR-H1] **Review cycle integration unspecified** — Manager system prompt extension and observation cycle plumbing (spawn dispatch + completed run injection) were not described. Fixed: explicit steps added to Integration section 1.
+
+[TRR-H2] **L2 action parking loses context** — Signals table would truncate structured action payloads. Fixed: new `pending_l2_actions` table (migration 32) added to Data Model; trust.py section updated to name the table and action identification pattern.
+
+[TRR-S1] **Trust enforcement interface undefined** — No definition of what constitutes an "action" in step output. Fixed: trust.py section now specifies `step_output.get("actions", [])` pattern and `tool` key identification.
+
+[TRR-S2] **Manager system prompt extension not specified** — Jules would have had no guidance on where/how to extend the manager prompt. Fixed: explicit note added to Integration section 1.
+
+[TRR-S3] **Scheduled handler registration missing** — Handler pattern exists but spec didn't name the file or decorator. Fixed: `@register_handler("subagent_spawn")` example added to Integration section 2.
+
+[TRR-S4] **Checkpoint/resume output chaining format unclear** — "chained" was too vague for Jules. Fixed: execution loop now specifies JSON serialization format for previous step output injection.
+
+[TRR-C1] **Pricing config location ambiguous** — Clarified that `subagent_models` and `subagent_pricing` are top-level keys in config.json.
+
+[TRR-V1] **Test agent vision gap** — Hardcoded Python dict could be read as the intended production pattern. Fixed: explicit note added that test-echo is temporary scaffolding, replaced by manifest at step-82.
+
+[TRR-P1] **Migration version** — Confirmed SCHEMA_VERSION=29; migrations 30-33 (4 tables: runs, checklist_steps, pending_l2_actions, cost_events).
+
+### Pre-flight Checks
+
+| # | File | Check | Result | Notes |
+|---|------|-------|--------|-------|
+| 1 | xibi/router.py | AnthropicClient exists with token tracking | PASS | Token tracking via inference_events table confirmed |
+| 2 | xibi/observation.py | Manager output schema extendable | PASS | JSON field addition; manager prompt requires explicit extension |
+| 3 | xibi/scheduling/__init__.py | Scheduling kernel accepts new action types | PASS | Handler registry pattern in handlers.py confirmed |
+| 4 | bregger_core.py | awaiting_task routing exists for L2 approval | PASS | `_get_awaiting_task()` confirmed; single-slot enforcement in place |
+| 5 | bregger_dashboard.py | Flask app supports new routes | PASS | Existing /api/* pattern; adding /api/subagent_* and /subagents is standard |
+| 6 | xibi/db/__init__.py | open_db() migration pattern for new tables | PASS | SchemaManager applies migrations in order; SCHEMA_VERSION=29 confirmed |
+| 7 | xibi/tools.py | PermissionTier / L1/L2 definitions exist | PASS | PermissionTier enum GREEN/YELLOW/RED; maps to L1/L2 in trust.py |
+| 8 | xibi/subagent/ | Namespace is clean | PASS | No existing xibi/subagent/ directory or subagent_* tables |
+
+### Risk Assessment
+
+Medium risk. All integration points are proven infrastructure. Largest implementation surface is the checklist executor + budget enforcement loop with retry logic. With amendments applied, spec is sufficiently precise for Jules to implement without guessing on integration wiring.
