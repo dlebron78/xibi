@@ -92,14 +92,15 @@ There are no mechanical rules. Use your judgment. Some common-sense guidelines:
 """
 ```
 
-The existing context sections (sender, trust, thread, corrections) stay. Calendar context (step-78) stays. The change is replacing the prescriptive tier rules with the directive above.
+The existing context sections (sender, trust, thread, corrections) stay. Calendar context (step-78) stays. The change is **deleting** the prescriptive tier rules (the `Rules:` section in the prompt, ~lines 182-189 of classification.py) and replacing them with the directive above. This is intentionally a breaking change — the system shifts from rule-matching to judgment. The common-sense guidelines in the directive provide guardrails without coded if/else.
 
-**Priority context block** — a new section injected into the prompt, populated from memory:
+**Priority context block** — a new section injected into the prompt, populated from the database:
 
 ```python
 def build_priority_context(db_path: Path) -> str | None:
     """
     Read the current priority context from the review cycle's last output.
+    Queries the priority_context table (migration 29).
     
     Returns a block like:
         CURRENT PRIORITIES (from last review):
@@ -110,17 +111,30 @@ def build_priority_context(db_path: Path) -> str | None:
     
     Returns None if no priority context exists yet (cold start).
     """
+    with open_db(db_path) as conn:
+        row = conn.execute(
+            "SELECT content FROM priority_context ORDER BY updated_at DESC LIMIT 1"
+        ).fetchone()
+        return row[0] if row else None
 ```
 
-This block is stored as a file or DB row that the review cycle overwrites each pass. It's not memory in the long-term sense — it's a rolling briefing note. The review cycle writes it, the fast model reads it.
+**Where it lives:** In the SQLite database as a `priority_context` table (migration 29). All stateful data stays in SQLite — no filesystem side-channels. The review cycle writes it, the fast model reads it.
 
-**Where it lives:** `~/.xibi/data/priority_context.md` — a plain text file the review cycle overwrites. Simple, readable, debuggable. The fast model reads it into the prompt.
+```sql
+-- Migration 29: priority_context table
+CREATE TABLE IF NOT EXISTS priority_context (
+    id INTEGER PRIMARY KEY,
+    content TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+```
 
 ### Part 2 — Review Cycle Upgrade
 
-**File:** `xibi/heartbeat/review_cycle.py` (new, or major refactor of existing review logic)
+**File:** `xibi/heartbeat/review_cycle.py` (**NEW** — standalone module, does NOT refactor the existing `ObservationCycle` in `poller.py`). The existing manager review (`observation_cycles`, mode=`manager`) continues to run for thread priority updates. The new review cycle is a separate, higher-level reasoning pass that reads the same data plus engagement, calendar, and priority context.
 
-The review cycle runs periodically (configurable — every 30 min, every hour, tunable). It's the Opus call. One pass, multiple outputs.
+The review cycle runs 3x daily (8am, 2pm, 8pm local time — see Part 4). It's the Opus call. One pass, multiple outputs.
 
 **Inputs (everything the system knows):**
 
@@ -130,17 +144,20 @@ def run_review_cycle(db_path: Path, config: dict) -> ReviewOutput:
     The chief of staff's periodic big-picture review.
     
     Reads (all available in the existing DB):
-    - signals since last review (1,118 total, filter to recent — classified with tier, topic, action_type, direction)
-    - threads with current priorities and summaries (639 total, filter to active/recently updated)
-    - contacts involved in recent signals (1,891 total, filter to signal_count > 0 or appearing in recent activity)
-    - session_turns — Telegram chat log between Daniel and Roberto (107 rows, recent subset)
-    - engagement events since last review (step-79 — taps, reactions, corrections)
+    - signals since last review (filter to recent — classified with tier/urgency, topic, action_type, direction)
+    - threads with current priorities and summaries (filter to active/recently updated)
+    - contacts involved in recent signals (filter to signal_count > 0 or appearing in recent activity)
+    - session_turns — Telegram chat log between Daniel and Roberto (recent subset)
+    - engagements since last review (step-79 — taps, reactions, corrections via engagements table: signal_id, event_type, source, metadata)
     - upcoming calendar events via step-78 (next 24-48h)
-    - beliefs (11 entries — identity, preferences, session memories)
-    - observation_cycles — its own history (what it did last review, 118 total)
-    - triage_log (290 entries — email verdicts, recent subset)
-    - current priority_context.md (from last review, may not exist yet)
-    - inference_events for cost awareness (671 entries)
+    - beliefs (identity, preferences, session memories)
+    - observation_cycles — its own history (what it did last review)
+    - triage_log (email verdicts, recent subset)
+    - current priority_context from DB (from last review, may not exist yet)
+    - inference_events for cost awareness
+    
+    All data sections in the prompt are wrapped in XML delimiters (e.g. <signals>...</signals>,
+    <engagements>...</engagements>) to reduce prompt injection risk from malicious signal content.
     
     Produces:
     - Reclassifications (signals the fast model got wrong)
@@ -199,12 +216,41 @@ You produce these outputs:
 ```python
 @dataclass
 class ReviewOutput:
-    reclassifications: list[dict]   # [{signal_id, new_tier, reason}]
-    priority_context: str            # Full replacement text for priority_context.md
-    memory_notes: list[dict]         # [{title, content}] — may be empty
-    contact_updates: list[dict]      # [{contact_id, relationship, notes}] — may be empty
+    reclassifications: list[dict]   # [{signal_id: int, new_tier: str, reason: str}]
+                                     # new_tier updates signals.urgency column directly
+    priority_context: str            # Full replacement text → INSERT/UPDATE priority_context table
+    memory_notes: list[dict]         # [{key: str, value: str}] → beliefs table (key=title, value=content)
+                                     # Check for existing belief with same key before inserting
+    contact_updates: list[dict]      # [{contact_id: str, relationship: str, notes: str}]
+                                     # Updates contacts.relationship and contacts.notes columns
     message: str | None              # Telegram message to Daniel, or None if nothing to say
-    reasoning: str                   # The model's full reasoning (stored for debugging)
+    reasoning: str                   # The model's full reasoning (stored in review_traces table)
+```
+
+**New helper functions (in review_cycle.py):**
+
+```python
+def update_signal_tier(db_path: Path, signal_id: int, new_tier: str) -> None:
+    """Update signals.urgency for the given signal_id."""
+    with open_db(db_path) as conn, conn:
+        conn.execute("UPDATE signals SET urgency = ? WHERE id = ?", (new_tier, signal_id))
+
+def write_memory_note(db_path: Path, key: str, value: str) -> None:
+    """Upsert a belief — update if key exists, insert if new."""
+    with open_db(db_path) as conn, conn:
+        existing = conn.execute("SELECT id FROM beliefs WHERE key = ?", (key,)).fetchone()
+        if existing:
+            conn.execute("UPDATE beliefs SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ?", (value, key))
+        else:
+            conn.execute("INSERT INTO beliefs (key, value) VALUES (?, ?)", (key, value))
+
+def update_contact_relationship(db_path: Path, contact_id: str, relationship: str, notes: str | None) -> None:
+    """Update relationship and notes on an existing contact."""
+    with open_db(db_path) as conn, conn:
+        conn.execute(
+            "UPDATE contacts SET relationship = ?, notes = ? WHERE id = ?",
+            (relationship, notes, contact_id),
+        )
 ```
 
 ### Part 3 — Review Cycle Execution
@@ -215,23 +261,32 @@ class ReviewOutput:
 async def execute_review(output: ReviewOutput, db_path: Path, config: dict):
     """Apply the review cycle's outputs."""
     
-    # 1. Reclassify signals
+    # 1. Reclassify signals (update signals.urgency)
     for reclass in output.reclassifications:
         update_signal_tier(db_path, reclass["signal_id"], reclass["new_tier"])
-        record_engagement(
-            signal_id=reclass["signal_id"],
+        # Record engagement event for audit trail (uses step-79 engagements table)
+        record_engagement_sync(
+            db_path=db_path,
+            signal_id=str(reclass["signal_id"]),
             event_type="reclassified",
             source="review_cycle",
             metadata={"new_tier": reclass["new_tier"], "reason": reclass["reason"]},
         )
     
-    # 2. Write priority context
-    priority_path = Path(config["workdir"]) / "data" / "priority_context.md"
-    priority_path.write_text(output.priority_context)
+    # 2. Write priority context to DB (not filesystem)
+    with open_db(db_path) as conn, conn:
+        existing = conn.execute("SELECT id FROM priority_context LIMIT 1").fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE priority_context SET content = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (output.priority_context, existing[0]),
+            )
+        else:
+            conn.execute("INSERT INTO priority_context (content) VALUES (?)", (output.priority_context,))
     
-    # 3. Write memory notes (if any)
+    # 3. Write memory notes to beliefs table (if any — deduplicated by key)
     for note in output.memory_notes:
-        write_memory_note(note["title"], note["content"])
+        write_memory_note(db_path, note["key"], note["value"])
     
     # 4. Update contact relationships (if any)
     for update in output.contact_updates:
@@ -250,9 +305,11 @@ async def execute_review(output: ReviewOutput, db_path: Path, config: dict):
 
 ### Part 4 — Wire Review Cycle into Heartbeat
 
-**File:** `xibi/heartbeat/heartbeat.py`
+**File:** `xibi/heartbeat/poller.py` (the heartbeat entry point — `heartbeat.py` does not exist; the `HeartbeatPoller` class lives here)
 
-The review cycle runs three times a day on a fixed schedule: **8am, 2pm, 8pm** (local time). This replaces the current ~8h manager review interval.
+The review cycle runs three times a day on a fixed schedule: **8am, 2pm, 8pm** (local time). The existing manager review (`observation_cycles`, mode=`manager`) continues to run on its current interval for thread priority updates. The new chief-of-staff review cycle is a **separate, additive** pass.
+
+Add a time-gate check inside `async_tick()`:
 
 ```python
 REVIEW_SCHEDULE = [8, 14, 20]  # hours in local time
@@ -266,7 +323,16 @@ def should_run_review(last_review_time: datetime, now: datetime) -> bool:
     return False
 ```
 
-The review cycle is non-blocking — if it takes 30 seconds for Opus to reason, the heartbeat continues processing signals. The review runs in the background.
+Inside `async_tick()` (poller.py), after the existing signal processing phases, add:
+
+```python
+# Chief of staff review cycle (3x daily)
+last_review = get_last_review_time(db_path)  # query observation_cycles WHERE mode='chief_of_staff'
+if should_run_review(last_review, datetime.now(tz=local_tz)):
+    asyncio.create_task(run_review_cycle(db_path, config))
+```
+
+The review cycle is non-blocking — if it takes 30 seconds for Opus to reason, the heartbeat continues processing signals. The review runs in the background. It logs its start/completion to `observation_cycles` with `mode='chief_of_staff'` (same table, new mode value).
 
 ### Part 5 — Communication (Replaces Digest)
 
@@ -275,6 +341,8 @@ The review cycle replaces the current email digest. The existing digest is a mec
 Instead, the review cycle's output IS the communication. If the chief of staff's reasoning says Daniel needs to hear something, it sends a message through Roberto. The content, tone, format, and frequency are all up to the LLM. Some reviews produce a morning briefing. Some produce a single heads-up about something time-sensitive. Some produce nothing because there's nothing worth interrupting Daniel about.
 
 We don't prescribe nudges, recaps, or digests as separate features. We tell the LLM: "You're the chief of staff. You've reviewed everything. If Daniel needs to hear from you right now, say it. If not, don't."
+
+**What happens to `digest_tick()`:** The existing `digest_tick()` in `poller.py` (~line 795) is **deprecated** by this step. The review cycle's communication output replaces the mechanical email digest. `digest_tick()` should be guarded with a feature flag (config key `enable_legacy_digest`, default `False`) so it can be re-enabled during cold start if the review cycle isn't producing messages yet. Once the review cycle is proven, `digest_tick()` can be removed in a future cleanup step.
 
 ```python
 # In the review prompt — communication guidance (not rules):
@@ -383,11 +451,12 @@ This is by design. The system doesn't pretend to know Daniel's priorities on day
 
 | File | Change |
 |---|---|
-| `xibi/heartbeat/review_cycle.py` | **NEW** — `run_review_cycle()`, `execute_review()`, prompt construction, output parsing |
-| `xibi/heartbeat/classification.py` | Replace tier rules with chief-of-staff directive, add priority context block |
-| `xibi/heartbeat/heartbeat.py` | Add review cycle scheduling (interval-based) |
+| `xibi/heartbeat/review_cycle.py` | **NEW** — `run_review_cycle()`, `execute_review()`, prompt construction, output parsing, helper functions (`update_signal_tier`, `write_memory_note`, `update_contact_relationship`) |
+| `xibi/heartbeat/classification.py` | **DELETE** tier rules block (~lines 182-189), replace with `CHIEF_OF_STAFF_DIRECTIVE`, add `build_priority_context()` reading from DB |
+| `xibi/heartbeat/poller.py` | Add review cycle scheduling via `should_run_review()` time-gate in `async_tick()`, deprecate `digest_tick()` behind feature flag |
+| `xibi/db/migrations.py` | **Migration 29** — `priority_context` table (`id`, `content`, `created_at`, `updated_at`) |
 | `tests/test_review_cycle.py` | **NEW** — 14 tests (inputs, outputs, reclassification, memory, nudges) |
-| `tests/test_classification.py` | Update prompt tests for new directive format |
+| `tests/test_classification.py` | Update prompt tests for new directive format (import paths: `xibi.heartbeat.classification`) |
 | `tests/test_integration.py` | 2 tests (interval firing, full loop) |
 
 ---
@@ -398,3 +467,28 @@ This is by design. The system doesn't pretend to know Daniel's priorities on day
 - **Automated task creation** — nudges suggest, Daniel confirms. The reflection loop (Bregger architecture) handles task promotion separately.
 - **Multi-user support** — this is Daniel's chief of staff. One user, one priority context, one review cycle.
 - **Review cycle tuning interface** — the interval and prompt are config-driven. Tuning happens by editing config and prompt text, not through a UI.
+
+---
+
+## TRR Record
+
+**TRR Conducted:** 2026-04-14
+**Reviewer:** Opus (independent, pipeline-delegated)
+**Verdict:** **AMEND** — all corrections applied inline
+
+### Findings Applied
+
+| Tag | Finding | Correction Applied |
+|---|---|---|
+| TRR-C1 | `xibi/heartbeat/heartbeat.py` doesn't exist | Changed to `xibi/heartbeat/poller.py` — integrate into `HeartbeatPoller.async_tick()` |
+| TRR-H1 | `priority_context.md` as filesystem file breaks DB-as-source-of-truth | Moved to `priority_context` table in SQLite, migration 29. `build_priority_context()` queries DB. |
+| TRR-H2 | `update_signal_tier()`, `write_memory_note()`, `update_contact_relationship()` undefined | Added full function signatures with SQL in Part 2 output parsing section |
+| TRR-C2 | Review cycle file scope unclear (new vs. refactor of ObservationCycle) | Clarified: NEW standalone module. Existing manager review continues; review_cycle is additive. |
+| TRR-S1 | Review cycle 3x daily scheduling unspecified | Added `should_run_review()` time-gate in `async_tick()`, logs to observation_cycles with mode='chief_of_staff' |
+| TRR-V1 | Classification rules vs. "no mechanical rules" tension | Clarified: DELETE the rules block (~lines 182-189), replace with directive. Intentional breaking change. |
+| TRR-S2 | ReviewOutput schema and DB mapping vague | Added exact field types, SQL column targets, and dedup logic |
+| TRR-S3 | Test imports reference non-existent `bregger_heartbeat` | Updated file table to note correct import paths (`xibi.heartbeat.classification`) |
+| TRR-S4 | Migration number for priority_context not stated | Specified: migration 29, added full CREATE TABLE DDL |
+| TRR-H3 | Prompt injection risk from concatenated DB data | Added XML delimiter requirement for all data sections in review prompt |
+| TRR-S5 | `digest_tick()` fate unclear | Specified: deprecated behind `enable_legacy_digest` feature flag (default False) |
+| TRR-P1 | How engagement_events (step-79) feed review unclear | Added engagements table fields to review cycle inputs docstring |
