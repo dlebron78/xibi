@@ -1,4 +1,3 @@
-
 import pytest
 
 from xibi.db import open_db
@@ -10,16 +9,14 @@ from xibi.heartbeat.context_assembly import SignalContext
 def db_path(tmp_path):
     db = tmp_path / "test.db"
     from xibi.db.migrations import migrate
+
     migrate(db)
     return db
 
+
 def test_build_classification_prompt_new(db_path):
     ctx = SignalContext(
-        signal_ref_id="123",
-        sender_id="alice@example.com",
-        sender_name="Alice",
-        headline="Lunch?",
-        db_path=db_path
+        signal_ref_id="123", sender_id="alice@example.com", sender_name="Alice", headline="Lunch?", db_path=db_path
     )
     email = {"id": "123"}
 
@@ -33,6 +30,7 @@ def test_build_classification_prompt_new(db_path):
     assert "Daniel is busy." in prompt
     assert "CONTEXT:" in prompt
     assert "From: Alice <alice@example.com>" in prompt
+
 
 def test_build_priority_context(db_path):
     assert build_priority_context(db_path) is None

@@ -22,10 +22,13 @@ def test_review_cycle_scheduling():
     now = datetime(2026, 4, 14, 8, 1)
     assert poller._should_run_review(last, now) is True
 
+
 def test_legacy_digest_deprecation():
     config = {"enable_legacy_digest": False}
     rules = MagicMock()
-    poller = HeartbeatPoller(skills_dir=None, db_path=None, adapter=None, rules=rules, allowed_chat_ids=[], config=config)
+    poller = HeartbeatPoller(
+        skills_dir=None, db_path=None, adapter=None, rules=rules, allowed_chat_ids=[], config=config
+    )
 
     # Should skip if disabled and not forced
     poller.digest_tick()
