@@ -380,7 +380,7 @@ Exchanges:
                 rows = conn.execute(
                     """
                     SELECT key, value, type FROM beliefs
-                    WHERE type IN ('memory', 'passive_memory')
+                    WHERE type IN ('memory', 'passive_memory', 'behavior')
                       AND (valid_until IS NULL OR valid_until > ?)
                     ORDER BY type, key
                     """,
