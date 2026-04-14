@@ -565,9 +565,7 @@ class HeartbeatPoller:
             await execute_review(output, self.db_path, self.config, self.adapter)
 
             with open_db(self.db_path) as conn, conn:
-                conn.execute(
-                    "UPDATE observation_cycles SET completed_at = CURRENT_TIMESTAMP WHERE id = ?", (cycle_id,)
-                )
+                conn.execute("UPDATE observation_cycles SET completed_at = CURRENT_TIMESTAMP WHERE id = ?", (cycle_id,))
             logger.info("🧠 Chief of staff review cycle complete")
         except Exception as e:
             logger.error("🧠 Chief of staff review cycle failed: %s", e, exc_info=True)
@@ -575,9 +573,7 @@ class HeartbeatPoller:
                 from xibi.db import open_db
 
                 with open_db(self.db_path) as conn, conn:
-                    conn.execute(
-                        "UPDATE observation_cycles SET error_log = ? WHERE id = ?", (str(e), cycle_id)
-                    )
+                    conn.execute("UPDATE observation_cycles SET error_log = ? WHERE id = ?", (str(e), cycle_id))
 
     async def _run_phase3(self) -> None:
         """

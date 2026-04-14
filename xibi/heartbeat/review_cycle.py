@@ -17,14 +17,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class ReviewOutput:
-    reclassifications: list[dict] = field(default_factory=list)   # [{signal_id: int, new_tier: str, reason: str}]
-    priority_context: str = ""                                     # Full replacement text
-    memory_notes: list[dict] = field(default_factory=list)         # [{key: str, value: str}]
-    contact_updates: list[dict] = field(default_factory=list)      # [{contact_id: str, relationship: str, notes: str}]
-    message: str | None = None                                     # Telegram message to Daniel
-    reasoning: str = ""                                            # The model's full reasoning
+    reclassifications: list[dict] = field(default_factory=list)  # [{signal_id: int, new_tier: str, reason: str}]
+    priority_context: str = ""  # Full replacement text
+    memory_notes: list[dict] = field(default_factory=list)  # [{key: str, value: str}]
+    contact_updates: list[dict] = field(default_factory=list)  # [{contact_id: str, relationship: str, notes: str}]
+    message: str | None = None  # Telegram message to Daniel
+    reasoning: str = ""  # The model's full reasoning
+
 
 REVIEW_CYCLE_PROMPT = """
 You are Daniel's chief of staff, doing your periodic review. You're looking at
@@ -106,6 +108,7 @@ Message text to Daniel, or empty.
 </message>
 """
 
+
 async def run_review_cycle(db_path: Path, config: dict) -> ReviewOutput:
     """The chief of staff's periodic big-picture review."""
     logger.info("🧠 Starting chief of staff review cycle")
@@ -114,9 +117,10 @@ async def run_review_cycle(db_path: Path, config: dict) -> ReviewOutput:
     context_str = _gather_review_context(db_path)
 
     # 2. Call LLM (Opus effort)
+    from typing import cast
     from xibi.router import Config
 
-    llm = get_model(specialty="text", effort="review", config=Config(config))
+    llm = get_model(specialty="text", effort="review", config=cast(Config, config))
     full_prompt = f"{REVIEW_CYCLE_PROMPT}\n\nCONTEXT:\n{context_str}"
 
     try:
@@ -126,6 +130,7 @@ async def run_review_cycle(db_path: Path, config: dict) -> ReviewOutput:
     except Exception as e:
         logger.error(f"Review cycle LLM call failed: {e}")
         return ReviewOutput(reasoning=f"Error: {e}")
+
 
 def _gather_review_context(db_path: Path) -> str:
     """Query DB for all context needed for the review."""
@@ -146,19 +151,19 @@ def _gather_review_context(db_path: Path) -> str:
         ).fetchall()
         signals_xml = ["<signals>"]
         for r in rows:
-            signals_xml.append(f"  <signal id=\"{r['id']}\" tier=\"{r['urgency']}\" topic=\"{r['topic_hint']}\" action=\"{r['action_type']}\" direction=\"{r['direction']}\">")
+            signals_xml.append(
+                f'  <signal id="{r["id"]}" tier="{r["urgency"]}" topic="{r["topic_hint"]}" action="{r["action_type"]}" direction="{r["direction"]}">'
+            )
             signals_xml.append(f"    <content>{r['content_preview']}</content>")
             signals_xml.append("  </signal>")
         signals_xml.append("</signals>")
         sections.append("\n".join(signals_xml))
 
         # Threads
-        rows = conn.execute(
-            "SELECT * FROM threads WHERE status = 'active' OR updated_at > ?", (since,)
-        ).fetchall()
+        rows = conn.execute("SELECT * FROM threads WHERE status = 'active' OR updated_at > ?", (since,)).fetchall()
         threads_xml = ["<threads>"]
         for r in rows:
-            threads_xml.append(f"  <thread id=\"{r['id']}\" priority=\"{r['priority']}\" status=\"{r['status']}\">")
+            threads_xml.append(f'  <thread id="{r["id"]}" priority="{r["priority"]}" status="{r["status"]}">')
             threads_xml.append(f"    <name>{r['name']}</name>")
             threads_xml.append(f"    <summary>{r['summary']}</summary>")
             threads_xml.append("  </thread>")
@@ -171,8 +176,10 @@ def _gather_review_context(db_path: Path) -> str:
         ).fetchall()
         eng_xml = ["<engagements>"]
         for r in rows:
-            eng_xml.append(f"  <engagement signal_id=\"{r['signal_id']}\" type=\"{r['event_type']}\" source=\"{r['source']}\">")
-            if r['metadata']:
+            eng_xml.append(
+                f'  <engagement signal_id="{r["signal_id"]}" type="{r["event_type"]}" source="{r["source"]}">'
+            )
+            if r["metadata"]:
                 eng_xml.append(f"    <metadata>{r['metadata']}</metadata>")
             eng_xml.append("  </engagement>")
         eng_xml.append("</engagements>")
@@ -180,11 +187,12 @@ def _gather_review_context(db_path: Path) -> str:
 
         # Chat log (recent)
         rows = conn.execute(
-            "SELECT query, answer, created_at FROM session_turns WHERE created_at > ? ORDER BY created_at ASC LIMIT 20", (since,)
+            "SELECT query, answer, created_at FROM session_turns WHERE created_at > ? ORDER BY created_at ASC LIMIT 20",
+            (since,),
         ).fetchall()
         chat_xml = ["<chat_history>"]
         for r in rows:
-            chat_xml.append(f"  <turn at=\"{r['created_at']}\">")
+            chat_xml.append(f'  <turn at="{r["created_at"]}">')
             chat_xml.append(f"    <user>{r['query']}</user>")
             chat_xml.append(f"    <assistant>{r['answer']}</assistant>")
             chat_xml.append("  </turn>")
@@ -202,7 +210,7 @@ def _gather_review_context(db_path: Path) -> str:
         ).fetchall()
         triage_xml = ["<triage_log>"]
         for r in rows:
-            triage_xml.append(f"  <entry at=\"{r['timestamp']}\" sender=\"{r['sender']}\" verdict=\"{r['verdict']}\">")
+            triage_xml.append(f'  <entry at="{r["timestamp"]}" sender="{r["sender"]}" verdict="{r["verdict"]}">')
             triage_xml.append(f"    <subject>{r['subject']}</subject>")
             triage_xml.append("  </entry>")
         triage_xml.append("</triage_log>")
@@ -214,19 +222,21 @@ def _gather_review_context(db_path: Path) -> str:
         ).fetchall()
         inf_xml = ["<inference_events>"]
         for r in rows:
-            inf_xml.append(f"  <event at=\"{r['recorded_at']}\" role=\"{r['role']}\" model=\"{r['model']}\" op=\"{r['operation']}\" prompt=\"{r['prompt_tokens']}\" response=\"{r['response_tokens']}\" />")
+            inf_xml.append(
+                f'  <event at="{r["recorded_at"]}" role="{r["role"]}" model="{r["model"]}" op="{r["operation"]}" prompt="{r["prompt_tokens"]}" response="{r["response_tokens"]}" />'
+            )
         inf_xml.append("</inference_events>")
         sections.append("\n".join(inf_xml))
 
         # Contacts
-        rows = conn.execute(
-            "SELECT * FROM contacts WHERE last_seen > ? LIMIT 50", (since,)
-        ).fetchall()
+        rows = conn.execute("SELECT * FROM contacts WHERE last_seen > ? LIMIT 50", (since,)).fetchall()
         contacts_xml = ["<contacts>"]
         for r in rows:
-            contacts_xml.append(f"  <contact id=\"{r['id']}\" relationship=\"{r['relationship']}\" org=\"{r['organization']}\">")
+            contacts_xml.append(
+                f'  <contact id="{r["id"]}" relationship="{r["relationship"]}" org="{r["organization"]}">'
+            )
             contacts_xml.append(f"    <name>{r['display_name']}</name>")
-            if r['notes']:
+            if r["notes"]:
                 contacts_xml.append(f"    <notes>{r['notes']}</notes>")
             contacts_xml.append("  </contact>")
         contacts_xml.append("</contacts>")
@@ -235,10 +245,13 @@ def _gather_review_context(db_path: Path) -> str:
     # Calendar events (next 48h)
     try:
         from xibi.heartbeat.calendar_context import fetch_upcoming_events
+
         upcoming = fetch_upcoming_events(lookahead_hours=48)
         cal_xml = ["<calendar>"]
         for e in upcoming:
-            cal_xml.append(f"  <event title=\"{e['title']}\" start=\"{e['start']}\" recurring=\"{e['recurring']}\" minutes_until=\"{e.get('minutes_until')}\">")
+            cal_xml.append(
+                f'  <event title="{e["title"]}" start="{e["start"]}" recurring="{e["recurring"]}" minutes_until="{e.get("minutes_until")}">'
+            )
             cal_xml.append(f"    <tags>{', '.join(e.get('event_tags', []))}</tags>")
             cal_xml.append("  </event>")
         cal_xml.append("</calendar>")
@@ -248,12 +261,14 @@ def _gather_review_context(db_path: Path) -> str:
 
     return "\n\n".join(sections)
 
+
 def _parse_review_response(response: str) -> ReviewOutput:
     """Parse XML-ish tags from LLM response."""
     output = ReviewOutput(reasoning=response)
 
     def extract_tag(tag_name: str) -> str | None:
         import re
+
         match = re.search(f"<{tag_name}>(.*?)</{tag_name}>", response, re.DOTALL)
         return match.group(1).strip() if match else None
 
@@ -266,11 +281,13 @@ def _parse_review_response(response: str) -> ReviewOutput:
                 parts = [p.strip() for p in line.split("|")]
                 if len(parts) >= 2:
                     try:
-                        output.reclassifications.append({
-                            "signal_id": int(parts[0]),
-                            "new_tier": parts[1].upper(),
-                            "reason": parts[2] if len(parts) > 2 else ""
-                        })
+                        output.reclassifications.append(
+                            {
+                                "signal_id": int(parts[0]),
+                                "new_tier": parts[1].upper(),
+                                "reason": parts[2] if len(parts) > 2 else "",
+                            }
+                        )
                     except ValueError:
                         continue
 
@@ -290,11 +307,13 @@ def _parse_review_response(response: str) -> ReviewOutput:
             if "|" in line:
                 parts = [p.strip() for p in line.split("|")]
                 if len(parts) >= 2:
-                    output.contact_updates.append({
-                        "contact_id": parts[0],
-                        "relationship": parts[1],
-                        "notes": parts[2] if len(parts) > 2 else None
-                    })
+                    output.contact_updates.append(
+                        {
+                            "contact_id": parts[0],
+                            "relationship": parts[1],
+                            "notes": parts[2] if len(parts) > 2 else None,
+                        }
+                    )
 
     output.message = extract_tag("message")
     if output.message == "empty" or not output.message:
@@ -307,7 +326,9 @@ async def execute_review(
     output: ReviewOutput, db_path: Path, config: dict, adapter: TelegramAdapter | None = None
 ) -> None:
     """Apply the review cycle's outputs."""
-    logger.info(f"🧠 Applying review cycle results: {len(output.reclassifications)} reclass, {len(output.memory_notes)} notes")
+    logger.info(
+        f"🧠 Applying review cycle results: {len(output.reclassifications)} reclass, {len(output.memory_notes)} notes"
+    )
 
     # 1. Reclassify signals
     for reclass in output.reclassifications:
@@ -339,8 +360,10 @@ async def execute_review(
     # 4. Update contact relationships
     for update in output.contact_updates:
         update_contact_relationship(
-            db_path, update["contact_id"],
-            update["relationship"], update.get("notes"),
+            db_path,
+            update["contact_id"],
+            update["relationship"],
+            update.get("notes"),
         )
 
     # 5. Send message to Daniel
@@ -359,10 +382,12 @@ async def execute_review(
     # 6. Store the full reasoning for debugging
     store_review_trace(db_path, output)
 
+
 def update_signal_tier(db_path: Path, signal_id: int, new_tier: str) -> None:
     """Update signals.urgency for the given signal_id."""
     with open_db(db_path) as conn, conn:
         conn.execute("UPDATE signals SET urgency = ? WHERE id = ?", (new_tier, signal_id))
+
 
 def write_memory_note(db_path: Path, key: str, value: str) -> None:
     """Upsert a belief — update if key exists, insert if new."""
@@ -372,6 +397,7 @@ def write_memory_note(db_path: Path, key: str, value: str) -> None:
             conn.execute("UPDATE beliefs SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE key = ?", (value, key))
         else:
             conn.execute("INSERT INTO beliefs (key, value, type) VALUES (?, ?, 'memory')", (key, value))
+
 
 def update_contact_relationship(db_path: Path, contact_id: str, relationship: str, notes: str | None) -> None:
     """Update relationship and notes on an existing contact."""
@@ -387,6 +413,7 @@ def update_contact_relationship(db_path: Path, contact_id: str, relationship: st
                 (relationship, contact_id),
             )
 
+
 def store_review_trace(db_path: Path, output: ReviewOutput) -> None:
     """Log the full review reasoning and output to review_traces."""
     with open_db(db_path) as conn, conn:
@@ -395,9 +422,9 @@ def store_review_trace(db_path: Path, output: ReviewOutput) -> None:
             "priority_context": output.priority_context,
             "memory_notes": output.memory_notes,
             "contact_updates": output.contact_updates,
-            "message": output.message
+            "message": output.message,
         }
         conn.execute(
             "INSERT INTO review_traces (reasoning, output_json) VALUES (?, ?)",
-            (output.reasoning, json.dumps(output_data))
+            (output.reasoning, json.dumps(output_data)),
         )
