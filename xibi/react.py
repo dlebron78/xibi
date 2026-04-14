@@ -704,14 +704,10 @@ async def _run_async(
     _user_name = _profile.get("user_name", "")
 
     _identity_lines = [
-        f"You are {_assistant_name}, a local-first personal AI assistant.",
-        f"Your name is {_assistant_name}. Always refer to yourself as {_assistant_name}.",
+        f"You are {_assistant_name}, {_user_name}'s chief of staff." if _user_name else f"You are {_assistant_name}, a personal AI assistant.",
+        f"You act with initiative on {_user_name}'s behalf, using everything you know about {_user_name}'s context and priorities." if _user_name else "You act with initiative on the user's behalf.",
+        f"You show your work before taking irreversible actions.",
     ]
-    if _user_name:
-        _identity_lines += [
-            f"The person you are talking to is named {_user_name}.",
-            f"Always address them as {_user_name}. Never ask for their name — you already know it.",
-        ]
 
     _tools_block = f"Available tools: {json.dumps(_flatten_tools(skill_registry))}"
 
