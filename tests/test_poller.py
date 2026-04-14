@@ -485,6 +485,7 @@ def test_digest_tick_force_empty(tmp_path):
 
 def test_digest_tick_with_items(tmp_path):
     hp = _make_hp(tmp_path)
+    hp._enable_legacy_digest = True
     hp.rules.pop_digest_items.return_value = [
         {"sender": "alice@example.com", "subject": "Hi", "verdict": "MEDIUM"},
     ]

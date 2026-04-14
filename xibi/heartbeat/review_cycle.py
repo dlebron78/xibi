@@ -6,7 +6,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from xibi.db import open_db
 from xibi.router import get_model
@@ -114,7 +114,9 @@ async def run_review_cycle(db_path: Path, config: dict) -> ReviewOutput:
     context_str = _gather_review_context(db_path)
 
     # 2. Call LLM (Opus effort)
-    llm = get_model(specialty="text", effort="review", config=config)
+    from xibi.router import Config
+
+    llm = get_model(specialty="text", effort="review", config=Config(config))
     full_prompt = f"{REVIEW_CYCLE_PROMPT}\n\nCONTEXT:\n{context_str}"
 
     try:
@@ -300,7 +302,10 @@ def _parse_review_response(response: str) -> ReviewOutput:
 
     return output
 
-async def execute_review(output: ReviewOutput, db_path: Path, config: dict, adapter: TelegramAdapter | None = None):
+
+async def execute_review(
+    output: ReviewOutput, db_path: Path, config: dict, adapter: TelegramAdapter | None = None
+) -> None:
     """Apply the review cycle's outputs."""
     logger.info(f"🧠 Applying review cycle results: {len(output.reclassifications)} reclass, {len(output.memory_notes)} notes")
 

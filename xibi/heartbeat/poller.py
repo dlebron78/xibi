@@ -542,8 +542,8 @@ class HeartbeatPoller:
 
     def _should_run_review(self, last_review_time: datetime, now: datetime) -> bool:
         """Check if we've crossed a scheduled review time since last run."""
-        REVIEW_SCHEDULE = [8, 14, 20]  # hours in local time
-        for hour in REVIEW_SCHEDULE:
+        review_schedule = [8, 14, 20]  # hours in local time
+        for hour in review_schedule:
             scheduled = now.replace(hour=hour, minute=0, second=0, microsecond=0)
             if last_review_time < scheduled <= now:
                 return True
