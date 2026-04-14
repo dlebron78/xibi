@@ -53,3 +53,17 @@ def create_checklist_template(params: dict[str, Any]) -> dict[str, Any]:
     return api.create_checklist_template(
         str(db_path), name, description, items, recurrence, rollover_policy, nudge_config
     )
+
+
+def instantiate_checklist(params: dict[str, Any]) -> dict[str, Any]:
+    db_path = params.get("_db_path")
+    template_id = params.get("template_id")
+    template_name = params.get("template_name")
+
+    if not template_id and not template_name:
+        return {"status": "error", "error": "Provide either template_id or template_name"}
+
+    try:
+        return api.instantiate_checklist(str(db_path), template_id=template_id, template_name=template_name)
+    except ValueError as e:
+        return {"status": "error", "error": str(e)}

@@ -238,3 +238,80 @@ def get_checklist(db_path: str, instance_id: str) -> dict:
             "status": inst["status"],
             "items": item_list,
         }
+
+
+def instantiate_checklist(
+    db_path: str,
+    template_id: str | None = None,
+    template_name: str | None = None,
+) -> dict:
+    """Create an active instance from a checklist template.
+
+    Accepts either template_id (exact) or template_name (case-insensitive substring match).
+    This is the ad-hoc counterpart to the recurrence-triggered fire in lifecycle.py.
+    """
+    if not template_id and not template_name:
+        raise ValueError("Provide either template_id or template_name")
+
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+
+        # Resolve template
+        if template_id:
+            template = conn.execute(
+                "SELECT * FROM checklist_templates WHERE id = ?", (template_id,)
+            ).fetchone()
+            if not template:
+                raise ValueError(f"Template {template_id} not found")
+        else:
+            template = conn.execute(
+                "SELECT * FROM checklist_templates WHERE LOWER(name) LIKE ?",
+                (f"%{template_name.lower()}%",),
+            ).fetchone()
+            if not template:
+                raise ValueError(f"No template matching '{template_name}'")
+
+        template_id = template["id"]
+
+        # Create instance
+        instance_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc)
+        now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+        conn.execute(
+            "INSERT INTO checklist_instances (id, template_id, created_at, status) VALUES (?, ?, ?, ?)",
+            (instance_id, template_id, now_str, "open"),
+        )
+
+        # Copy template items into instance items (no deadline scheduling — ad-hoc lists)
+        template_items = conn.execute(
+            "SELECT * FROM checklist_template_items WHERE template_id = ? ORDER BY position ASC",
+            (template_id,),
+        ).fetchall()
+        for t_item in template_items:
+            conn.execute(
+                """
+                INSERT INTO checklist_instance_items
+                (id, instance_id, template_item_id, label, position, completed_at, deadline_at, deadline_action_ids)
+                VALUES (?, ?, ?, ?, ?, NULL, NULL, '[]')
+                """,
+                (
+                    str(uuid.uuid4()),
+                    instance_id,
+                    t_item["id"],
+                    t_item["label"],
+                    t_item["position"],
+                ),
+            )
+
+    logger.info(
+        "instantiate_checklist: Created instance %s from template %s (%s)",
+        instance_id,
+        template_id,
+        template["name"],
+    )
+    return {
+        "instance_id": instance_id,
+        "template_name": template["name"],
+        "item_count": len(template_items),
+        "created_at": now_str,
+    }

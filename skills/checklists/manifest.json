@@ -105,6 +105,23 @@
         },
         "required": ["name", "items"]
       }
+    },
+    {
+      "name": "instantiate_checklist",
+      "description": "Create an active checklist instance from an existing template. Use this when the user wants to start a new list (e.g., 'create a shopping list', 'start my morning routine'). Provide either template_id or template_name.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "template_id": {
+            "type": "string",
+            "description": "The UUID of the checklist template."
+          },
+          "template_name": {
+            "type": "string",
+            "description": "A name or partial name to look up the template (case-insensitive)."
+          }
+        }
+      }
     }
   ]
 }
