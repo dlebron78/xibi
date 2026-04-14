@@ -351,6 +351,11 @@ Exchanges:
                 unique_values = sorted(list(set(values)))
                 lines.append(f"  {etype}: {', '.join(unique_values)}")
 
+        # Append durable context about the user (memory + passive_memory beliefs)
+        user_context = self._get_user_context()
+        if user_context:
+            lines.insert(0, user_context)
+
         # Append memories from past sessions
         memories = self._get_session_memories()
         if memories:
@@ -362,6 +367,36 @@ Exchanges:
             lines.insert(0, summaries + "\n")
 
         return "\n".join(lines)
+
+    def _get_user_context(self) -> str:
+        """
+        Inject durable beliefs (memory, passive_memory) into the system prompt context.
+        These are long-term facts about the user — job situation, ongoing projects,
+        behavioral preferences — that shape how the assistant should act.
+        """
+        try:
+            with open_db(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute(
+                    """
+                    SELECT key, value, type FROM beliefs
+                    WHERE type IN ('memory', 'passive_memory')
+                      AND (valid_until IS NULL OR valid_until > ?)
+                    ORDER BY type, key
+                    """,
+                    (datetime.utcnow().isoformat(),),
+                ).fetchall()
+
+                if not rows:
+                    return ""
+
+                lines = ["## What I know about Daniel"]
+                for r in rows:
+                    lines.append(f"- **{r['key']}:** {r['value']}")
+                return "\n".join(lines)
+        except Exception as e:
+            logger.debug("Failed to fetch user context beliefs: %s", e, exc_info=True)
+            return ""
 
     def _get_belief_summaries(self) -> str:
         """Fetch belief_summaries for this session."""
