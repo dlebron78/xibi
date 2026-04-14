@@ -13,6 +13,10 @@ from xibi.signal_intelligence import _upsert_contact_core
 
 logger = logging.getLogger(__name__)
 
+# Himalaya account that holds Daniel's sent mail (used for contact population).
+# Roberto's account (default) is the inbox; Daniel's personal Gmail has the sent history.
+SENT_MAIL_ACCOUNT = "daniel"
+
 SENT_FOLDER_CANDIDATES = [
     "Sent",
     "[Gmail]/Sent Mail",
@@ -47,7 +51,7 @@ def _discover_sent_folder(himalaya_bin: str, db_path: Path) -> str | None:
 
     for folder in SENT_FOLDER_CANDIDATES:
         try:
-            cmd = [himalaya_bin, "--output", "json", "envelope", "list", "--folder", folder, "--page-size", "1"]
+            cmd = [himalaya_bin, "--account", SENT_MAIL_ACCOUNT, "--output", "json", "envelope", "list", "--folder", folder, "--page-size", "1"]
             res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
             if res.returncode == 0:
                 # Validate output is a JSON array
@@ -83,7 +87,7 @@ def _list_envelopes(
     page: int = 1,
 ) -> list[dict]:
     """List envelopes from a specific folder (or inbox if None)."""
-    cmd = [himalaya_bin, "--output", "json", "envelope", "list", "--page-size", str(page_size), "--page", str(page)]
+    cmd = [himalaya_bin, "--account", SENT_MAIL_ACCOUNT, "--output", "json", "envelope", "list", "--page-size", str(page_size), "--page", str(page)]
     if folder:
         cmd.extend(["--folder", folder])
 
@@ -148,7 +152,7 @@ def _extract_recipients(himalaya_bin: str, envelope: dict) -> list[dict]:
 def _fetch_recipients_full(himalaya_bin: str, email_id: str) -> list[dict]:
     """Fetch full RFC 5322 headers and parse To/CC/BCC."""
     try:
-        cmd = [himalaya_bin, "message", "export", "--full", str(email_id)]
+        cmd = [himalaya_bin, "--account", SENT_MAIL_ACCOUNT, "message", "export", "--full", str(email_id)]
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
         if res.returncode != 0:
             return []
