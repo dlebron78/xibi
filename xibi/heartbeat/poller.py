@@ -5,7 +5,7 @@ import logging
 import os
 import sqlite3
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -527,7 +527,7 @@ class HeartbeatPoller:
         # Chief of staff review cycle (3x daily: 8am, 2pm, 8pm)
         try:
             last_review = self._get_last_review_time("chief_of_staff")
-            if self._should_run_review(last_review, datetime.now()):
+            if self._should_run_review(last_review, datetime.now(timezone.utc)):
                 logger.info("🧠 Scheduled chief of staff review cycle is due")
                 # Run non-blocking
                 asyncio.create_task(self._do_review_cycle())

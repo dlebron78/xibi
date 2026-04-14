@@ -199,9 +199,11 @@ def _gather_review_context(db_path: Path) -> str:
         ).fetchall()
         chat_xml = ["<chat_history>"]
         for r in rows:
+            user_q = xml.sax.saxutils.escape(r["query"] or "")
+            asst_a = xml.sax.saxutils.escape(r["answer"] or "")
             chat_xml.append(f'  <turn at="{r["created_at"]}">')
-            chat_xml.append(f"    <user>{r['query']}</user>")
-            chat_xml.append(f"    <assistant>{r['answer']}</assistant>")
+            chat_xml.append(f"    <user>{user_q}</user>")
+            chat_xml.append(f"    <assistant>{asst_a}</assistant>")
             chat_xml.append("  </turn>")
         chat_xml.append("</chat_history>")
         sections.append("\n".join(chat_xml))
@@ -344,13 +346,24 @@ async def execute_review(
 
     # 1. Reclassify signals
     for reclass in output.reclassifications:
+        # Fetch old tier for metadata
+        old_tier = None
+        with open_db(db_path) as conn:
+            row = conn.execute("SELECT urgency FROM signals WHERE id = ?", (reclass["signal_id"],)).fetchone()
+            if row:
+                old_tier = row[0]
+
         update_signal_tier(db_path, reclass["signal_id"], reclass["new_tier"])
         record_engagement_sync(
             db_path=db_path,
             signal_id=str(reclass["signal_id"]),
             event_type="reclassified",
             source="review_cycle",
-            metadata={"new_tier": reclass["new_tier"], "reason": reclass["reason"]},
+            metadata={
+                "old_tier": old_tier,
+                "new_tier": reclass["new_tier"],
+                "reason": reclass["reason"],
+            },
         )
 
     # 2. Write priority context to DB

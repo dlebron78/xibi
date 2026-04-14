@@ -1,4 +1,3 @@
-
 import pytest
 
 from xibi.db.migrations import migrate
@@ -85,3 +84,17 @@ async def test_redirect_whitespace_payload(client, db_path):
     assert resp.status == 200
     text = await resp.text()
     assert "url=https://safe.com" in text
+
+
+async def test_redirect_protocol_relative(client, db_path):
+    import sqlite3
+
+    conn = sqlite3.connect(db_path)
+    conn.execute("INSERT INTO signals (source, content_preview, deep_link_url) VALUES ('email', 'test', '//evil.com')")
+    row = conn.execute("SELECT last_insert_rowid()").fetchone()
+    sid = row[0]
+    conn.commit()
+    conn.close()
+
+    resp = await client.get(f"/go/{sid}")
+    assert resp.status == 400
