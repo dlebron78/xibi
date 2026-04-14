@@ -6,8 +6,6 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
-from xibi.router import inference_lock
-
 
 def normalize_topic(topic: str | None) -> str | None:
     """Consolidates fragmented topics (e.g. scheduling -> schedule)."""

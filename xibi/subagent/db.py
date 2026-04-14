@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
-from typing import Any
 
 from xibi.db import open_db
 from xibi.subagent.models import ChecklistStep, CostEvent, PendingL2Action, SubagentRun

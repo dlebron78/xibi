@@ -4,18 +4,19 @@ import json
 import logging
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from xibi.subagent.db import (
     create_cost_event,
     create_l2_action,
+    get_run,
     get_steps,
     update_run,
     update_step,
 )
-from xibi.subagent.models import ChecklistStep, CostEvent, SubagentRun
+from xibi.subagent.models import CostEvent, SubagentRun
 from xibi.subagent.routing import ModelRouter
 from xibi.subagent.trust import enforce_trust
 
@@ -27,7 +28,7 @@ def execute_checklist(run: SubagentRun, db_path: Path, checklist: list[dict[str,
     steps = get_steps(db_path, run.id)
 
     run.status = "RUNNING"
-    run.started_at = datetime.utcnow().isoformat()
+    run.started_at = datetime.now(timezone.utc).isoformat()
     update_run(db_path, run)
 
     previous_outputs = []
@@ -50,15 +51,14 @@ def execute_checklist(run: SubagentRun, db_path: Path, checklist: list[dict[str,
             run.error_detail = "Exceeded max cost budget"
             break
         # Duration check
-        elapsed = (datetime.utcnow() - datetime.fromisoformat(run.started_at)).total_seconds()
-        if elapsed >= run.budget_max_duration_s:
-            run.status = "TIMEOUT"
-            run.error_detail = "Exceeded max duration"
-            break
+        if run.started_at:
+            elapsed = (datetime.now(timezone.utc) - datetime.fromisoformat(run.started_at)).total_seconds()
+            if elapsed >= run.budget_max_duration_s:
+                run.status = "TIMEOUT"
+                run.error_detail = "Exceeded max duration"
+                break
 
         # Check for cancellation
-        # We should reload the run to see if status changed to CANCELLED
-        from xibi.subagent.db import get_run
         current_run = get_run(db_path, run.id)
         if current_run and current_run.status == "CANCELLED":
             run.status = "CANCELLED"
@@ -67,7 +67,7 @@ def execute_checklist(run: SubagentRun, db_path: Path, checklist: list[dict[str,
 
         # Execute step
         step.status = "RUNNING"
-        step.started_at = datetime.utcnow().isoformat()
+        step.started_at = datetime.now(timezone.utc).isoformat()
         update_step(db_path, step)
 
         try:
@@ -114,7 +114,7 @@ def execute_checklist(run: SubagentRun, db_path: Path, checklist: list[dict[str,
 
             # Update step
             step.status = "DONE"
-            step.completed_at = datetime.utcnow().isoformat()
+            step.completed_at = datetime.now(timezone.utc).isoformat()
             step.model = response.model_id
             step.output_data = output_data
             step.input_tokens = response.input_tokens
@@ -156,6 +156,6 @@ def execute_checklist(run: SubagentRun, db_path: Path, checklist: list[dict[str,
         run.status = "DONE"
         run.output = previous_outputs[-1] if previous_outputs else {}
 
-    run.completed_at = datetime.utcnow().isoformat()
+    run.completed_at = datetime.now(timezone.utc).isoformat()
     update_run(db_path, run)
     return run

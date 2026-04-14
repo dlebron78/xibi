@@ -1,22 +1,21 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from xibi.subagent.checklist import execute_checklist
-from xibi.subagent.db import create_run, create_step, get_run, get_steps
+from xibi.subagent.db import create_run, create_step, get_run
 from xibi.subagent.models import ChecklistStep, SubagentRun
 
 
 def spawn_subagent(
     agent_id: str,
     trigger: str,
-    trigger_context: dict,
-    scoped_input: dict,
-    checklist: list[dict],      # [{skill_name, model, ...}]
-    budget: dict,               # {max_calls, max_cost_usd, max_duration_s}
+    trigger_context: dict[str, Any],
+    scoped_input: dict[str, Any],
+    checklist: list[dict[str, Any]],      # [{skill_name, model, ...}]
+    budget: dict[str, Any],               # {max_calls, max_cost_usd, max_duration_s}
     db_path: Path,
 ) -> SubagentRun:
     """
@@ -51,7 +50,7 @@ def spawn_subagent(
     # Execute (sequentially for now as per spec)
     return execute_checklist(run, db_path, checklist)
 
-def resume_run(run_id: str, db_path: Path, checklist: list[dict]) -> SubagentRun:
+def resume_run(run_id: str, db_path: Path, checklist: list[dict[str, Any]]) -> SubagentRun:
     """
     Load the run and its checklist.
     Skip steps with status=DONE (their output_data is already persisted).

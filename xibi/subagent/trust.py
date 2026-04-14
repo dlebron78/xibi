@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import json
 import uuid
 from typing import Any
 
 from xibi.subagent.models import PendingL2Action
 
 
-def enforce_trust(step_output: dict, skill_config: dict, run_id: str, step_id: str) -> tuple[dict, list[PendingL2Action]]:
+def enforce_trust(step_output: dict[str, Any], skill_config: dict[str, Any], run_id: str, step_id: str) -> tuple[dict[str, Any], list[PendingL2Action]]:
     """
     Inspect step output for declared actions.
     L1 actions: pass through, record in output.
@@ -20,14 +19,13 @@ def enforce_trust(step_output: dict, skill_config: dict, run_id: str, step_id: s
     actions = step_output.get("actions", [])
 
     parked_actions = []
-    allowed_actions = []
 
     for action in actions:
         if not isinstance(action, dict) or "tool" not in action:
             continue
 
         if trust_level == "L1":
-            allowed_actions.append(action)
+            pass
         else:
             # Park L2 action
             pending = PendingL2Action(
