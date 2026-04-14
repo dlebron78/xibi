@@ -703,8 +703,6 @@ async def _run_async(
     _assistant_name = str(_profile.get("assistant_name", "Xibi"))
     _user_name = _profile.get("user_name", "")
 
-    _persona_instructions = _profile.get("persona_instructions", "")
-
     _identity_lines = [
         f"You are {_assistant_name}, a local-first personal AI assistant.",
         f"Your name is {_assistant_name}. Always refer to yourself as {_assistant_name}.",
@@ -714,8 +712,6 @@ async def _run_async(
             f"The person you are talking to is named {_user_name}.",
             f"Always address them as {_user_name}. Never ask for their name — you already know it.",
         ]
-    if _persona_instructions:
-        _identity_lines += ["", _persona_instructions]
 
     _tools_block = f"Available tools: {json.dumps(_flatten_tools(skill_registry))}"
 
