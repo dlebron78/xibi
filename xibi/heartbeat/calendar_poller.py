@@ -95,9 +95,10 @@ def poll_calendar_signals(
             urgency = _derive_urgency(start_iso)
             attendee_name, attendee_email = _extract_attendees(event)
 
-            # Google Calendar deep link
-            # event_id needs base64 encoding for the eid parameter
+            # Google Calendar deep link format uses a base64 encoded string of "event_id calendar_id"
+            # Standard padding is removed to match observed GCal URL patterns.
             import base64
+
             calendar_id = cal["calendar_id"]
             eid = base64.b64encode(f"{event_id} {calendar_id}".encode()).decode().rstrip("=")
             deep_link_url = f"https://calendar.google.com/calendar/event?eid={eid}"

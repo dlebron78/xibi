@@ -744,6 +744,8 @@ class HeartbeatPoller:
                     if item["verdict"] in ("CRITICAL", "HIGH", "URGENT"):
                         from xibi.heartbeat.rich_nudge import compose_smart_nudge
 
+                        base_url = self.config.get("redirect_base_url") or os.environ.get("XIBI_REDIRECT_BASE")
+
                         ctx = email_contexts.get(item["email_id"])
                         if ctx and self._nudge_limiter.allow():
                             nudge = await compose_smart_nudge(
@@ -751,6 +753,7 @@ class HeartbeatPoller:
                                 model=self.nudge_model,
                                 signal_id=item.get("signal_id"),
                                 timeout_ms=self.nudge_timeout_ms,
+                                base_url=base_url,
                             )
                             self._broadcast(nudge.text, nudge=nudge)
                             # Store nudge context for the adapter

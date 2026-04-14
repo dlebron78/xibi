@@ -755,7 +755,11 @@ class TelegramAdapter:
             logger.error(f"Error handling reaction: {e}", exc_info=True)
 
     def _lookup_signal_by_message_id(self, message_id: int) -> int | None:
-        """Attempt to find a signal ID associated with a Telegram message ID."""
+        """Attempt to find a signal ID associated with a Telegram message ID.
+
+        # FIXME: This heuristic relies on the undocumented JSON structure in access_log.user_name.
+        # It should be replaced by a dedicated message_id -> signal_id mapping table in step-80.
+        """
         try:
             with open_db(self.db_path) as conn:
                 # Check access_log (nudge delivery)

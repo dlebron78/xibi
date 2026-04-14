@@ -88,11 +88,12 @@ async def handle_redirect(request: web.Request) -> web.Response:
     # Return HTML page that triggers native app opening
     # Meta-refresh + JS redirect works better than raw 302
     # for opening native apps from Telegram's in-app browser
+    # JS interpolation uses json.dumps to prevent XSS
     html = f"""<!DOCTYPE html>
     <html><head>
         <meta http-equiv="refresh" content="0;url={deep_link_url}">
-        <script>window.location.replace("{deep_link_url}");</script>
-    </head><body>Redirecting to {deep_link_url}...</body></html>"""
+        <script>window.location.replace({json.dumps(deep_link_url)});</script>
+    </head><body>Redirecting to native app...</body></html>"""
 
     return web.Response(text=html, content_type="text/html")
 

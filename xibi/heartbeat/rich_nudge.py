@@ -32,6 +32,7 @@ def compose_rich_nudge(
     verdict_reason: str | None = None,
     signal_id: int | None = None,
     is_late: bool = False,
+    base_url: str | None = None,
 ) -> RichNudge:
     """Build a rich nudge from assembled SignalContext.
 
@@ -71,13 +72,13 @@ def compose_rich_nudge(
         lines.append(f"↔️ You've emailed them {context.contact_outbound_count}x")
 
     # WHAT — body summary
-    import os
-
     from xibi.telegram.formatter import format_signal_link
 
-    # Assume we might not have a full config here, check env too
-    # The context doesn't have the config, but we can try to get base_url from env.
-    base_url = os.environ.get("XIBI_REDIRECT_BASE")
+    # If base_url wasn't passed in, fall back to environment variable
+    if not base_url:
+        import os
+
+        base_url = os.environ.get("XIBI_REDIRECT_BASE")
 
     summary = context.summary
     headline = context.headline
@@ -178,13 +179,14 @@ async def compose_smart_nudge(
     signal_id: int | None = None,
     is_late: bool = False,
     timeout_ms: int = 3000,
+    base_url: str | None = None,
 ) -> RichNudge:
     """Compose rich nudge with LLM 'why it matters' line.
 
     Falls back to template-only nudge if LLM is unavailable or slow.
     """
     # Start with template nudge
-    nudge = compose_rich_nudge(context, signal_id=signal_id, is_late=is_late)
+    nudge = compose_rich_nudge(context, signal_id=signal_id, is_late=is_late, base_url=base_url)
 
     if not model:
         return nudge

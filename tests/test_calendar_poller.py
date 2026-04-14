@@ -25,7 +25,8 @@ def db_path(tmp_path):
                 urgency TEXT,
                 entity_type TEXT,
                 entity_text TEXT,
-                env TEXT
+                env TEXT,
+                deep_link_url TEXT
             )
         """)
         conn.execute("""

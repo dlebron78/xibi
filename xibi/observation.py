@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import sqlite3
 from contextlib import suppress
@@ -1042,6 +1043,7 @@ Rules:
                                 verdict_reason=n.get("reason"),
                                 signal_id=n["signal_id"],
                                 is_late=True,
+                                base_url=self.profile.get("redirect_base_url") or os.environ.get("XIBI_REDIRECT_BASE"),
                             )
                             rich_late_nudges.append(nudge.text)
                         else:

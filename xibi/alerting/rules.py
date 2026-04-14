@@ -81,6 +81,7 @@ class RuleEngine:
                         sender_trust   TEXT,
                         sender_contact_id TEXT,
                         classification_reasoning TEXT,
+                        deep_link_url  TEXT,
                         timestamp      DATETIME DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
