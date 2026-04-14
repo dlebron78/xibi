@@ -56,6 +56,47 @@ def query_correction_context(
         return []
 
 
+CHIEF_OF_STAFF_DIRECTIVE = """
+You are Daniel's chief of staff. Your job is to look at this signal and decide
+how important it is to him RIGHT NOW — not in general, not in theory, right now
+given everything you know about his day, his priorities, and his relationships.
+
+You have context about:
+- Who sent this and their relationship with Daniel
+- What's on Daniel's calendar today
+- What Daniel has been paying attention to recently (if available)
+- Active threads and recent activity with this sender
+- Past corrections where Daniel told you a classification was wrong
+
+Use all of this to make a judgment call. Output a tier (CRITICAL / HIGH / MEDIUM / LOW / NOISE)
+and a one-line reason. The reason should reflect your thinking, not just restate a rule.
+
+There are no mechanical rules. Use your judgment. Some common-sense guidelines:
+- Missing a flight or a hard external deadline has real consequences
+- A message from someone Daniel is about to meet is worth knowing about
+- Routine newsletters and FYIs are noise unless Daniel has been actively engaging with the topic
+- When in doubt about whether something is MEDIUM or HIGH, consider: would Daniel want to see
+  this before his next meeting, or can it wait until tonight?
+"""
+
+
+def build_priority_context(db_path: Path) -> str | None:
+    """
+    Read the current priority context from the review cycle's last output.
+    Queries the priority_context table (migration 29).
+    """
+    try:
+        from xibi.db import open_db
+
+        with open_db(db_path) as conn:
+            row = conn.execute("SELECT content FROM priority_context ORDER BY updated_at DESC LIMIT 1").fetchone()
+            if row:
+                return f"CURRENT PRIORITIES (from last review):\n{row[0]}"
+    except Exception:
+        pass
+    return None
+
+
 def build_classification_prompt(signal: dict, context: SignalContext) -> str:
     """Build a context-rich classification prompt from SignalContext."""
 
@@ -162,29 +203,19 @@ def build_classification_prompt(signal: dict, context: SignalContext) -> str:
                 correction_lines.append(line)
             sections.append("Past corrections:\n" + "\n".join(correction_lines))
 
+    # Priority context from review cycle
+    if context.db_path:
+        pc = build_priority_context(Path(context.db_path))
+        if pc:
+            sections.append(pc)
+
     # Build final prompt
     context_block = "\n".join(sections)
 
-    prompt = f"""{context_block}
+    prompt = f"""{CHIEF_OF_STAFF_DIRECTIVE}
 
-Classify this signal. Reply with a tier and one sentence explaining why.
-
-Format: TIER: One sentence reasoning.
-Example: HIGH: Established contact following up on an open thread with a Friday deadline.
-
-Tiers:
-CRITICAL — Act now. Human-to-human from trusted sender, security/fraud alert, travel disruption, deadline today.
-HIGH — Act today. Important request or update from known sender, active thread approaching deadline, direct question requiring a response.
-MEDIUM — Read soon. Meaningful update, job alert, newsletter you read, FYI from colleague, no immediate action needed.
-LOW — Read when convenient. Low-priority update, automated notification you care about, confirmation email.
-NOISE — Ignore. Marketing, bulk email, social alerts, unknown sender with no context, promotional content.
-
-Rules:
-- ESTABLISHED sender with a direct request → at least HIGH
-- Active thread with deadline today → CRITICAL regardless of sender
-- Unknown sender, no thread context → at most MEDIUM, usually LOW or NOISE
-- When unsure between adjacent tiers → choose the lower one
-- NOISE only when clearly automated or irrelevant
+CONTEXT:
+{context_block}
 
 Classification:"""
 

@@ -16,6 +16,7 @@ from xibi.channels.sheets import SheetsExporter
 from xibi.channels.telegram import TelegramAdapter
 from xibi.command_layer import CommandLayer
 from xibi.heartbeat.classification import build_classification_prompt
+from xibi.heartbeat.review_cycle import run_review_cycle, execute_review
 from xibi.heartbeat.contact_poller import backfill_contacts, find_himalaya, poll_sent_folder
 from xibi.heartbeat.extractors import SignalExtractorRegistry
 from xibi.heartbeat.sender_trust import (
@@ -120,6 +121,7 @@ class HeartbeatPoller:
         self._digest_overflow: list[dict] = []
         self._pending_nudges: list[dict] = []
         self._pending_nudge_context: dict | None = None
+        self._enable_legacy_digest = self.config.get("enable_legacy_digest", False)
 
         self.scheduler_kernel: ScheduledActionKernel | None
         if self.executor is not None:
@@ -510,6 +512,73 @@ class HeartbeatPoller:
         except Exception as e:
             logger.warning("Phase 3 error: %s", e, exc_info=True)
 
+        # Chief of staff review cycle (3x daily: 8am, 2pm, 8pm)
+        try:
+            last_review = self._get_last_review_time("chief_of_staff")
+            if self._should_run_review(last_review, datetime.now()):
+                logger.info("🧠 Scheduled chief of staff review cycle is due")
+                # Run non-blocking
+                asyncio.create_task(self._do_review_cycle())
+        except Exception as e:
+            logger.warning("Chief of staff review trigger error: %s", e)
+
+    def _get_last_review_time(self, mode: str) -> datetime:
+        """Query observation_cycles for the last completion of a specific mode."""
+        try:
+            from xibi.db import open_db
+
+            with open_db(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                row = conn.execute(
+                    "SELECT completed_at FROM observation_cycles WHERE review_mode = ? AND completed_at IS NOT NULL ORDER BY completed_at DESC LIMIT 1",
+                    (mode,),
+                ).fetchone()
+                if row:
+                    return datetime.fromisoformat(row["completed_at"])
+        except Exception:
+            pass
+        # Default to long ago if never run
+        return datetime.now() - timedelta(days=1)
+
+    def _should_run_review(self, last_review_time: datetime, now: datetime) -> bool:
+        """Check if we've crossed a scheduled review time since last run."""
+        REVIEW_SCHEDULE = [8, 14, 20]  # hours in local time
+        for hour in REVIEW_SCHEDULE:
+            scheduled = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+            if last_review_time < scheduled <= now:
+                return True
+        return False
+
+    async def _do_review_cycle(self) -> None:
+        """Run the review cycle and record it in observation_cycles."""
+        cycle_id = None
+        try:
+            from xibi.db import open_db
+
+            with open_db(self.db_path) as conn, conn:
+                cursor = conn.execute(
+                    "INSERT INTO observation_cycles (started_at, last_signal_id, review_mode) VALUES (CURRENT_TIMESTAMP, 0, 'chief_of_staff')"
+                )
+                cycle_id = cursor.lastrowid
+
+            output = await run_review_cycle(self.db_path, self.config)
+            await execute_review(output, self.db_path, self.config, self.adapter)
+
+            with open_db(self.db_path) as conn, conn:
+                conn.execute(
+                    "UPDATE observation_cycles SET completed_at = CURRENT_TIMESTAMP WHERE id = ?", (cycle_id,)
+                )
+            logger.info("🧠 Chief of staff review cycle complete")
+        except Exception as e:
+            logger.error("🧠 Chief of staff review cycle failed: %s", e, exc_info=True)
+            if cycle_id:
+                from xibi.db import open_db
+
+                with open_db(self.db_path) as conn, conn:
+                    conn.execute(
+                        "UPDATE observation_cycles SET error_log = ? WHERE id = ?", (str(e), cycle_id)
+                    )
+
     async def _run_phase3(self) -> None:
         """
         Signal intelligence, observation cycle, Jules watcher, Radiant audit.
@@ -793,6 +862,9 @@ class HeartbeatPoller:
             logger.warning(f"Error in process_email_signals write phase: {e}", exc_info=True)
 
     def digest_tick(self, force: bool = False) -> None:
+        if not self._enable_legacy_digest and not force:
+            return
+
         if self._is_quiet_hours() and not force:
             return
 
