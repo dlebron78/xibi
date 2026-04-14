@@ -187,7 +187,8 @@ def _gather_review_context(db_path: Path) -> str:
                 f'  <engagement signal_id="{r["signal_id"]}" type="{r["event_type"]}" source="{r["source"]}">'
             )
             if r["metadata"]:
-                eng_xml.append(f"    <metadata>{r['metadata']}</metadata>")
+                metadata = xml.sax.saxutils.escape(r["metadata"])
+                eng_xml.append(f"    <metadata>{metadata}</metadata>")
             eng_xml.append("  </engagement>")
         eng_xml.append("</engagements>")
         sections.append("\n".join(eng_xml))
