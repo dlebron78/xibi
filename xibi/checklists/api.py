@@ -258,12 +258,12 @@ def instantiate_checklist(
 
         # Resolve template
         if template_id:
-            template = conn.execute(
-                "SELECT * FROM checklist_templates WHERE id = ?", (template_id,)
-            ).fetchone()
+            template = conn.execute("SELECT * FROM checklist_templates WHERE id = ?", (template_id,)).fetchone()
             if not template:
                 raise ValueError(f"Template {template_id} not found")
         else:
+            if not template_name:
+                raise ValueError("Must provide template_id or template_name")
             template = conn.execute(
                 "SELECT * FROM checklist_templates WHERE LOWER(name) LIKE ?",
                 (f"%{template_name.lower()}%",),

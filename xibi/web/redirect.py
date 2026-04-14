@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
-from html import escape as html_escape
 import logging
 import uuid
 from datetime import datetime, timezone
+from html import escape as html_escape
 from pathlib import Path
 from typing import Any
 
@@ -76,6 +76,14 @@ async def handle_redirect(request: web.Request) -> web.Response:
     if not deep_link_url:
         logger.warning(f"⚠️ Redirect failed for {signal_id}: Signal not found or no deep link")
         return web.Response(status=404, text="Signal not found")
+
+    # Security: Normalize and validate URL scheme to prevent URI-based XSS (javascript:, data:, etc.)
+    # Also block protocol-relative urls (//evil.com) which can bypass scheme checks.
+    deep_link_url = deep_link_url.strip()
+    url_lower = deep_link_url.lower()
+    if url_lower.startswith("//") or not (url_lower.startswith("http://") or url_lower.startswith("https://")):
+        logger.error(f"❌ Malicious deep link detected for signal {signal_id}: {deep_link_url}")
+        return web.Response(status=400, text="Invalid redirect URL")
 
     # Log the engagement event
     await record_engagement(

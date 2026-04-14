@@ -7,7 +7,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 28  # increment when adding new migrations
+SCHEMA_VERSION = 29  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -59,6 +59,7 @@ class SchemaManager:
             (26, "signals: add correction_reason column", self._migration_26),
             (27, "signals: add deep_link_url column", self._migration_27),
             (28, "engagement: create engagements table", self._migration_28),
+            (29, "chief of staff: priority_context and review_traces", self._migration_29),
         ]
 
         for version, description, func in migrations:
@@ -698,6 +699,23 @@ class SchemaManager:
             CREATE INDEX IF NOT EXISTS idx_engagements_signal ON engagements(signal_id);
             CREATE INDEX IF NOT EXISTS idx_engagements_created ON engagements(created_at);
             CREATE INDEX IF NOT EXISTS idx_engagements_type ON engagements(event_type);
+        """)
+
+    def _migration_29(self, conn: sqlite3.Connection) -> None:
+        """Chief of Staff: priority_context and review_traces."""
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS priority_context (
+                id INTEGER PRIMARY KEY,
+                content TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS review_traces (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                reasoning TEXT,
+                output_json TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
         """)
 
 
