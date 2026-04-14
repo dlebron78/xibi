@@ -712,6 +712,28 @@ class ObservationCycle:
                 lines.append(f"CURRENTLY PINNED TOPICS: {', '.join(current_pinned)}")
                 lines.append("")
 
+            # Subagent results injection
+            try:
+                with open_db(self.db_path) as conn:
+                    conn.row_factory = sqlite3.Row
+                    cursor = conn.execute(
+                        "SELECT agent_id, status, output, completed_at FROM subagent_runs "
+                        "WHERE status IN ('DONE', 'FAILED') AND completed_at > ? "
+                        "ORDER BY completed_at DESC",
+                        (since,)
+                    )
+                    completed_runs = cursor.fetchall()
+                    if completed_runs:
+                        lines.append("COMPLETED SUBAGENT RUNS SINCE LAST REVIEW:")
+                        for run in completed_runs:
+                            status_str = run["status"]
+                            output_preview = str(run["output"])[:200] if run["output"] else "N/A"
+                            lines.append(f"- {run['agent_id']} ({status_str}) at {run['completed_at']}")
+                            lines.append(f"  Result: {output_preview}")
+                        lines.append("")
+            except Exception as e:
+                logger.warning(f"Error injecting subagent results: {e}")
+
             # Recent signal distribution for context
             with open_db(self.db_path) as conn:
                 cursor = conn.execute(
@@ -722,6 +744,23 @@ class ObservationCycle:
                 dist_str = ", ".join(f"{k}: {v}" for k, v in sorted(dist.items()))
                 lines.append(f"SIGNAL DISTRIBUTION: {dist_str}")
                 lines.append("")
+
+            # Pending L2 Actions injection
+            try:
+                with open_db(self.db_path) as conn:
+                    conn.row_factory = sqlite3.Row
+                    cursor = conn.execute(
+                        "SELECT id, tool, args, run_id FROM pending_l2_actions WHERE status = 'PENDING'"
+                    )
+                    pending_actions = cursor.fetchall()
+                    if pending_actions:
+                        lines.append("PENDING ACTIONS REQUIRING APPROVAL:")
+                        for action in pending_actions:
+                            lines.append(f"- [action_id={action['id']}] Tool: {action['tool']} (Run: {action['run_id']})")
+                            lines.append(f"  Args: {action['args']}")
+                        lines.append("")
+            except Exception as e:
+                logger.warning(f"Error injecting pending L2 actions: {e}")
 
             # Sender Trust Distribution
             with open_db(self.db_path) as conn:
@@ -795,6 +834,15 @@ Update summaries for threads that are stale or missing summaries.
 Set owner (me = user needs to act, them = waiting on others, unclear = ambiguous).
 Set deadline if one is mentioned or implied in signal summaries.
 
+## Action Approvals
+Subagents may have parked actions (L2 trust) that require your approval before execution.
+Review the "PENDING ACTIONS REQUIRING APPROVAL" section.
+For each action, decide whether to "approve" or "reject".
+
+## Delegation
+If a thread requires deep work (e.g. "run a career scan", "prepare a meeting brief", "research topic"), delegate it to a subagent.
+Subagents are bounded, trust-scoped agents that perform specific tasks and report back.
+
 ## Signal Review
 Look at all recent signals, especially those the real-time classifier may have gotten wrong:
 - ESTABLISHED sender with a direct request classified as MEDIUM → should be HIGH or CRITICAL
@@ -852,6 +900,21 @@ Respond with ONLY valid JSON matching this schema (no markdown, no explanation):
       "organization": "str or null"
     }
   ],
+  "action_approvals": [
+    {
+      "action_id": "...",
+      "decision": "approve|reject",
+      "reason": "..."
+    }
+  ],
+  "subagent_spawns": [
+    {
+      "agent_id": "...",
+      "reason": "...",
+      "scoped_input": {},
+      "skills": [{"skill_name": "...", "model": "haiku|sonnet|opus"}]
+    }
+  ],
   "digest": "markdown bullets"
 }
 
@@ -859,6 +922,16 @@ Rules:
 - CALIBRATION: use the full priority range realistically. Across all threads, expect roughly: 5-10% critical, 20-30% high, 40-50% medium, 20-30% low.
 - Keep summaries under 150 characters.
 - CRITICAL: output RAW JSON only. No markdown, no code fences, no explanation. Start your response with { and end with }. Nothing else.
+
+Example for subagent_spawns:
+"subagent_spawns": [
+    {
+        "agent_id": "career-ops",
+        "reason": "Scheduled weekly career scan overdue",
+        "scoped_input": {"criteria": "..."},
+        "skills": [{"skill_name": "scan", "model": "haiku"}, {"skill_name": "triage", "model": "haiku"}]
+    }
+]
 """
 
     def _get_all_active_threads(self) -> list[dict[str, Any]]:
@@ -971,11 +1044,15 @@ Rules:
                 all_signal_flags = review_data.get("signal_flags", [])
                 all_topic_pins = review_data.get("topic_pins", [])
                 all_contact_updates = review_data.get("contact_updates", [])
+                all_subagent_spawns = review_data.get("subagent_spawns", [])
+                all_action_approvals = review_data.get("action_approvals", [])
                 digest = review_data.get("digest", "")
 
             except Exception as e:
                 review_errors.append(f"LLM generate failed: {e}")
                 logger.warning(f"Manager review LLM call failed: {e}")
+                all_subagent_spawns = []
+                all_action_approvals = []
 
             # Apply all updates
             merged = {
@@ -983,9 +1060,42 @@ Rules:
                 "signal_flags": all_signal_flags,
                 "topic_pins": all_topic_pins,
                 "contact_updates": all_contact_updates,
+                "action_approvals": all_action_approvals,
             }
             updates_applied = self._apply_manager_updates(merged)
             result.actions_taken = updates_applied
+
+            # Dispatch subagent spawns
+            if all_subagent_spawns:
+                from xibi.subagent.runtime import spawn_subagent
+
+                for spawn in all_subagent_spawns:
+                    try:
+                        agent_id = spawn.get("agent_id")
+                        if not agent_id:
+                            continue
+
+                        # Use default budget if none provided
+                        budget = spawn.get("budget", {"max_calls": 50, "max_cost_usd": 1.0, "max_duration_s": 600})
+
+                        run = spawn_subagent(
+                            agent_id=agent_id,
+                            trigger="review_cycle",
+                            trigger_context={"review_id": cycle_id},
+                            scoped_input=spawn.get("scoped_input", {}),
+                            checklist=spawn.get("skills", []),
+                            budget=budget,
+                            db_path=self.db_path,
+                        )
+                        result.actions_taken.append({
+                            "tool": "subagent_spawn",
+                            "input": spawn,
+                            "output": {"run_id": run.id, "status": run.status},
+                            "allowed": True
+                        })
+                    except Exception as e:
+                        logger.error(f"Failed to spawn subagent {agent_id}: {e}")
+                        result.errors.append(f"Subagent spawn failed: {e}")
             result.errors.extend(review_errors)
 
             # Compose and fire single digest nudge
@@ -1317,6 +1427,37 @@ Rules:
                         )
             except Exception as e:
                 logger.error(f"Manager review: failed to apply topic pins: {e}", exc_info=True)
+
+        # Action approvals
+        action_approvals = review_data.get("action_approvals", [])
+        if action_approvals:
+            try:
+                with open_db(self.db_path) as conn, conn:
+                    for approval in action_approvals:
+                        action_id = approval.get("action_id")
+                        decision = approval.get("decision")
+                        if not action_id or decision not in ("approve", "reject"):
+                            continue
+
+                        status = "APPROVED" if decision == "approve" else "REJECTED"
+                        conn.execute(
+                            "UPDATE pending_l2_actions SET status = ?, reviewed_at = ?, reviewed_by = 'manager' WHERE id = ?",
+                            (status, now_str, action_id),
+                        )
+
+                        # If approved, route to existing command execution layer?
+                        # For now, just mark status — the runtime execution of approved actions is Block 2/3.
+
+                        actions.append(
+                            {
+                                "tool": "manager_action_approval",
+                                "input": approval,
+                                "output": {"status": "ok"},
+                                "allowed": True,
+                            }
+                        )
+            except Exception as e:
+                logger.error(f"Manager review: failed to apply action approvals: {e}", exc_info=True)
 
         # Contact updates
         contact_updates = review_data.get("contact_updates", [])
