@@ -18,7 +18,6 @@ from xibi.mcp.registry import MCPServerRegistry
 from xibi.router import init_telemetry
 from xibi.routing.control_plane import ControlPlaneRouter
 from xibi.routing.llm_classifier import LLMRoutingClassifier
-from xibi.routing.shadow import ShadowMatcher
 from xibi.shutdown import request_shutdown
 from xibi.skills.registry import SkillRegistry
 from xibi.tracing import Tracer
@@ -57,9 +56,6 @@ def cmd_telegram(args: argparse.Namespace) -> None:
 
     executor = LocalHandlerExecutor(registry, config=config, mcp_registry=mcp_registry)
     control_plane = ControlPlaneRouter()
-    shadow = ShadowMatcher()
-    shadow.load_manifests(str(skills_dir))
-
     llm_routing_classifier = LLMRoutingClassifier(config)
 
     db_path = Path(config.get("db_path", workdir / "data" / "xibi.db")).expanduser()
@@ -79,7 +75,7 @@ def cmd_telegram(args: argparse.Namespace) -> None:
             skill_registry=registry,
             executor=executor,
             control_plane=control_plane,
-            shadow=shadow,
+            shadow=None,
             db_path=db_path,
             llm_routing_classifier=llm_routing_classifier,
         )
@@ -150,15 +146,12 @@ def cmd_heartbeat(args: argparse.Namespace) -> None:
 
     executor = LocalHandlerExecutor(registry, config=config, mcp_registry=mcp_registry)
     control_plane = ControlPlaneRouter()
-    shadow = ShadowMatcher()
-    shadow.load_manifests(str(skills_dir))
-
     adapter = TelegramAdapter(
         config=config,
         skill_registry=registry,
         executor=executor,
         control_plane=control_plane,
-        shadow=shadow,
+        shadow=None,
         db_path=db_path,
     )
 
