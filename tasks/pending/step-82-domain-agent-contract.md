@@ -12,7 +12,7 @@
 > **Date:** 2026-04-14
 > **Reviewer:** Opus (independent — spec authored by Daniel)
 > **Repo HEAD:** Block 1 merged as 095ba90 on main
-> **Verdict:** AMEND — manifest schema and registry design are sound; 9 findings on integration seams applied inline
+> Verdict: **AMEND** — manifest schema and registry design are sound; 9 findings on integration seams applied inline
 
 ### Findings Applied (AMEND)
 
