@@ -135,7 +135,7 @@ def create_reminder(params: dict[str, Any]) -> dict[str, Any]:
     if "text" not in params and "title" in params:
         params["text"] = params["title"]
     if "when" not in params:
-        params["when"] = params.get("time") or params.get("datetime") or params.get("at") or ""
+        params["when"] = params.get("time") or params.get("datetime") or params.get("start_datetime") or params.get("start_time") or params.get("at") or ""
 
     db_path = Path(params["_db_path"])
     text = params["text"]
