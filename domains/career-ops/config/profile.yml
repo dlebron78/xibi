@@ -1,0 +1,139 @@
+# Career Profile — Daniel LeBron
+# ============================================================
+# This file is loaded at spawn time and injected into every
+# career-ops skill as scoped_input.user_config["profile.yml"].
+#
+# Fill in your values below. Fields marked REQUIRED must be
+# populated before career-ops skills can run meaningfully.
+# Optional fields improve scoring accuracy — the more you
+# provide, the better the evaluation quality.
+# ============================================================
+
+# === Identity ===
+# REQUIRED: These fields appear in tailored resume output.
+name: ""                            # Full name as it appears on your resume
+email: ""                           # Professional email
+phone: ""                           # e.g., "+1 555 123 4567"
+linkedin_url: ""                    # e.g., "https://linkedin.com/in/yourhandle"
+portfolio_url: ""                   # Personal site, GitHub, or portfolio — omit if none
+location: ""                        # City, State (or Country if outside US)
+work_preference: "remote"           # remote | hybrid | onsite | flexible
+visa_status: ""                     # e.g., "US Citizen", "Green Card", "H-1B", "OPT"
+
+# === Current State ===
+# Describes where you are NOW (used for seniority gap analysis).
+current:
+  title: ""                         # REQUIRED: Your current or most recent title
+  company: ""                       # Current or most recent employer
+  years_experience: 0               # REQUIRED: Total years of relevant professional experience
+
+# === Target ===
+# Defines what you're looking for. The evaluate skill scores postings against this.
+target:
+  primary_role: ""                  # REQUIRED: e.g., "Senior Software Engineer", "Product Manager"
+  secondary_roles: []               # Additional role titles you'd consider
+  # Examples:
+  # - "Staff Engineer"
+  # - "Engineering Manager"
+  industries: []                    # Industries you want to work in (empty = open to all)
+  # Examples:
+  # - "AI/ML"
+  # - "FinTech"
+  # - "Healthcare"
+  seniority: "senior"               # entry | mid | senior | lead | director | vp | c-suite
+  exclude_keywords: []              # Role/company keywords to avoid
+  # Examples:
+  # - "staffing agency"
+  # - "crypto"
+
+# === Skills ===
+# REQUIRED: Your top 10-15 skills. Used for keyword matching in evaluate/triage.
+# List strongest skills first. Include both technical and domain skills.
+skills: []
+# Examples:
+# - "Python"
+# - "LLM application development"
+# - "System design"
+# - "Distributed systems"
+# - "Team leadership"
+# - "Product strategy"
+
+# === Credentials ===
+# Certifications, licenses, clearances. Important for regulated industries.
+# Leave empty if none. Required fields for certain archetypes (Healthcare, Legal, Government).
+credentials: []
+# Examples:
+# - name: "AWS Solutions Architect"
+#   issuer: "Amazon"
+#   year: 2023
+# - name: "PMP"
+#   issuer: "PMI"
+#   year: 2022
+
+# === Narrative ===
+# REQUIRED: How you want to be positioned. Used in tailored resumes and outreach drafts.
+narrative:
+  headline: ""                      # 1 line, e.g., "AI engineer building production LLM systems"
+  story: ""                         # 3-5 sentences: background, transition (if any), current focus
+  superpowers: ""                   # 2-3 distinctive strengths, e.g., "shipping fast, clear technical writing, cross-functional influence"
+
+# === Work History ===
+# REQUIRED for tailor-resume and outreach skills.
+# List most recent first. Include measurable impact in highlights.
+work_history: []
+# Format:
+# - title: ""
+#   company: ""
+#   dates: ""                       # e.g., "2022–present" or "Jan 2020–Mar 2022"
+#   highlights: []
+#   # Examples:
+#   # - "Led migration of 3 legacy services to event-driven architecture, reducing p99 latency 40%"
+#   # - "Built LLM evaluation pipeline processing 100K samples/day"
+#   # - "Managed team of 8 engineers across 2 time zones"
+
+# === Education ===
+education: []
+# Format:
+# - degree: ""                      # e.g., "B.S. Computer Science"
+#   institution: ""
+#   year: 0
+#   notes: ""                       # Relevant coursework, honors, GPA if strong
+
+# === Compensation ===
+# Used by evaluate skill to score compensation alignment.
+# Be honest — an unrealistic target produces misleading scores.
+compensation:
+  target: ""                        # e.g., "$200K total comp"
+  minimum: ""                       # Walk-away floor, e.g., "$160K base"
+  currency: "USD"
+  equity_preference: ""             # optional: "preferred", "indifferent", "avoid"
+
+# === Proof Points ===
+# Specific quantified achievements. Used to populate Block E (Positioning Strategy)
+# in evaluate and to seed the story bank.
+proof_points: []
+# Examples:
+# - "Reduced model inference latency from 800ms to 120ms via quantization and batching"
+# - "Shipped 0-to-1 agentic product used by 50K users in 6 months"
+# - "Grew engineering org from 4 to 22 engineers over 18 months"
+
+# === Portfolio ===
+# Public work samples. Referenced in outreach and apply outputs.
+portfolio: []
+# Format:
+# - title: ""
+#   url: ""
+#   description: ""                 # 1 sentence
+
+# === Persona Modifiers ===
+# These adjust scoring weights for your specific situation.
+# recent_graduate: applies if <2 years experience; softens seniority penalties
+# career_changer: applies if switching industries/domains; softens domain fit penalties
+# career_returner: applies if returning after a gap; softens recency penalties
+# international: applies if credentials may not be recognized in target market
+persona:
+  recent_graduate: false
+  career_changer: false
+  career_returner: false
+  international: false
+  gap_explanation: ""               # Brief explanation of any employment gap, e.g., "18-month sabbatical for family care"

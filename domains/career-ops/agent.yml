@@ -1,0 +1,209 @@
+name: career-ops
+version: "1.0.0"
+description: "Job search automation — evaluate postings, tailor resumes, research companies, draft outreach, track applications"
+author: "Daniel LeBron"
+
+expected_duration_s: 300
+max_duration_s: 900
+check_in_interval_s: 0              # Disabled (sync execution)
+
+budget:
+  max_calls: 15
+  max_cost_usd: 1.00
+
+summary:
+  mode: dedicated                   # Extra synthesis step — career evaluations need a clean summary
+  model: haiku                      # Summary is compression, not judgment
+  max_chars: 2000
+  presentation_file: true           # Generate markdown deliverable for every run
+
+output_ttl_hours: 720               # 30 days — job search data has a long shelf life
+
+input_schema:
+  type: object
+  required: []                      # No universal required fields — each standalone skill declares its own
+  properties:
+    criteria:
+      type: object
+      description: "Job search criteria from profile.yml (injected by runtime)"
+    posting:
+      type: object
+      description: "Job posting content for evaluate/apply"
+    company:
+      type: string
+      description: "Company name for research"
+    target:
+      type: object
+      description: "Outreach target (person, role, company)"
+    postings:
+      type: array
+      description: "Multiple postings for compare/triage"
+    focus:
+      type: string
+      description: "Optional narrowing instruction"
+
+output_schema:
+  type: object
+  properties:
+    evaluation:
+      type: object
+      description: "Scored assessment with A-G blocks (includes Block G posting legitimacy)"
+    story_bank_updates:
+      type: array
+      description: "New STAR+R stories from evaluate, to append to persistent story bank"
+    tailored_resume:
+      type: string
+      description: "Markdown resume tailored to specific role"
+    company_brief:
+      type: object
+      description: "Intelligence brief on target company"
+    outreach_drafts:
+      type: array
+      description: "Draft messages for review (L2)"
+    application_updates:
+      type: array
+      description: "Status changes to application tracker"
+    scored_pipeline:
+      type: array
+      description: "Quick-scored postings from triage"
+    comparison:
+      type: object
+      description: "Side-by-side analysis of multiple opportunities"
+
+skills:
+  # === L1 skills (autonomous — results surface in review queue as info) ===
+
+  - name: evaluate
+    description: "Score a job posting A-G with match analysis, comp research, positioning strategy, interview prep, and posting legitimacy"
+    prompt_file: skills/evaluate.md
+    trust: L1
+    model: sonnet
+    standalone: true
+    standalone_input:
+      type: object
+      required: [posting]
+      properties:
+        posting:
+          type: object
+          description: "Job posting text or URL"
+
+  - name: triage
+    description: "Quick-score a batch of postings from 1.0-5.0 with one-line verdicts"
+    prompt_file: skills/triage.md
+    trust: L1
+    model: haiku
+    standalone: true
+    standalone_input:
+      type: object
+      required: [postings]
+      properties:
+        postings:
+          type: array
+          description: "Array of job posting objects to quick-score"
+
+  - name: research
+    description: "Company intelligence brief — culture, tech stack, funding, leadership, Glassdoor signals"
+    prompt_file: skills/research.md
+    trust: L1
+    model: sonnet
+    standalone: true
+    standalone_input:
+      type: object
+      required: [company]
+      properties:
+        company:
+          type: string
+
+  - name: compare
+    description: "Side-by-side comparison of 2-5 opportunities with weighted scoring"
+    prompt_file: skills/compare.md
+    trust: L1
+    model: sonnet
+    standalone: true
+    standalone_input:
+      type: object
+      required: [postings]
+      properties:
+        postings:
+          type: array
+          description: "2-5 evaluated postings to compare"
+
+  - name: track
+    description: "Application status tracking — add entries, update status, show pipeline stats"
+    prompt_file: skills/track.md
+    trust: L1
+    model: haiku
+    standalone: true
+    standalone_input:
+      type: object
+      required: []
+      properties:
+        action:
+          type: string
+          description: "add | update | status | stats"
+        entry:
+          type: object
+          description: "Application entry data (for add/update)"
+
+  # === L2 skills (park in review queue — never auto-execute) ===
+
+  - name: tailor-resume
+    description: "Generate an ATS-optimized resume tailored to a specific job posting"
+    prompt_file: skills/tailor-resume.md
+    trust: L2                       # Generates a document representing the user — review before use
+    model: sonnet
+    standalone: true
+    standalone_input:
+      type: object
+      required: [posting]
+      properties:
+        posting:
+          type: object
+          description: "Job posting to tailor resume for"
+        evaluation:
+          type: object
+          description: "Prior evaluation output (optional — reuses match analysis)"
+
+  - name: outreach
+    description: "Draft LinkedIn connection request or email to hiring manager/recruiter"
+    prompt_file: skills/outreach.md
+    trust: L2                       # Drafts messages to real people — review before sending
+    model: opus                     # Outreach quality is critical — worth the cost
+    standalone: true
+    standalone_input:
+      type: object
+      required: [target, context]
+      properties:
+        target:
+          type: object
+          description: "Person to contact (name, role, company, platform)"
+        context:
+          type: object
+          description: "Relevant context (evaluation, company research, mutual connections)"
+
+  - name: apply
+    description: "Prepare application form answers and cover letter for a specific posting"
+    prompt_file: skills/apply.md
+    trust: L2                       # Represents the user to employers — review before submission
+    model: sonnet
+    standalone: true
+    standalone_input:
+      type: object
+      required: [posting]
+      properties:
+        posting:
+          type: object
+          description: "Job posting to apply to"
+        evaluation:
+          type: object
+          description: "Prior evaluation output (optional)"
+
+# default_sequence deliberately omitted — scan is deferred, so no pipeline yet.
+# Each skill runs standalone. When scan ships, define: [scan, triage, evaluate]
+
+mcp_dependencies: []                # None required for v1 — all skills are pure LLM reasoning
+
+user_config:
+  - file: profile.yml
+    description: "Career profile — identity, target roles, skills, work history, compensation, narrative"
+    required: true                  # Spawn fails without a profile
