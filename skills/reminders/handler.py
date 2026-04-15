@@ -110,6 +110,12 @@ def create_reminder(params: dict[str, Any]) -> dict[str, Any]:
             params["text"] = nested.get("title") or nested.get("text", "")
         if "when" not in params:
             params["when"] = nested.get("datetime") or nested.get("when", "")
+    # Normalise common key aliases the model uses instead of the schema names
+    if "text" not in params and "title" in params:
+        params["text"] = params["title"]
+    if "when" not in params:
+        params["when"] = params.get("time") or params.get("datetime") or params.get("at") or ""
+
     db_path = Path(params["_db_path"])
     text = params["text"]
     when = params["when"]
