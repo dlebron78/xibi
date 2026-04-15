@@ -1,0 +1,7 @@
+[Unit]
+Description=Xibi CI watch (poll GitHub PR checks, notify via Telegram)
+
+[Service]
+Type=oneshot
+ExecStart=%h/xibi/scripts/ci-watch.sh
+Environment=HOME=%h
