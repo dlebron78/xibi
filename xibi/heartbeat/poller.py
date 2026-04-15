@@ -1011,6 +1011,7 @@ class HeartbeatPoller:
                 if now.hour == 7 and now.minute < 15:
                     self.reflection_tick()
                     self._cleanup_telegram_cache()
+                    self._cleanup_subagent_runs()
 
             except Exception as e:
                 logger.error(f"Error in heartbeat loop: {e}", exc_info=True)
@@ -1032,3 +1033,26 @@ def _infer_model(role: str, config: dict[str, Any]) -> str:
         return str(config["models"]["text"][role]["model"])
     except KeyError:
         return "unknown"
+
+    def _cleanup_subagent_runs(self) -> None:
+        """Purge expired subagent runs. Runs once per day."""
+        today = datetime.now().strftime("%Y-%m-%d")
+        try:
+            with xibi.db.open_db(self.db_path) as conn:
+                cursor = conn.execute("SELECT value FROM heartbeat_state WHERE key = 'subagent_ttl_cleanup_last_run'")
+                row = cursor.fetchone()
+                if row and row[0] == today:
+                    return
+
+                from xibi.subagent.db import cleanup_expired_runs
+
+                count = cleanup_expired_runs(self.db_path)
+                if count > 0:
+                    logger.info(f"Cleaned up {count} expired subagent runs")
+
+                conn.execute(
+                    "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('subagent_ttl_cleanup_last_run', ?)",
+                    (today,),
+                )
+        except Exception as e:
+            logger.warning(f"Subagent run cleanup error: {e}", exc_info=True)

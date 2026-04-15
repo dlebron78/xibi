@@ -3,14 +3,17 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from xibi.subagent.models import SubagentRun, AgentManifest
+
+from xibi.subagent.models import AgentManifest, SubagentRun
 from xibi.subagent.routing import ModelRouter
+
 
 class SummaryGenerator:
     """Generates run summaries for DB storage and optional presentation files."""
 
-    def generate_summary(self, run: SubagentRun, manifest: AgentManifest,
-                         full_output: dict, router: ModelRouter) -> str:
+    def generate_summary(
+        self, run: SubagentRun, manifest: AgentManifest, full_output: dict, router: ModelRouter
+    ) -> str:
         """Generate a condensed summary for DB storage.
 
         If manifest.summary.mode == "terminal":
@@ -25,7 +28,7 @@ class SummaryGenerator:
             # Last step output as summary
             summary_text = json.dumps(full_output, indent=2)
             if len(summary_text) > max_chars:
-                summary_text = summary_text[:max_chars-3] + "..."
+                summary_text = summary_text[: max_chars - 3] + "..."
             return summary_text
 
         # Dedicated synthesis
@@ -41,14 +44,14 @@ class SummaryGenerator:
             response = router.call(model=model, prompt=prompt, system=system_prompt)
             summary_text = response.content.strip()
             if len(summary_text) > max_chars:
-                summary_text = summary_text[:max_chars-3] + "..."
+                summary_text = summary_text[: max_chars - 3] + "..."
             return summary_text
         except Exception as e:
             return f"Error generating dedicated summary: {e}. Raw output: {json.dumps(full_output)}"
 
-    def generate_presentation_file(self, run: SubagentRun, manifest: AgentManifest,
-                                    full_output: dict, summary: str,
-                                    domains_dir: Path) -> Path | None:
+    def generate_presentation_file(
+        self, run: SubagentRun, manifest: AgentManifest, full_output: dict, summary: str, domains_dir: Path
+    ) -> Path | None:
         """Generate a human-readable markdown deliverable.
 
         Only called if manifest.summary.presentation_file is True.
@@ -76,7 +79,7 @@ class SummaryGenerator:
             "## Full Output",
             "```json",
             json.dumps(full_output, indent=2),
-            "```"
+            "```",
         ]
 
         content_str = "\n".join(content)

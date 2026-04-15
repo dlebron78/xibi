@@ -1,18 +1,28 @@
 from __future__ import annotations
 
-import yaml
 from pathlib import Path
-from typing import Any
+
+import yaml
+
 from xibi.subagent.models import AgentManifest, SkillDeclaration
+
 
 class ManifestValidator:
     """Validates agent.yml against the contract schema."""
 
     REQUIRED_FIELDS = [
-        "name", "version", "description", "author",
-        "expected_duration_s", "max_duration_s",
-        "budget", "summary", "output_ttl_hours",
-        "input_schema", "output_schema", "skills"
+        "name",
+        "version",
+        "description",
+        "author",
+        "expected_duration_s",
+        "max_duration_s",
+        "budget",
+        "summary",
+        "output_ttl_hours",
+        "input_schema",
+        "output_schema",
+        "skills",
     ]
 
     def validate(self, manifest_path: Path) -> tuple[AgentManifest | None, list[str]]:
@@ -27,7 +37,7 @@ class ManifestValidator:
             return None, [f"Manifest file not found: {manifest_path}"]
 
         try:
-            with open(manifest_path, "r") as f:
+            with open(manifest_path) as f:
                 data = yaml.safe_load(f)
         except Exception as e:
             return None, [f"Failed to parse YAML: {e}"]
@@ -67,7 +77,7 @@ class ManifestValidator:
 
         skills = []
         agent_dir = manifest_path.parent
-        for s_data in (skills_data if isinstance(skills_data, list) else []):
+        for s_data in skills_data if isinstance(skills_data, list) else []:
             s_name = s_data.get("name")
             if not s_name:
                 errors.append("Skill missing name")
@@ -87,20 +97,21 @@ class ManifestValidator:
             if not s_data.get("model"):
                 errors.append(f"Skill '{s_name}' missing model")
 
-            if s_data.get("standalone") is True:
-                if "standalone_input" not in s_data:
-                    errors.append(f"Skill '{s_name}' is standalone but missing standalone_input schema")
+            if s_data.get("standalone") is True and "standalone_input" not in s_data:
+                errors.append(f"Skill '{s_name}' is standalone but missing standalone_input schema")
 
-            skills.append(SkillDeclaration(
-                name=s_name,
-                description=s_data.get("description", ""),
-                prompt_file=s_data.get("prompt_file", ""),
-                trust=s_data.get("trust", ""),
-                model=s_data.get("model", ""),
-                standalone=s_data.get("standalone", False),
-                standalone_input=s_data.get("standalone_input"),
-                depends_on=s_data.get("depends_on", [])
-            ))
+            skills.append(
+                SkillDeclaration(
+                    name=s_name,
+                    description=s_data.get("description", ""),
+                    prompt_file=s_data.get("prompt_file", ""),
+                    trust=s_data.get("trust", ""),
+                    model=s_data.get("model", ""),
+                    standalone=s_data.get("standalone", False),
+                    standalone_input=s_data.get("standalone_input"),
+                    depends_on=s_data.get("depends_on", []),
+                )
+            )
 
         # Check default_sequence
         default_sequence = data.get("default_sequence", [])
@@ -133,7 +144,7 @@ class ManifestValidator:
             skills=skills,
             default_sequence=default_sequence,
             mcp_dependencies=data.get("mcp_dependencies", []),
-            user_config=data.get("user_config", [])
+            user_config=data.get("user_config", []),
         )
 
         # Initial config check

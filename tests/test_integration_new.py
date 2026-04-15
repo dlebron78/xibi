@@ -29,6 +29,8 @@ def test_legacy_digest_deprecation():
     poller = HeartbeatPoller(
         skills_dir=None, db_path=None, adapter=None, rules=rules, allowed_chat_ids=[], config=config
     )
+    poller.quiet_start = 0
+    poller.quiet_end = 0
 
     # Should skip if disabled and not forced
     poller.digest_tick()

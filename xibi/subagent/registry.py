@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from xibi.subagent.models import AgentManifest
+
 from xibi.subagent.manifest import ManifestValidator
+from xibi.subagent.models import AgentManifest
 
 logger = logging.getLogger(__name__)
+
 
 class AgentRegistry:
     """In-memory registry of validated domain agents."""
@@ -86,17 +88,14 @@ class AgentRegistry:
             skill = skill_map[s_name]
             prompt_path = agent_dir / skill.prompt_file
             try:
-                with open(prompt_path, "r") as f:
+                with open(prompt_path) as f:
                     prompt_content = f.read()
             except Exception as e:
-                raise RuntimeError(f"Failed to read prompt file {skill.prompt_file}: {e}")
+                raise RuntimeError(f"Failed to read prompt file {skill.prompt_file}: {e}") from e
 
-            checklist.append({
-                "skill_name": skill.name,
-                "model": skill.model,
-                "trust": skill.trust,
-                "prompt": prompt_content
-            })
+            checklist.append(
+                {"skill_name": skill.name, "model": skill.model, "trust": skill.trust, "prompt": prompt_content}
+            )
 
         return checklist
 
@@ -109,10 +108,10 @@ class AgentRegistry:
             return False, ["Agent not found"]
 
         mcp_config = self.config.get("mcp", {})
-        missing = []
+        missing: list[str] = []
         for dep in manifest.mcp_dependencies:
             dep_name = dep.get("name")
-            if dep.get("required") and dep_name not in mcp_config:
+            if dep.get("required") and isinstance(dep_name, str) and dep_name not in mcp_config:
                 missing.append(dep_name)
 
         return len(missing) == 0, missing

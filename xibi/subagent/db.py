@@ -245,12 +245,16 @@ def create_cost_event(db_path: Path, event: CostEvent) -> None:
             ),
         )
 
+
 def cleanup_expired_runs(db_path: Path) -> int:
     with open_db(db_path) as conn, conn:
-        expired_ids = [r[0] for r in conn.execute(
-            "SELECT id FROM subagent_runs WHERE output_ttl_hours > 0 "
-            "AND datetime(completed_at, '+' || output_ttl_hours || ' hours') < datetime('now')"
-        ).fetchall()]
+        expired_ids = [
+            r[0]
+            for r in conn.execute(
+                "SELECT id FROM subagent_runs WHERE output_ttl_hours > 0 "
+                "AND datetime(completed_at, '+' || output_ttl_hours || ' hours') < datetime('now')"
+            ).fetchall()
+        ]
         if not expired_ids:
             return 0
         placeholders = ",".join("?" * len(expired_ids))

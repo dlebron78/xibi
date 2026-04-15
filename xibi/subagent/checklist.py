@@ -108,7 +108,7 @@ def execute_checklist(run: SubagentRun, db_path: Path, checklist: list[dict[str,
                         )
                         time.sleep(wait_time)
                     else:
-                        raise e
+                        raise e from e
 
             if response is None:
                 raise last_error if last_error else RuntimeError("LLM call failed without error")
