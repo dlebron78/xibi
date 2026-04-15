@@ -4,7 +4,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, cast
 
-from xibi.router import AnthropicClient, GeminiClient, Config, load_config
+from xibi.router import AnthropicClient, Config, GeminiClient, load_config
 
 
 @dataclass
@@ -47,23 +47,19 @@ class ModelRouter:
         model_cfg = models_dict.get(model, models_dict.get("haiku", {}))
         provider = model_cfg.get("provider", "anthropic")
         model_id = model_cfg.get("model_id", "claude-3-haiku-20240307")
+        pricing_dict = cast(dict[str, Any], self.pricing)
 
         if provider == "anthropic":
-            api_key = os.environ.get("ANTHROPIC_API_KEY")
-            client = AnthropicClient(provider=provider, model=model_id, options={}, api_key=api_key)
-
-            # Using generate instead of generate_structured as we'll parse JSON ourselves
-            content = client.generate(prompt=prompt, system=system, **kwargs)
-
-            # AnthropicClient stores tokens in _last_tokens
-            input_tokens, output_tokens, _ = getattr(client, "_last_tokens", (0, 0, 0))
-
-            pricing_dict = cast(dict[str, Any], self.pricing)
+            anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
+            if not anthropic_key:
+                raise RuntimeError("ANTHROPIC_API_KEY is required for provider='anthropic'")
+            anthropic_client = AnthropicClient(provider=provider, model=model_id, options={}, api_key=anthropic_key)
+            content = anthropic_client.generate(prompt=prompt, system=system, **kwargs)
+            input_tokens, output_tokens, _ = getattr(anthropic_client, "_last_tokens", (0, 0, 0))
             pricing = pricing_dict.get(model_id, {"input_per_mtok": 0.0, "output_per_mtok": 0.0})
             cost_usd = (
                 input_tokens * pricing["input_per_mtok"] + output_tokens * pricing["output_per_mtok"]
             ) / 1_000_000
-
             return RoutedResponse(
                 content=content,
                 input_tokens=input_tokens,
@@ -72,11 +68,12 @@ class ModelRouter:
                 model_id=model_id,
             )
         elif provider == "gemini":
-            api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-            client = GeminiClient(provider=provider, model=model_id, options={}, api_key=api_key)
-            content = client.generate(prompt=prompt, system=system, **kwargs)
-            input_tokens, output_tokens, _ = getattr(client, "_last_tokens", (0, 0, 0))
-            pricing_dict = cast(dict[str, Any], self.pricing)
+            gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+            if not gemini_key:
+                raise RuntimeError("GEMINI_API_KEY or GOOGLE_API_KEY is required for provider='gemini'")
+            gemini_client = GeminiClient(provider=provider, model=model_id, options={}, api_key=gemini_key)
+            content = gemini_client.generate(prompt=prompt, system=system, **kwargs)
+            input_tokens, output_tokens, _ = getattr(gemini_client, "_last_tokens", (0, 0, 0))
             pricing = pricing_dict.get(model_id, {"input_per_mtok": 0.075, "output_per_mtok": 0.30})
             cost_usd = (
                 input_tokens * pricing["input_per_mtok"] + output_tokens * pricing["output_per_mtok"]
