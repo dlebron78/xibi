@@ -1,0 +1,40 @@
+{
+  "name": "subagent-retrieval",
+  "description": "Query interface for past subagent run summaries.",
+  "tools": [
+    {
+      "name": "get_recent_summaries",
+      "description": "Get recent run summaries, optionally filtered by agent.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "agent_id": { "type": "string", "description": "Optional agent ID to filter by." },
+          "limit": { "type": "integer", "description": "Max results to return (default 5)." }
+        }
+      }
+    },
+    {
+      "name": "get_run_detail",
+      "description": "Get full trace for a specific run.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "run_id": { "type": "string", "description": "UUID of the run." }
+        },
+        "required": ["run_id"]
+      }
+    },
+    {
+      "name": "search_runs",
+      "description": "Search past run outputs by keyword.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "description": "Keyword to search for." },
+          "agent_id": { "type": "string", "description": "Optional agent ID to filter by." }
+        },
+        "required": ["query"]
+      }
+    }
+  ]
+}

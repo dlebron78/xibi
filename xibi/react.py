@@ -704,9 +704,13 @@ async def _run_async(
     _user_name = _profile.get("user_name", "")
 
     _identity_lines = [
-        f"You are {_assistant_name}, {_user_name}'s chief of staff." if _user_name else f"You are {_assistant_name}, a personal AI assistant.",
-        f"You act with initiative on {_user_name}'s behalf, using everything you know about {_user_name}'s context and priorities." if _user_name else "You act with initiative on the user's behalf.",
-        f"You show your work before taking irreversible actions.",
+        f"You are {_assistant_name}, {_user_name}'s chief of staff."
+        if _user_name
+        else f"You are {_assistant_name}, a personal AI assistant.",
+        f"You act with initiative on {_user_name}'s behalf, using everything you know about {_user_name}'s context and priorities."
+        if _user_name
+        else "You act with initiative on the user's behalf.",
+        "You show your work before taking irreversible actions.",
     ]
 
     # --- Build categorized tools block (strip non-LLM fields) ---
@@ -714,7 +718,11 @@ async def _run_async(
     _obs_tools = []
     _act_tools = []
     for _t in _all_tools:
-        _entry = {"name": _t["name"], "description": _t.get("description", ""), "inputSchema": _t.get("inputSchema", {})}
+        _entry = {
+            "name": _t["name"],
+            "description": _t.get("description", ""),
+            "inputSchema": _t.get("inputSchema", {}),
+        }
         if _t.get("output_type", "raw") in ("raw", "synthesis"):
             _obs_tools.append(_entry)
         else:

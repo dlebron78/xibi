@@ -591,6 +591,58 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/api/agent_registry")
+def api_agent_registry():
+    """Returns registered agents and their manifests."""
+    try:
+        from xibi.subagent.registry import AgentRegistry
+        from pathlib import Path
+
+        # Initialize registry
+        # We need the config and domains_dir
+        # Config path same as in api_config
+        config_path = os.path.join(
+            os.environ.get("XIBI_DATA_DIR", os.path.join(os.path.expanduser("~"), "bregger_remote")), "config.json"
+        )
+        if os.path.exists(config_path):
+            with open(config_path) as f:
+                config = json.load(f)
+        else:
+            config = {}
+
+        domains_dir = Path(os.environ.get("XIBI_DOMAINS_DIR", "domains/"))
+        registry = AgentRegistry(domains_dir, config)
+        registry.discover()
+
+        agents = []
+        for a in registry.list_agents():
+            agents.append({
+                "name": a.name,
+                "version": a.version,
+                "description": a.description,
+                "author": a.author,
+                "expected_duration_s": a.expected_duration_s,
+                "max_duration_s": a.max_duration_s,
+                "budget": a.budget,
+                "summary": a.summary,
+                "output_ttl_hours": a.output_ttl_hours,
+                "config_ready": a.config_ready,
+                "skills": [
+                    {
+                        "name": s.name,
+                        "description": s.description,
+                        "trust": s.trust,
+                        "model": s.model,
+                        "standalone": s.standalone
+                    } for s in a.skills
+                ]
+            })
+
+        return jsonify({"agents": agents})
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
 if __name__ == "__main__":
     # Bind to all interfaces (Tailscale will route it securely)
     # SearXNG uses 8080, so we use 8081

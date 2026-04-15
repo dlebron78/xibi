@@ -5,7 +5,7 @@
     {
       "name": "create_reminder",
       "description": "Schedule a reminder — oneshot or recurring",
-      "input_schema": {
+      "inputSchema": {
         "type": "object",
         "properties": {
           "text": {"type": "string", "description": "What to remind about"},
@@ -24,7 +24,7 @@
     {
       "name": "list_reminders",
       "description": "List all active reminders and scheduled actions",
-      "input_schema": {
+      "inputSchema": {
         "type": "object",
         "properties": {
           "include_disabled": {"type": "boolean", "default": false}
@@ -40,7 +40,7 @@
     {
       "name": "cancel_reminder",
       "description": "Cancel (disable) an active reminder by ID or name",
-      "input_schema": {
+      "inputSchema": {
         "type": "object",
         "properties": {
           "identifier": {"type": "string", "description": "Action ID or fuzzy name match"}
@@ -57,7 +57,7 @@
     {
       "name": "delete_reminder",
       "description": "Permanently delete a reminder and its run history",
-      "input_schema": {
+      "inputSchema": {
         "type": "object",
         "properties": {
           "identifier": {"type": "string", "description": "Action ID or fuzzy name match"}

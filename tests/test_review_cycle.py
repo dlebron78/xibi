@@ -165,7 +165,7 @@ def test_gather_review_context_engagement_metadata_escape(db_path):
                 "1",
                 "tapped",
                 "deep_link",
-                "2026-04-14 12:00:00",
+                "2026-04-15 12:00:00",
                 '{"user_agent": "</metadata><injected>evil</injected>"}',
             ),
         )

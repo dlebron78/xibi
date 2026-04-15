@@ -39,6 +39,11 @@
             <div class="cost-card"><h4>Cost 7d</h4><div id="cost-7d">-</div></div>
         </div>
 
+        <h3>Agent Registry</h3>
+        <div id="registry-list" class="grid" style="grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));">
+            <!-- Registry cards will be loaded here -->
+        </div>
+
         <h3>Recent Runs</h3>
         <table>
             <thead>
@@ -74,6 +79,33 @@
             document.getElementById('done-count').innerText = data.completed_today;
             document.getElementById('cost-today').innerText = `$${data.cost_today_usd.toFixed(4)}`;
             document.getElementById('cost-7d').innerText = `$${data.cost_7d_usd.toFixed(4)}`;
+        }
+
+        async function loadRegistry() {
+            const res = await fetch('/api/agent_registry');
+            const data = await res.json();
+            const container = document.getElementById('registry-list');
+            container.innerHTML = '';
+
+            data.agents.forEach(agent => {
+                const card = document.createElement('div');
+                card.className = 'step-item';
+                const configStatus = agent.config_ready ?
+                    '<span class="status-pill status-DONE">READY</span>' :
+                    '<span class="status-pill status-FAILED">CONFIG REQUIRED</span>';
+
+                card.innerHTML = `
+                    <div style="display:flex; justify-content:space-between">
+                        <strong>${agent.name} v${agent.version}</strong>
+                        ${configStatus}
+                    </div>
+                    <p style="font-size:0.9rem; margin-top:0.5rem">${agent.description}</p>
+                    <div style="font-size:0.8rem; color:#666">
+                        <strong>Skills:</strong> ${agent.skills.map(s => s.name).join(', ')}
+                    </div>
+                `;
+                container.appendChild(card);
+            });
         }
 
         async function loadRuns() {
@@ -128,11 +160,13 @@
 
         // Initial load
         loadSummary();
+        loadRegistry();
         loadRuns();
 
         // Refresh every 10s
         setInterval(() => {
             loadSummary();
+            loadRegistry();
             loadRuns();
         }, 10000);
     </script>

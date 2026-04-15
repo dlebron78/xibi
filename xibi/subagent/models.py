@@ -25,6 +25,10 @@ class SubagentRun:
     actual_cost_usd: float = 0.0
     actual_input_tokens: int = 0
     actual_output_tokens: int = 0
+    summary: str | None = None
+    summary_generated_at: str | None = None
+    output_ttl_hours: int = 0
+    presentation_file_path: str | None = None
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -71,3 +75,35 @@ class CostEvent:
     output_tokens: int = 0
     cost_usd: float = 0.0
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+@dataclass
+class SkillDeclaration:
+    name: str
+    description: str
+    prompt_file: str
+    trust: str  # L1 | L2
+    model: str
+    standalone: bool = False
+    standalone_input: dict[str, Any] | None = None
+    depends_on: list[str] = field(default_factory=list)
+
+
+@dataclass
+class AgentManifest:
+    name: str
+    version: str
+    description: str
+    author: str
+    expected_duration_s: int
+    max_duration_s: int
+    budget: dict[str, Any]
+    summary: dict[str, Any]
+    output_ttl_hours: int
+    input_schema: dict[str, Any]
+    output_schema: dict[str, Any]
+    skills: list[SkillDeclaration]
+    default_sequence: list[str] = field(default_factory=list)
+    mcp_dependencies: list[dict[str, Any]] = field(default_factory=list)
+    user_config: list[dict[str, Any]] = field(default_factory=list)
+    config_ready: bool = False

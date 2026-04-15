@@ -95,9 +95,9 @@ def test_get_context_block_includes_last_two_full(db_path):
 
     block = session.get_context_block()
     assert "User: Query 4" in block
-    assert "Xibi: Answer 4" in block
+    assert "Assistant: Answer 4" in block
     assert "User: Query 1" in block
-    assert "Xibi: Answer 1" in block
+    assert "Assistant: Answer 1" in block
     assert "[4 turns ago] Summary 0" in block
 
 

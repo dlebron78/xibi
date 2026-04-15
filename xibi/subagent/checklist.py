@@ -108,7 +108,7 @@ def execute_checklist(run: SubagentRun, db_path: Path, checklist: list[dict[str,
                         )
                         time.sleep(wait_time)
                     else:
-                        raise e
+                        raise e from e
 
             if response is None:
                 raise last_error if last_error else RuntimeError("LLM call failed without error")
@@ -174,7 +174,9 @@ def execute_checklist(run: SubagentRun, db_path: Path, checklist: list[dict[str,
             break
 
     if run.status == "RUNNING":
-        run.status = "DONE"
+        # Block 2 modification: Don't set DONE yet, let spawn_subagent handle completion
+        # after summary generation. We use a temporary status to indicate checklist is complete.
+        run.status = "COMPLETING"
         run.output = previous_outputs[-1] if previous_outputs else {}
 
     run.completed_at = datetime.now(timezone.utc).isoformat()
