@@ -4,7 +4,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, cast
 
-from xibi.router import AnthropicClient, Config, load_config
+from xibi.router import AnthropicClient, GeminiClient, Config, load_config
 
 
 @dataclass
@@ -64,6 +64,23 @@ class ModelRouter:
                 input_tokens * pricing["input_per_mtok"] + output_tokens * pricing["output_per_mtok"]
             ) / 1_000_000
 
+            return RoutedResponse(
+                content=content,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cost_usd=cost_usd,
+                model_id=model_id,
+            )
+        elif provider == "gemini":
+            api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+            client = GeminiClient(provider=provider, model=model_id, options={}, api_key=api_key)
+            content = client.generate(prompt=prompt, system=system, **kwargs)
+            input_tokens, output_tokens, _ = getattr(client, "_last_tokens", (0, 0, 0))
+            pricing_dict = cast(dict[str, Any], self.pricing)
+            pricing = pricing_dict.get(model_id, {"input_per_mtok": 0.075, "output_per_mtok": 0.30})
+            cost_usd = (
+                input_tokens * pricing["input_per_mtok"] + output_tokens * pricing["output_per_mtok"]
+            ) / 1_000_000
             return RoutedResponse(
                 content=content,
                 input_tokens=input_tokens,
