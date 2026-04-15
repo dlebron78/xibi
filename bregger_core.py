@@ -1774,6 +1774,17 @@ class BreggerCore:
         self.db_path = self.workdir / "data" / "bregger.db"
         self.registry = SkillRegistry(str(self.workdir / "skills"))
 
+        # Agent registry — discovers domain agents (xibi/subagent lives here, bregger just delegates)
+        from xibi.subagent.registry import AgentRegistry
+        _deploy_dir = Path(os.environ.get("XIBI_DEPLOY_DIR", os.path.expanduser("~/xibi")))
+        _domains_dir = _deploy_dir / "domains"
+        if not _domains_dir.exists():
+            print(f"⚠️  WARNING: domains dir not found at {_domains_dir} — subagent dispatch will fail. Set XIBI_DEPLOY_DIR.", flush=True)
+        self.agent_registry = AgentRegistry(domains_dir=_domains_dir, config=self.config)
+        self.agent_registry.discover()
+        if not self.agent_registry.get("test-echo"):
+            print("⚠️  WARNING: test-echo agent not registered — check domains/test-echo/agent.yml", flush=True)
+
         self.shadow_matcher = ShadowMatcher()
         self.shadow_matcher.load_manifests(str(self.workdir / "skills"))
 
@@ -2687,46 +2698,30 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                         agent_id = plan["parameters"].get("agent_id")
                         user_input_val = plan["parameters"].get("input") or ""
 
-                        if agent_id == "test-echo":
-                            from xibi.subagent.runtime import spawn_subagent
+                        from xibi.subagent.runtime import spawn_subagent
 
-                            # Hardcoded test-echo agent for validation
-                            checklist = [
-                                {
-                                    "skill_name": "summarize",
-                                    "model": "haiku",
-                                    "trust": "L1",
-                                    "prompt": 'Summarize the following input in 2 sentences. Respond with JSON {"summary": "..."}: {input}',
-                                },
-                                {
-                                    "skill_name": "format",
-                                    "model": "haiku",
-                                    "trust": "L1",
-                                    "prompt": 'Format this summary as a bullet list. Respond with JSON {"bullets": ["..."]}: {previous_output}',
-                                },
-                            ]
-                            budget = {"max_calls": 10, "max_cost_usd": 0.50, "max_duration_s": 120}
-
+                        manifest = self.agent_registry.get(agent_id)
+                        if manifest is not None or agent_id == "test-echo":
                             try:
                                 run = spawn_subagent(
                                     agent_id=agent_id,
                                     trigger="telegram",
                                     trigger_context={"user": "telegram"},
                                     scoped_input={"input": user_input_val},
-                                    checklist=checklist,
-                                    budget=budget,
-                                    db_path=Path(self.db_path),
+                                    checklist=None,
+                                    budget=None,
+                                    db_path=self.db_path,
+                                    registry=self.agent_registry,
                                 )
                                 if run.status == "DONE":
-                                    report = (
-                                        f"Subagent {agent_id} complete!\nOutput: {json.dumps(run.output, indent=2)}"
-                                    )
+                                    report = f"Subagent {agent_id} complete!\nOutput: {json.dumps(run.output, indent=2)}"
                                 else:
                                     report = f"Subagent {agent_id} failed: {run.error_detail}"
                             except Exception as e:
                                 report = f"Failed to spawn subagent {agent_id}: {e}"
                         else:
-                            report = f"Unknown subagent: {agent_id}. Currently only 'test-echo' is supported."
+                            known = [a.name for a in self.agent_registry.list_agents()]
+                            report = f"Unknown agent: {agent_id}. Available: {', '.join(known) or 'none registered'}"
                     elif plan.get("intent") == "subagent_status":
                         try:
                             with sqlite3.connect(self.db_path) as conn:
