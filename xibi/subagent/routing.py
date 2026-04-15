@@ -14,6 +14,7 @@ class RoutedResponse:
     output_tokens: int
     cost_usd: float
     model_id: str
+    provider: str = "unknown"
 
 
 class ModelRouter:
@@ -64,6 +65,7 @@ class ModelRouter:
                 output_tokens=output_tokens,
                 cost_usd=cost_usd,
                 model_id=model_id,
+                provider="anthropic",
             )
         elif provider == "gemini":
             gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
@@ -82,6 +84,7 @@ class ModelRouter:
                 output_tokens=output_tokens,
                 cost_usd=cost_usd,
                 model_id=model_id,
+                provider="gemini",
             )
         else:
             raise ValueError(f"Unsupported provider: {provider}")

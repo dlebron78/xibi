@@ -70,7 +70,7 @@ class CostEvent:
     run_id: str
     step_id: str | None
     model: str
-    provider: str = "anthropic"
+    provider: str = "unknown"
     input_tokens: int = 0
     output_tokens: int = 0
     cost_usd: float = 0.0
