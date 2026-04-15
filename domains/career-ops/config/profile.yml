@@ -1,139 +1,165 @@
 # Career Profile — Daniel LeBron
 # ============================================================
-# This file is loaded at spawn time and injected into every
-# career-ops skill as scoped_input.user_config["profile.yml"].
-#
-# Fill in your values below. Fields marked REQUIRED must be
-# populated before career-ops skills can run meaningfully.
-# Optional fields improve scoring accuracy — the more you
-# provide, the better the evaluation quality.
-# ============================================================
 
 # === Identity ===
-# REQUIRED: These fields appear in tailored resume output.
-name: ""                            # Full name as it appears on your resume
-email: ""                           # Professional email
-phone: ""                           # e.g., "+1 555 123 4567"
-linkedin_url: ""                    # e.g., "https://linkedin.com/in/yourhandle"
-portfolio_url: ""                   # Personal site, GitHub, or portfolio — omit if none
-location: ""                        # City, State (or Country if outside US)
-work_preference: "remote"           # remote | hybrid | onsite | flexible
-visa_status: ""                     # e.g., "US Citizen", "Green Card", "H-1B", "OPT"
+name: "Daniel LeBron"
+email: "dannylebron@gmail.com"
+phone: "646-402-5268"
+linkedin_url: "https://linkedin.com/in/danlebron"
+portfolio_url: ""
+location: "Clermont, FL (Remote)"
+work_preference: "remote"
+visa_status: "US Citizen"
 
 # === Current State ===
-# Describes where you are NOW (used for seniority gap analysis).
 current:
-  title: ""                         # REQUIRED: Your current or most recent title
-  company: ""                       # Current or most recent employer
-  years_experience: 0               # REQUIRED: Total years of relevant professional experience
+  title: "Founder & Head of Product"
+  company: "AFYA Technologies Inc."
+  years_experience: 15
 
 # === Target ===
-# Defines what you're looking for. The evaluate skill scores postings against this.
 target:
-  primary_role: ""                  # REQUIRED: e.g., "Senior Software Engineer", "Product Manager"
-  secondary_roles: []               # Additional role titles you'd consider
-  # Examples:
-  # - "Staff Engineer"
-  # - "Engineering Manager"
-  industries: []                    # Industries you want to work in (empty = open to all)
-  # Examples:
-  # - "AI/ML"
-  # - "FinTech"
-  # - "Healthcare"
-  seniority: "senior"               # entry | mid | senior | lead | director | vp | c-suite
-  exclude_keywords: []              # Role/company keywords to avoid
-  # Examples:
-  # - "staffing agency"
-  # - "crypto"
+  primary_role: "Director of Product / Head of Product"
+  secondary_roles:
+    - "VP Product"
+    - "Principal Product Manager"
+    - "Director, Ad Product & Technology"
+    - "Head of AI Product"
+    - "Digital Solutions Architect"
+  industries:
+    - "AI/ML"
+    - "AdTech"
+    - "Streaming/CTV"
+    - "B2B SaaS"
+    - "Payments/FinTech"
+  seniority: "director"
+  exclude_keywords:
+    - "staffing agency"
+    - "crypto"
+    - "web3"
 
 # === Skills ===
-# REQUIRED: Your top 10-15 skills. Used for keyword matching in evaluate/triage.
-# List strongest skills first. Include both technical and domain skills.
-skills: []
-# Examples:
-# - "Python"
-# - "LLM application development"
-# - "System design"
-# - "Distributed systems"
-# - "Team leadership"
-# - "Product strategy"
+skills:
+  - "Agentic AI / Autonomous Systems"
+  - "Human-in-the-Loop (HITL) Design"
+  - "Tiered Intelligence Routing"
+  - "Programmatic Advertising (RTB/Prebid)"
+  - "SSAI / Server-Side Ad Insertion"
+  - "DSP/SSP Architecture"
+  - "Yield Optimization"
+  - "AVOD / CTV / FAST"
+  - "Stripe Connect / Payments Infrastructure"
+  - "GDPR/CCPA Compliance"
+  - "0-to-1 Product Development"
+  - "Build vs Buy Audits"
+  - "High-Concurrency APIs / Event-Driven Architecture"
+  - "SQL / BigQuery / Data Pipelines"
+  - "RAG / Local-First AI Architecture"
 
 # === Credentials ===
-# Certifications, licenses, clearances. Important for regulated industries.
-# Leave empty if none. Required fields for certain archetypes (Healthcare, Legal, Government).
 credentials: []
-# Examples:
-# - name: "AWS Solutions Architect"
-#   issuer: "Amazon"
-#   year: 2023
-# - name: "PMP"
-#   issuer: "PMI"
-#   year: 2022
 
 # === Narrative ===
-# REQUIRED: How you want to be positioned. Used in tailored resumes and outreach drafts.
 narrative:
-  headline: ""                      # 1 line, e.g., "AI engineer building production LLM systems"
-  story: ""                         # 3-5 sentences: background, transition (if any), current focus
-  superpowers: ""                   # 2-3 distinctive strengths, e.g., "shipping fast, clear technical writing, cross-functional influence"
+  headline: "Product leader who builds the actual pipes — from agentic AI systems to ad-tech infrastructure at scale"
+  story: >
+    15+ years building digital products across three distinct disciplines: agentic AI
+    and intelligent automation, programmatic monetization infrastructure, and payments/compliance
+    SaaS. Most of it spent replacing legacy systems with modern, scalable architecture
+    that actually performs. Built SSAI for WrestleMania-scale concurrent streams at WWE,
+    modernized programmatic demand for 100M+ users at Rainberry, and now building an
+    open-source autonomous AI framework. Not just strategy — the actual systems.
+  superpowers: "shipping production infrastructure fast, replacing legacy systems without breaking things, bridging technical architecture with business outcomes"
 
 # === Work History ===
-# REQUIRED for tailor-resume and outreach skills.
-# List most recent first. Include measurable impact in highlights.
-work_history: []
-# Format:
-# - title: ""
-#   company: ""
-#   dates: ""                       # e.g., "2022–present" or "Jan 2020–Mar 2022"
-#   highlights: []
-#   # Examples:
-#   # - "Led migration of 3 legacy services to event-driven architecture, reducing p99 latency 40%"
-#   # - "Built LLM evaluation pipeline processing 100K samples/day"
-#   # - "Managed team of 8 engineers across 2 time zones"
+work_history:
+  - title: "Founder & Head of Product"
+    company: "AFYA Technologies Inc."
+    dates: "2020 – present"
+    highlights:
+      - "Architected full-stack Business-in-a-Box SaaS platform from the ground up — data architecture, API design, onboarding, monetization"
+      - "Built proprietary agentic workflow engine with tiered intelligence routing — local vs cloud, data sovereign by default"
+      - "Designed HITL automation for scheduling, billing, client communications — reduced manual admin 90%"
+      - "Built payments infrastructure on Stripe Connect: multi-party payouts, automated billing, subscription management"
+
+  - title: "Digital Solutions Architect / Strategic Product Consultant"
+    company: "Fractional"
+    dates: "2021 – present"
+    highlights:
+      - "Diagnose and rebuild broken ad-tech and monetization stacks across mobile, web, and CTV"
+      - "Run Build vs Buy audits to eliminate misaligned technology spend"
+      - "Build data pipelines and dashboards for yield, fill rates, and latency visibility"
+
+  - title: "Principal Product Manager (Consultant)"
+    company: "Rainberry Inc."
+    dates: "2021 – 2023"
+    highlights:
+      - "Replaced legacy ad networks with modern programmatic demand infrastructure across 100M+ user product"
+      - "Rebuilt auction mechanics and inventory strategy — 5x CPM lift without impacting UX or retention"
+
+  - title: "Director, Ad Product & Technology"
+    company: "WWE"
+    dates: "2017 – 2021"
+    highlights:
+      - "Architected and launched AVOD tier from zero — grew to 50K active users before NBC Universal acquired broadcast rights"
+      - "Built SSAI infrastructure for millions of concurrent WrestleMania streams — zero latency spikes, zero delivery failures"
+      - "Became Google's first partner to leverage SSAI across all surfaces"
+      - "Locked down global data compliance (GDPR/CCPA) across 180+ countries"
+
+  - title: "Sr. Manager, Digital Video Strategy"
+    company: "Paramount (Viacom)"
+    dates: "2014 – 2017"
+    highlights:
+      - "Standardized mobile and web SDKs across MTV and Comedy Central — eliminated years of technical debt"
+      - "Built SSAI workflows that bypassed ad blockers and recovered lost revenue"
+      - "Launched 24/7 dynamic ad replacement on live TV feeds — first implementation at scale across both networks"
+
+  - title: "Principal Product Manager, Digital Ad Products"
+    company: "Univision Interactive"
+    dates: "2013 – 2014"
+    highlights:
+      - "Unified fragmented digital properties into single monetization stack"
+
+  - title: "Lead Product Manager, Video"
+    company: "Undertone"
+    dates: "2007 – 2013"
+    highlights:
+      - "Built video ad capabilities into core ad server and integrated third-party demand networks"
+      - "Tripled video revenue over tenure"
 
 # === Education ===
-education: []
-# Format:
-# - degree: ""                      # e.g., "B.S. Computer Science"
-#   institution: ""
-#   year: 0
-#   notes: ""                       # Relevant coursework, honors, GPA if strong
+education:
+  - degree: "B.S. Marketing & Information Systems"
+    institution: "Fordham University"
+    year: 0
+    notes: ""
 
 # === Compensation ===
-# Used by evaluate skill to score compensation alignment.
-# Be honest — an unrealistic target produces misleading scores.
 compensation:
-  target: ""                        # e.g., "$200K total comp"
-  minimum: ""                       # Walk-away floor, e.g., "$160K base"
+  target: ""
+  minimum: ""
   currency: "USD"
-  equity_preference: ""             # optional: "preferred", "indifferent", "avoid"
+  equity_preference: "indifferent"
 
 # === Proof Points ===
-# Specific quantified achievements. Used to populate Block E (Positioning Strategy)
-# in evaluate and to seed the story bank.
-proof_points: []
-# Examples:
-# - "Reduced model inference latency from 800ms to 120ms via quantization and batching"
-# - "Shipped 0-to-1 agentic product used by 50K users in 6 months"
-# - "Grew engineering org from 4 to 22 engineers over 18 months"
+proof_points:
+  - "Built SSAI infrastructure handling millions of concurrent WrestleMania streams — zero failures"
+  - "5x CPM lift through programmatic demand modernization on 100M+ user product"
+  - "90% reduction in manual admin overhead via HITL automation"
+  - "GDPR/CCPA compliance framework across 180+ countries became operational standard"
+  - "Google's first partner to leverage SSAI across all surfaces"
+  - "Built open-source autonomous AI framework — local-first, 95%+ cloud cost reduction"
 
 # === Portfolio ===
-# Public work samples. Referenced in outreach and apply outputs.
-portfolio: []
-# Format:
-# - title: ""
-#   url: ""
-#   description: ""                 # 1 sentence
+portfolio:
+  - title: "Xibi — Autonomous Edge AI Framework"
+    url: ""
+    description: "Open-source agentic AI framework with tiered intelligence routing and local-first architecture"
 
 # === Persona Modifiers ===
-# These adjust scoring weights for your specific situation.
-# recent_graduate: applies if <2 years experience; softens seniority penalties
-# career_changer: applies if switching industries/domains; softens domain fit penalties
-# career_returner: applies if returning after a gap; softens recency penalties
-# international: applies if credentials may not be recognized in target market
 persona:
   recent_graduate: false
   career_changer: false
   career_returner: false
   international: false
-  gap_explanation: ""               # Brief explanation of any employment gap, e.g., "18-month sabbatical for family care"
+  gap_explanation: ""
