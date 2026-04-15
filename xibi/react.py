@@ -709,7 +709,22 @@ async def _run_async(
         f"You show your work before taking irreversible actions.",
     ]
 
-    _tools_block = f"Available tools: {json.dumps(_flatten_tools(skill_registry))}"
+    # --- Build categorized tools block (strip non-LLM fields) ---
+    _all_tools = _flatten_tools(skill_registry)
+    _obs_tools = []
+    _act_tools = []
+    for _t in _all_tools:
+        _entry = {"name": _t["name"], "description": _t.get("description", ""), "inputSchema": _t.get("inputSchema", {})}
+        if _t.get("output_type", "raw") in ("raw", "synthesis"):
+            _obs_tools.append(_entry)
+        else:
+            _act_tools.append(_entry)
+    _tools_block = (
+        "## OBSERVATION TOOLS (use these FIRST to gather information)\n"
+        + json.dumps(_obs_tools)
+        + "\n\n## ACTION TOOLS (use AFTER observing — some are irreversible)\n"
+        + json.dumps(_act_tools)
+    )
 
     # Auto-detection fallback
     if react_format == "native" and not getattr(llm, "supports_tool_calling", lambda: False)():
@@ -789,9 +804,39 @@ async def _run_async(
             (f"{context_block}\n\n" if context_block else "") + ("\n".join(_identity_lines)) + _handle_instructions
         )
     else:
-        system_prompt = (f"{context_block}\n\n" if context_block else "") + (
-            "\n".join(_identity_lines) + f"\n\n{_tools_block}\n\n{_format_instructions}"
+        # --- Behavioral rules (ranked by importance) ---
+        _rules = (
+            "## RULES\n"
+            "\n"
+            "1. LOOK BEFORE YOU LEAP\n"
+            "   Before any action tool, use an observation tool first.\n"
+            "   Don't know a filename → list_files. Don't know an email → recall.\n"
+            "   Don't know what's in a file → read_file. NEVER guess what you can look up.\n"
+            "\n"
+            "2. IRREVERSIBLE ACTIONS NEED CONFIRMATION\n"
+            "   Before send_email, reply_email, add_event, or archive:\n"
+            "   Present a draft to the user via finish first. Ask 'Should I send this?'\n"
+            "\n"
+            "3. COMPOSE FROM CONTEXT, NOT ASSUMPTIONS\n"
+            "   Before drafting emails or documents: recall the recipient's details,\n"
+            "   recall relevant business context. Infer subject and body from the request.\n"
+            "   Do NOT ask the user to provide what you can compose yourself.\n"
+            "\n"
+            "4. CURRENT REQUEST ONLY\n"
+            "   Conversation history is background — completed prior turns.\n"
+            "   Do not continue, revisit, or re-execute old turns.\n"
+            "   If an answer appears in history, verify with a tool — data may be stale.\n"
         )
+
+        # Assembly order: identity → rules → context → tools → format
+        _prompt_parts = []
+        _prompt_parts.append("\n".join(_identity_lines))
+        _prompt_parts.append(_rules)
+        if context_block:
+            _prompt_parts.append(context_block)
+        _prompt_parts.append(_tools_block)
+        _prompt_parts.append(_format_instructions)
+        system_prompt = "\n\n".join(_prompt_parts)
 
     for step_num in range(1, max_steps + 1):
         error_obj: XibiError | None = None

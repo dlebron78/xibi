@@ -56,6 +56,14 @@ class SessionContext:
         self.db_path = db_path
         self.config = config
 
+    @property
+    def assistant_name(self) -> str:
+        """Read assistant name from config, default to 'Assistant'."""
+        if self.config:
+            profile = self.config.get("profile") or {}
+            return str(profile.get("assistant_name", "Assistant"))
+        return "Assistant"
+
     def compress_to_beliefs(self) -> int:
         """
         Extract durable facts from this session's turns and store them as beliefs.
@@ -295,7 +303,7 @@ Exchanges:
             if i >= full_start_idx:
                 # Full detail
                 lines.append(f"User: {turn.query}")
-                lines.append(f"Xibi: {turn.answer}")
+                lines.append(f"{self.assistant_name}: {turn.answer}")
                 if turn.tools_called:
                     lines.append(f"Tools used: {', '.join(t for t in turn.tools_called if t)}")
             else:
