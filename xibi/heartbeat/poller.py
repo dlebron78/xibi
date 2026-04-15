@@ -1021,19 +1021,6 @@ class HeartbeatPoller:
         logger.info("HeartbeatPoller run loop exiting (shutdown requested)")
 
 
-def _infer_provider(role: str, config: dict[str, Any]) -> str:
-    try:
-        return str(config["models"]["text"][role]["provider"])
-    except KeyError:
-        return "unknown"
-
-
-def _infer_model(role: str, config: dict[str, Any]) -> str:
-    try:
-        return str(config["models"]["text"][role]["model"])
-    except KeyError:
-        return "unknown"
-
     def _cleanup_subagent_runs(self) -> None:
         """Purge expired subagent runs. Runs once per day."""
         today = datetime.now().strftime("%Y-%m-%d")
@@ -1056,3 +1043,18 @@ def _infer_model(role: str, config: dict[str, Any]) -> str:
                 )
         except Exception as e:
             logger.warning(f"Subagent run cleanup error: {e}", exc_info=True)
+
+
+def _infer_provider(role: str, config: dict[str, Any]) -> str:
+    try:
+        return str(config["models"]["text"][role]["provider"])
+    except KeyError:
+        return "unknown"
+
+
+def _infer_model(role: str, config: dict[str, Any]) -> str:
+    try:
+        return str(config["models"]["text"][role]["model"])
+    except KeyError:
+        return "unknown"
+

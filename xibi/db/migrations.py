@@ -807,12 +807,12 @@ class SchemaManager:
 
     def _migration_34(self, conn: sqlite3.Connection) -> None:
         """Add decay_days column to ledger (backfill from CREATE TABLE schema drift)."""
-        conn.execute("ALTER TABLE ledger ADD COLUMN decay_days INTEGER")
+        with contextlib.suppress(sqlite3.OperationalError):
+            conn.execute("ALTER TABLE ledger ADD COLUMN decay_days INTEGER")
 
 
-    def _migration_35(self, conn) -> None:
+    def _migration_35(self, conn: sqlite3.Connection) -> None:
         """Subagent: add summary and ttl columns to subagent_runs."""
-        import contextlib, sqlite3 as _sqlite3
         new_cols = [
             ("summary", "TEXT"),
             ("summary_generated_at", "TEXT"),
@@ -820,7 +820,7 @@ class SchemaManager:
             ("presentation_file_path", "TEXT"),
         ]
         for col_name, col_type in new_cols:
-            with contextlib.suppress(_sqlite3.OperationalError):
+            with contextlib.suppress(sqlite3.OperationalError):
                 conn.execute(f"ALTER TABLE subagent_runs ADD COLUMN {col_name} {col_type}")
 
 
