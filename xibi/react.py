@@ -885,7 +885,7 @@ async def _run_async(
                 # Construct prompt for traditional formats
                 compressed_pad = compress_scratchpad(scratchpad)
                 _step_label = "Next Step (XML):" if react_format == "xml" else "Next Step (JSON):"
-                prompt = f"Original Query: {query}\nContext: {context}\nScratchpad:\n{compressed_pad}\n\n{_step_label}"
+                prompt = f"User: {query}\nContext: {context}\nScratchpad:\n{compressed_pad}\n\n{_step_label}"
 
                 response_text = llm.generate(prompt, system=system_prompt)
                 try:
