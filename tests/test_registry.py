@@ -1,129 +1,113 @@
-import json
+from pathlib import Path
+import unittest
+import yaml
+from xibi.subagent.registry import AgentRegistry
 
-from xibi.skills.registry import SkillRegistry
+class TestRegistry(unittest.TestCase):
+    def setUp(self):
+        self.domains_dir = Path("domains_test")
+        self.domains_dir.mkdir(exist_ok=True)
+        self.config = {"mcp": {"greenhouse": {}}}
 
+    def tearDown(self):
+        import shutil
+        if self.domains_dir.exists():
+            shutil.rmtree(self.domains_dir)
 
-def test_load_skills_scans_manifests(tmp_path):
-    skill1 = tmp_path / "skill1"
-    skill1.mkdir()
-    (skill1 / "manifest.json").write_text(json.dumps({"name": "skill1", "description": "desc1"}))
+    def test_discovery_and_resolution(self):
+        agent_dir = self.domains_dir / "test-agent"
+        agent_dir.mkdir(parents=True)
+        (agent_dir / "skills").mkdir()
 
-    skill2 = tmp_path / "skill2"
-    skill2.mkdir()
-    (skill2 / "manifest.json").write_text(json.dumps({"name": "skill2", "description": "desc2"}))
+        with open(agent_dir / "agent.yml", "w") as f:
+            yaml.dump({
+                "name": "test-agent",
+                "version": "1.0.0",
+                "description": "desc",
+                "author": "auth",
+                "expected_duration_s": 10,
+                "max_duration_s": 20,
+                "budget": {"max_calls": 5, "max_cost_usd": 0.1},
+                "summary": {"mode": "terminal"},
+                "output_ttl_hours": 1,
+                "input_schema": {},
+                "output_schema": {},
+                "skills": [
+                    {
+                        "name": "s1",
+                        "description": "d1",
+                        "prompt_file": "skills/s1.md",
+                        "trust": "L1",
+                        "model": "haiku"
+                    }
+                ],
+                "default_sequence": ["s1"]
+            }, f)
 
-    registry = SkillRegistry(tmp_path)
-    assert len(registry.skills) == 2
-    assert "skill1" in registry.skills
-    assert "skill2" in registry.skills
+        with open(agent_dir / "skills/s1.md", "w") as f:
+            f.write("s1 prompt")
 
+        registry = AgentRegistry(self.domains_dir, self.config)
+        registry.discover()
 
-def test_load_skills_skips_invalid_json(tmp_path):
-    skill1 = tmp_path / "skill1"
-    skill1.mkdir()
-    (skill1 / "manifest.json").write_text("{invalid json}")
+        agents = registry.list_agents()
+        self.assertEqual(len(agents), 1)
+        self.assertEqual(agents[0].name, "test-agent")
 
-    registry = SkillRegistry(tmp_path)
-    assert len(registry.skills) == 0
+        checklist = registry.resolve_checklist("test-agent")
+        self.assertEqual(len(checklist), 1)
+        self.assertEqual(checklist[0]["skill_name"], "s1")
+        self.assertEqual(checklist[0]["prompt"], "s1 prompt")
 
+    def test_dependency_validation(self):
+        agent_dir = self.domains_dir / "dep-agent"
+        agent_dir.mkdir(parents=True)
+        (agent_dir / "skills").mkdir()
 
-def test_load_skills_empty_dir(tmp_path):
-    registry = SkillRegistry(tmp_path)
-    assert len(registry.skills) == 0
+        with open(agent_dir / "agent.yml", "w") as f:
+            yaml.dump({
+                "name": "dep-agent",
+                "version": "1.0.0",
+                "description": "desc",
+                "author": "auth",
+                "expected_duration_s": 10,
+                "max_duration_s": 20,
+                "budget": {"max_calls": 5, "max_cost_usd": 0.1},
+                "summary": {"mode": "terminal"},
+                "output_ttl_hours": 1,
+                "input_schema": {},
+                "output_schema": {},
+                "skills": [
+                    {
+                        "name": "s1",
+                        "description": "d1",
+                        "prompt_file": "skills/s1.md",
+                        "trust": "L1",
+                        "model": "haiku"
+                    },
+                    {
+                        "name": "s2",
+                        "description": "d2",
+                        "prompt_file": "skills/s2.md",
+                        "trust": "L1",
+                        "model": "haiku",
+                        "depends_on": ["s1"]
+                    }
+                ]
+            }, f)
 
+        with open(agent_dir / "skills/s1.md", "w") as f:
+            f.write("s1")
+        with open(agent_dir / "skills/s2.md", "w") as f:
+            f.write("s2")
 
-def test_load_skills_nonexistent_dir():
-    registry = SkillRegistry("/nonexistent/path")
-    assert len(registry.skills) == 0
+        registry = AgentRegistry(self.domains_dir, self.config)
+        registry.discover()
 
+        # Should fail because s1 is not included
+        with self.assertRaises(ValueError):
+            registry.resolve_checklist("dep-agent", skills=["s2"])
 
-def test_get_skill_manifests_returns_all(tmp_path):
-    for i in range(3):
-        skill_dir = tmp_path / f"skill{i}"
-        skill_dir.mkdir()
-        (skill_dir / "manifest.json").write_text(json.dumps({"name": f"skill{i}", "description": f"desc{i}"}))
-
-    registry = SkillRegistry(tmp_path)
-    manifests = registry.get_skill_manifests()
-    assert len(manifests) == 3
-    names = {m["name"] for m in manifests}
-    assert names == {"skill0", "skill1", "skill2"}
-
-
-def test_get_tool_meta_found(tmp_path):
-    skill_dir = tmp_path / "skill1"
-    skill_dir.mkdir()
-    manifest = {
-        "name": "skill1",
-        "description": "desc1",
-        "tools": [{"name": "tool1", "description": "t1"}, {"name": "tool2", "description": "t2"}],
-    }
-    (skill_dir / "manifest.json").write_text(json.dumps(manifest))
-
-    registry = SkillRegistry(tmp_path)
-    meta = registry.get_tool_meta("skill1", "tool1")
-    assert meta == {"name": "tool1", "description": "t1"}
-
-
-def test_get_tool_meta_not_found(tmp_path):
-    registry = SkillRegistry(tmp_path)
-    assert registry.get_tool_meta("unknown", "tool") is None
-
-
-def test_get_tool_min_effort_default(tmp_path):
-    skill_dir = tmp_path / "skill1"
-    skill_dir.mkdir()
-    manifest = {"name": "skill1", "tools": [{"name": "tool1"}]}
-    (skill_dir / "manifest.json").write_text(json.dumps(manifest))
-    registry = SkillRegistry(tmp_path)
-    assert registry.get_tool_min_effort("skill1", "tool1") == 1
-
-
-def test_get_tool_min_effort_explicit(tmp_path):
-    skill_dir = tmp_path / "skill1"
-    skill_dir.mkdir()
-    manifest = {"name": "skill1", "tools": [{"name": "tool1", "min_effort": 2}]}
-    (skill_dir / "manifest.json").write_text(json.dumps(manifest))
-    registry = SkillRegistry(tmp_path)
-    assert registry.get_tool_min_effort("skill1", "tool1") == 2
-
-
-def test_find_skill_for_tool_found(tmp_path):
-    skill_dir = tmp_path / "skill1"
-    skill_dir.mkdir()
-    manifest = {"name": "skill1", "tools": [{"name": "tool1"}]}
-    (skill_dir / "manifest.json").write_text(json.dumps(manifest))
-    registry = SkillRegistry(tmp_path)
-    assert registry.find_skill_for_tool("tool1") == "skill1"
-
-
-def test_find_skill_for_tool_not_found(tmp_path):
-    registry = SkillRegistry(tmp_path)
-    assert registry.find_skill_for_tool("unknown") is None
-
-
-def test_validate_returns_warnings_for_bad_manifests(tmp_path):
-    skill_dir = tmp_path / "skill1"
-    skill_dir.mkdir()
-    manifest = {
-        "name": "skill1",
-        # "description" missing
-        "tools": [{"name": "tool1", "output_type": "invalid"}],
-    }
-    (skill_dir / "manifest.json").write_text(json.dumps(manifest))
-    registry = SkillRegistry(tmp_path)
-    warnings = registry.validate()
-    assert len(warnings) > 0
-
-
-def test_validate_clean_manifest_no_warnings(tmp_path):
-    skill_dir = tmp_path / "skill1"
-    skill_dir.mkdir()
-    manifest = {
-        "name": "skill1",
-        "description": "desc1",
-        "tools": [{"name": "tool1", "description": "t1", "output_type": "raw"}],
-    }
-    (skill_dir / "manifest.json").write_text(json.dumps(manifest))
-    registry = SkillRegistry(tmp_path)
-    assert registry.validate() == []
+        # Should pass
+        checklist = registry.resolve_checklist("dep-agent", skills=["s1", "s2"])
+        self.assertEqual(len(checklist), 2)

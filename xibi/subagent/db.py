@@ -16,8 +16,10 @@ def create_run(db_path: Path, run: SubagentRun) -> None:
                 id, agent_id, status, trigger, trigger_context, scoped_input, output,
                 error_detail, started_at, completed_at, cancelled_reason,
                 budget_max_calls, budget_max_cost_usd, budget_max_duration_s,
-                actual_calls, actual_cost_usd, actual_input_tokens, actual_output_tokens, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                actual_calls, actual_cost_usd, actual_input_tokens, actual_output_tokens,
+                summary, summary_generated_at, output_ttl_hours, presentation_file_path,
+                created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run.id,
@@ -38,6 +40,10 @@ def create_run(db_path: Path, run: SubagentRun) -> None:
                 run.actual_cost_usd,
                 run.actual_input_tokens,
                 run.actual_output_tokens,
+                run.summary,
+                run.summary_generated_at,
+                run.output_ttl_hours,
+                run.presentation_file_path,
                 run.created_at,
             ),
         )
@@ -50,7 +56,9 @@ def update_run(db_path: Path, run: SubagentRun) -> None:
             UPDATE subagent_runs SET
                 status = ?, output = ?, error_detail = ?, started_at = ?,
                 completed_at = ?, cancelled_reason = ?, actual_calls = ?,
-                actual_cost_usd = ?, actual_input_tokens = ?, actual_output_tokens = ?
+                actual_cost_usd = ?, actual_input_tokens = ?, actual_output_tokens = ?,
+                summary = ?, summary_generated_at = ?, output_ttl_hours = ?,
+                presentation_file_path = ?
             WHERE id = ?
             """,
             (
@@ -64,6 +72,10 @@ def update_run(db_path: Path, run: SubagentRun) -> None:
                 run.actual_cost_usd,
                 run.actual_input_tokens,
                 run.actual_output_tokens,
+                run.summary,
+                run.summary_generated_at,
+                run.output_ttl_hours,
+                run.presentation_file_path,
                 run.id,
             ),
         )
@@ -95,6 +107,10 @@ def get_run(db_path: Path, run_id: str) -> SubagentRun | None:
             actual_cost_usd=d["actual_cost_usd"],
             actual_input_tokens=d["actual_input_tokens"],
             actual_output_tokens=d["actual_output_tokens"],
+            summary=d["summary"],
+            summary_generated_at=d["summary_generated_at"],
+            output_ttl_hours=d["output_ttl_hours"],
+            presentation_file_path=d["presentation_file_path"],
             created_at=d["created_at"],
         )
 
@@ -228,3 +244,18 @@ def create_cost_event(db_path: Path, event: CostEvent) -> None:
                 event.timestamp,
             ),
         )
+
+def cleanup_expired_runs(db_path: Path) -> int:
+    with open_db(db_path) as conn, conn:
+        expired_ids = [r[0] for r in conn.execute(
+            "SELECT id FROM subagent_runs WHERE output_ttl_hours > 0 "
+            "AND datetime(completed_at, '+' || output_ttl_hours || ' hours') < datetime('now')"
+        ).fetchall()]
+        if not expired_ids:
+            return 0
+        placeholders = ",".join("?" * len(expired_ids))
+        conn.execute(f"DELETE FROM subagent_cost_events WHERE run_id IN ({placeholders})", expired_ids)
+        conn.execute(f"DELETE FROM subagent_checklist_steps WHERE run_id IN ({placeholders})", expired_ids)
+        conn.execute(f"DELETE FROM pending_l2_actions WHERE run_id IN ({placeholders})", expired_ids)
+        conn.execute(f"DELETE FROM subagent_runs WHERE id IN ({placeholders})", expired_ids)
+        return len(expired_ids)

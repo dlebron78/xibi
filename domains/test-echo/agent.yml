@@ -1,0 +1,58 @@
+name: test-echo
+version: "1.0.0"
+description: "Echoes scoped input through a 2-step checklist for runtime validation"
+author: "Xibi Core"
+
+expected_duration_s: 30
+max_duration_s: 120
+check_in_interval_s: 0
+
+budget:
+  max_calls: 10
+  max_cost_usd: 0.50
+
+summary:
+  mode: terminal
+  max_chars: 500
+  presentation_file: false
+
+output_ttl_hours: 24
+
+input_schema:
+  type: object
+  required: [input]
+  properties:
+    input:
+      type: string
+      description: "Text to echo and transform"
+
+output_schema:
+  type: object
+  properties:
+    formatted_summary:
+      type: string
+
+skills:
+  - name: summarize
+    description: "Summarize the input in 2 sentences"
+    prompt_file: skills/summarize.md
+    trust: L1
+    model: haiku
+    standalone: true
+    standalone_input:
+      type: object
+      required: [input]
+      properties:
+        input: { type: string }
+
+  - name: format
+    description: "Format the summary as a bullet list"
+    prompt_file: skills/format.md
+    trust: L1
+    model: haiku
+    standalone: false
+    depends_on: [summarize]
+
+default_sequence:
+  - summarize
+  - format

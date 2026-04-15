@@ -26,7 +26,7 @@ def _json_default(obj: Any) -> Any:
 
 
 if TYPE_CHECKING:
-    pass
+    from xibi.subagent.registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +84,7 @@ class ObservationCycle:
         skill_registry: list[dict[str, Any]] | None = None,
         *,
         trust_gradient: TrustGradient | None = None,
+        agent_registry: AgentRegistry | None = None,
     ) -> None:
         """
         db_path: Path to the SQLite database.
@@ -94,6 +95,7 @@ class ObservationCycle:
         self.profile = profile or {}
         self.skill_registry = skill_registry or []
         self.trust_gradient = trust_gradient
+        self.agent_registry = agent_registry
         self.config = self._load_config()
 
     def _load_config(self) -> ObservationConfig:
@@ -820,8 +822,20 @@ class ObservationCycle:
         System prompt for the manager review role. This is fundamentally different from
         the triage prompt — the manager reviews accumulated state, not new signals.
         """
-        return """You are the manager reviewer for Xibi, a personal AI assistant.
+        registry_info = ""
+        if self.agent_registry:
+            agents = self.agent_registry.list_agents()
+            if agents:
+                registry_info = "\n## Available Subagents\n"
+                for a in agents:
+                    config_status = "READY" if a.config_ready else "CONFIG_REQUIRED"
+                    registry_info += f"- {a.name} (v{a.version}): {a.description} [{config_status}]\n"
+                    registry_info += "  Skills: " + ", ".join([s.name for s in a.skills]) + "\n"
+
+        return f"""You are the manager reviewer for Xibi, a personal AI assistant.
 You are reviewing all signals received since the last review period.
+
+{registry_info}
 
 Your job is to look at the FULL PICTURE and take actions that improve future classification:
 
@@ -869,70 +883,70 @@ Write a 3-5 bullet briefing of the most important things the user should know.
 Focus on: what needs action, what's heating up, what changed since last review.
 
 Respond with ONLY valid JSON matching this schema (no markdown, no explanation):
-{
+{{
   "thread_updates": [
-    {
+    {{
       "thread_id": "...",
       "priority": "critical|high|medium|low",
       "summary": "updated summary text or null",
       "owner": "me|them|unclear or null",
       "deadline": "ISO date or null"
-    }
+    }}
   ],
   "signal_flags": [
-    {
+    {{
       "signal_id": 123,
       "suggested_tier": "CRITICAL|HIGH|MEDIUM|LOW|NOISE",
       "suggested_action_type": "request|reply|fyi|confirmation",
       "reclassify": false,
       "reason": "why this was reclassified"
-    }
+    }}
   ],
   "topic_pins": [
-    {
+    {{
       "topic": "normalized topic name",
       "action": "pin|unpin",
       "reason": "why this topic is hot/cold"
-    }
+    }}
   ],
   "contact_updates": [
-    {
+    {{
       "contact_id": "...",
       "relationship": "vendor|client|recruiter|colleague|unknown or null",
       "organization": "str or null"
-    }
+    }}
   ],
   "action_approvals": [
-    {
+    {{
       "action_id": "...",
       "decision": "approve|reject",
       "reason": "..."
-    }
+    }}
   ],
   "subagent_spawns": [
-    {
+    {{
       "agent_id": "...",
       "reason": "...",
-      "scoped_input": {},
-      "skills": [{"skill_name": "...", "model": "haiku|sonnet|opus"}]
-    }
+      "scoped_input": {{}},
+      "skills": ["skill_name1", "skill_name2"]
+    }}
   ],
   "digest": "markdown bullets"
-}
+}}
 
 Rules:
 - CALIBRATION: use the full priority range realistically. Across all threads, expect roughly: 5-10% critical, 20-30% high, 40-50% medium, 20-30% low.
 - Keep summaries under 150 characters.
-- CRITICAL: output RAW JSON only. No markdown, no code fences, no explanation. Start your response with { and end with }. Nothing else.
+- CRITICAL: output RAW JSON only. No markdown, no code fences, no explanation. Start your response with {{ and end with }}. Nothing else.
 
 Example for subagent_spawns:
 "subagent_spawns": [
-    {
+    {{
         "agent_id": "career-ops",
         "reason": "Scheduled weekly career scan overdue",
-        "scoped_input": {"criteria": "..."},
-        "skills": [{"skill_name": "scan", "model": "haiku"}, {"skill_name": "triage", "model": "haiku"}]
-    }
+        "scoped_input": {{"criteria": "..."}},
+        "skills": ["scan", "triage"]
+    }}
 ]
 """
 
@@ -1085,9 +1099,11 @@ Example for subagent_spawns:
                             trigger="review_cycle",
                             trigger_context={"review_id": cycle_id},
                             scoped_input=spawn.get("scoped_input", {}),
-                            checklist=spawn.get("skills", []),
+                            checklist=None,
+                            skills=spawn.get("skills"),
                             budget=budget,
                             db_path=self.db_path,
+                            registry=self.agent_registry,
                         )
                         result.actions_taken.append(
                             {
