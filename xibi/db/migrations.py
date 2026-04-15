@@ -7,7 +7,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 34  # increment when adding new migrations
+SCHEMA_VERSION = 35  # increment when adding new migrations
 
 
 class SchemaManager:
@@ -64,7 +64,8 @@ class SchemaManager:
             (31, "subagent: subagent_checklist_steps table", self._migration_31),
             (32, "subagent: pending_l2_actions table", self._migration_32),
             (33, "subagent: subagent_cost_events table", self._migration_33),
-            (34, "subagent: add summary and ttl columns to subagent_runs", self._migration_34),
+            (34, "ledger: add decay_days column", self._migration_34),
+            (35, "subagent: add summary and ttl columns to subagent_runs", self._migration_35),
         ]
 
         for version, description, func in migrations:
@@ -803,8 +804,15 @@ class SchemaManager:
             );
         """)
 
+
     def _migration_34(self, conn: sqlite3.Connection) -> None:
+        """Add decay_days column to ledger (backfill from CREATE TABLE schema drift)."""
+        conn.execute("ALTER TABLE ledger ADD COLUMN decay_days INTEGER")
+
+
+    def _migration_35(self, conn) -> None:
         """Subagent: add summary and ttl columns to subagent_runs."""
+        import contextlib, sqlite3 as _sqlite3
         new_cols = [
             ("summary", "TEXT"),
             ("summary_generated_at", "TEXT"),
@@ -812,10 +820,11 @@ class SchemaManager:
             ("presentation_file_path", "TEXT"),
         ]
         for col_name, col_type in new_cols:
-            with contextlib.suppress(sqlite3.OperationalError):
+            with contextlib.suppress(_sqlite3.OperationalError):
                 conn.execute(f"ALTER TABLE subagent_runs ADD COLUMN {col_name} {col_type}")
 
 
 def migrate(db_path: Path) -> list[int]:
     """Convenience: create SchemaManager and run all pending migrations."""
     return SchemaManager(db_path).migrate()
+
