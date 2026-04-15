@@ -14,35 +14,56 @@ logger = logging.getLogger(__name__)
 
 
 def parse_when(when_str: str) -> datetime:
-    """
-    Parse 'when' parameter.
-    Supports: ISO 8601 or shorthand like '15m', '2h', '1d'.
-    Returns UTC datetime.
-    """
+    """Parse when param. Returns UTC datetime. Supports ISO8601, 15m/2h/1d, today/tomorrow+time, 8pm/20:00."""
+    import re as _re
     now = datetime.now(timezone.utc)
+    raw = when_str.strip()
+    # today_20:00 -> today 20:00
+    raw = _re.sub(r"^(today|tomorrow)[_ ]", lambda x: x.group(1) + " ", raw, flags=_re.IGNORECASE)
 
-    # Shorthand regex: \d+[mhd]
-    match = re.fullmatch(r"(\d+)([mhd])", when_str.strip().lower())
-    if match:
-        amount = int(match.group(1))
-        unit = match.group(2)
-        if unit == "m":
-            return now + timedelta(minutes=amount)
-        elif unit == "h":
-            return now + timedelta(hours=amount)
-        elif unit == "d":
-            return now + timedelta(days=amount)
+    def _clock(t):
+        t = t.strip().lower()
+        pm, am = t.endswith("pm"), t.endswith("am")
+        t = t.rstrip("apm").rstrip(":")
+        p = t.split(":")
+        h, mn = int(p[0]), (int(p[1]) if len(p) > 1 else 0)
+        if pm and h != 12: h += 12
+        if am and h == 12: h = 0
+        return h, mn
 
-    # Try ISO 8601
+    # shorthand: 15m / 2h / 1d
+    m = _re.fullmatch(r"(\d+)([mhd])", raw.lower())
+    if m:
+        a, u = int(m.group(1)), m.group(2)
+        return now + {"m": timedelta(minutes=a), "h": timedelta(hours=a), "d": timedelta(days=a)}[u]
+
+    # today 8pm / today 20:00
+    m = _re.match(r"today\s+(.*)", raw, _re.IGNORECASE)
+    if m:
+        h, mn = _clock(m.group(1))
+        return now.replace(hour=h, minute=mn, second=0, microsecond=0)
+
+    # tomorrow 9am / tomorrow 14:00
+    m = _re.match(r"tomorrow\s+(.*)", raw, _re.IGNORECASE)
+    if m:
+        h, mn = _clock(m.group(1))
+        return (now + timedelta(days=1)).replace(hour=h, minute=mn, second=0, microsecond=0)
+
+    # bare time: 8pm / 20:00
+    m = _re.fullmatch(r"\d{1,2}(:\d{2})?(:\d{2})?(am|pm)?", raw, _re.IGNORECASE)
+    if m:
+        h, mn = _clock(raw)
+        c = now.replace(hour=h, minute=mn, second=0, microsecond=0)
+        return c + timedelta(days=1) if c <= now else c
+
+    # ISO 8601
     try:
-        # replace Z with +00:00 for fromisoformat compatibility in some python versions
-        dt = datetime.fromisoformat(when_str.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
         return dt.astimezone(timezone.utc)
     except ValueError:
-        raise ValueError(f"Unparseable 'when' expression: {when_str}") from None
-
+        raise ValueError(f"Unparseable when expression: {when_str}") from None
 
 def parse_interval(recurring_str: str) -> int:
     """
