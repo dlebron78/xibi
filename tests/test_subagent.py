@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from xibi.db.migrations import migrate
 from xibi.subagent.cost import get_agent_total_cost, get_rolling_total, get_run_cost
@@ -32,8 +32,12 @@ class TestSubagent(unittest.TestCase):
         if self.db_path.exists():
             self.db_path.unlink()
         migrate(self.db_path)
+        # Prevent ModelRouter.__init__ from calling load_config() and looking for config.json
+        self.config_patcher = patch("xibi.subagent.routing.load_config", return_value={})
+        self.config_patcher.start()
 
     def tearDown(self):
+        self.config_patcher.stop()
         if self.db_path.exists():
             self.db_path.unlink()
 

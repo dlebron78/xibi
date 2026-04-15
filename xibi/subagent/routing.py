@@ -25,17 +25,15 @@ class ModelRouter:
         self.models = config_dict.get(
             "subagent_models",
             {
-                "haiku": {"provider": "anthropic", "model_id": "claude-3-haiku-20240307"},
-                "sonnet": {"provider": "anthropic", "model_id": "claude-3-5-sonnet-20240620"},
-                "opus": {"provider": "anthropic", "model_id": "claude-3-opus-20240229"},
+                "haiku": {"provider": "gemini", "model_id": "gemini-3.1-flash-lite-preview"},
+                "sonnet": {"provider": "gemini", "model_id": "gemini-3.1-flash-lite-preview"},
+                "opus": {"provider": "gemini", "model_id": "gemini-3.1-flash-lite-preview"},
             },
         )
         self.pricing = config_dict.get(
             "subagent_pricing",
             {
-                "claude-3-haiku-20240307": {"input_per_mtok": 0.25, "output_per_mtok": 1.25},
-                "claude-3-5-sonnet-20240620": {"input_per_mtok": 3.00, "output_per_mtok": 15.00},
-                "claude-3-opus-20240229": {"input_per_mtok": 15.00, "output_per_mtok": 75.00},
+                "gemini-3.1-flash-lite-preview": {"input_per_mtok": 0.075, "output_per_mtok": 0.30},
             },
         )
 

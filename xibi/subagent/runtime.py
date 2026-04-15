@@ -115,6 +115,10 @@ def spawn_subagent(
         if resolved_checklist is None:
             raise ValueError("Checklist must be provided or resolved via registry")
 
+        # Ensure user_config is always present — downstream checklist steps may assume it
+        if "user_config" not in scoped_input:
+            scoped_input["user_config"] = {}
+
         run = SubagentRun(
             id=run_id,
             agent_id=agent_id,
@@ -220,6 +224,11 @@ def resume_run(
         return run
 
     run = execute_checklist(run, db_path, checklist)
+
+    # Checklist completed without a summary step — persist and return
+    if run.status == "DONE":
+        update_run(db_path, run)
+        return run
 
     # Re-handle completion with summary generation
     if run.status == "COMPLETING":
