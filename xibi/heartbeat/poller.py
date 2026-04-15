@@ -1020,7 +1020,6 @@ class HeartbeatPoller:
 
         logger.info("HeartbeatPoller run loop exiting (shutdown requested)")
 
-
     def _cleanup_subagent_runs(self) -> None:
         """Purge expired subagent runs. Runs once per day."""
         today = datetime.now().strftime("%Y-%m-%d")
@@ -1057,4 +1056,3 @@ def _infer_model(role: str, config: dict[str, Any]) -> str:
         return str(config["models"]["text"][role]["model"])
     except KeyError:
         return "unknown"
-

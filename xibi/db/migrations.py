@@ -804,12 +804,10 @@ class SchemaManager:
             );
         """)
 
-
     def _migration_34(self, conn: sqlite3.Connection) -> None:
         """Add decay_days column to ledger (backfill from CREATE TABLE schema drift)."""
         with contextlib.suppress(sqlite3.OperationalError):
             conn.execute("ALTER TABLE ledger ADD COLUMN decay_days INTEGER")
-
 
     def _migration_35(self, conn: sqlite3.Connection) -> None:
         """Subagent: add summary and ttl columns to subagent_runs."""
@@ -827,4 +825,3 @@ class SchemaManager:
 def migrate(db_path: Path) -> list[int]:
     """Convenience: create SchemaManager and run all pending migrations."""
     return SchemaManager(db_path).migrate()
-
