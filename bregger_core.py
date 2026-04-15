@@ -1777,8 +1777,13 @@ class BreggerCore:
         # Agent registry — discovers domain agents (xibi/subagent lives here, bregger just delegates)
         from xibi.subagent.registry import AgentRegistry
         _deploy_dir = Path(os.environ.get("XIBI_DEPLOY_DIR", os.path.expanduser("~/xibi")))
-        self.agent_registry = AgentRegistry(domains_dir=_deploy_dir / "domains", config=self.config)
+        _domains_dir = _deploy_dir / "domains"
+        if not _domains_dir.exists():
+            print(f"⚠️  WARNING: domains dir not found at {_domains_dir} — subagent dispatch will fail. Set XIBI_DEPLOY_DIR.", flush=True)
+        self.agent_registry = AgentRegistry(domains_dir=_domains_dir, config=self.config)
         self.agent_registry.discover()
+        if not self.agent_registry.get("test-echo"):
+            print("⚠️  WARNING: test-echo agent not registered — check domains/test-echo/agent.yml", flush=True)
 
         self.shadow_matcher = ShadowMatcher()
         self.shadow_matcher.load_manifests(str(self.workdir / "skills"))
@@ -2695,7 +2700,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
 
                         from xibi.subagent.runtime import spawn_subagent
 
-                        manifest = self.agent_registry.get(agent_id) if self.agent_registry else None
+                        manifest = self.agent_registry.get(agent_id)
                         if manifest is not None or agent_id == "test-echo":
                             try:
                                 run = spawn_subagent(
@@ -2705,7 +2710,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                                     scoped_input={"input": user_input_val},
                                     checklist=None,
                                     budget=None,
-                                    db_path=Path(self.db_path),
+                                    db_path=self.db_path,
                                     registry=self.agent_registry,
                                 )
                                 if run.status == "DONE":
@@ -2715,7 +2720,7 @@ If no durable facts, set "facts" to []. If no clear topic, set "signal" to null.
                             except Exception as e:
                                 report = f"Failed to spawn subagent {agent_id}: {e}"
                         else:
-                            known = [a.name for a in self.agent_registry.list_agents()] if self.agent_registry else []
+                            known = [a.name for a in self.agent_registry.list_agents()]
                             report = f"Unknown agent: {agent_id}. Available: {', '.join(known) or 'none registered'}"
                     elif plan.get("intent") == "subagent_status":
                         try:
