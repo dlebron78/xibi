@@ -579,7 +579,7 @@ async def _run_async(
     step_callback: Callable[[Any], None] | None = None,
     trace_id: str | None = None,
     max_steps: int = 10,
-    max_secs: int = 60,
+    max_secs: int = 120,
     executor: Executor | None = None,
     command_layer: CommandLayer | None = None,
     control_plane: ControlPlaneRouter | None = None,
