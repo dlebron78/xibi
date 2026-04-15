@@ -157,10 +157,7 @@ def cmd_heartbeat(args: argparse.Namespace) -> None:
     )
 
     rules = RuleEngine(db_path)
-    from xibi.subagent.registry import AgentRegistry
-    agent_registry = AgentRegistry(domains_dir=Path("domains"), config=config)
-    agent_registry.discover()
-    obs = ObservationCycle(db_path, profile=config, skill_registry=registry.get_skill_manifests(), agent_registry=agent_registry)
+    obs = ObservationCycle(db_path, profile=config, skill_registry=registry.get_skill_manifests())
     radiant = Radiant(db_path, profile=config)
 
     # Get allowed chat IDs from environment (comma-separated list of integers)
