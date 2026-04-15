@@ -1,0 +1,7 @@
+[Unit]
+Description=Xibi auto-deploy (poll origin/main, pull, restart)
+
+[Service]
+Type=oneshot
+ExecStart=%h/xibi/scripts/deploy.sh
+Environment=HOME=%h
