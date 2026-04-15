@@ -87,6 +87,7 @@ omit = [
     "tests/*",
     "xibi/__main__.py",        # CLI entry point — subprocess init; not unit-testable
     "xibi/skills/sample.bak/*",  # backup skill templates, not production code
+    "xibi/mcp/jobspy_mcp_server.py",  # standalone MCP server entry point; not unit-testable
 ]
 
 [tool.coverage.report]
