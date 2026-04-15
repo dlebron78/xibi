@@ -5,12 +5,34 @@
 > **Phase:** 2 — depends on Block 1 (step-81, subagent runtime)
 > **Acceptance criteria:** see epic Block 2 (6 items) + additions from design session
 
-> **TRR Record**
-> Date: 2026-04-14
-> Reviewer: Opus (independent — spec authored by Daniel)
-> Repo HEAD: origin/subagent-runtime-block1-14241903174212842630 (Block 1, unmerged)
-> Verdict: **AMEND** — manifest schema and registry design are sound; 9 findings on integration seams
-> Gaps: TRR-C1 (review cycle bypass), TRR-C2 (sync execution), TRR-S1–S4 (specificity), TRR-H1–H2 (hazards), TRR-P1 (module list)
+---
+
+## TRR Record
+
+> **Date:** 2026-04-14
+> **Reviewer:** Opus (independent — spec authored by Daniel)
+> **Repo HEAD:** Block 1 merged as 095ba90 on main
+> **Verdict:** AMEND — manifest schema and registry design are sound; 9 findings on integration seams applied inline
+
+### Findings Applied (AMEND)
+
+[TRR-C1] **Review cycle spawn path bypasses registry** — observation.py:1085 passes raw LLM skill dicts as `checklist`, taking Block 1 raw path with no prompt content. Fixed: review cycle dispatch updated to pass skill names + `checklist=None`; observation.py added to module MODIFIED list.
+
+[TRR-C2] **Sync execution blocks Telegram and review cycle** — `execute_checklist` is fully synchronous; Telegram handler blocks during multi-step cloud runs. `check_in_interval_s` promised progress updates that are physically impossible without async execution. Fixed: AC17 deferred, `check_in_interval_s` marked declared-but-not-implemented, "What This Step Does NOT Build" section updated.
+
+[TRR-S1] **Retrieval tool has no registration path** — `SubagentRetrieval` class exists but Roberto can't call it without a skill manifest entry. Fixed: `xibi/skills/subagent-retrieval/manifest.json` added to module structure.
+
+[TRR-S2] **Summary generation insertion point undefined** — `SummaryGenerator` needs `AgentManifest` and `ModelRouter` not available in `checklist.py`. Fixed: `spawn_subagent` wraps post-execution, generates summary before setting status DONE, presentation files go to `domains/{agent}/output/{run_id}.md`.
+
+[TRR-S3] **Partial pipeline dependency resolution undefined** — behavior for `skills=["triage"]` where triage depends on scan was unspecified. Fixed: explicit rule — reject with error, never auto-include dependencies.
+
+[TRR-S4] **Required config invisible to registry** — agents with missing required config show as "available" but always fail to spawn. Fixed: `list_agents()` returns `config_ready: bool` per manifest.
+
+[TRR-H1] **Config injection notation ambiguous** — `{user_config.criteria}` looked like Python template syntax, risking LLM-injection violation. Fixed: clarified that prompt files use natural language referencing scoped_input, no string interpolation performed by runtime.
+
+[TRR-H2] **Cascading deletes unreliable** — SQLite foreign keys off by default; CASCADE won't fire. Fixed: `cleanup_expired_runs` now explicitly deletes child tables in order before parent.
+
+[TRR-P1] **observation.py missing from module list** — AC15 (manager prompt includes registry) requires a real change to observation.py. Fixed: added to MODIFIED list.
 
 ---
 
