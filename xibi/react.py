@@ -836,6 +836,8 @@ async def _run_async(
             _prompt_parts.append(context_block)
         _prompt_parts.append(_tools_block)
         _prompt_parts.append(_format_instructions)
+        # Anchor the current request at the bottom — visible on every react step.
+        _prompt_parts.append(f"CURRENT REQUEST: {query}\n\nWhat is your next step?")
         system_prompt = "\n\n".join(_prompt_parts)
 
     for step_num in range(1, max_steps + 1):
@@ -885,7 +887,7 @@ async def _run_async(
                 # Construct prompt for traditional formats
                 compressed_pad = compress_scratchpad(scratchpad)
                 _step_label = "Next Step (XML):" if react_format == "xml" else "Next Step (JSON):"
-                prompt = f"User: {query}\nContext: {context}\nScratchpad:\n{compressed_pad}\n\n{_step_label}"
+                prompt = f"Context: {context}\nScratchpad:\n{compressed_pad}\n\n{_step_label}"
 
                 response_text = llm.generate(prompt, system=system_prompt)
                 try:
