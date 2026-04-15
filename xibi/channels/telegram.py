@@ -94,8 +94,10 @@ class TelegramAdapter:
         offset_file: Path | str | None = None,
         db_path: Path | str | None = None,
         llm_routing_classifier: Any | None = None,
+        config_path: Path | str | None = None,
     ) -> None:
         self.config = config
+        self.config_path = Path(config_path) if config_path else None
         self.skill_registry = skill_registry
         self.executor = executor
         self.control_plane = control_plane
@@ -359,8 +361,18 @@ class TelegramAdapter:
             logger.warning(f"Failed to generate decision review: {e}")
             return ""
 
+    def _reload_config(self) -> None:
+        """Re-read config.json from disk so model changes take effect immediately."""
+        if self.config_path and self.config_path.exists():
+            try:
+                with self.config_path.open() as f:
+                    self.config = json.load(f)
+            except Exception:
+                logger.warning("Failed to reload config from %s", self.config_path, exc_info=True)
+
     def _handle_text(self, chat_id: int, user_text: str) -> None:
         """Handle core engine interaction and response sending."""
+        self._reload_config()
         stop_event = threading.Event()
         typing_thread = threading.Thread(target=self._typing_loop, args=(chat_id, stop_event), daemon=True)
         self._active_chats[chat_id] = {"stop": stop_event, "thread": typing_thread}

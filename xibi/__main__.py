@@ -78,6 +78,7 @@ def cmd_telegram(args: argparse.Namespace) -> None:
             shadow=None,
             db_path=db_path,
             llm_routing_classifier=llm_routing_classifier,
+            config_path=config_path,
         )
         adapter.poll()
     except KeyboardInterrupt:
