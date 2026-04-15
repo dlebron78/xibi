@@ -64,6 +64,7 @@ class SchemaManager:
             (31, "subagent: subagent_checklist_steps table", self._migration_31),
             (32, "subagent: pending_l2_actions table", self._migration_32),
             (33, "subagent: subagent_cost_events table", self._migration_33),
+            (34, "ledger: add decay_days column", self._migration_34),
         ]
 
         for version, description, func in migrations:
@@ -801,6 +802,11 @@ class SchemaManager:
                 timestamp     TEXT NOT NULL
             );
         """)
+
+
+    def _migration_34(self, conn: sqlite3.Connection) -> None:
+        """Add decay_days column to ledger (backfill from CREATE TABLE schema drift)."""
+        conn.execute("ALTER TABLE ledger ADD COLUMN decay_days INTEGER")
 
 
 def migrate(db_path: Path) -> list[int]:

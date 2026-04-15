@@ -103,6 +103,13 @@ def resolve_identifier(db_path: Path, identifier: str) -> str:
 
 
 def create_reminder(params: dict[str, Any]) -> dict[str, Any]:
+    # Unwrap if model passes a nested reminder_details object instead of flat params
+    if "reminder_details" in params and isinstance(params["reminder_details"], dict):
+        nested = params["reminder_details"]
+        if "text" not in params:
+            params["text"] = nested.get("title") or nested.get("text", "")
+        if "when" not in params:
+            params["when"] = nested.get("datetime") or nested.get("when", "")
     db_path = Path(params["_db_path"])
     text = params["text"]
     when = params["when"]
