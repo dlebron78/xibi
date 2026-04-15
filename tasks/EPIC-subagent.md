@@ -2,7 +2,7 @@
 
 > **Owner:** Daniel LeBron
 > **Created:** 2026-04-13
-> **Status:** Not Started — Pre-spec complete, chief of staff pipeline done (steps 67-80 merged)
+> **Status:** In Progress — Blocks 1-3 merged (steps 81-83), Blocks 4-6 specced
 > **Depends on:** EPIC-chief-of-staff (complete — all blocks merged through step-80)
 > **Resolves:** "Subagent task delegation" backlog item in EPIC-chief-of-staff
 
@@ -70,9 +70,12 @@ Domain agents declare their actions as L1 (autonomous) or L2 (needs review). The
 
 | Block | Title | Step | Depends on | Status |
 |-------|-------|------|-----------|--------|
-| 1 | Subagent Runtime | 81 | Chief of staff pipeline (steps 70-80) | NOT STARTED |
-| 2 | Domain Agent Contract & Registry | 82 | Block 1 | NOT STARTED |
-| 3 | Career-Ops Domain Agent | 83 | Block 2 | NOT STARTED |
+| 1 | Subagent Runtime | 81 | Chief of staff pipeline (steps 70-80) | DONE |
+| 2 | Domain Agent Contract & Registry | 82 | Block 1 | DONE |
+| 3 | Career-Ops Domain Agent | 83 | Block 2 | DONE |
+| 4 | Runtime Tool Access (MCP Prefetch) | 84 | Blocks 1-3 | NOT STARTED |
+| 5 | Signal-to-Subagent Dispatch | 85 | Block 4 | NOT STARTED |
+| 6 | Career Portal MCP Servers | TBD | Block 4 | NOT STARTED |
 
 ## Phases
 
@@ -80,7 +83,10 @@ Domain agents declare their actions as L1 (autonomous) or L2 (needs review). The
 |-------|--------|------|
 | 1 | Block 1 | Runtime can spawn, scope, and collect output from a hardcoded test agent |
 | 2 | Block 2 | Any conforming domain agent directory is discoverable and runnable |
-| 3 | Block 3 | Career-ops runs end-to-end: scan → score → draft → queue for review |
+| 3 | Block 3 | Career-ops skills run standalone with structured output |
+| 4 | Block 4 | Skills can consume MCP tool data; scan → triage → evaluate pipeline works |
+| 5 | Block 5 | Observation cycle autonomously dispatches career-ops against real job signals |
+| 6 | Block 6 | Career portal scanning (Greenhouse, Lever, Ashby) via dedicated MCP servers |
 
 ---
 
