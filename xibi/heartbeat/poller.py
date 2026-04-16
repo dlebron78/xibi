@@ -1002,7 +1002,7 @@ class HeartbeatPoller:
             logger.warning(f"Reflection tick error: {e}", exc_info=True)
 
     def run(self) -> None:
-        from xibi.shutdown import is_shutdown_requested
+        from xibi.shutdown import is_shutdown_requested, wait_for_shutdown
 
         tick_count = 0
         interval_secs = self.interval_minutes * 60
@@ -1028,7 +1028,12 @@ class HeartbeatPoller:
             except Exception as e:
                 logger.error(f"Error in heartbeat loop: {e}", exc_info=True)
 
-            time.sleep(interval_secs)
+            # Interruptible inter-tick wait. `wait_for_shutdown` returns True
+            # when the shutdown event is set (SIGTERM), so `break` exits the
+            # loop directly — bypassing the redundant `while` recheck on the
+            # next iteration. Both exit paths hit the same "exiting" log line.
+            if wait_for_shutdown(interval_secs):
+                break
 
         logger.info("HeartbeatPoller run loop exiting (shutdown requested)")
 

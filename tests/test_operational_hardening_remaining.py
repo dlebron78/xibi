@@ -14,10 +14,15 @@ import xibi.shutdown as shutdown_mod
 
 @pytest.fixture(autouse=True)
 def reset_shutdown_flag():
-    """Reset the shutdown flag before and after each test."""
-    shutdown_mod._shutdown_requested = False
+    """Reset the shutdown flag before and after each test.
+
+    `xibi.shutdown` now uses a module-level `threading.Event`, so reset via
+    `.clear()` on that event (the old `_shutdown_requested` bool was removed
+    by step-88).
+    """
+    shutdown_mod._shutdown_event.clear()
     yield
-    shutdown_mod._shutdown_requested = False
+    shutdown_mod._shutdown_event.clear()
 
 
 # ---------------------------------------------------------------------------
