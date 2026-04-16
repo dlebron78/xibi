@@ -228,6 +228,16 @@ Exchanges:
                 (str(uuid.uuid4()), self.session_id, query, answer),
             )
 
+    def add_nudge_turn(self, nudge_text: str) -> None:
+        """Record an outbound nudge so it appears in conversation history."""
+        with open_db(self.db_path) as conn, conn:
+            conn.execute(
+                """INSERT INTO session_turns
+                   (turn_id, session_id, query, answer, tools_called, exit_reason, summary, source)
+                   VALUES (?, ?, ?, ?, '[]', 'nudge', '', 'nudge')""",
+                (str(uuid.uuid4()), self.session_id, "", nudge_text),
+            )
+
     def _get_session_memories(self) -> str:
         """
         Fetch recent session_memory beliefs for injection into context.
@@ -278,7 +288,11 @@ Exchanges:
         last_turn_time = datetime.fromisoformat(rows[0]["created_at"])
         if datetime.utcnow() - last_turn_time > timedelta(minutes=30):
             self.compress_to_beliefs()
-            return ""
+            # Always keep the last 2 turns so the assistant knows what
+            # was just discussed, even after a long gap.
+            rows = rows[: min(2, len(rows))]
+            if not rows:
+                return ""
 
         turns = [
             Turn(

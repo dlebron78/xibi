@@ -27,8 +27,18 @@ def _get_telegram_config(config: dict[str, Any] | None = None) -> tuple[str | No
     return token, chat_id
 
 
-def send_nudge(message: str, category: str = "info", config: dict[str, Any] | None = None) -> None:
-    """Synchronous nudge using raw Telegram API."""
+def send_nudge(
+    message: str,
+    category: str = "info",
+    config: dict[str, Any] | None = None,
+    db_path: Any = None,
+    session_id: str | None = None,
+) -> None:
+    """Synchronous nudge using raw Telegram API.
+
+    If *db_path* and *session_id* are provided the nudge is also recorded in
+    session_turns so Roberto remembers what he sent.
+    """
     token, chat_id = _get_telegram_config(config)
     if not token or not chat_id:
         logger.error("Telegram not configured for nudge")
@@ -43,6 +53,16 @@ def send_nudge(message: str, category: str = "info", config: dict[str, Any] | No
     text = f"{prefix} {message}"
 
     _api_call(token, "sendMessage", {"chat_id": chat_id, "text": text})
+
+    # Record in session history so the nudge is visible in future context
+    if db_path and session_id:
+        try:
+            from xibi.session import SessionContext
+
+            ctx = SessionContext(session_id=session_id, db_path=db_path)
+            ctx.add_nudge_turn(text)
+        except Exception:
+            logger.warning("Failed to record nudge in session", exc_info=True)
 
 
 def send_message_with_buttons(text: str, buttons: list[dict[str, str]], config: dict[str, Any] | None = None) -> None:

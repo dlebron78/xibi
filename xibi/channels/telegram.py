@@ -688,6 +688,11 @@ class TelegramAdapter:
                         continue
 
                     user_text = message["text"]
+                    # Inject quoted message when user replies inline
+                    if "reply_to_message" in message and "text" in message["reply_to_message"]:
+                        quoted = message["reply_to_message"]["text"][:300]
+                        user_text = f"[Replying to: {quoted}]\n\n{user_text}"
+
                     pending_path = self._pending_attachments.get(chat_id)
                     if pending_path and os.path.isfile(pending_path):
                         user_text = f"{user_text} [attachment_path={pending_path}]"

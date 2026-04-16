@@ -194,6 +194,18 @@ class HeartbeatPoller:
             try:
                 self.adapter.send_message(chat_id, text)
                 logger.info(f"Broadcast to {chat_id}: {text[:80]}...")
+
+                # Record nudge in session history so Roberto remembers it
+                try:
+                    from datetime import date as _date
+
+                    from xibi.session import SessionContext
+
+                    sid = f"telegram:{chat_id}:{_date.today().isoformat()}"
+                    ctx = SessionContext(session_id=sid, db_path=self.db_path)
+                    ctx.add_nudge_turn(text)
+                except Exception:
+                    logger.debug("Could not record nudge in session", exc_info=True)
             except Exception as e:
                 logger.warning(f"Failed to broadcast to {chat_id}: {e}", exc_info=True)
 
