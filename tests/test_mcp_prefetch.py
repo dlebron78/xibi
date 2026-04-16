@@ -41,22 +41,22 @@ class TestResolveArgs(unittest.TestCase):
     """Test _resolve_args helper."""
 
     def test_args_from_found(self):
-        scoped_input = {"criteria": {"search_term": "PM Director", "location": "Remote"}}
-        tool_decl = {"args_from": "scoped_input.criteria", "args_default": {"search_term": "fallback"}}
+        scoped_input = {"criteria": {"query": "PM Director", "location": "Remote"}}
+        tool_decl = {"args_from": "scoped_input.criteria", "args_default": {"query": "fallback"}}
         result = _resolve_args(scoped_input, tool_decl)
-        self.assertEqual(result, {"search_term": "PM Director", "location": "Remote"})
+        self.assertEqual(result, {"query": "PM Director", "location": "Remote"})
 
     def test_args_from_missing_falls_back(self):
         scoped_input = {}
-        tool_decl = {"args_from": "scoped_input.criteria", "args_default": {"search_term": "fallback"}}
+        tool_decl = {"args_from": "scoped_input.criteria", "args_default": {"query": "fallback"}}
         result = _resolve_args(scoped_input, tool_decl)
-        self.assertEqual(result, {"search_term": "fallback"})
+        self.assertEqual(result, {"query": "fallback"})
 
     def test_no_args_from_uses_default(self):
-        scoped_input = {"criteria": {"search_term": "PM"}}
-        tool_decl = {"args_default": {"search_term": "default"}}
+        scoped_input = {"criteria": {"query": "PM"}}
+        tool_decl = {"args_default": {"query": "default"}}
         result = _resolve_args(scoped_input, tool_decl)
-        self.assertEqual(result, {"search_term": "default"})
+        self.assertEqual(result, {"query": "default"})
 
     def test_no_args_at_all(self):
         result = _resolve_args({}, {})
@@ -125,7 +125,7 @@ class TestPrefetch(unittest.TestCase):
                     {
                         "server": "jobspy",
                         "tool": "search_jobs",
-                        "args_default": {"search_term": "PM"},
+                        "args_default": {"query": "PM"},
                         "inject_as": "raw_postings",
                         "required": True,
                     }
@@ -137,7 +137,7 @@ class TestPrefetch(unittest.TestCase):
         execute_checklist(run, self.db_path, checklist, mcp_configs=[{"name": "jobspy", "command": ["echo"]}])
 
         # Verify the tool was called
-        mock_client.call_tool.assert_called_once_with("search_jobs", {"search_term": "PM"})
+        mock_client.call_tool.assert_called_once_with("search_jobs", {"query": "PM"})
         # Verify result was injected into scoped_input
         self.assertIn("raw_postings", run.scoped_input)
         self.assertEqual(run.scoped_input["raw_postings"], '[{"title": "PM at Acme"}]')

@@ -16,7 +16,14 @@ TOOL_SCHEMA = {
     "inputSchema": {
         "type": "object",
         "properties": {
-            "query": {"type": "string", "description": "Job search query (e.g. 'product manager')"},
+            "query": {
+                "type": "string",
+                "description": "Job search query (e.g. 'product manager'). Alias: 'search_term'.",
+            },
+            "search_term": {
+                "type": "string",
+                "description": "Alias for 'query'. Accepted for legacy callers; prefer 'query'.",
+            },
             "location": {"type": "string", "description": "Location (e.g. 'Miami, FL')", "default": ""},
             "results_wanted": {"type": "integer", "description": "Number of results", "default": 5},
             "hours_old": {"type": "integer", "description": "Max age of listings in hours", "default": 72},
@@ -26,16 +33,30 @@ TOOL_SCHEMA = {
                 "default": "indeed,linkedin",
             },
         },
-        "required": ["query"],
+        # Not listing 'query' in required — either 'query' or 'search_term' is
+        # acceptable. _search_jobs enforces the either/or and returns an error
+        # structure when neither is provided.
     },
 }
 
 
 def _search_jobs(arguments: dict) -> dict:
     """Run python-jobspy and return structured results."""
+    # Accept ``query`` (canonical) or ``search_term`` (alias used by some callers,
+    # incl. early config.json examples). If neither is present, fail loudly — a
+    # silent default like "software engineer" masked real config bugs for weeks.
+    # Validate *before* importing jobspy so a missing-arg error is surfaced
+    # regardless of whether the jobspy dep is installed.
+    query = arguments.get("query") or arguments.get("search_term")
+    if not query:
+        return {
+            "jobs": [],
+            "count": 0,
+            "error": "missing required 'query' (alias 'search_term') argument",
+        }
+
     from jobspy import scrape_jobs
 
-    query = arguments.get("query", "software engineer")
     location = arguments.get("location", "")
     results_wanted = arguments.get("results_wanted", 5)
     hours_old = arguments.get("hours_old", 72)

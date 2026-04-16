@@ -84,9 +84,8 @@ skills:
         tool: search_jobs
         args_from: scoped_input.criteria
         args_default:
-          search_term: "Product Manager Director VP"
+          query: "Product Manager Director VP"
           location: "Remote"
-          is_remote: true
           results_wanted: 15
           hours_old: 48
         inject_as: raw_postings
