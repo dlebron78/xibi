@@ -6,7 +6,10 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from xibi.mcp.client import MCPClient
 
 from xibi.subagent.db import (
     create_cost_event,
@@ -20,13 +23,99 @@ from xibi.subagent.models import CostEvent, SubagentRun
 from xibi.subagent.routing import ModelRouter
 from xibi.subagent.trust import enforce_trust
 
+# ---------------------------------------------------------------------------
+# MCP prefetch helpers (step-84)
+# ---------------------------------------------------------------------------
+
+
+def _resolve_args(scoped_input: dict, tool_decl: dict) -> dict:
+    """Resolve tool arguments from scoped_input or fall back to defaults."""
+    args_from = tool_decl.get("args_from")
+    args_default = tool_decl.get("args_default", {})
+
+    if args_from:
+        # Simple dotted path resolution: "scoped_input.criteria" -> scoped_input["criteria"]
+        parts = args_from.split(".")
+        obj: Any = scoped_input
+        # Skip leading "scoped_input" if present (it's the root)
+        if parts and parts[0] == "scoped_input":
+            parts = parts[1:]
+        for part in parts:
+            if isinstance(obj, dict) and part in obj:
+                obj = obj[part]
+            else:
+                obj = None
+                break
+        if isinstance(obj, dict):
+            return dict(obj)
+
+    return dict(args_default)  # type: ignore[no-any-return]
+
+
+def _get_mcp_client(
+    server_name: str,
+    mcp_configs: list[dict[str, Any]] | None,
+    active_clients: dict[str, Any],
+) -> MCPClient:
+    """Get or create an MCPClient for the named server.
+
+    active_clients is a dict that accumulates clients for the run's lifetime
+    so they can be reused across steps and closed at the end.
+    """
+    if server_name in active_clients:
+        client: MCPClient = active_clients[server_name]
+        return client
+
+    if not mcp_configs:
+        raise RuntimeError(f"No MCP configs provided — cannot create client for '{server_name}'")
+
+    # Find server config by name
+    server_conf = None
+    for conf in mcp_configs:
+        if conf.get("name") == server_name:
+            server_conf = conf
+            break
+
+    if not server_conf:
+        raise RuntimeError(f"MCP server '{server_name}' not found in mcp_configs")
+
+    from xibi.mcp.client import MCPClient, MCPServerConfig
+
+    client_config = MCPServerConfig(
+        name=server_name,
+        command=server_conf["command"],
+        env=server_conf.get("env", {}),
+        max_response_bytes=server_conf.get("max_response_bytes", 65536),
+    )
+    client = MCPClient(client_config)
+    client.initialize()
+    active_clients[server_name] = client
+    return client
+
+
+def _close_mcp_clients(active_clients: dict) -> None:
+    """Close all MCP clients opened during this run."""
+    for name, client in active_clients.items():
+        try:
+            client.close()
+        except Exception as e:
+            logger.warning(f"Failed to close MCP client '{name}': {e}")
+    active_clients.clear()
+
+
 logger = logging.getLogger(__name__)
 
 
-def execute_checklist(run: SubagentRun, db_path: Path, checklist: list[dict[str, Any]]) -> SubagentRun:
+def execute_checklist(
+    run: SubagentRun,
+    db_path: Path,
+    checklist: list[dict[str, Any]],
+    mcp_configs: list[dict[str, Any]] | None = None,
+) -> SubagentRun:
     """The core execution loop for a subagent run."""
     router = ModelRouter()
     steps = get_steps(db_path, run.id)
+    mcp_clients: dict = {}  # server_name -> MCPClient, reused across steps, closed at end
 
     run.status = "RUNNING"
     run.started_at = datetime.now(timezone.utc).isoformat()
@@ -72,6 +161,36 @@ def execute_checklist(run: SubagentRun, db_path: Path, checklist: list[dict[str,
         update_step(db_path, step)
 
         try:
+            # --- Pre-fetch: call declared MCP tools and inject results ---
+            if step_cfg.get("tools"):
+                for tool_decl in step_cfg["tools"]:
+                    server_name = tool_decl["server"]
+                    tool_name = tool_decl["tool"]
+                    inject_key = tool_decl.get("inject_as", tool_name)
+
+                    try:
+                        args = _resolve_args(run.scoped_input, tool_decl)
+                        client = _get_mcp_client(server_name, mcp_configs, mcp_clients)
+                        result = client.call_tool(tool_name, args)
+
+                        if result["status"] == "ok":
+                            run.scoped_input[inject_key] = result["result"]
+                            logger.info(f"Prefetch {server_name}/{tool_name} -> scoped_input.{inject_key}")
+                        elif tool_decl.get("required", False):
+                            raise RuntimeError(f"Required tool {server_name}/{tool_name} failed: {result.get('error')}")
+                        else:
+                            logger.warning(f"Optional tool {server_name}/{tool_name} failed: {result.get('error')}")
+                    except RuntimeError:
+                        raise  # re-raise required tool failures
+                    except Exception as e:
+                        if tool_decl.get("required", False):
+                            raise RuntimeError(f"Required tool {server_name}/{tool_name} error: {e}") from e
+                        logger.warning(f"Optional tool {server_name}/{tool_name} error: {e}")
+
+            # --- Inject reference docs into scoped_input ---
+            if step_cfg.get("references"):
+                run.scoped_input.setdefault("references", {}).update(step_cfg["references"])
+
             # Assemble prompt
             system_prompt = f"Agent ID: {run.agent_id}\nSkill: {step.skill_name}\n"
 
@@ -83,6 +202,12 @@ def execute_checklist(run: SubagentRun, db_path: Path, checklist: list[dict[str,
                     context_str += f"Step {j + 1}: {json.dumps(prev_out)}\n"
 
             prompt = f"{context_str}\nTask: Execute skill {step.skill_name}.\n"
+            # Input validation preamble — prevent hallucination of missing data
+            prompt += (
+                "\nIMPORTANT: If any required input referenced in the prompt below is missing "
+                'or empty in scoped_input, return {"error": "missing_input", '
+                '"detail": "<field>"} — do NOT fabricate or hallucinate the missing data.\n'
+            )
             # Add skill specific prompt if available
             if "prompt" in step_cfg:
                 prompt += f"\nPrompt: {step_cfg['prompt']}"
@@ -149,7 +274,7 @@ def execute_checklist(run: SubagentRun, db_path: Path, checklist: list[dict[str,
                     run_id=run.id,
                     step_id=step.id,
                     model=response.model_id,
-                    provider=response.provider,
+                    provider=str(getattr(response, "provider", "unknown")),
                     input_tokens=response.input_tokens,
                     output_tokens=response.output_tokens,
                     cost_usd=response.cost_usd,
@@ -179,6 +304,9 @@ def execute_checklist(run: SubagentRun, db_path: Path, checklist: list[dict[str,
         # after summary generation. We use a temporary status to indicate checklist is complete.
         run.status = "COMPLETING"
         run.output = previous_outputs[-1] if previous_outputs else {}
+
+    # Close MCP clients opened during this run
+    _close_mcp_clients(mcp_clients)
 
     run.completed_at = datetime.now(timezone.utc).isoformat()
     update_run(db_path, run)

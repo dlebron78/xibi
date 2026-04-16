@@ -93,8 +93,26 @@ class AgentRegistry:
             except Exception as e:
                 raise RuntimeError(f"Failed to read prompt file {skill.prompt_file}: {e}") from e
 
+            # Scan prompt for reference doc mentions and load matching files
+            references = {}
+            references_dir = agent_dir / "references"
+            if references_dir.exists():
+                for ref_file in references_dir.iterdir():
+                    if ref_file.suffix == ".md" and ref_file.name in prompt_content:
+                        try:
+                            references[ref_file.name] = ref_file.read_text()
+                        except Exception as e:
+                            logger.warning(f"Failed to read reference {ref_file.name}: {e}")
+
             checklist.append(
-                {"skill_name": skill.name, "model": skill.model, "trust": skill.trust, "prompt": prompt_content}
+                {
+                    "skill_name": skill.name,
+                    "model": skill.model,
+                    "trust": skill.trust,
+                    "prompt": prompt_content,
+                    "references": references,
+                    "tools": skill.tools,
+                }
             )
 
         return checklist

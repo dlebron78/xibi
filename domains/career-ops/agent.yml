@@ -73,6 +73,32 @@ output_schema:
 skills:
   # === L1 skills (autonomous — results surface in review queue as info) ===
 
+  - name: scan
+    description: "Search job boards for matching postings via MCP"
+    prompt_file: skills/scan.md
+    trust: L1
+    model: haiku
+    standalone: true
+    tools:
+      - server: jobspy
+        tool: search_jobs
+        args_from: scoped_input.criteria
+        args_default:
+          search_term: "Product Manager Director VP"
+          location: "Remote"
+          is_remote: true
+          results_wanted: 15
+          hours_old: 48
+        inject_as: raw_postings
+        required: true
+    standalone_input:
+      type: object
+      required: []
+      properties:
+        criteria:
+          type: object
+          description: "Search criteria override (optional — defaults from profile)"
+
   - name: evaluate
     description: "Score a job posting A-G with match analysis, comp research, positioning strategy, interview prep, and posting legitimacy"
     prompt_file: skills/evaluate.md
@@ -198,10 +224,11 @@ skills:
           type: object
           description: "Prior evaluation output (optional)"
 
-# default_sequence deliberately omitted — scan is deferred, so no pipeline yet.
-# Each skill runs standalone. When scan ships, define: [scan, triage, evaluate]
+default_sequence: [scan, triage, evaluate]
 
-mcp_dependencies: []                # None required for v1 — all skills are pure LLM reasoning
+mcp_dependencies:
+  - name: jobspy
+    required: false                   # Scan needs it, but other skills work without it
 
 user_config:
   - file: profile.yml
