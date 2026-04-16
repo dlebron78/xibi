@@ -320,35 +320,53 @@ of JSON structure.
 
 ### Posting Deduplication
 
-> **TRR-S1 fix:** Dispatch rows are written **before** `spawn_subagent()`
-> runs (on SPAWNED status) so a failed/retried run still marks the signal
-> as dispatched. If `spawn_subagent()` raises, roll back the dispatch rows
-> in the same transaction.
+> **TRR-S1 / TRR-v2-M4 fix:** Dispatch rows are written **after**
+> `spawn_subagent()` returns a `run_id`. On spawn failure, no row is
+> written — signals remain `[NOT_EVALUATED]` and are re-considered on the
+> next review cycle. This keeps the dedup table consistent with
+> `subagent_runs` (every dispatch row points to a real run).
+
+> **TRR-v2-M4 fix:** Reverted to post-spawn dispatch recording (simpler).
+> If `spawn_subagent()` raises, no dispatch row is written — signals
+> remain `[NOT_EVALUATED]` for the next review cycle. This preserves the
+> TRR-S1 correctness property (failed spawns don't leave stale dispatch
+> rows) via absence rather than rollback. The `run_id` column is declared
+> nullable in the schema to accommodate future patterns where the row is
+> reserved before the run is finalized, but v1 inserts always have
+> `run_id` set.
 
 When the observation cycle dispatches career-ops, the dispatch loop:
 
-1. Opens a transaction
-2. Writes one `subagent_signal_dispatch` row per `(signal_id, skill)` from
-   the LLM's `signal_ids` array
-3. Calls `spawn_subagent()` — returns run_id
-4. Updates the dispatch rows with the run_id
-5. Commits
-6. If step 3 raises, the transaction rolls back (dispatch rows disappear),
-   and the signals remain `[NOT_EVALUATED]` for the next review cycle
+1. Calls `spawn_subagent()` — returns run_id on success, raises on failure
+2. On success, opens a transaction
+3. Writes one `subagent_signal_dispatch` row per `(signal_id, skill)` from
+   the LLM's `signal_ids` array, with `run_id` = the returned run_id
+4. Commits
+5. If step 1 raises, nothing is written; observation.py:1116–1118 records
+   the error in `result.errors` and the signals remain
+   `[NOT_EVALUATED]` for the next review cycle
+6. If steps 2–4 raise (DB error after successful spawn), log a WARNING —
+   the run exists but dedup won't prevent re-dispatch next cycle. Rare;
+   not worth a rollback complexity.
 
 The review dump builder checks this table when rendering posting status
 (see §Evaluation status above).
 
 **Schema:**
 
+> **TRR-v2-M3 fix:** Added FK to `subagent_runs(id) ON DELETE CASCADE`
+> for consistency with `subagent_checklist_steps`. Cascade on run deletion
+> keeps dispatch tracking aligned with run lifecycle.
+
 ```sql
 CREATE TABLE IF NOT EXISTS subagent_signal_dispatch (
     signal_id TEXT NOT NULL,
-    run_id TEXT NOT NULL,
+    run_id TEXT,  -- nullable; filled after spawn_subagent() returns (see TRR-v2-M4)
     agent_id TEXT NOT NULL,
     skill TEXT NOT NULL,
     dispatched_at TEXT NOT NULL,
-    PRIMARY KEY (signal_id, skill)
+    PRIMARY KEY (signal_id, skill),
+    FOREIGN KEY (run_id) REFERENCES subagent_runs(id) ON DELETE CASCADE
 );
 ```
 
@@ -409,40 +427,50 @@ subagent handlers in `bregger_core.py` (lines 2686–2900) are dead code — do
 not extend them.
 
 **What to build:** A new skill manifest at
-`xibi/skills/sample/subagent/manifest.json`:
+`xibi/skills/sample/subagent/manifest.json`.
+
+> **TRR-v2-M1 fix:** Per-tool manifest shape to match existing pattern
+> (nudge/schedule/reminders/etc.). Skill-level tier/access were a
+> copy-paste error in v2.
+
+> **TRR-v2-M2 fix:** Manifest-declared tier is advisory. Runtime tier
+> enforcement reads from `TOOL_TIERS` in `xibi/tools.py`. This step adds
+> `"spawn_subagent": PermissionTier.YELLOW` to that dict (and adds
+> `spawn_subagent` to `WRITE_TOOLS`) — without it, the tool defaults to
+> RED and is blocked in the observation cycle + Telegram headless paths.
 
 ```json
 {
-    "name": "subagent",
-    "description": "Dispatch a domain agent to perform deep work",
-    "tier": "YELLOW",
-    "access": "operator",
-    "output_type": "action",
-    "tools": ["spawn_subagent"]
-}
-```
-
-With a matching tool implementation at
-`xibi/skills/sample/subagent/tools/spawn_subagent.py`:
-
-```python
-# Tool schema
-{
-    "name": "spawn_subagent",
-    "description": "Dispatch a domain agent to perform deep work. Use when a task requires "
-                   "more than a quick answer — job evaluation, company research, resume tailoring, etc.",
-    "parameters": {
-        "agent_id": "string — registered agent name (e.g. 'career-ops')",
-        "skills": "array of strings — which skills to run (e.g. ['evaluate'])",
-        "scoped_input": "object — data the agent needs (e.g. {'posting': {...}})",
-        "reason": "string — why you're dispatching this"
+  "name": "subagent",
+  "description": "Dispatch a domain agent to perform deep work",
+  "tools": [
+    {
+      "name": "spawn_subagent",
+      "description": "Dispatch a domain agent to perform deep work. Use when a task requires more than a quick answer — job evaluation, company research, resume tailoring, etc.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "agent_id": {"type": "string", "description": "Registered agent name (e.g. 'career-ops')"},
+          "skills": {"type": "array", "items": {"type": "string"}, "description": "Which skills to run (e.g. ['evaluate'])"},
+          "scoped_input": {"type": "object", "description": "Data the agent needs (e.g. {'posting': {...}})"},
+          "reason": {"type": "string", "description": "Why you're dispatching this"}
+        },
+        "required": ["agent_id", "skills", "scoped_input"]
+      },
+      "output_type": "action",
+      "timeout_secs": 30,
+      "tier": "YELLOW",
+      "access": "operator"
     }
+  ]
 }
 ```
 
-The tool implementation imports `xibi.subagent.runtime.spawn_subagent` and
-returns `{run_id, status}`. The executor's standard skill-tool dispatch
-handles it without any changes to executor.py.
+The matching tool implementation at
+`xibi/skills/sample/subagent/tools/spawn_subagent.py` imports
+`xibi.subagent.runtime.spawn_subagent` and returns `{run_id, status}`.
+The executor's standard skill-tool dispatch handles it without any
+changes to executor.py.
 
 When Roberto calls this tool:
 1. Executor validates `agent_id` exists in the registry (standard skill flow)
@@ -505,6 +533,10 @@ The long-term goal is migrating dashboard endpoints out of `bregger_dashboard.py
 - **No coded intelligence.** Dispatch decisions are LLM-driven via prompt
   guidance, not hardcoded if/else rules.
 - **No LLM content injected into scratchpad.** Side-channel architecture only.
+- **Runtime tier enforcement.** `spawn_subagent` is registered in
+  `xibi/tools.py:TOOL_TIERS` as `PermissionTier.YELLOW` and in `WRITE_TOOLS`
+  (sends work to a separate agent run). The manifest `tier` is documentation
+  only — the dict drives `resolve_tier`.
 
 ---
 
@@ -541,14 +573,19 @@ builder reads this column when expanding job signal threads.
 
 **2. `subagent_signal_dispatch` table:**
 
+> **TRR-v2-M3 fix:** Added FK to `subagent_runs(id) ON DELETE CASCADE`
+> for consistency with `subagent_checklist_steps`. Cascade on run deletion
+> keeps dispatch tracking aligned with run lifecycle.
+
 ```sql
 CREATE TABLE IF NOT EXISTS subagent_signal_dispatch (
     signal_id TEXT NOT NULL,
-    run_id TEXT NOT NULL,
+    run_id TEXT,  -- nullable; filled after spawn_subagent() returns (see TRR-v2-M4)
     agent_id TEXT NOT NULL,
     skill TEXT NOT NULL,
     dispatched_at TEXT NOT NULL,
-    PRIMARY KEY (signal_id, skill)
+    PRIMARY KEY (signal_id, skill),
+    FOREIGN KEY (run_id) REFERENCES subagent_runs(id) ON DELETE CASCADE
 );
 ```
 
@@ -565,6 +602,7 @@ CREATE TABLE IF NOT EXISTS subagent_signal_dispatch (
 | `xibi/db/migrations.py` | Migration 36: `_safe_add_column(conn, "signals", "metadata", "TEXT")` + `CREATE TABLE IF NOT EXISTS subagent_signal_dispatch`. Bump `SCHEMA_VERSION` to 36. |
 | `xibi/skills/sample/subagent/manifest.json` | **New.** Skill manifest for `spawn_subagent` tool. Tier YELLOW, access operator. |
 | `xibi/skills/sample/subagent/tools/spawn_subagent.py` | **New.** Tool implementation: validates agent_id, calls `spawn_subagent()`, returns `{run_id, status}`. |
+| `xibi/tools.py` | Register `spawn_subagent` in `TOOL_TIERS` as `PermissionTier.YELLOW` (lines 39–67) and in `WRITE_TOOLS` (lines 17–35). Without this, the manifest-declared tier is documentation only — `resolve_tier` falls back to `DEFAULT_TIER = RED` and blocks headless execution. |
 | `tests/test_observation_dispatch.py` | **New.** Tests for job signal surfacing, dispatch construction, dedup, structured result feedback |
 | `tests/test_react_subagent.py` | **New.** Tests for Telegram-triggered spawn_subagent tool |
 | `tests/test_signal_metadata.py` | **New.** Tests for metadata persistence round-trip (write via log_signal_with_conn, read back, verify JSON) |
@@ -1148,3 +1186,18 @@ context. The v1 findings, addendum, and v2 revision were read as
 pre-fetched input; all code citations were independently verified against
 HEAD (observation.py, rules.py, migrations.py, skills/registry.py,
 tools.py, skills/sample/nudge/manifest.json, systemd/xibi-heartbeat.service).
+
+---
+
+## v3 Condition Resolution Summary
+
+For the re-TRR reviewer — where each v2 finding was addressed:
+
+| # | Finding | Severity | Section | Resolution |
+|---|---------|----------|---------|------------|
+| M1 | Skill manifest JSON shape | C2 | §Telegram Dispatch | Rewrote manifest to per-tool shape matching nudge/schedule pattern; tools[] contains a tool-object dict with name/description/input_schema/output_type/tier/access/timeout_secs. |
+| M2 | Manifest tier not runtime-enforced | C2 | §Files to Create/Modify, §Constraints, §Telegram Dispatch | Added `xibi/tools.py` row to Files Changed: register `spawn_subagent` in `TOOL_TIERS` as `PermissionTier.YELLOW` and in `WRITE_TOOLS`. Added Constraints line documenting that manifest tier is advisory. |
+| M3 | Missing FK on `subagent_signal_dispatch.run_id` | C3 | §Posting Deduplication, §Database Migration | Added `FOREIGN KEY (run_id) REFERENCES subagent_runs(id) ON DELETE CASCADE` and made `run_id` nullable. |
+| M4 | `run_id NOT NULL` vs write-before-spawn | C3 | §Posting Deduplication | Reordered to write-after-spawn (simpler); dispatch row always has `run_id` populated at insert. Absence-on-failure preserves TRR-S1 correctness property. |
+
+Ready for re-TRR by a fresh Opus subagent in Claude Code.
