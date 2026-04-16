@@ -107,8 +107,7 @@ def add_item(
             """INSERT INTO checklist_instance_items
                (id, instance_id, template_item_id, label, position, status, metadata, deadline_action_ids)
                VALUES (?, ?, NULL, ?, ?, ?, ?, '[]')""",
-            (item_id, instance_id_val, label, position, status,
-             json.dumps(metadata) if metadata is not None else None),
+            (item_id, instance_id_val, label, position, status, json.dumps(metadata) if metadata is not None else None),
         )
 
     logger.info("add_item: added %r to list %r at position %d", label, list_name, position)

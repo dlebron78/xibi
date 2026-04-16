@@ -876,7 +876,6 @@ class SchemaManager:
         for col_name, col_type in new_cols:
             _safe_add_column(conn, "subagent_runs", col_name, col_type)
 
-
     def _migration_36(self, conn: sqlite3.Connection) -> None:
         """Signals: add metadata column. Create subagent_signal_dispatch table."""
         _safe_add_column(conn, "signals", "metadata", "TEXT")
@@ -891,7 +890,6 @@ class SchemaManager:
                 FOREIGN KEY (run_id) REFERENCES subagent_runs(id) ON DELETE CASCADE
             )
         """)
-
 
     def _migration_37(self, conn: sqlite3.Connection) -> None:
         """Rebuild checklist_instance_items: make template_item_id nullable, add status + metadata."""

@@ -31,9 +31,7 @@ def _extract_evaluate_score(run_id: str | None, db_path: Path) -> str:
         return ""
     try:
         with open_db(db_path) as conn:
-            row = conn.execute(
-                "SELECT output FROM subagent_runs WHERE id = ?", (run_id,)
-            ).fetchone()
+            row = conn.execute("SELECT output FROM subagent_runs WHERE id = ?", (run_id,)).fetchone()
         if not row or not row[0]:
             return ""
         output = json.loads(row[0]) if isinstance(row[0], str) else row[0]
@@ -52,9 +50,7 @@ def _extract_triage_score(signal_id: str, run_id: str | None, db_path: Path) -> 
         return ""
     try:
         with open_db(db_path) as conn:
-            row = conn.execute(
-                "SELECT output FROM subagent_runs WHERE id = ?", (run_id,)
-            ).fetchone()
+            row = conn.execute("SELECT output FROM subagent_runs WHERE id = ?", (run_id,)).fetchone()
         if not row or not row[0]:
             return ""
         output = json.loads(row[0]) if isinstance(row[0], str) else row[0]
@@ -675,7 +671,9 @@ class ObservationCycle:
                                 ).fetchall():
                                     sid = str(row["signal_id"])
                                     existing = dispatch_map.get(sid)
-                                    if existing is None or (row["skill"] == "evaluate" and existing["skill"] != "evaluate"):
+                                    if existing is None or (
+                                        row["skill"] == "evaluate" and existing["skill"] != "evaluate"
+                                    ):
                                         dispatch_map[sid] = {"skill": row["skill"], "run_id": row["run_id"]}
                         if sigs:
                             lines.append("  postings:")
@@ -857,7 +855,9 @@ class ObservationCycle:
                                 lines.append(f"  Error: {str(err)[:200]}")
                             elif run["output"] and agent_id.startswith("career-ops"):
                                 try:
-                                    output = json.loads(run["output"]) if isinstance(run["output"], str) else run["output"]
+                                    output = (
+                                        json.loads(run["output"]) if isinstance(run["output"], str) else run["output"]
+                                    )
                                     # Determine skill type from output shape
                                     if "scored_pipeline" in output:
                                         pipeline = output.get("scored_pipeline", [])
@@ -875,7 +875,9 @@ class ObservationCycle:
                                             grade = evaluation.get("grade", "?")
                                             score = evaluation.get("composite_score", "?")
                                             rec = evaluation.get("recommendation", "")
-                                            lines.append(f"  career-ops evaluate: grade={grade}, score={score}, rec={rec}")
+                                            lines.append(
+                                                f"  career-ops evaluate: grade={grade}, score={score}, rec={rec}"
+                                            )
                                         else:
                                             lines.append(f"  Result: {str(output)[:200]}")
                                     else:
@@ -1315,9 +1317,7 @@ Example for subagent_spawns:
                                                 (str(sid), run.id, agent_id, skill, now_iso),
                                             )
                             except Exception as db_err:
-                                logger.warning(
-                                    f"Failed to record dispatch rows for run {run.id}: {db_err}"
-                                )
+                                logger.warning(f"Failed to record dispatch rows for run {run.id}: {db_err}")
                         logger.info(
                             f"review cycle dispatched {agent_id} skills={skills_dispatched} "
                             f"with {len(signal_ids)} signals, run={run.id}"
