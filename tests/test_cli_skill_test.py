@@ -34,7 +34,7 @@ def test_skill_test_valid_manifest(clean_xibi_home, capsys):
             {
                 "name": "test_tool",
                 "description": "test",
-                "input_schema": {"type": "object", "properties": {"p1": {"type": "string"}}, "required": ["p1"]},
+                "inputSchema": {"type": "object", "properties": {"p1": {"type": "string"}}, "required": ["p1"]},
             }
         ],
     }
@@ -51,7 +51,7 @@ def test_skill_test_valid_manifest(clean_xibi_home, capsys):
     captured = strip_ansi(capsys.readouterr().out)
     assert "[✓] Manifest valid YAML" in captured
     assert "[✓] Schema fields present" in captured
-    assert '[✓] Tool "test_tool" has input_schema' in captured
+    assert '[✓] Tool "test_tool" has inputSchema' in captured
     assert '[✓] Tool "test_tool" input schema is valid JSON Schema' in captured
     assert '[✓] Tool "test_tool" schema has required fields' in captured
     assert '[✓] Tool "test_tool" invocable' in captured
@@ -68,7 +68,7 @@ def test_skill_test_invalid_json_schema(clean_xibi_home, capsys):
         "tools": [
             {
                 "name": "bad_tool",
-                "input_schema": {
+                "inputSchema": {
                     "type": "not-a-type"  # Invalid type in JSON Schema
                 },
             }
@@ -99,7 +99,7 @@ def test_skill_test_missing_required_field(clean_xibi_home, capsys):
         "tools": [
             {
                 "name": "tool_without_required",
-                "input_schema": {
+                "inputSchema": {
                     "type": "object",
                     "properties": {"p1": {"type": "string"}},
                     # missing "required"

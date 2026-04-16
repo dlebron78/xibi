@@ -138,7 +138,7 @@ def test_nudge_auto_discovered(tmp_path):
 
 
 def test_nudge_manifest_has_required_fields():
-    """Manifest is well-formed: has name, description, input_schema, and required=['message']."""
+    """Manifest is well-formed: has name, description, inputSchema, and required=['message']."""
     repo_root = Path(__file__).parent.parent
     sample_skills_dir = repo_root / "xibi" / "skills" / "sample"
 
@@ -146,6 +146,6 @@ def test_nudge_manifest_has_required_fields():
     tool_meta = registry.get_tool_meta("nudge", "nudge")
 
     assert tool_meta is not None, "nudge tool not found in manifest"
-    assert "input_schema" in tool_meta, "input_schema missing from manifest"
-    assert tool_meta["input_schema"]["required"] == ["message"]
+    assert "inputSchema" in tool_meta, "inputSchema missing from manifest"
+    assert tool_meta["inputSchema"]["required"] == ["message"]
     assert tool_meta.get("tier") == "YELLOW"

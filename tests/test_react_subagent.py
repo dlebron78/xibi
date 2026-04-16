@@ -154,12 +154,12 @@ def test_subagent_manifest_loads():
     assert len(tools) == 1
     tool = tools[0]
     assert tool["name"] == "spawn_subagent"
-    assert "input_schema" in tool
+    assert "inputSchema" in tool
     assert tool["output_type"] == "action"
     assert tool["tier"] == "YELLOW"
     assert tool["access"] == "operator"
-    # required fields in input_schema
-    required = tool["input_schema"]["required"]
+    # required fields in inputSchema
+    required = tool["inputSchema"]["required"]
     assert "agent_id" in required
     assert "skills" in required
     assert "scoped_input" in required
