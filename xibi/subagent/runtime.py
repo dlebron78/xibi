@@ -30,6 +30,7 @@ def spawn_subagent(
     db_path: Path | None = None,
     registry: AgentRegistry | None = None,
     skills: list[str] | None = None,
+    mcp_configs: list[dict[str, Any]] | None = None,
 ) -> SubagentRun:
     """
     Create a run record (SPAWNED), build the checklist steps,
@@ -145,7 +146,7 @@ def spawn_subagent(
             create_step(db_path, step)
 
         # 8. Execute (sequentially for now as per spec)
-        run = execute_checklist(run, db_path, resolved_checklist)
+        run = execute_checklist(run, db_path, resolved_checklist, mcp_configs=mcp_configs)
 
         # 9. Generate summary
         if run.status == "COMPLETING":
@@ -209,6 +210,7 @@ def resume_run(
     db_path: Path,
     checklist: list[dict[str, Any]],
     registry: AgentRegistry | None = None,
+    mcp_configs: list[dict[str, Any]] | None = None,
 ) -> SubagentRun:
     """
     Load the run and its checklist.
@@ -223,7 +225,7 @@ def resume_run(
     if run.status in ("DONE", "RUNNING"):
         return run
 
-    run = execute_checklist(run, db_path, checklist)
+    run = execute_checklist(run, db_path, checklist, mcp_configs=mcp_configs)
 
     # Checklist completed without a summary step — persist and return
     if run.status == "DONE":

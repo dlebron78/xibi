@@ -100,6 +100,17 @@ class ManifestValidator:
             if s_data.get("standalone") is True and "standalone_input" not in s_data:
                 errors.append(f"Skill '{s_name}' is standalone but missing standalone_input schema")
 
+            # Validate tools declarations if present
+            tools_decl = s_data.get("tools", [])
+            if tools_decl:
+                for t_idx, tool_decl in enumerate(tools_decl):
+                    if not tool_decl.get("server"):
+                        errors.append(f"Skill '{s_name}' tool[{t_idx}] missing 'server'")
+                    if not tool_decl.get("tool"):
+                        errors.append(f"Skill '{s_name}' tool[{t_idx}] missing 'tool'")
+                    if not tool_decl.get("inject_as"):
+                        errors.append(f"Skill '{s_name}' tool[{t_idx}] missing 'inject_as'")
+
             skills.append(
                 SkillDeclaration(
                     name=s_name,
@@ -110,6 +121,7 @@ class ManifestValidator:
                     standalone=s_data.get("standalone", False),
                     standalone_input=s_data.get("standalone_input"),
                     depends_on=s_data.get("depends_on", []),
+                    tools=tools_decl,
                 )
             )
 

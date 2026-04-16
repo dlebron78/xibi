@@ -87,6 +87,7 @@ class SkillDeclaration:
     standalone: bool = False
     standalone_input: dict[str, Any] | None = None
     depends_on: list[str] = field(default_factory=list)
+    tools: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
