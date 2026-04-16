@@ -1201,3 +1201,42 @@ For the re-TRR reviewer — where each v2 finding was addressed:
 | M4 | `run_id NOT NULL` vs write-before-spawn | C3 | §Posting Deduplication | Reordered to write-after-spawn (simpler); dispatch row always has `run_id` populated at insert. Absence-on-failure preserves TRR-S1 correctness property. |
 
 Ready for re-TRR by a fresh Opus subagent in Claude Code.
+
+---
+
+## TRR Record — Opus, 2026-04-16 (v3)
+
+**Verdict:** ACCEPT
+**Summary:** All four v2 findings (M1–M4) are resolved correctly in the v3
+revision; the manifest now matches the per-tool shape used by `nudge`,
+`xibi/tools.py` registration is called out in Files Changed and
+Constraints, the `subagent_signal_dispatch` schema has the correct FK with
+nullable `run_id`, and the dispatch flow is cleanly reordered to
+write-after-spawn. No new issues introduced.
+**Confidence:** High on all four M-finding resolutions.
+
+### v2 finding verification
+
+| M# | Status | Where resolved |
+|----|--------|----------------|
+| M1 | SATISFIED | §Telegram Dispatch — `tools[]` is an array of tool-objects with `name`/`description`/`input_schema`/`output_type`/`timeout_secs`/`tier`/`access`; no skill-level tier/access/output_type. Would pass `SkillRegistry.validate()` (registry.py:93-121). Matches the `nudge/manifest.json` pattern. |
+| M2 | SATISFIED | §Files to Create/Modify adds row registering `spawn_subagent` in `TOOL_TIERS` as `PermissionTier.YELLOW` and in `WRITE_TOOLS`; §Constraints adds "Runtime tier enforcement" bullet documenting that manifest tier is advisory; §Telegram Dispatch TRR-v2-M2 callout reiterates it. |
+| M3 | SATISFIED | Both SQL blocks (§Posting Deduplication and §Database Migration) include `FOREIGN KEY (run_id) REFERENCES subagent_runs(id) ON DELETE CASCADE`. Matches the `subagent_checklist_steps` pattern. `run_id TEXT` is declared nullable in both. |
+| M4 | SATISFIED | §Posting Deduplication shows reordered flow: spawn → tx → insert with `run_id` → commit; spawn failure = no row (signals remain NOT_EVALUATED); DB failure after successful spawn = WARN log (no rollback). Combined TRR-S1 / TRR-v2-M4 callout present. AC#5 still holds under new ordering. |
+
+### New findings (v3 edits)
+
+None. v3 is promotion-ready.
+
+One observation (not a finding): the v3 Condition Resolution Summary was
+appended below the v2 Condition Resolution Summary but above the v2 TRR
+Record in the file layout. All four prior records (v1 TRR Record, TRR
+Addendum, v2 Condition Resolution Summary, v2 TRR Record) are preserved
+verbatim. The ordering is cosmetic and does not affect verdict.
+
+### Independence note
+
+Fresh Opus subagent with no draft-authoring context. All v3 claims
+independently verified against repo HEAD: `xibi/skills/registry.py:93-121`,
+`xibi/tools.py:17-67`, `xibi/db/migrations.py` (FK pattern in
+`_migration_31` for `subagent_checklist_steps`), and the spec file itself.
