@@ -101,7 +101,8 @@ def test_get_context_block_includes_last_two_full(db_path):
     assert "[4 turns ago] Summary 0" in block
 
 
-def test_get_context_block_drops_stale_session(db_path):
+def test_get_context_block_stale_session_keeps_last_2(db_path):
+    """Stale sessions compress to beliefs but still return the last 2 turns."""
     session = SessionContext("test_session", db_path)
     stale_time = (datetime.utcnow() - timedelta(minutes=31)).isoformat()
 
@@ -112,7 +113,9 @@ def test_get_context_block_drops_stale_session(db_path):
         )
         conn.commit()
 
-    assert session.get_context_block() == ""
+    context = session.get_context_block()
+    assert "Old query" in context
+    assert "Old answer" in context
 
 
 def test_is_continuation_pronoun_detection(db_path):

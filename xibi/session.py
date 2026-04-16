@@ -278,7 +278,11 @@ Exchanges:
         last_turn_time = datetime.fromisoformat(rows[0]["created_at"])
         if datetime.utcnow() - last_turn_time > timedelta(minutes=30):
             self.compress_to_beliefs()
-            return ""
+            # Always keep the last 2 turns so the assistant knows what
+            # was just discussed, even after a long gap.
+            rows = rows[: min(2, len(rows))]
+            if not rows:
+                return ""
 
         turns = [
             Turn(
