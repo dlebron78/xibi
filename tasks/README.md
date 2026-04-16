@@ -2,8 +2,9 @@
 
 This directory is the source of truth for Xibi's spec-driven work pipeline. It
 describes how a feature moves from idea → shipped code, and what quality gate
-each stage is responsible for. Jules (the pipeline driver) reads from this
-tree; humans and Opus write into it; Sonnet implements against it.
+each stage is responsible for. Cowork (Opus) handles spec authoring and TRR;
+Claude Code (Sonnet) handles implementation, CI, and code review; humans write
+into it at any stage.
 
 ## Division of labor: Opus thinks, Sonnet builds
 
@@ -32,17 +33,20 @@ already-thought-through thing real.
 ```
 tasks/
   backlog/     # specs drafted but not yet ready for implementation
-  pending/     # specs that have passed TRR and are queued for Jules
-  triggered/   # specs Jules has picked up and is actively working
+  pending/     # specs that have passed TRR and are queued for implementation
   done/        # specs that have been implemented and merged
   templates/   # starter templates for new specs
   README.md    # this file
 ```
 
+> **Note:** A `triggered/` directory may exist from legacy Jules automation.
+> It is no longer part of the active pipeline. Specs found there should be
+> moved to `pending/` or `done/` as appropriate.
+
 ## Stage Gates
 
 ```
-backlog/  ──(TRR pass)──→  pending/  ──(pipeline tick)──→  triggered/  ──(PR merge)──→  done/
+backlog/  ──(TRR pass in Cowork)──→  pending/  ──(impl + CI + review in Claude Code)──→  done/
 ```
 
 Each arrow is a quality gate. Nothing moves forward without passing its gate.
@@ -62,10 +66,10 @@ TRR pass. The TRR is not a document — it is a **process** whose output is
 **amendments to the spec itself**, plus a compact "TRR Record" block in the
 spec header showing the pass happened.
 
-**Who runs the TRR:** Opus, not Sonnet. Sonnet is the implementer; Opus is
-the reviewer. Opus's context and attention profile are better suited to
-comparing an abstract spec against a large existing codebase and surfacing
-things Sonnet (implementing under pressure) would miss.
+**Who runs the TRR:** Opus in **Cowork** (the desktop app), not Sonnet, and
+not Claude Code. Cowork's context window and tooling are faster and better
+suited to spec-vs-codebase comparison (~5 min vs ~30 min in Claude Code).
+Sonnet is the implementer; Opus is the reviewer.
 
 **Amendments are Opus-only.** Sonnet must never edit a spec to add TRR
 findings, ‼️ callouts, or a TRR Record block — not even as a stopgap. If
@@ -137,63 +141,65 @@ the implementer tier.
      path should either self-heal (with logging) or surface the
      failure to an operator.
 
-**Possible TRR verdicts:**
+**TRR verdicts — one pass, three outcomes:**
 
-- **PASS** — the spec is ready. Apply all amendments inline to the
-  spec, add a TRR Record block to the header with date + commit hash +
-  reviewer + verdict, move to `pending/`.
-- **AMEND** — the spec is the right idea but has mismatches or gaps.
-  Apply amendments inline (not to a separate doc), document open
-  questions, then either re-run the TRR on the amended version or
-  promote to `pending/` if the remaining items are non-blocking.
-- **PARK** — the spec is no longer relevant. Reasons to park: vision
-  has shifted and this no longer fits; a later spec supersedes it;
-  the code has evolved to make this moot; the assumed dependencies
-  never landed. Parked specs move to `backlog/parked/` (create the
-  dir if absent) with a short note in the TRR Record explaining why
-  and when to reconsider. **Do not be afraid to park.** A parked
-  spec is better than a force-marched one.
-- **BLOCK** — the spec depends on something that doesn't exist yet
-  and cannot be implemented until that something lands. Leave in
-  `backlog/`, document the blocker, schedule a re-TRR after the
-  dependency ships.
+- **READY** — the spec is implementable as written. Cowork appends a
+  TRR Record, `git mv backlog → pending`, commits.
+- **READY WITH CONDITIONS** — the spec is sound but the reviewer has
+  specific implementation directives the implementer should follow.
+  Each condition is written as an **actionable imperative** (specific
+  file/function/contract point, not "spec should clarify X"). Cowork
+  appends the TRR Record with numbered conditions, `git mv backlog →
+  pending`, commits. Claude Code reads the conditions on pickup and
+  applies them during implementation — they travel with the spec as
+  implementation directives, not as spec-body edits.
+- **NOT READY** — the spec requires substantive rework, a structural
+  change, a dependency that doesn't yet exist, or a scope decision
+  Daniel should make. Cowork appends the TRR Record with findings,
+  leaves the spec in `backlog/`, and telegram-escalates. Daniel
+  decides: park, revise-and-re-review, or scope down into a smaller
+  spec. **Do not be afraid of NOT READY.** A parked or reworked spec
+  is better than a force-marched one.
 
-**TRR output shape — write in the spec, not alongside it:**
+**One pass, not a loop.** There is no v1/v2 iteration within a single
+review session. Cowork produces one verdict and stops. If a NOT READY
+spec is later revised by Cowork/Daniel, that's a fresh TRR in a fresh
+Cowork session.
 
-1. Corrections go inline at the point they apply, tagged with a
-   callout like `‼️ TRR-Cn`. Each correction explains what was wrong
-   and what the code actually says, with file:line references.
-2. Hazards (integration gotchas the spec didn't anticipate) go inline
-   at the relevant section, tagged `‼️ TRR-Hn`.
-3. Specificity clarifications go inline, tagged `‼️ TRR-Sn`.
-4. Vision/pipeline relevance findings go in a short "Relevance Check"
-   subsection near the top of the spec, tagged `‼️ TRR-Vn` for vision
-   and `‼️ TRR-Pn` for pipeline.
-5. Open questions that need human decision go in an "Open Questions"
-   section near the end, tagged `Q1, Q2, ...` with proposed positions.
-6. A "TRR Record" block at the very top of the spec (below the
-   summary) captures date, repo HEAD, reviewer, verdict, and gap
-   types covered. This is the audit trail.
+**TRR output shape — append, don't interleave:**
 
-**Why this shape:** specs that rot do so because their corrections
-live somewhere else. A separate review doc that points at a spec
-decouples the two and lets both drift. Writing corrections directly
-into the spec with `‼️` markers keeps the audit trail visible without
-requiring a second artifact. Jules reads one document.
+1. A single `## TRR Record — Opus, YYYY-MM-DD` block appended to the
+   bottom of the spec. It contains: verdict, summary, findings (severity-
+   tagged), conditions (for READY WITH CONDITIONS), any inline fixes the
+   reviewer applied during review, and a confidence breakdown.
+2. Trivial text fixes (typos, wrong file paths, missing pytest target)
+   the reviewer can just apply during review, recorded under "Inline
+   fixes applied during review" in the Record. Bounded — no
+   architectural or contract rewrites inline.
+3. Conditions are **numbered implementation directives**, not
+   `‼️ TRR-Cn` style inline annotations. Example: *"In `add_item`'s
+   auto-create path, acquire one `sqlite3.connect()`, open explicit
+   `BEGIN`, commit the three INSERTs in one transaction."* Not: *"Spec
+   should clarify atomicity."*
+4. No v1/v2 callouts unless the spec genuinely went through a NOT
+   READY → revise → fresh-session re-review cycle.
 
-### pending → triggered: Jules picks up the next spec
+**Why this shape:** the old inline-amendment pattern (`‼️ TRR-Cn`) was
+tuned for a world where Sonnet read the spec as-amended and implemented
+against it. In the current pipeline, conditions are directives the
+implementer checks off as an implementation checklist — they live in one
+appended block so Claude Code can read them on pickup without parsing
+the whole spec for `‼️` markers. Keeps the audit trail contiguous.
 
-The Jules pipeline driver (Sonnet) picks the next file in `pending/` and
-moves it to `triggered/` atomically. No review happens at this stage —
-the TRR already provided the quality gate. If the TRR missed something,
-that's a process failure to address, not a reason to add a second gate.
+### pending → done: Implementation + CI + Code Review + Merge
 
-### triggered → done: PR merge
-
-Jules works the spec in a branch, opens a PR, Sonnet reviews and merges,
-the pipeline driver moves the spec to `done/`. Opus optionally does a
-post-merge code review (distinct from the pre-implementation TRR) for
-high-stakes changes.
+Claude Code (Sonnet) picks the next spec from `pending/`, implements it on
+a feature branch, iterates until CI is green, then an Opus subagent runs
+code review. On APPROVE or APPROVE WITH NITS, the main session merges
+(`git merge --ff-only`), moves the spec to `done/` (`git mv pending/ →
+done/`) as part of the merge commit, pushes to `origin/main`, and sends an
+enriched merge telegram. See `.claude/skills/code-review.md` for the full
+review protocol and verdict actions.
 
 ## Feedback Memory vs Spec vs Code
 
@@ -225,8 +231,9 @@ should get promoted from spec-level notes to feedback memory.
   Sonnet ran the analysis, the commit says Sonnet ran the analysis.
 - **Sonnet doing critical-thinking work on specs.** Analysis, TRR
   passes, amendments, relevance calls, parking decisions, and spec
-  authorship are Opus-only. Sonnet catching itself mid-analysis and
-  escalating to Opus is the correct move, not an inconvenience.
+  authorship are Opus-only (in Cowork). Sonnet catching itself
+  mid-analysis and escalating to Cowork/Opus is the correct move,
+  not an inconvenience.
 - **Shipping an engine without a steering wheel.** If the spec builds
   backend machinery (a kernel, a store, a handler registry) but no
   user-facing tool or skill exposes it, the feature lands silently

@@ -5,12 +5,33 @@ this — no subagent needed, no handoff to Cowork.
 
 ---
 
+## Prerequisites
+
+CI iteration runs against GitHub Actions on an open PR. Before entering
+the loop:
+
+1. Implementation committed on a **feature branch** (not `main`).
+2. Feature branch pushed to origin: `git push -u origin <branch>`.
+3. PR opened against `main`: `gh pr create --base main --title "step-X: …" --body "…"`.
+
+If you finished implementation but haven't pushed the branch or opened a
+PR, do those two steps first. They're part of the pipeline, not optional
+infrastructure. See CLAUDE.md § Git workflow for why this is safe
+(feature-branch pushes don't trigger NucBox).
+
+If you're working directly on `main` (rare — only for trivial spec/doc
+changes), CI runs automatically on the push. No PR needed in that case.
+
+---
+
 ## When to invoke
 
-- You just pushed a branch or a commit to `main`.
-- CI is running or has finished.
+- You just pushed a branch + opened a PR (normal case).
+- You pushed a follow-up commit to a PR branch (CI reruns).
+- You pushed directly to `main` (trivial path only).
 
-Trigger: after every `git push`, or user says "check CI on step-X."
+Trigger: after every `git push` on a PR branch, or user says "check CI on
+step-X."
 
 ---
 
