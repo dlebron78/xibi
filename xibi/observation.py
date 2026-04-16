@@ -681,6 +681,8 @@ class ObservationCycle:
                             lines.append("  postings:")
                             for sig in sigs:
                                 sig_id = str(sig["id"])
+                                # Canonical key matches what the LLM emits ("sig-4" from "[sig-4]" in prompt)
+                                sig_key = f"sig-{sig_id}"
                                 meta = None
                                 if sig["metadata"]:
                                     try:
@@ -694,9 +696,9 @@ class ObservationCycle:
                                     loc_str = f" ({location})" if location else ""
                                     label = f"{title} — {company}{loc_str}"
                                 else:
-                                    label = sig["content_preview"][:80] if sig["content_preview"] else f"sig-{sig_id}"
+                                    label = (sig["content_preview"] or "")[:80] or sig_key
 
-                                disp = dispatch_map.get(sig_id)
+                                disp = dispatch_map.get(sig_key)
                                 if disp is None:
                                     status_tag = "[NOT_EVALUATED]"
                                 elif disp["skill"] == "evaluate":
@@ -704,10 +706,10 @@ class ObservationCycle:
                                     score_str = f": {score}" if score else ""
                                     status_tag = f"[EVALUATED{score_str}]"
                                 else:
-                                    score = _extract_triage_score(sig_id, disp["run_id"], self.db_path)
+                                    score = _extract_triage_score(sig_key, disp["run_id"], self.db_path)
                                     score_str = f": {score}" if score else ""
                                     status_tag = f"[TRIAGE{score_str}]"
-                                lines.append(f"    [sig-{sig_id}] {label} {status_tag}")
+                                lines.append(f"    [{sig_key}] {label} {status_tag}")
                     except Exception as e:
                         logger.warning(f"Error building job posting block for thread {t['id']}: {e}")
                         lines.append(f"  summary: {summary_str[:200]}")
@@ -1103,7 +1105,10 @@ When you see job signal threads with NOT_EVALUATED postings:
      "agent_id": "career-ops",
      "reason": "N unevaluated postings in <thread name>",
      "signal_ids": ["sig-456", "sig-457", "sig-458", "sig-459"],
-     "scoped_input": {{"postings": [<posting objects from the thread>]}},
+     "scoped_input": {{"postings": [
+       {{"signal_id": "sig-456", "title": "...", "company": "...", "location": "...", "url": "...", "description": "..."}},
+       ...
+     ]}},
      "skills": ["triage"]
    }}]
 

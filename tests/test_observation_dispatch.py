@@ -112,7 +112,7 @@ def test_build_review_dump_non_job_thread(db_path):
 
 
 def test_build_review_dump_job_thread_shows_posting_block(db_path):
-    """Job-source threads render posting block with signal IDs."""
+    """Job-source threads render posting block with signal IDs in sig-NNN format."""
     profile = {"sources": {"jobspy_pm_search": {"signal_extractor": "jobs"}}}
     _insert_thread(db_path, "t1", "Remote PM roles", source_channels=["jobspy_pm_search"], signal_count=2)
     sig_id = _insert_signal(
@@ -129,6 +129,7 @@ def test_build_review_dump_job_thread_shows_posting_block(db_path):
 
     assert "[t1] Remote PM roles" in dump
     assert "postings:" in dump
+    # posting block uses sig-NNN format (matching what LLM emits in signal_ids)
     assert f"[sig-{sig_id}]" in dump
     assert "Director of Product" in dump
     assert "ScaleAI" in dump
@@ -149,9 +150,10 @@ def test_build_review_dump_job_thread_shows_triage_status(db_path):
     run_id = "run-triage-001"
     _insert_subagent_run(
         db_path, run_id,
-        output={"scored_pipeline": [{"signal_id": str(sig_id), "title": "VP Product", "company": "Stripe", "score": 3.5}]}
+        output={"scored_pipeline": [{"signal_id": f"sig-{sig_id}", "title": "VP Product", "company": "Stripe", "score": 3.5}]}
     )
-    _insert_dispatch_row(db_path, str(sig_id), "triage", run_id)
+    # Dispatch row keyed with sig-NNN format (what LLM emits in signal_ids)
+    _insert_dispatch_row(db_path, f"sig-{sig_id}", "triage", run_id)
 
     cycle = ObservationCycle(db_path=db_path, profile=profile)
     dump = cycle._build_review_dump()
@@ -176,7 +178,8 @@ def test_build_review_dump_job_thread_shows_evaluated_status(db_path):
         db_path, run_id,
         output={"evaluation": {"composite_score": 4.7, "grade": "A-", "recommendation": "Strong apply"}}
     )
-    _insert_dispatch_row(db_path, str(sig_id), "evaluate", run_id)
+    # Dispatch row keyed with sig-NNN format (what LLM emits in signal_ids)
+    _insert_dispatch_row(db_path, f"sig-{sig_id}", "evaluate", run_id)
 
     cycle = ObservationCycle(db_path=db_path, profile=profile)
     dump = cycle._build_review_dump()
@@ -201,8 +204,8 @@ def test_dispatch_loop_records_signal_dispatch_rows(db_path):
     spawn_input = {
         "agent_id": "career-ops",
         "skills": ["triage"],
-        "signal_ids": [str(sig_id)],
-        "scoped_input": {"postings": [{"title": "Director", "company": "Acme"}]},
+        "signal_ids": [f"sig-{sig_id}"],  # LLM emits sig-NNN format (matches posting block labels)
+        "scoped_input": {"postings": [{"signal_id": f"sig-{sig_id}", "title": "Director", "company": "Acme"}]},
         "reason": "3 unevaluated postings",
     }
 
@@ -229,7 +232,8 @@ def test_dispatch_loop_records_signal_dispatch_rows(db_path):
         rows = conn.execute("SELECT signal_id, skill, run_id FROM subagent_signal_dispatch").fetchall()
 
     assert len(rows) == 1
-    assert rows[0][0] == str(sig_id)
+    # signal_id stored in sig-NNN format (what LLM emits)
+    assert rows[0][0] == f"sig-{sig_id}"
     assert rows[0][1] == "triage"
     assert rows[0][2] == "run-dispatch-001"
 
@@ -270,13 +274,14 @@ def test_extract_triage_score_missing_run(db_path):
 
 
 def test_extract_triage_score_returns_matching_entry(db_path):
+    # scored_pipeline uses sig-NNN format (triage skill echoes signal_id from input posting)
     _insert_subagent_run(
         db_path, "run-tr-1",
         output={"scored_pipeline": [
-            {"signal_id": "100", "score": 4.0},
-            {"signal_id": "101", "score": 2.5},
+            {"signal_id": "sig-100", "score": 4.0},
+            {"signal_id": "sig-101", "score": 2.5},
         ]}
     )
-    assert _extract_triage_score("100", "run-tr-1", db_path) == "4.0"
-    assert _extract_triage_score("101", "run-tr-1", db_path) == "2.5"
-    assert _extract_triage_score("999", "run-tr-1", db_path) == ""
+    assert _extract_triage_score("sig-100", "run-tr-1", db_path) == "4.0"
+    assert _extract_triage_score("sig-101", "run-tr-1", db_path) == "2.5"
+    assert _extract_triage_score("sig-999", "run-tr-1", db_path) == ""

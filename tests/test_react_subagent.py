@@ -65,50 +65,48 @@ def test_spawn_subagent_tool_success():
     mock_run.id = "run-telegram-001"
     mock_run.status = "SPAWNED"
 
-    mock_registry = MagicMock()
-    mock_agent = MagicMock()
-    mock_agent.name = "career-ops"
-    mock_registry.list_agents.return_value = [mock_agent]
-
     with patch("xibi.subagent.runtime.spawn_subagent", return_value=mock_run):
-        result = mod.run(
-            tool_input={
-                "agent_id": "career-ops",
-                "skills": ["evaluate"],
-                "scoped_input": {"posting": {"title": "Head of Product", "company": "Anthropic"}},
-                "reason": "Daniel asked to evaluate Anthropic posting",
-            },
-            context={"db_path": None, "agent_registry": mock_registry},
-        )
+        # executor calls module.run(params) — single dict arg with underscore-prefixed internals
+        result = mod.run({
+            "agent_id": "career-ops",
+            "skills": ["evaluate"],
+            "scoped_input": {"posting": {"title": "Head of Product", "company": "Anthropic"}},
+            "reason": "Daniel asked to evaluate Anthropic posting",
+            # No _workdir → no registry → validation skipped; spawn proceeds
+        })
 
     assert result["run_id"] == "run-telegram-001"
     assert result["status"] == "SPAWNED"
     assert "error" not in result
 
 
-def test_spawn_subagent_tool_unknown_agent():
+def test_spawn_subagent_tool_unknown_agent(tmp_path):
+    """Unknown agent returns error when workdir has a domains dir."""
     mod = _load_tool()
 
-    mock_registry = MagicMock()
-    mock_agent = MagicMock()
-    mock_agent.name = "career-ops"
-    mock_registry.list_agents.return_value = [mock_agent]
+    # Create a domains dir with only career-ops
+    domains = tmp_path / "domains"
+    (domains / "career-ops").mkdir(parents=True)
+    (domains / "career-ops" / "agent.yml").write_text("name: career-ops\nversion: 1\n")
 
-    result = mod.run(
-        tool_input={
+    with patch("xibi.subagent.registry.AgentRegistry.list_agents") as mock_list:
+        mock_agent = MagicMock()
+        mock_agent.name = "career-ops"
+        mock_list.return_value = [mock_agent]
+
+        result = mod.run({
             "agent_id": "nonexistent-agent",
             "skills": ["triage"],
             "scoped_input": {},
-        },
-        context={"db_path": None, "agent_registry": mock_registry},
-    )
+            "_workdir": str(tmp_path),
+        })
 
     assert result["error"] == "unknown_agent"
     assert "nonexistent-agent" in result["detail"]
 
 
-def test_spawn_subagent_tool_no_registry_skips_validation():
-    """Without a registry, validation is skipped and we try to spawn."""
+def test_spawn_subagent_tool_no_workdir_skips_validation():
+    """Without _workdir, no registry is built, validation is skipped, spawn proceeds."""
     mod = _load_tool()
 
     mock_run = MagicMock()
@@ -116,14 +114,12 @@ def test_spawn_subagent_tool_no_registry_skips_validation():
     mock_run.status = "SPAWNED"
 
     with patch("xibi.subagent.runtime.spawn_subagent", return_value=mock_run):
-        result = mod.run(
-            tool_input={
-                "agent_id": "career-ops",
-                "skills": ["triage"],
-                "scoped_input": {"postings": []},
-            },
-            context={"db_path": None, "agent_registry": None},
-        )
+        result = mod.run({
+            "agent_id": "career-ops",
+            "skills": ["triage"],
+            "scoped_input": {"postings": []},
+            # no _workdir → no registry
+        })
 
     assert result["run_id"] == "run-no-registry"
 
@@ -132,14 +128,11 @@ def test_spawn_subagent_tool_spawn_failure():
     mod = _load_tool()
 
     with patch("xibi.subagent.runtime.spawn_subagent", side_effect=RuntimeError("agent not found")):
-        result = mod.run(
-            tool_input={
-                "agent_id": "career-ops",
-                "skills": ["evaluate"],
-                "scoped_input": {"posting": {}},
-            },
-            context={"db_path": None, "agent_registry": None},
-        )
+        result = mod.run({
+            "agent_id": "career-ops",
+            "skills": ["evaluate"],
+            "scoped_input": {"posting": {}},
+        })
 
     assert result["error"] == "spawn_failed"
     assert "agent not found" in result["detail"]

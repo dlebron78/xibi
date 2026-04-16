@@ -40,6 +40,7 @@ Return ONLY a JSON object with this exact structure (no markdown fences, no text
   "scored_pipeline": [
     {
       "index": 0,
+      "signal_id": "string or null — echo the signal_id from the input posting if present",
       "title": "string or null",
       "company": "string or null",
       "score": 3.8,

@@ -7,14 +7,11 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-def run(params: dict[str, Any]) -> dict[str, Any]:
+def spawn_subagent(params: dict[str, Any]) -> dict[str, Any]:
     """
     Dispatch a domain agent to perform deep work.
 
-    The executor calls this as module.run(params). LocalHandlerExecutor routes
-    to handler.py (which has _db_path + _config injected) before falling through
-    here, so this path is the base-executor fallback. It attempts to derive
-    db_path from _workdir when _db_path is not present.
+    Called by LocalHandlerExecutor which injects _db_path, _config, _workdir.
     """
     from xibi.subagent.registry import AgentRegistry
     from xibi.subagent.runtime import spawn_subagent as _spawn
@@ -28,15 +25,9 @@ def run(params: dict[str, Any]) -> dict[str, Any]:
     workdir_str = params.get("_workdir")
     config: dict[str, Any] = params.get("_config") or {}
 
-    # Derive db_path: prefer explicit injection, fall back to workdir convention
-    if db_path_str:
-        db_path = Path(db_path_str)
-    elif workdir_str:
-        db_path = Path(workdir_str) / "data" / "xibi.db"
-    else:
-        db_path = None
+    db_path = Path(db_path_str) if db_path_str else None
 
-    # Build agent registry from workdir if available
+    # Build agent registry from workdir
     registry = None
     if workdir_str:
         domains_dir = Path(workdir_str) / "domains"
@@ -44,7 +35,7 @@ def run(params: dict[str, Any]) -> dict[str, Any]:
             try:
                 registry = AgentRegistry(domains_dir=domains_dir, config=config)
             except Exception as e:
-                logger.warning(f"spawn_subagent tool: could not build registry: {e}")
+                logger.warning(f"spawn_subagent handler: could not build registry: {e}")
 
     if registry is not None:
         known_ids = {a.name for a in registry.list_agents()}
@@ -70,5 +61,5 @@ def run(params: dict[str, Any]) -> dict[str, Any]:
         )
         return {"run_id": run_obj.id, "status": run_obj.status}
     except Exception as e:
-        logger.error(f"spawn_subagent tool: failed to dispatch {agent_id}: {e}")
+        logger.error(f"spawn_subagent handler: failed to dispatch {agent_id}: {e}")
         return {"error": "spawn_failed", "detail": str(e)}
