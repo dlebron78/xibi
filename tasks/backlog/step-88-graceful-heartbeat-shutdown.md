@@ -240,3 +240,39 @@ def wait_for_shutdown(timeout: float) -> bool:
 ---
 > **Spec gating:** Non-blocking. Can ship independently of 85/86/87.
 > See `WORKFLOW.md`.
+
+---
+
+## TRR Record — Opus, 2026-04-16 (v1)
+
+**Verdict:** ACCEPT WITH CONDITIONS
+
+**Summary:** The plan is technically sound, narrowly scoped, and addresses a real observed production issue. The primitive design (`threading.Event` wrapping the existing bool API) is the right shape and preserves backwards-compat for the existing polling callsite. Two small clarifications and one test-coverage gap should be fixed in spec text before promotion; none require structural change.
+
+**Findings:**
+
+1. **[C2] Backwards-compat of `is_shutdown_requested()` under the Event rewrite.** (Contract section, `xibi/shutdown.py`.) The spec rewrites the module from a module-level `bool` to a module-level `threading.Event` and drops `_shutdown_requested: bool`. `is_shutdown_requested()` is reimplemented on top of `_shutdown_event.is_set()`, which preserves semantics, but the spec's "Contract" code block quietly removes the `global _shutdown_requested` line and the bool. The step-specific gate ("existing `is_shutdown_requested()` API is preserved") would be more defensible if the spec explicitly states: "the bool is removed; `is_shutdown_requested()` now delegates to `_shutdown_event.is_set()`; callers in `xibi/channels/telegram.py:590` and `xibi/heartbeat/poller.py:1011` continue to work unchanged." **Fix:** add one sentence in Contract calling this out.
+
+2. **[C2] Loop-control change is not just a `time.sleep` substitution.** (Contract, poller.py diff.) The diff replaces `time.sleep(interval_secs)` with `if wait_for_shutdown(interval_secs): break`. That's correct but subtly different from a pure sleep swap: it short-circuits out of the `while` loop instead of letting the `while not is_shutdown_requested():` check handle termination on the next iteration. Both exit paths log the same "run loop exiting" line because it's after the loop. Fine, but the contract diff should either (a) use `break` as shown and note that this is intentional (bypasses the `while` condition recheck for a one-line exit), or (b) use `wait_for_shutdown(interval_secs)` as a bare call and let the `while` condition on line 1011 terminate the loop. The `break` form is preferable (explicit). **Fix:** add a one-line comment in the spec explaining the `break` is deliberate.
+
+3. **[C3] Test coverage gap: handler-to-event wiring.** (Tests Required.) The listed unit tests cover the primitive in isolation and an integration test covers poller exit time, but nothing verifies that the SIGTERM handler at `__main__.py:27` actually flips the Event. A cheap unit test that calls `_handle_sigterm(signal.SIGTERM, None)` and asserts `is_shutdown_requested() is True` would close the loop and guard against someone later refactoring the handler. **Fix:** add `test_shutdown.py::test_sigterm_handler_flips_flag` to the Tests Required list.
+
+4. **[C3] Scope note re: telegram poller.** `xibi/channels/telegram.py:710` has the same pattern (`while not is_shutdown_requested(): ... time.sleep(1)`). The 1-second sleep makes it a non-issue in practice, but once `wait_for_shutdown` exists the asymmetry invites drift. Spec's Constraints section should note "telegram poller uses `time.sleep(1)` which is acceptable and out of scope; future steps may migrate it for consistency." Otherwise a reviewer of the implementation PR will ask the same question. **Fix:** one-line scope note.
+
+5. **[C3] Minor factual inaccuracy in Context.** Spec says the SIGTERM handler is registered at `xibi/__main__.py:26`; actual registration is at lines 69 and 176 (inside `cmd_telegram` and `cmd_heartbeat`). Line 26–27 is just the handler definition. Not load-bearing, but specs get read as ground truth later. **Fix:** correct the line reference.
+
+**Conditions for Promotion:**
+
+1. Add a sentence in the Contract section stating the module-level bool is removed and `is_shutdown_requested()` delegates to `_shutdown_event.is_set()`, preserving the existing API for callers at `xibi/channels/telegram.py:590` and `xibi/heartbeat/poller.py:1011`.
+2. Clarify in the poller.py contract diff that the `break` form is intentional (one-line inline comment or sentence beneath the diff).
+3. Add `test_shutdown.py::test_sigterm_handler_flips_flag` to the Tests Required list, verifying `_handle_sigterm` wiring.
+4. Add a scope note in Constraints acknowledging `xibi/channels/telegram.py:710` uses the same pattern but is out of scope (1s sleep is acceptable).
+5. Correct the Context section's line reference for the SIGTERM handler registration (actual sites: `__main__.py:69` and `:176`, not `:26`).
+
+**Confidence:**
+- Technical correctness: **High** — the Event-based primitive is the standard Python pattern for this problem; semantics are preserved.
+- Scope clarity: **High** — tightly bounded to heartbeat, explicitly non-blocking re: other epics.
+- Test coverage adequacy: **Medium** — good primitive + integration tests, but missing a handler-wiring test (condition 3).
+- Operational risk: **High** (i.e. low risk) — worst case regression is exactly today's behavior (2-minute SIGKILL), already visible in journal.
+
+This TRR was conducted by a fresh Opus subagent with no draft-authoring context.
