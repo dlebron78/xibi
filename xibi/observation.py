@@ -685,10 +685,8 @@ class ObservationCycle:
                                 sig_key = f"sig-{sig_id}"
                                 meta = None
                                 if sig["metadata"]:
-                                    try:
+                                    with suppress(json.JSONDecodeError, TypeError):
                                         meta = json.loads(sig["metadata"])
-                                    except (json.JSONDecodeError, TypeError):
-                                        pass
                                 if meta:
                                     title = meta.get("title", "Unknown Role")
                                     company = meta.get("company", "Unknown Company")

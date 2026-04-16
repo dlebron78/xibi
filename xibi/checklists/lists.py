@@ -11,20 +11,22 @@ from xibi.checklists.fuzzy import fuzzy_match_item
 logger = logging.getLogger(__name__)
 
 
-def _find_template(conn: sqlite3.Connection, list_name: str) -> dict | None:
+def _find_template(conn: sqlite3.Connection, list_name: str) -> sqlite3.Row | None:
     conn.row_factory = sqlite3.Row
-    return conn.execute(
+    result: sqlite3.Row | None = conn.execute(
         "SELECT * FROM checklist_templates WHERE LOWER(name) = LOWER(?)",
         (list_name,),
     ).fetchone()
+    return result
 
 
-def _find_active_instance(conn: sqlite3.Connection, template_id: str) -> dict | None:
+def _find_active_instance(conn: sqlite3.Connection, template_id: str) -> sqlite3.Row | None:
     conn.row_factory = sqlite3.Row
-    return conn.execute(
+    result: sqlite3.Row | None = conn.execute(
         "SELECT * FROM checklist_instances WHERE template_id = ? AND status = 'open' ORDER BY created_at DESC LIMIT 1",
         (template_id,),
     ).fetchone()
+    return result
 
 
 def _require_list(conn: sqlite3.Connection, list_name: str) -> tuple[dict, dict]:
