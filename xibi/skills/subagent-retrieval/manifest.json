@@ -11,7 +11,8 @@
           "agent_id": { "type": "string", "description": "Optional agent ID to filter by." },
           "limit": { "type": "integer", "description": "Max results to return (default 5)." }
         }
-      }
+      },
+      "output_type": "synthesis"
     },
     {
       "name": "get_run_detail",
@@ -22,7 +23,8 @@
           "run_id": { "type": "string", "description": "UUID of the run." }
         },
         "required": ["run_id"]
-      }
+      },
+      "output_type": "synthesis"
     },
     {
       "name": "search_runs",
@@ -34,7 +36,25 @@
           "agent_id": { "type": "string", "description": "Optional agent ID to filter by." }
         },
         "required": ["query"]
-      }
+      },
+      "output_type": "synthesis"
+    }
+  ],
+  "control_plane_triggers": [
+    {
+      "regex": "^what did the last (?P<agent_id>[a-zA-Z0-9_-]+) run find[.!?\\s]*$",
+      "intent": "get_recent_summaries",
+      "tool": "get_recent_summaries"
+    },
+    {
+      "regex": "^show me (recent|last) (?P<limit>\\d+)? ?subagent runs[.!?\\s]*$",
+      "intent": "get_recent_summaries",
+      "tool": "get_recent_summaries"
+    },
+    {
+      "regex": "^search (subagent )?runs for (?P<query>.*)$",
+      "intent": "search_runs",
+      "tool": "search_runs"
     }
   ]
 }

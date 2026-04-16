@@ -101,7 +101,16 @@
                     </div>
                     <p style="font-size:0.9rem; margin-top:0.5rem">${agent.description}</p>
                     <div style="font-size:0.8rem; color:#666">
-                        <strong>Skills:</strong> ${agent.skills.map(s => s.name).join(', ')}
+                        <strong>Skills:</strong>
+                        <ul style="margin: 0.5rem 0 0 1rem; list-style: disc;">
+                            ${agent.skills.map(s => `
+                                <li>
+                                    <strong>${s.name}</strong>: ${s.description}
+                                    <br>
+                                    <em style="color:#888">Trust: ${s.trust} | Model: ${s.model} | Standalone: ${s.standalone ? 'Yes' : 'No'}</em>
+                                </li>
+                            `).join('')}
+                        </ul>
                     </div>
                 `;
                 container.appendChild(card);

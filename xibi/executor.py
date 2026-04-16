@@ -87,12 +87,14 @@ class Executor:
                 logger.warning("core skills dir not found: %s", sample_dir)
                 return
 
-            core_registry = SkillRegistry(sample_dir)
+            # Core skills are either in sample/ (collection) or siblings to it
+            for core_dir in [sample_dir, sample_dir.parent]:
+                core_registry = SkillRegistry(core_dir)
 
-            for skill_name, skill_info in core_registry.skills.items():
-                if skill_name not in self.registry.skills:
-                    self.registry.skills[skill_name] = skill_info
-                    logger.debug("executor: registered core skill '%s' from %s", skill_name, skill_info.path)
+                for skill_name, skill_info in core_registry.skills.items():
+                    if skill_name not in self.registry.skills:
+                        self.registry.skills[skill_name] = skill_info
+                        logger.debug("executor: registered core skill '%s' from %s", skill_name, skill_info.path)
         except Exception as e:
             logger.warning("executor: failed to register core skills: %s", e)
 
