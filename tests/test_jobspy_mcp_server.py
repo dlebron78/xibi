@@ -8,75 +8,96 @@ The fix is twofold:
 1. Accept ``search_term`` as an alias for ``query``.
 2. When neither is provided, return an explicit error rather than running a
    default search — silent defaults were masking real config bugs.
+
+These tests do not require the jobspy / pandas runtime deps. The fail-fast
+cases return before the jobspy import, and the alias-routing cases stub
+the ``jobspy`` module entirely in ``sys.modules``.
 """
 
 from __future__ import annotations
 
+import sys
+import types
 import unittest
-from unittest.mock import MagicMock, patch
+from typing import Any
 
-import pandas as pd
+
+def _install_jobspy_stub(capture: dict[str, Any]) -> types.ModuleType:
+    """Install a fake ``jobspy`` module that records the kwargs scrape_jobs is
+    called with and returns a minimal duck-typed 'empty DataFrame' (iterrows ->
+    empty iterator). Returns the installed stub module for unwind/cleanup."""
+
+    class _FakeDF:
+        def iterrows(self):
+            return iter(())
+
+    def fake_scrape_jobs(**kwargs):
+        capture.clear()
+        capture.update(kwargs)
+        return _FakeDF()
+
+    stub = types.ModuleType("jobspy")
+    stub.scrape_jobs = fake_scrape_jobs
+    sys.modules["jobspy"] = stub
+    return stub
 
 
 class TestSearchJobsArgContract(unittest.TestCase):
     """Argument handling for jobspy MCP's ``search_jobs`` tool."""
 
-    def _empty_df(self) -> pd.DataFrame:
-        # scrape_jobs returns a DataFrame; an empty one is the simplest stub.
-        return pd.DataFrame(columns=["id", "title", "company"])
+    def setUp(self):
+        self._prev_jobspy = sys.modules.get("jobspy")
+        self.capture: dict[str, Any] = {}
+        _install_jobspy_stub(self.capture)
 
-    @patch("jobspy.scrape_jobs")
-    def test_query_key_is_honored(self, mock_scrape):
+    def tearDown(self):
+        if self._prev_jobspy is not None:
+            sys.modules["jobspy"] = self._prev_jobspy
+        else:
+            sys.modules.pop("jobspy", None)
+
+    def test_query_key_is_honored(self):
         from xibi.mcp.jobspy_mcp_server import _search_jobs
 
-        mock_scrape.return_value = self._empty_df()
         _search_jobs({"query": "Director of Product", "location": "Remote"})
 
-        _, kwargs = mock_scrape.call_args
-        self.assertEqual(kwargs["search_term"], "Director of Product")
-        self.assertEqual(kwargs["location"], "Remote")
+        self.assertEqual(self.capture.get("search_term"), "Director of Product")
+        self.assertEqual(self.capture.get("location"), "Remote")
 
-    @patch("jobspy.scrape_jobs")
-    def test_search_term_alias_is_honored(self, mock_scrape):
+    def test_search_term_alias_is_honored(self):
         """Legacy alias: callers using 'search_term' should still work."""
         from xibi.mcp.jobspy_mcp_server import _search_jobs
 
-        mock_scrape.return_value = self._empty_df()
         _search_jobs({"search_term": "Head of Product", "location": "NYC"})
 
-        _, kwargs = mock_scrape.call_args
-        self.assertEqual(kwargs["search_term"], "Head of Product")
+        self.assertEqual(self.capture.get("search_term"), "Head of Product")
 
-    @patch("jobspy.scrape_jobs")
-    def test_query_wins_over_search_term_when_both_present(self, mock_scrape):
+    def test_query_wins_over_search_term_when_both_present(self):
         from xibi.mcp.jobspy_mcp_server import _search_jobs
 
-        mock_scrape.return_value = self._empty_df()
         _search_jobs({"query": "VP Product", "search_term": "ignored"})
 
-        _, kwargs = mock_scrape.call_args
-        self.assertEqual(kwargs["search_term"], "VP Product")
+        self.assertEqual(self.capture.get("search_term"), "VP Product")
 
-    @patch("jobspy.scrape_jobs")
-    def test_missing_query_fails_loudly(self, mock_scrape):
+    def test_missing_query_fails_loudly(self):
         """No default search — missing query is an error, not a silent fallback."""
         from xibi.mcp.jobspy_mcp_server import _search_jobs
 
         result = _search_jobs({"location": "Remote"})
 
-        mock_scrape.assert_not_called()
+        # scrape_jobs should not have been invoked.
+        self.assertEqual(self.capture, {})
         self.assertEqual(result["jobs"], [])
         self.assertEqual(result["count"], 0)
         self.assertIn("query", result["error"].lower())
 
-    @patch("jobspy.scrape_jobs")
-    def test_empty_query_fails_loudly(self, mock_scrape):
+    def test_empty_query_fails_loudly(self):
         """Empty-string query is treated the same as missing — no silent default."""
         from xibi.mcp.jobspy_mcp_server import _search_jobs
 
         result = _search_jobs({"query": "", "location": "Remote"})
 
-        mock_scrape.assert_not_called()
+        self.assertEqual(self.capture, {})
         self.assertIn("query", result["error"].lower())
 
 
