@@ -28,6 +28,41 @@
      spec ships in the same batch or is a dependency. An engine without a
      steering wheel is not shippable. -->
 
+## Real-World Test Scenarios
+<!-- Required. Write these BEFORE implementation — they define what "done" looks
+     like from Daniel's perspective. Each scenario should be runnable the moment
+     the Telegram notification drops that the step is merged. Format:
+
+     ### Scenario N: [What you're testing]
+     **What you do:** Exact Telegram message or action
+     **What Roberto does:** What happens internally (brief)
+     **What you see:** Exact expected Telegram response
+     **How you know it worked:** Observable signal (dashboard, logs, DB state)
+
+     Cover: happy path, failure/error path, dedup/idempotency if relevant.
+     These scenarios also serve as TRR validation targets — the reviewer
+     should be able to trace each scenario through the codebase and confirm
+     all the wiring exists. -->
+
+### Scenario 1: [Happy path — main feature]
+**What you do:**
+```
+Daniel: [exact message]
+```
+**What Roberto does:** [brief description of internal dispatch]
+
+**What you see:**
+```
+Roberto: [expected response]
+```
+**How you know it worked:** [dashboard entry, log line, DB state]
+
+### Scenario 2: [Secondary path or variant]
+...
+
+### Scenario 3: [Error / edge case]
+...
+
 ## Files to Create/Modify
 - `xibi/[file].py` — [what it does]
 - `tests/test_[file].py` — [what it tests]
@@ -77,11 +112,31 @@
 ## Tests Required
 - [Specific test cases that must pass]
 
+## TRR Checklist
+<!-- The Technical Readiness Review must verify each of these before approving.
+     Add step-specific items below the standard ones. -->
+
+**Standard gates:**
+- [ ] All new code lives in `xibi/` packages — nothing added to bregger files
+- [ ] If this step touches functionality currently in a bregger file (`bregger_core.py`,
+      `bregger_dashboard.py`, etc.), reviewer must confirm: was a migration opportunity
+      identified? If yes, is it scoped in this step or explicitly parked as a follow-on?
+      Bregger files are legacy — every step is an opportunity to migrate, not extend.
+- [ ] No coded intelligence (no if/else tier rules — surface data, let LLM reason)
+- [ ] No LLM content injected directly into scratchpad (side-channel architecture)
+- [ ] Input validation: required fields produce clear errors, not hallucinated output
+- [ ] All acceptance criteria traceable through the codebase (reviewer can find the wiring)
+- [ ] Real-world test scenarios walkable end-to-end (reviewer traces each scenario through code)
+
+**Step-specific gates:**
+- [ ] [Add step-specific TRR checks here]
+
 ## Definition of Done
 - [ ] All files created/modified as listed
 - [ ] All tests pass locally
 - [ ] No hardcoded model names anywhere in new code
 - [ ] If schema changes: migration added, `SCHEMA_VERSION` bumped, migration tested against a fresh DB
+- [ ] Real-world test scenarios validated manually or via integration test
 - [ ] PR opened with summary + test results + any deviations noted
 
 ---
