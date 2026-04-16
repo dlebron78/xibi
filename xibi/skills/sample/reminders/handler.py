@@ -167,7 +167,9 @@ def list_reminders(params: dict[str, Any]) -> dict[str, Any]:
 
 def cancel_reminder(params: dict[str, Any]) -> dict[str, Any]:
     db_path = Path(params["_db_path"])
-    identifier = params["identifier"]
+    identifier = params.get("identifier")
+    if not identifier:
+        return {"status": "error", "error": "identifier is required"}
 
     try:
         action_id = resolve_identifier(db_path, identifier)
@@ -183,7 +185,9 @@ def cancel_reminder(params: dict[str, Any]) -> dict[str, Any]:
 
 def delete_reminder(params: dict[str, Any]) -> dict[str, Any]:
     db_path = Path(params["_db_path"])
-    identifier = params["identifier"]
+    identifier = params.get("identifier")
+    if not identifier:
+        return {"status": "error", "error": "identifier is required"}
 
     try:
         action_id = resolve_identifier(db_path, identifier)
