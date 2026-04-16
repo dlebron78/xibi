@@ -16,7 +16,9 @@ def spawn_subagent(params: dict[str, Any]) -> dict[str, Any]:
     from xibi.subagent.registry import AgentRegistry
     from xibi.subagent.runtime import spawn_subagent as _spawn
 
-    agent_id: str = params["agent_id"]
+    agent_id: str = params.get("agent_id", "")
+    if not agent_id:
+        return {"status": "error", "error": "agent_id is required"}
     skills: list[str] = params.get("skills") or []
     scoped_input: dict[str, Any] = params.get("scoped_input") or {}
     reason: str = params.get("reason", "")
