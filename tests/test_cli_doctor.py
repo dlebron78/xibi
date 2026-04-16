@@ -71,10 +71,56 @@ def test_doctor_all_checks_pass(isolated_config, capsys):
     captured = strip_ansi(capsys.readouterr().out)
     assert "[✓] Config file" in captured
     assert f"[✓] Database at {db_path} (schema version {SCHEMA_VERSION})" in captured
+    assert "[✓] Schema drift check (0 missing columns, 0 type mismatches)" in captured
     assert "[✓] Telegram token configured" in captured
     assert "[✓] Ollama endpoint responding (qwen3.5:9b available)" in captured
     assert "[✓] Skill manifest directory found (1 skills loaded)" in captured
     assert "[✓] Admin telegram user ID configured" in captured
+
+
+def test_doctor_reports_schema_drift_as_critical(isolated_config, capsys):
+    """step-87A: a DB with known missing columns (the BUG-009 state)
+    must flip doctor's overall result to FAIL and the drift details must
+    appear in the output."""
+    import sqlite3
+
+    config = {
+        "channel": "telegram",
+        "admin_user_id": 12345,
+        "skill_dir": str(isolated_config / "skills"),
+        "db_path": str(isolated_config / "data" / "xibi.db"),
+        "models": {"text": {"fast": {"provider": "ollama", "model": "qwen3.5:9b"}}},
+        "providers": {"ollama": {"base_url": "http://localhost:11434"}},
+    }
+    with open(isolated_config / "config.yaml", "w") as f:
+        yaml.dump(config, f)
+
+    db_path = isolated_config / "data" / "xibi.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    SchemaManager(db_path).migrate()
+
+    # Induce the real BUG-009 drift: drop signals.summary_model
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("ALTER TABLE signals DROP COLUMN summary_model")
+        conn.commit()
+
+    (isolated_config / "skills").mkdir(parents=True, exist_ok=True)
+
+    args = MagicMock()
+    args.workdir = str(isolated_config)
+    args.config = None
+
+    with patch("xibi.secrets.manager.load", return_value="my-token"), patch("requests.get") as mock_get:
+        mock_get.return_value.status_code = 200
+        mock_get.return_value.json.return_value = {"models": [{"name": "qwen3.5:9b"}]}
+
+        with pytest.raises(SystemExit) as exc:
+            cmd_doctor(args)
+        assert exc.value.code == 1
+
+    captured = strip_ansi(capsys.readouterr().out)
+    assert "[✗] Schema drift detected" in captured
+    assert "signals.summary_model — expected TEXT, missing" in captured
 
 
 def test_doctor_missing_config_reports_error(isolated_config, capsys):

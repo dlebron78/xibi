@@ -11,6 +11,7 @@ import yaml
 # Re-export main from chat to support legacy test imports
 from xibi.cli.chat import load_config_with_env_fallback, main
 from xibi.db.migrations import SCHEMA_VERSION, SchemaManager
+from xibi.db.schema_check import check_schema_drift
 from xibi.secrets import manager as secrets_manager
 
 __all__ = ["cmd_doctor", "main", "load_config_with_env_fallback"]
@@ -75,6 +76,35 @@ def cmd_doctor(args: Any) -> None:
                     f"{check_mark(False)} Database at {db_path} (schema version mismatch: got {version}, expected {SCHEMA_VERSION})"
                 )
                 critical_failed = True
+
+            # Column-level schema drift (BUG-009 / step-87A). Runs regardless
+            # of the version match — a version-matched DB can still have
+            # drift if a prior migration silently partial-applied under the
+            # old contextlib.suppress() pattern.
+            try:
+                drift = check_schema_drift(db_path)
+            except Exception as e:
+                print(f"{check_mark(False)} Schema drift check failed: {e}")
+                critical_failed = True
+            else:
+                if not drift:
+                    print(f"{check_mark(True)} Schema drift check (0 missing columns, 0 type mismatches)")
+                else:
+                    missing = sum(1 for d in drift if d.actual_type is None)
+                    mismatched = len(drift) - missing
+                    print(
+                        f"{check_mark(False)} Schema drift detected in {db_path} "
+                        f"({missing} missing columns, {mismatched} type mismatches):"
+                    )
+                    for item in drift:
+                        if item.actual_type is None:
+                            print(f"       {item.table}.{item.column} — expected {item.expected_type}, missing")
+                        else:
+                            print(
+                                f"       {item.table}.{item.column} — expected {item.expected_type}, "
+                                f"got {item.actual_type}"
+                            )
+                    critical_failed = True
         except Exception as e:
             print(f"{check_mark(False)} Database at {db_path} error: {e}")
             critical_failed = True

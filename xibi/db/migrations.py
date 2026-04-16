@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import logging
 import sqlite3
 from pathlib import Path
@@ -8,6 +7,48 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 35  # increment when adding new migrations
+
+
+def _safe_add_column(
+    conn: sqlite3.Connection,
+    table: str,
+    col_name: str,
+    col_type: str,
+) -> bool:
+    """Add a column to ``table`` if it does not already exist.
+
+    Idempotent across re-runs: catches the "duplicate column name"
+    OperationalError raised by SQLite when the column already exists and
+    treats that as a no-op. **Every other** OperationalError (invalid type,
+    missing table, locked DB, disk full, ...) is re-raised so the migration
+    fails loudly instead of silently half-applying.
+
+    After a successful ALTER, PRAGMA table_info is consulted to verify the
+    column is actually present. A RuntimeError is raised if not — this would
+    indicate a sqlite3 bug or a suppressed error we failed to catch, and is
+    strictly better than bumping ``schema_version`` over a silent failure.
+
+    Returns True if the column was newly added, False if it already existed.
+
+    Rationale: BUG-009. The previous pattern
+    ``with contextlib.suppress(sqlite3.OperationalError): conn.execute(ALTER)``
+    swallowed every OperationalError — including real failures — while the
+    caller still proceeded to bump ``schema_version``, leaving prod DBs
+    claiming a schema version they did not in fact have.
+    """
+    try:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" in str(e).lower():
+            return False
+        raise
+    cols = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if col_name not in cols:
+        raise RuntimeError(
+            f"ALTER TABLE {table} ADD COLUMN {col_name} reported success "
+            f"but column is not present in PRAGMA table_info({table})"
+        )
+    return True
 
 
 class SchemaManager:
@@ -74,12 +115,25 @@ class SchemaManager:
                 try:
                     with sqlite3.connect(self.db_path, timeout=30) as conn:
                         conn.execute("PRAGMA busy_timeout=30000")
-                        func(conn)
-                        conn.execute(
-                            "INSERT INTO schema_version (version, description) VALUES (?, ?)",
-                            (version, description),
-                        )
-                        conn.commit()
+                        # Explicit BEGIN so the migration body + version
+                        # bookkeeping row land atomically. Required because
+                        # Python's sqlite3 LEGACY isolation mode does NOT
+                        # auto-open a transaction before DDL — ALTER TABLE
+                        # would otherwise autocommit on its own, leaving
+                        # partial schema behind if a later statement in
+                        # the same migration raised. See BUG-009 / step-87A
+                        # keystone test for the regression guard.
+                        conn.execute("BEGIN")
+                        try:
+                            func(conn)
+                            conn.execute(
+                                "INSERT INTO schema_version (version, description) VALUES (?, ?)",
+                                (version, description),
+                            )
+                            conn.commit()
+                        except Exception:
+                            conn.rollback()
+                            raise
                     applied.append(version)
                 except Exception as e:
                     logger.error(f"Failed to apply migration {version}: {e}")
@@ -279,12 +333,11 @@ class SchemaManager:
         """)
 
     def _migration_7(self, conn: sqlite3.Connection) -> None:
-        for column_sql in [
-            "ALTER TABLE trust_records ADD COLUMN model_hash TEXT",
-            "ALTER TABLE trust_records ADD COLUMN last_failure_type TEXT",
+        for col_name, col_type in [
+            ("model_hash", "TEXT"),
+            ("last_failure_type", "TEXT"),
         ]:
-            with contextlib.suppress(sqlite3.OperationalError):
-                conn.execute(column_sql)
+            _safe_add_column(conn, "trust_records", col_name, col_type)
 
     def _migration_8(self, conn: sqlite3.Connection) -> None:
         conn.executescript("""
@@ -394,8 +447,7 @@ class SchemaManager:
             ("intel_tier", "INTEGER DEFAULT 0"),  # highest extraction tier applied
         ]
         for col_name, col_type in new_cols:
-            with contextlib.suppress(sqlite3.OperationalError):
-                conn.execute(f"ALTER TABLE signals ADD COLUMN {col_name} {col_type}")
+            _safe_add_column(conn, "signals", col_name, col_type)
 
     def _migration_13(self, conn: sqlite3.Connection) -> None:
         conn.executescript("""
@@ -433,13 +485,19 @@ class SchemaManager:
         """)
 
     def _migration_15(self, conn: sqlite3.Connection) -> None:
-        conn.execute("ALTER TABLE session_turns ADD COLUMN source TEXT NOT NULL DEFAULT 'user'")
+        # Was a bare ALTER with no error handling; wrapped in _safe_add_column
+        # (step-87A, Category C) so replays against stale DBs where the column
+        # already exists become a no-op rather than crashing.
+        _safe_add_column(conn, "session_turns", "source", "TEXT NOT NULL DEFAULT 'user'")
 
     def _migration_16(self, conn: sqlite3.Connection) -> None:
-        conn.executescript("""
-            ALTER TABLE inference_events ADD COLUMN trace_id TEXT;
-            CREATE INDEX IF NOT EXISTS idx_inference_events_trace ON inference_events(trace_id);
-        """)
+        # Split from a single executescript so the ALTER goes through
+        # _safe_add_column (step-87A Category C — same replay-safety rationale
+        # as _migration_15). The CREATE INDEX is left bare because the SQL
+        # `IF NOT EXISTS` clause already makes it idempotent, matching the
+        # treatment of the three Category B sites in _migration_18.
+        _safe_add_column(conn, "inference_events", "trace_id", "TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_inference_events_trace ON inference_events(trace_id)")
 
     def _migration_17(self, conn: sqlite3.Connection) -> None:
         # Idempotent addition of columns to access_log
@@ -450,8 +508,7 @@ class SchemaManager:
             ("effective_tier", "TEXT"),
         ]
         for col_name, col_type in new_cols:
-            with contextlib.suppress(sqlite3.OperationalError):
-                conn.execute(f"ALTER TABLE access_log ADD COLUMN {col_name} {col_type}")
+            _safe_add_column(conn, "access_log", col_name, col_type)
 
     def _migration_18(self, conn: sqlite3.Connection) -> None:
         """Chief of Staff pipeline: signal summaries, contact extensions, sender trust."""
@@ -465,10 +522,13 @@ class SchemaManager:
             ("sender_contact_id", "TEXT"),  # FK to contacts(id)
         ]
         for col_name, col_type in signal_cols:
-            with contextlib.suppress(sqlite3.OperationalError):
-                conn.execute(f"ALTER TABLE signals ADD COLUMN {col_name} {col_type}")
+            _safe_add_column(conn, "signals", col_name, col_type)
 
         # --- Step 68: Extend contacts for outbound tracking ---
+        # Kept as an explicit narrow try/except (not _safe_add_column) on
+        # purpose: this block predates step-87A and adds a per-column
+        # logger.error before re-raising, which we want preserved for
+        # historical BUG-009 forensics on any future failure here.
         contact_cols = [
             ("phone", "TEXT"),
             ("title", "TEXT"),
@@ -502,16 +562,21 @@ class SchemaManager:
                 UNIQUE(channel_type, handle)
             );
         """)
-        with contextlib.suppress(sqlite3.OperationalError):
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_cc_handle ON contact_channels(channel_type, handle);")
-        with contextlib.suppress(sqlite3.OperationalError):
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_cc_contact ON contact_channels(contact_id);")
-        with contextlib.suppress(sqlite3.OperationalError):
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_contact_channels_lookup ON contact_channels(channel_type, handle);"
-            )
+        # step-87A Category B: these CREATE INDEX statements are already
+        # idempotent via the SQL `IF NOT EXISTS` clause. The previous
+        # `contextlib.suppress(sqlite3.OperationalError)` wrapper was
+        # redundant and could mask genuine failures (disk full, bad
+        # table, etc.). Removed; bare execute propagates real errors.
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_cc_handle ON contact_channels(channel_type, handle);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_cc_contact ON contact_channels(contact_id);")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_contact_channels_lookup ON contact_channels(channel_type, handle);"
+        )
 
         # Extend session_entities table
+        # Kept as an explicit narrow try/except (not _safe_add_column) on
+        # purpose: this block predates step-87A and adds a logger.error
+        # before re-raising, preserved for BUG-009 forensics.
         try:
             conn.execute("ALTER TABLE session_entities ADD COLUMN contact_id TEXT")
         except sqlite3.OperationalError as e:
@@ -520,16 +585,11 @@ class SchemaManager:
                 raise
 
     def _migration_19(self, conn: sqlite3.Connection) -> None:
-        import contextlib
-
         # Thread priority + last_reviewed_at for manager review pattern
-        with contextlib.suppress(sqlite3.OperationalError):
-            conn.execute("ALTER TABLE threads ADD COLUMN priority TEXT DEFAULT NULL")
-        with contextlib.suppress(sqlite3.OperationalError):
-            conn.execute("ALTER TABLE threads ADD COLUMN last_reviewed_at DATETIME DEFAULT NULL")
+        _safe_add_column(conn, "threads", "priority", "TEXT DEFAULT NULL")
+        _safe_add_column(conn, "threads", "last_reviewed_at", "DATETIME DEFAULT NULL")
         # Track whether an observation cycle was a manager review vs normal triage
-        with contextlib.suppress(sqlite3.OperationalError):
-            conn.execute("ALTER TABLE observation_cycles ADD COLUMN review_mode TEXT DEFAULT 'triage'")
+        _safe_add_column(conn, "observation_cycles", "review_mode", "TEXT DEFAULT 'triage'")
 
     def _migration_20(self, conn: sqlite3.Connection) -> None:
         sql_path = Path(__file__).parent / "migrations" / "0020_belief_summaries.sql"
@@ -654,15 +714,13 @@ class SchemaManager:
             ("sender_contact_id", "TEXT"),
         ]
         for col_name, col_type in new_cols:
-            with contextlib.suppress(sqlite3.OperationalError):
-                conn.execute(f"ALTER TABLE signals ADD COLUMN {col_name} {col_type}")
+            _safe_add_column(conn, "signals", col_name, col_type)
 
     def _migration_24(self, conn: sqlite3.Connection) -> None:
         """Upgrade processed_messages to multi-source schema."""
         # Add source and ref_id columns to existing table
         for col_name, col_type in [("source", "TEXT"), ("ref_id", "TEXT")]:
-            with contextlib.suppress(sqlite3.OperationalError):
-                conn.execute(f"ALTER TABLE processed_messages ADD COLUMN {col_name} {col_type}")
+            _safe_add_column(conn, "processed_messages", col_name, col_type)
 
         # Create unique index for multi-source dedup
         conn.execute(
@@ -678,18 +736,15 @@ class SchemaManager:
 
     def _migration_25(self, conn: sqlite3.Connection) -> None:
         """Add classification_reasoning column to signals table."""
-        with contextlib.suppress(sqlite3.OperationalError):
-            conn.execute("ALTER TABLE signals ADD COLUMN classification_reasoning TEXT")
+        _safe_add_column(conn, "signals", "classification_reasoning", "TEXT")
 
     def _migration_26(self, conn: sqlite3.Connection) -> None:
         """Add correction_reason column to signals table."""
-        with contextlib.suppress(sqlite3.OperationalError):
-            conn.execute("ALTER TABLE signals ADD COLUMN correction_reason TEXT")
+        _safe_add_column(conn, "signals", "correction_reason", "TEXT")
 
     def _migration_27(self, conn: sqlite3.Connection) -> None:
         """Add deep_link_url column to signals table."""
-        with contextlib.suppress(sqlite3.OperationalError):
-            conn.execute("ALTER TABLE signals ADD COLUMN deep_link_url TEXT")
+        _safe_add_column(conn, "signals", "deep_link_url", "TEXT")
 
     def _migration_28(self, conn: sqlite3.Connection) -> None:
         """Create engagements table for tracking Daniel's behavior."""
@@ -806,8 +861,7 @@ class SchemaManager:
 
     def _migration_34(self, conn: sqlite3.Connection) -> None:
         """Add decay_days column to ledger (backfill from CREATE TABLE schema drift)."""
-        with contextlib.suppress(sqlite3.OperationalError):
-            conn.execute("ALTER TABLE ledger ADD COLUMN decay_days INTEGER")
+        _safe_add_column(conn, "ledger", "decay_days", "INTEGER")
 
     def _migration_35(self, conn: sqlite3.Connection) -> None:
         """Subagent: add summary and ttl columns to subagent_runs."""
@@ -818,8 +872,7 @@ class SchemaManager:
             ("presentation_file_path", "TEXT"),
         ]
         for col_name, col_type in new_cols:
-            with contextlib.suppress(sqlite3.OperationalError):
-                conn.execute(f"ALTER TABLE subagent_runs ADD COLUMN {col_name} {col_type}")
+            _safe_add_column(conn, "subagent_runs", col_name, col_type)
 
 
 def migrate(db_path: Path) -> list[int]:
