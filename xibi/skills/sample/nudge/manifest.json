@@ -5,7 +5,7 @@
     {
       "name": "nudge",
       "description": "Surface important information to the operator via Telegram. Used by the observation cycle when it detects something worth notifying about.",
-      "input_schema": {
+      "inputSchema": {
         "type": "object",
         "properties": {
           "message": {
@@ -38,7 +38,7 @@
     {
       "name": "send_document",
       "description": "Upload a local file to the operator via Telegram as a document attachment. Use this when the operator asks for results 'as a file', 'as a CSV', 'as a download', or any time text-only delivery would be lossy or truncated. The file must already exist on disk — write it first via the filesystem MCP or another tool, then call send_document with the path.",
-      "input_schema": {
+      "inputSchema": {
         "type": "object",
         "properties": {
           "file_path": {

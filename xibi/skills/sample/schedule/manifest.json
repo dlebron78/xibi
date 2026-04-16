@@ -12,7 +12,7 @@
         "upcoming meetings",
         "what's next on my agenda"
       ],
-      "input_schema": {"days_ahead": {"type": "integer", "default": 1}},
+      "inputSchema": {"days_ahead": {"type": "integer", "default": 1}},
       "output_type": "raw"
     },
     {
@@ -25,7 +25,7 @@
         "book a time",
         "block time for a call"
       ],
-      "input_schema": {"title": {"type": "string"}, "time": {"type": "string"}},
+      "inputSchema": {"title": {"type": "string"}, "time": {"type": "string"}},
       "output_type": "action"
     },
     {
@@ -38,7 +38,7 @@
         "push back the call by an hour",
         "rename a calendar event"
       ],
-      "input_schema": {
+      "inputSchema": {
         "event_id": {"type": "string", "description": "ID of the event to update (optional if title is clear)"},
         "title": {"type": "string", "description": "New title for the event (optional)"},
         "time": {"type": "string", "description": "New time for the event (optional)"}
@@ -53,7 +53,7 @@
         "delete the standup",
         "remove an event from my calendar"
       ],
-      "input_schema": {
+      "inputSchema": {
         "event_id": {"type": "string", "description": "ID of the event to delete (optional if title is clear)"},
         "title": {"type": "string", "description": "Title of the event to delete"}
       },

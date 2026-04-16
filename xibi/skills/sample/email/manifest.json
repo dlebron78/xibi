@@ -12,7 +12,7 @@
         "show unread",
         "what's in my inbox"
       ],
-      "input_schema": {"max_results": {"type": "integer", "default": 5}},
+      "inputSchema": {"max_results": {"type": "integer", "default": 5}},
       "output_type": "raw"
     },
     {
@@ -24,7 +24,7 @@
         "prioritise my email",
         "what should I respond to first"
       ],
-      "input_schema": {},
+      "inputSchema": {},
       "output_type": "raw"
     },
     {
@@ -37,7 +37,7 @@
         "reply to this email",
         "write an email about the standup"
       ],
-      "input_schema": {
+      "inputSchema": {
         "to": {"type": "string", "description": "Recipient address or name"},
         "subject": {"type": "string", "description": "Email subject line"},
         "body": {"type": "string", "description": "Email body text"}

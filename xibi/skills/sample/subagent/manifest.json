@@ -5,7 +5,7 @@
     {
       "name": "spawn_subagent",
       "description": "Dispatch a domain agent to perform deep work. Use when a task requires more than a quick answer — job evaluation, company research, resume tailoring, etc.",
-      "input_schema": {
+      "inputSchema": {
         "type": "object",
         "properties": {
           "agent_id": {
