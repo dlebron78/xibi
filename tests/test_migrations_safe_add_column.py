@@ -24,7 +24,6 @@ import pytest
 
 from xibi.db.migrations import SCHEMA_VERSION, SchemaManager, _safe_add_column, migrate
 
-
 # ----------------------------------------------------------------------------
 # _safe_add_column unit tests
 # ----------------------------------------------------------------------------
@@ -112,9 +111,7 @@ def test_safe_add_column_verifies_column_post_alter(tmp_path: Path):
 # ----------------------------------------------------------------------------
 
 
-def test_migration_failure_does_not_bump_version(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-):
+def test_migration_failure_does_not_bump_version(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """BUG-009 fire drill: if a migration raises mid-way, ``schema_version``
     must NOT be bumped and any partial ALTER must NOT persist.
 
@@ -166,9 +163,7 @@ def test_migration_failure_does_not_bump_version(
         call_count["n"] += 1
         if call_count["n"] == 1:
             return real_safe_add(conn, table, col, type_)
-        raise sqlite3.OperationalError(
-            "simulated invalid type (unit test injection)"
-        )
+        raise sqlite3.OperationalError("simulated invalid type (unit test injection)")
 
     monkeypatch.setattr(migmod, "_safe_add_column", flaky_safe_add)
 
@@ -178,21 +173,13 @@ def test_migration_failure_does_not_bump_version(
 
     # 4. schema_version must NOT have been bumped to 7.
     with sqlite3.connect(db_path) as conn:
-        max_version = conn.execute(
-            "SELECT MAX(version) FROM schema_version"
-        ).fetchone()[0]
-        assert max_version == 6, (
-            f"migrate() bumped schema_version to {max_version} "
-            "despite migration raising"
-        )
+        max_version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+        assert max_version == 6, f"migrate() bumped schema_version to {max_version} despite migration raising"
 
         # 5 + 6. Neither column from _migration_7 must be visible —
         # BEGIN..ROLLBACK around the migration body guarantees atomicity.
         cols = {row[1] for row in conn.execute("PRAGMA table_info(trust_records)")}
-        assert "model_hash" not in cols, (
-            "partial ALTER persisted: model_hash present despite "
-            "_migration_7 failing"
-        )
+        assert "model_hash" not in cols, "partial ALTER persisted: model_hash present despite _migration_7 failing"
         assert "last_failure_type" not in cols
 
 
@@ -243,9 +230,7 @@ def test_migration_16_is_idempotent(tmp_path: Path):
 
 
 def _migrations_source() -> str:
-    return (
-        Path(__file__).parent.parent / "xibi" / "db" / "migrations.py"
-    ).read_text()
+    return (Path(__file__).parent.parent / "xibi" / "db" / "migrations.py").read_text()
 
 
 def test_create_index_suppressors_removed():
@@ -276,9 +261,7 @@ def test_no_bare_alter_table_outside_explicit_try_except():
     src = _migrations_source()
     lines = src.splitlines()
     alter_hits = [
-        (i + 1, line.strip())
-        for i, line in enumerate(lines)
-        if "ALTER TABLE" in line and "ADD COLUMN" in line
+        (i + 1, line.strip()) for i, line in enumerate(lines) if "ALTER TABLE" in line and "ADD COLUMN" in line
     ]
     # Expected:
     #   - line inside _safe_add_column executing the ALTER

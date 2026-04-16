@@ -10,7 +10,6 @@ DBs rather than modifying the reference schema.
 
 from __future__ import annotations
 
-import os
 import sqlite3
 from pathlib import Path
 
@@ -22,7 +21,6 @@ from xibi.db.schema_check import (
     build_reference_schema,
     check_schema_drift,
 )
-
 
 # ----------------------------------------------------------------------------
 # _normalize_type

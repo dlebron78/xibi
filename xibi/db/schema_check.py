@@ -80,19 +80,13 @@ def build_reference_schema() -> dict[str, dict[str, str]]:
         # in-memory DB, so we pass a dummy path and invoke _migration_N
         # directly. The version-row table comes from _migration_1 itself.
         sm = SchemaManager(Path(":memory:"))
-        migration_methods = [
-            getattr(sm, f"_migration_{i}")
-            for i in range(1, _highest_migration(sm) + 1)
-        ]
+        migration_methods = [getattr(sm, f"_migration_{i}") for i in range(1, _highest_migration(sm) + 1)]
         for migration in migration_methods:
             migration(conn)
             conn.commit()
 
         reference: dict[str, dict[str, str]] = {}
-        cursor = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' "
-            "AND name NOT LIKE 'sqlite_%'"
-        )
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
         tables = [row[0] for row in cursor.fetchall()]
         for table in tables:
             cols: dict[str, str] = {}
@@ -116,7 +110,7 @@ def _highest_migration(sm: SchemaManager) -> int:
     for attr in dir(sm):
         if attr.startswith("_migration_"):
             try:
-                n = int(attr[len("_migration_"):])
+                n = int(attr[len("_migration_") :])
             except ValueError:
                 continue
             if n > highest:
@@ -154,10 +148,7 @@ def check_schema_drift(db_path: Path) -> list[DriftItem]:
     conn = sqlite3.connect(uri, uri=True)
     try:
         # Gather live tables once
-        cursor = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' "
-            "AND name NOT LIKE 'sqlite_%'"
-        )
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
         live_tables = {row[0] for row in cursor.fetchall()}
 
         for table, ref_cols in reference.items():
