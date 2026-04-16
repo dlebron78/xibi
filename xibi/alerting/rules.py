@@ -406,6 +406,7 @@ class RuleEngine:
         sender_contact_id: str | None = None,
         classification_reasoning: str | None = None,
         deep_link_url: str | None = None,
+        metadata: dict | None = None,
     ) -> None:
         try:
             preview = (content_preview[:277] + "...") if len(content_preview) > 280 else content_preview
@@ -416,10 +417,11 @@ class RuleEngine:
                 )
                 if cursor.fetchone():
                     return
+            metadata_json = json.dumps(metadata) if metadata is not None else None
             conn.execute(
                 """
-                INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id, classification_reasoning, deep_link_url)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id, classification_reasoning, deep_link_url, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     source,
@@ -436,6 +438,7 @@ class RuleEngine:
                     sender_contact_id,
                     classification_reasoning,
                     deep_link_url,
+                    metadata_json,
                 ),
             )
         except Exception as e:

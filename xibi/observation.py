@@ -25,6 +25,50 @@ def _json_default(obj: Any) -> Any:
     return str(obj)
 
 
+def _extract_evaluate_score(run_id: str | None, db_path: Path) -> str:
+    """Parse composite_score from a career-ops evaluate run's output JSON."""
+    if not run_id:
+        return ""
+    try:
+        with open_db(db_path) as conn:
+            row = conn.execute(
+                "SELECT output FROM subagent_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+        if not row or not row[0]:
+            return ""
+        output = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+        evaluation = output.get("evaluation") or output.get("result", {})
+        score = evaluation.get("composite_score") if isinstance(evaluation, dict) else None
+        if score is not None:
+            return str(score)
+        return ""
+    except Exception:
+        return ""
+
+
+def _extract_triage_score(signal_id: str, run_id: str | None, db_path: Path) -> str:
+    """Parse score for a specific signal_id from a career-ops triage run's scored_pipeline."""
+    if not run_id:
+        return ""
+    try:
+        with open_db(db_path) as conn:
+            row = conn.execute(
+                "SELECT output FROM subagent_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+        if not row or not row[0]:
+            return ""
+        output = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+        pipeline = output.get("scored_pipeline", [])
+        for entry in pipeline:
+            if str(entry.get("signal_id", "")) == signal_id:
+                score = entry.get("score")
+                if score is not None:
+                    return str(score)
+        return ""
+    except Exception:
+        return ""
+
+
 if TYPE_CHECKING:
     from xibi.subagent.registry import AgentRegistry
 
@@ -531,6 +575,14 @@ class ObservationCycle:
 
     # ── Manager review methods ──────────────────────────────────────────
 
+    def _job_source_names(self) -> set[str]:
+        """Source names configured with signal_extractor='jobs'."""
+        return {
+            name
+            for name, cfg in self.profile.get("sources", {}).items()
+            if isinstance(cfg, dict) and cfg.get("signal_extractor") == "jobs"
+        }
+
     def _build_review_dump(self) -> str:
         """
         Build a full-state dump for the manager review. Unlike _build_observation_dump
@@ -575,6 +627,7 @@ class ObservationCycle:
             lines.append("")
 
             # Thread details
+            job_source_names = self._job_source_names()
             lines.append("THREADS:")
             for t in threads:
                 priority_str = t["priority"] or "UNSET"
@@ -586,12 +639,80 @@ class ObservationCycle:
                 )
                 channels = t.get("source_channels") or "[]"
 
+                # Detect job-source threads
+                is_job_thread = False
+                if job_source_names:
+                    try:
+                        ch_list = json.loads(channels) if isinstance(channels, str) else channels
+                        if isinstance(ch_list, list):
+                            is_job_thread = any(c in job_source_names for c in ch_list)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
                 lines.append(f"[{t['id']}] {t['name']}")
                 lines.append(
-                    f"  priority={priority_str} | owner={owner_str} | signals={t['signal_count']} | "
-                    f"channels={channels}{deadline_str}{reviewed_str}"
+                    f"  priority={priority_str} | owner={owner_str} | signals={t['signal_count']}"
+                    f"{deadline_str}{reviewed_str}"
                 )
-                lines.append(f"  summary: {summary_str[:200]}")
+
+                if is_job_thread:
+                    # Render expanded posting block instead of generic summary
+                    lines.append(f"  summary: {summary_str[:200]}")
+                    try:
+                        with open_db(self.db_path) as conn:
+                            conn.row_factory = sqlite3.Row
+                            sigs = conn.execute(
+                                "SELECT id, ref_id, content_preview, metadata FROM signals "
+                                "WHERE thread_id = ? ORDER BY id DESC LIMIT 20",
+                                (t["id"],),
+                            ).fetchall()
+                            # Build a map: signal_id -> best dispatch status
+                            # (evaluate beats triage)
+                            dispatch_map: dict[str, dict] = {}
+                            if sigs:
+                                for row in conn.execute(
+                                    "SELECT signal_id, skill, run_id FROM subagent_signal_dispatch"
+                                ).fetchall():
+                                    sid = str(row["signal_id"])
+                                    existing = dispatch_map.get(sid)
+                                    if existing is None or (row["skill"] == "evaluate" and existing["skill"] != "evaluate"):
+                                        dispatch_map[sid] = {"skill": row["skill"], "run_id": row["run_id"]}
+                        if sigs:
+                            lines.append("  postings:")
+                            for sig in sigs:
+                                sig_id = str(sig["id"])
+                                meta = None
+                                if sig["metadata"]:
+                                    try:
+                                        meta = json.loads(sig["metadata"])
+                                    except (json.JSONDecodeError, TypeError):
+                                        pass
+                                if meta:
+                                    title = meta.get("title", "Unknown Role")
+                                    company = meta.get("company", "Unknown Company")
+                                    location = meta.get("location", "")
+                                    loc_str = f" ({location})" if location else ""
+                                    label = f"{title} — {company}{loc_str}"
+                                else:
+                                    label = sig["content_preview"][:80] if sig["content_preview"] else f"sig-{sig_id}"
+
+                                disp = dispatch_map.get(sig_id)
+                                if disp is None:
+                                    status_tag = "[NOT_EVALUATED]"
+                                elif disp["skill"] == "evaluate":
+                                    score = _extract_evaluate_score(disp["run_id"], self.db_path)
+                                    score_str = f": {score}" if score else ""
+                                    status_tag = f"[EVALUATED{score_str}]"
+                                else:
+                                    score = _extract_triage_score(sig_id, disp["run_id"], self.db_path)
+                                    score_str = f": {score}" if score else ""
+                                    status_tag = f"[TRIAGE{score_str}]"
+                                lines.append(f"    [sig-{sig_id}] {label} {status_tag}")
+                    except Exception as e:
+                        logger.warning(f"Error building job posting block for thread {t['id']}: {e}")
+                        lines.append(f"  summary: {summary_str[:200]}")
+                else:
+                    lines.append(f"  summary: {summary_str[:200]}")
                 lines.append("")
 
             # Signals with gaps (null urgency or action_type) — up to 30
@@ -719,7 +840,7 @@ class ObservationCycle:
                 with open_db(self.db_path) as conn:
                     conn.row_factory = sqlite3.Row
                     cursor = conn.execute(
-                        "SELECT agent_id, status, output, completed_at FROM subagent_runs "
+                        "SELECT id, agent_id, status, output, error_detail, completed_at FROM subagent_runs "
                         "WHERE status IN ('DONE', 'FAILED') AND completed_at > ? "
                         "ORDER BY completed_at DESC",
                         (since,),
@@ -729,9 +850,42 @@ class ObservationCycle:
                         lines.append("COMPLETED SUBAGENT RUNS SINCE LAST REVIEW:")
                         for run in completed_runs:
                             status_str = run["status"]
-                            output_preview = str(run["output"])[:200] if run["output"] else "N/A"
-                            lines.append(f"- {run['agent_id']} ({status_str}) at {run['completed_at']}")
-                            lines.append(f"  Result: {output_preview}")
+                            agent_id = run["agent_id"] or ""
+                            lines.append(f"- [{run['id']}] {agent_id} ({status_str}) at {run['completed_at']}")
+                            if run["status"] == "FAILED":
+                                err = run["error_detail"] or "unknown"
+                                lines.append(f"  Error: {str(err)[:200]}")
+                            elif run["output"] and agent_id.startswith("career-ops"):
+                                try:
+                                    output = json.loads(run["output"]) if isinstance(run["output"], str) else run["output"]
+                                    # Determine skill type from output shape
+                                    if "scored_pipeline" in output:
+                                        pipeline = output.get("scored_pipeline", [])
+                                        lines.append(f"  career-ops triage ({len(pipeline)} postings):")
+                                        for entry in pipeline:
+                                            lines.append(
+                                                f"    {entry.get('signal_id', '?')} "
+                                                f"{entry.get('title', '')} — "
+                                                f"{entry.get('company', '')} — "
+                                                f"score: {entry.get('score', '?')}"
+                                            )
+                                    elif "evaluation" in output:
+                                        evaluation = output.get("evaluation") or {}
+                                        if isinstance(evaluation, dict):
+                                            grade = evaluation.get("grade", "?")
+                                            score = evaluation.get("composite_score", "?")
+                                            rec = evaluation.get("recommendation", "")
+                                            lines.append(f"  career-ops evaluate: grade={grade}, score={score}, rec={rec}")
+                                        else:
+                                            lines.append(f"  Result: {str(output)[:200]}")
+                                    else:
+                                        lines.append(f"  Result: {str(output)[:200]}")
+                                except Exception:
+                                    lines.append(f"  Result: {str(run['output'])[:200]}")
+                            elif run["output"]:
+                                lines.append(f"  Result: {str(run['output'])[:200]}")
+                            else:
+                                lines.append("  Result: N/A")
                         lines.append("")
             except Exception as e:
                 logger.warning(f"Error injecting subagent results: {e}")
@@ -927,6 +1081,7 @@ Respond with ONLY valid JSON matching this schema (no markdown, no explanation):
     {{
       "agent_id": "...",
       "reason": "...",
+      "signal_ids": ["sig-123", "sig-456"],
       "scoped_input": {{}},
       "skills": ["skill_name1", "skill_name2"]
     }}
@@ -939,11 +1094,45 @@ Rules:
 - Keep summaries under 150 characters.
 - CRITICAL: output RAW JSON only. No markdown, no code fences, no explanation. Start your response with {{ and end with }}. Nothing else.
 
+## Career-Ops Dispatch Rules
+
+When you see job signal threads with NOT_EVALUATED postings:
+
+1. If there are 3+ unevaluated postings in a thread, dispatch career-ops TRIAGE:
+   "subagent_spawns": [{{
+     "agent_id": "career-ops",
+     "reason": "N unevaluated postings in <thread name>",
+     "signal_ids": ["sig-456", "sig-457", "sig-458", "sig-459"],
+     "scoped_input": {{"postings": [<posting objects from the thread>]}},
+     "skills": ["triage"]
+   }}]
+
+2. If there is 1 high-signal posting (appears to match profile well), dispatch EVALUATE:
+   "subagent_spawns": [{{
+     "agent_id": "career-ops",
+     "reason": "Strong match: <title> at <company>",
+     "signal_ids": ["sig-456"],
+     "scoped_input": {{"posting": {{"title": "...", "company": "...", "location": "...", "url": "...", "description": "..."}}}},
+     "skills": ["evaluate"]
+   }}]
+
+3. If triage results exist with scores >= 4.0, dispatch EVALUATE on top scorers.
+
+4. Do NOT dispatch if:
+   - All postings in the thread are already EVALUATED or show TRIAGE scores
+   - The thread was reviewed less than 24 hours ago and no new [NOT_EVALUATED] signals arrived
+
+5. ALWAYS include:
+   - signal_ids: the [sig-NNN] IDs from the posting block (used for dedup tracking)
+   - Actual posting data in scoped_input — title, company, location, url, description from metadata
+   - Do NOT dispatch with empty scoped_input or missing signal_ids
+
 Example for subagent_spawns:
 "subagent_spawns": [
     {{
         "agent_id": "career-ops",
         "reason": "Scheduled weekly career scan overdue",
+        "signal_ids": [],
         "scoped_input": {{"criteria": "..."}},
         "skills": ["scan", "triage"]
     }}
@@ -1086,8 +1275,8 @@ Example for subagent_spawns:
                 from xibi.subagent.runtime import spawn_subagent
 
                 for spawn in all_subagent_spawns:
+                    agent_id = spawn.get("agent_id")
                     try:
-                        agent_id = spawn.get("agent_id")
                         if not agent_id:
                             continue
 
@@ -1104,6 +1293,31 @@ Example for subagent_spawns:
                             budget=budget,
                             db_path=self.db_path,
                             registry=self.agent_registry,
+                        )
+                        # Record signal dispatch rows (post-spawn, so run_id is known)
+                        signal_ids = spawn.get("signal_ids") or []
+                        skills_dispatched = spawn.get("skills") or []
+                        if signal_ids and skills_dispatched:
+                            now_iso = datetime.now(timezone.utc).isoformat()
+                            try:
+                                with open_db(self.db_path) as conn, conn:
+                                    for skill in skills_dispatched:
+                                        for sid in signal_ids:
+                                            conn.execute(
+                                                """
+                                                INSERT OR IGNORE INTO subagent_signal_dispatch
+                                                (signal_id, run_id, agent_id, skill, dispatched_at)
+                                                VALUES (?, ?, ?, ?, ?)
+                                                """,
+                                                (str(sid), run.id, agent_id, skill, now_iso),
+                                            )
+                            except Exception as db_err:
+                                logger.warning(
+                                    f"Failed to record dispatch rows for run {run.id}: {db_err}"
+                                )
+                        logger.info(
+                            f"review cycle dispatched {agent_id} skills={skills_dispatched} "
+                            f"with {len(signal_ids)} signals, run={run.id}"
                         )
                         result.actions_taken.append(
                             {

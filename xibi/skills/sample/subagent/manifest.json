@@ -1,0 +1,37 @@
+{
+  "name": "subagent",
+  "description": "Dispatch a domain agent to perform deep work",
+  "tools": [
+    {
+      "name": "spawn_subagent",
+      "description": "Dispatch a domain agent to perform deep work. Use when a task requires more than a quick answer — job evaluation, company research, resume tailoring, etc.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "agent_id": {
+            "type": "string",
+            "description": "Registered agent name (e.g. 'career-ops')"
+          },
+          "skills": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Which skills to run (e.g. ['evaluate'])"
+          },
+          "scoped_input": {
+            "type": "object",
+            "description": "Data the agent needs (e.g. {'posting': {...}})"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why you're dispatching this"
+          }
+        },
+        "required": ["agent_id", "skills", "scoped_input"]
+      },
+      "output_type": "action",
+      "timeout_secs": 30,
+      "tier": "YELLOW",
+      "access": "operator"
+    }
+  ]
+}

@@ -6,7 +6,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 35  # increment when adding new migrations
+SCHEMA_VERSION = 36  # increment when adding new migrations
 
 
 def _safe_add_column(
@@ -107,6 +107,7 @@ class SchemaManager:
             (33, "subagent: subagent_cost_events table", self._migration_33),
             (34, "ledger: add decay_days column", self._migration_34),
             (35, "subagent: add summary and ttl columns to subagent_runs", self._migration_35),
+            (36, "signals: add metadata column + subagent_signal_dispatch table", self._migration_36),
         ]
 
         for version, description, func in migrations:
@@ -873,6 +874,22 @@ class SchemaManager:
         ]
         for col_name, col_type in new_cols:
             _safe_add_column(conn, "subagent_runs", col_name, col_type)
+
+
+    def _migration_36(self, conn: sqlite3.Connection) -> None:
+        """Signals: add metadata column. Create subagent_signal_dispatch table."""
+        _safe_add_column(conn, "signals", "metadata", "TEXT")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS subagent_signal_dispatch (
+                signal_id TEXT NOT NULL,
+                run_id TEXT,
+                agent_id TEXT NOT NULL,
+                skill TEXT NOT NULL,
+                dispatched_at TEXT NOT NULL,
+                PRIMARY KEY (signal_id, skill),
+                FOREIGN KEY (run_id) REFERENCES subagent_runs(id) ON DELETE CASCADE
+            )
+        """)
 
 
 def migrate(db_path: Path) -> list[int]:

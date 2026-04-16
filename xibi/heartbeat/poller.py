@@ -521,6 +521,7 @@ class HeartbeatPoller:
                                 content_preview=sig.get("content_preview", ""),
                                 ref_id=sig.get("ref_id"),
                                 ref_source=sig.get("ref_source"),
+                                metadata=sig.get("metadata"),
                             )
             except Exception as e:
                 logger.warning(f"Error processing signals for {source_name}: {e}", exc_info=True)
@@ -826,6 +827,7 @@ class HeartbeatPoller:
                         sender_contact_id=trust.contact_id,
                         classification_reasoning=item.get("reasoning"),
                         deep_link_url=deep_link_url,
+                        metadata=sig.get("metadata"),
                     )
 
                     if not item["is_new"] or item["verdict"] == "DEFER":
