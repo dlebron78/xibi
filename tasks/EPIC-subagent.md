@@ -2,7 +2,7 @@
 
 > **Owner:** Daniel LeBron
 > **Created:** 2026-04-13
-> **Status:** In Progress — Blocks 1-3 merged (steps 81-83), Blocks 4-6 specced
+> **Status:** In Progress — Blocks 1-4 merged (steps 81-84), Blocks 5-7 specced. Step-85 blocked on operational hardening (step-87A, see §Operational Dependencies).
 > **Depends on:** EPIC-chief-of-staff (complete — all blocks merged through step-80)
 > **Resolves:** "Subagent task delegation" backlog item in EPIC-chief-of-staff
 
@@ -73,9 +73,10 @@ Domain agents declare their actions as L1 (autonomous) or L2 (needs review). The
 | 1 | Subagent Runtime | 81 | Chief of staff pipeline (steps 70-80) | DONE |
 | 2 | Domain Agent Contract & Registry | 82 | Block 1 | DONE |
 | 3 | Career-Ops Domain Agent | 83 | Block 2 | DONE |
-| 4 | Runtime Tool Access (MCP Prefetch) | 84 | Blocks 1-3 | NOT STARTED |
-| 5 | Signal-to-Subagent Dispatch | 85 | Block 4 | NOT STARTED |
-| 6 | Career Portal MCP Servers | TBD | Block 4 | NOT STARTED |
+| 4 | Runtime Tool Access (MCP Prefetch) | 84 | Blocks 1-3 | DONE |
+| 5 | Telegram Dispatch & Job Signal Wiring | 85 | Block 4, **step-87A** | BLOCKED on 87A |
+| 6 | List API (Checklist UX Simplification) | 86 | Block 5 | NOT STARTED |
+| 7 | Career Portal MCP Servers | TBD | Block 5 | NOT STARTED |
 
 ## Phases
 
@@ -85,8 +86,73 @@ Domain agents declare their actions as L1 (autonomous) or L2 (needs review). The
 | 2 | Block 2 | Any conforming domain agent directory is discoverable and runnable |
 | 3 | Block 3 | Career-ops skills run standalone with structured output |
 | 4 | Block 4 | Skills can consume MCP tool data; scan → triage → evaluate pipeline works |
-| 5 | Block 5 | Observation cycle autonomously dispatches career-ops against real job signals |
-| 6 | Block 6 | Career portal scanning (Greenhouse, Lever, Ashby) via dedicated MCP servers |
+| 5 | Block 5 | Roberto dispatches career-ops via Telegram; heartbeat triggers profile-aware job scan; nudges on new postings |
+| 6 | Block 6 | List API wraps checklists as simple named lists; job pipeline tracking via Telegram |
+| 7 | Block 7 | Career portal scanning (Greenhouse, Lever, Ashby) via dedicated MCP servers |
+
+---
+
+## Operational Dependencies
+
+Three operational-hardening specs sit alongside the feature blocks. They are
+not themselves part of the subagent runtime work, but they gate or accompany
+it. They are listed here so the block sequencing and epic status make sense
+at a glance.
+
+### step-87A — Migration Safe Add Column (HARD BLOCKER for step-85)
+
+**Status:** backlog, active, first in the operational queue.
+**Location:** `tasks/backlog/step-87a-migration-safe-add-column.md`
+
+Replaces the 17 `contextlib.suppress(sqlite3.OperationalError)` sites in
+`xibi/db/migrations.py` with a narrow `_safe_add_column` helper that only
+swallows genuine "duplicate column name" errors, verifies post-ALTER that
+the column landed, and raises loudly on anything else. Also ships a read-only
+extends the existing `xibi doctor` CLI (`xibi/cli/__init__.py:cmd_doctor`)
+with a column-level schema-drift check that compares a live DB against a
+reference schema built by running migrations on an in-memory DB.
+
+**Why it blocks step-85.** Step-85 adds new metadata columns to `signals`.
+Those migrations will hit the same silent-failure trap (BUG-009) if any
+deployed DB has weird pre-existing state. Shipping 87A first means step-85's
+migrations throw loudly on any unexpected error instead of claiming success
+while silently leaving drift behind.
+
+**Unblock trigger.** 87A merged + deployed to NucBox + doctor reports OK on
+all three deployed DBs. Then step-85 TRR can re-run and move to pending.
+
+### step-87B — Schema Reconciliation (PARKED)
+
+**Status:** backlog, parked. Not required for step-85.
+**Location:** `tasks/backlog/step-87b-schema-reconciliation.md`
+
+Auto-reconcile drift on startup: `SchemaManager.migrate()` would compare the
+live DB to a reference built from in-memory migrations and add any missing
+columns. Add-only, never drops. This is a comfort upgrade, not a safety
+upgrade — 87A already prevents *new* drift. Manual repair of pre-existing
+drift is two lines of SQL, and doctor can surface it on a weekly schedule.
+
+**Unpark criteria** (any one triggers implementation):
+- Second drift incident surfaces after 87A has deployed (suggests latent drift
+  we don't know about).
+- We deploy to a second environment (tourism chatbot, job search rig, etc.).
+- Backup/restore becomes a regular operation — every restore is a drift source.
+
+### step-88 — Graceful Heartbeat Shutdown (NON-BLOCKING PARALLEL)
+
+**Status:** backlog, can ship in parallel with 87A or step-85.
+**Location:** `tasks/backlog/step-88-graceful-heartbeat-shutdown.md`
+
+Replaces `time.sleep(interval_secs)` in `xibi/heartbeat/poller.py` with
+`wait_for_shutdown(timeout)` backed by a `threading.Event`, so SIGTERM during
+the inter-tick sleep wakes the poller immediately instead of waiting for
+TimeoutStopSec=300 to SIGKILL it. Motivated by the 2026-04-15 NucBox incident
+where `systemctl restart xibi-heartbeat.service` sat hung for two minutes
+mid-quiet-hours sleep before SIGKILL.
+
+**Why it doesn't block anything.** It's an operator-experience fix. The
+service recovers correctly on SIGKILL today; it's just slow and noisy. Ship
+whenever there's a convenient slot.
 
 ---
 
