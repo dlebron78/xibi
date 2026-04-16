@@ -12,10 +12,7 @@ def get_recent_summaries(params: dict[str, Any]) -> dict[str, Any]:
         return {"status": "error", "message": "Missing _db_path"}
 
     retrieval = SubagentRetrieval(Path(db_path))
-    summaries = retrieval.get_recent_summaries(
-        agent_id=params.get("agent_id"),
-        limit=params.get("limit", 5)
-    )
+    summaries = retrieval.get_recent_summaries(agent_id=params.get("agent_id"), limit=params.get("limit", 5))
     return {"status": "success", "summaries": summaries}
 
 
@@ -46,8 +43,5 @@ def search_runs(params: dict[str, Any]) -> dict[str, Any]:
         return {"status": "error", "message": "Missing query"}
 
     retrieval = SubagentRetrieval(Path(db_path))
-    results = retrieval.search_runs(
-        query=query,
-        agent_id=params.get("agent_id")
-    )
+    results = retrieval.search_runs(query=query, agent_id=params.get("agent_id"))
     return {"status": "success", "results": results}
