@@ -15,8 +15,10 @@ sleeps 15 minutes between ticks and never checks for shutdown during the sleep.
 The plumbing is already in place:
 
 - `xibi/shutdown.py` exposes `request_shutdown()` / `is_shutdown_requested()`
-- `xibi/__main__.py:26` registers a SIGTERM handler that calls
-  `request_shutdown()`
+- `xibi/__main__.py:26-27` **defines** `_handle_sigterm` (which calls
+  `request_shutdown()`); the handler is **registered** via
+  `signal.signal(signal.SIGTERM, _handle_sigterm)` at `xibi/__main__.py:69`
+  (inside `cmd_telegram`) and `xibi/__main__.py:176` (inside `cmd_heartbeat`).
 - `HeartbeatPoller.run()` checks `is_shutdown_requested()` at the **top** of
   each loop iteration
 
@@ -156,12 +158,23 @@ def wait_for_shutdown(timeout: float) -> bool:
     return _shutdown_event.wait(timeout=timeout)
 ```
 
+Note: the previous module-level `_shutdown_requested: bool` is removed.
+`is_shutdown_requested()` now delegates to `_shutdown_event.is_set()`, so the
+existing API is preserved — callers at `xibi/channels/telegram.py:590` and
+`xibi/heartbeat/poller.py:1011` continue to work unchanged.
+
 ```python
 # xibi/heartbeat/poller.py — replace line 1031
 - time.sleep(interval_secs)
 + if wait_for_shutdown(interval_secs):
 +     break
 ```
+
+The `break` form is intentional: `wait_for_shutdown` returning `True` means
+shutdown was requested, so `break` exits the `while` loop directly (bypassing
+the redundant `while not is_shutdown_requested()` recheck on the next
+iteration). Both exit paths hit the same "run loop exiting" log line after
+the loop.
 
 ---
 
@@ -188,6 +201,11 @@ def wait_for_shutdown(timeout: float) -> bool:
 - `threading.Event` is process-local — fine for a single-process service. If
   we ever split the heartbeat into multiple processes (we don't today), each
   process needs its own handler.
+- The telegram poller at `xibi/channels/telegram.py:710` uses the same
+  `while not is_shutdown_requested(): ... time.sleep(1)` pattern. The
+  1-second sleep makes this a non-issue operationally; migrating it to
+  `wait_for_shutdown` is explicitly out of scope for step-88 but may be
+  picked up by a follow-up step for consistency.
 
 ---
 
@@ -197,6 +215,9 @@ def wait_for_shutdown(timeout: float) -> bool:
 - `test_shutdown.py::test_request_shutdown_flips_flag`
 - `test_shutdown.py::test_wait_for_shutdown_returns_true_when_set`
 - `test_shutdown.py::test_wait_for_shutdown_respects_timeout_when_not_set`
+- `test_shutdown.py::test_sigterm_handler_flips_flag` — verifies that calling
+  `_handle_sigterm(signal.SIGTERM, None)` results in `is_shutdown_requested()
+  == True`. Closes the handler-to-event wiring loop.
 - `test_heartbeat_shutdown.py::test_poller_exits_promptly_on_shutdown` —
   integration test: start poller with a big interval in a daemon thread, call
   `request_shutdown()`, join thread, assert it returned in under 1 second.
@@ -232,7 +253,7 @@ def wait_for_shutdown(timeout: float) -> bool:
 
 - [ ] `xibi/shutdown.py` exposes `wait_for_shutdown(timeout) -> bool`
 - [ ] `xibi/heartbeat/poller.py` uses `wait_for_shutdown` in place of `time.sleep`
-- [ ] Unit tests cover shutdown primitive behavior (flag, event, timeout)
+- [ ] Unit tests cover shutdown primitive behavior (flag, event, timeout) and SIGTERM handler wiring test passes
 - [ ] Integration test: poller exits in < 1s when `request_shutdown()` is called
 - [ ] Deployed to NucBox and verified with Scenario 1 (restart time < 3s, no SIGKILL in journal)
 - [ ] PR opened with summary + test results + before/after journal snippet
@@ -276,3 +297,30 @@ def wait_for_shutdown(timeout: float) -> bool:
 - Operational risk: **High** (i.e. low risk) — worst case regression is exactly today's behavior (2-minute SIGKILL), already visible in journal.
 
 This TRR was conducted by a fresh Opus subagent with no draft-authoring context.
+
+---
+
+## TRR Record — Opus, 2026-04-16 (v2)
+
+**Verdict:** ACCEPT
+
+**Summary:** All five v1 conditions are cleanly addressed in the revised spec text. Changes are textual/scoping refinements — no structural drift from the v1-accepted design. The plan is ready to promote to `tasks/pending/`.
+
+**Condition Check:**
+1. **SATISFIED** — Contract section has explicit "Note" block: module-level bool removed; `is_shutdown_requested()` delegates to `_shutdown_event.is_set()`; both caller sites (`xibi/channels/telegram.py:590`, `xibi/heartbeat/poller.py:1011`) named and declared unchanged.
+2. **SATISFIED** — The paragraph immediately after the poller diff explains the `break` is intentional, short-circuits the `while not is_shutdown_requested()` recheck, and notes both paths hit the same exit log.
+3. **SATISFIED** — "Tests Required" lists `test_sigterm_handler_flips_flag` with a precise description ("`_handle_sigterm(signal.SIGTERM, None)` results in `is_shutdown_requested() == True`"). Also reflected in Definition of Done.
+4. **SATISFIED** — Constraints bullet explicitly names `xibi/channels/telegram.py:710`, justifies why the 1s sleep is operationally acceptable, and marks migration out of scope for step-88.
+5. **SATISFIED** — Context now correctly distinguishes handler **definition** at `__main__.py:26-27` from **registration** at `:69` (cmd_telegram) and `:176` (cmd_heartbeat). Matches the supplied code context verbatim.
+
+**New Findings:** None. A minor observation (not a finding): the DoD item "SIGTERM handler wiring test passes" is collapsed into the broader unit-tests bullet rather than its own line, but it is referenced explicitly. Acceptable as-is — not worth a condition.
+
+**Conditions for Promotion:** None.
+
+**Confidence:**
+- Technical correctness: **High** — `threading.Event` is the textbook primitive for this; signal-handler-to-event wiring is standard; the existing `is_shutdown_requested()` polling callers are preserved.
+- Scope clarity: **High** — telegram poller explicitly deferred; no DB/migration/observability surface; single-process assumption documented.
+- Test coverage: **High** — primitive unit tests, handler-wiring test, and a bounded (<1s) integration test with realistic interval.
+- Operational risk: **High** (i.e. low risk) — rollback is trivial (revert two-line diff); failure mode regresses to current behavior (visible via existing SIGKILL symptom, caught pre-deploy by the integration test).
+
+This TRR v2 was conducted by a fresh Opus subagent with no draft-authoring context.
