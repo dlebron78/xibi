@@ -104,8 +104,10 @@ def resolve_identifier(db_path: Path, identifier: str) -> str:
 
 def create_reminder(params: dict[str, Any]) -> dict[str, Any]:
     db_path = Path(params["_db_path"])
-    text = params["text"]
-    when = params["when"]
+    text = params.get("text")
+    when = params.get("when")
+    if not text or not when:
+        return {"status": "error", "error": "text and when are required"}
     recurring = params.get("recurring")
 
     try:
