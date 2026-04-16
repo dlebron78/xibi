@@ -6,7 +6,10 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from xibi.mcp.client import MCPClient
 
 from xibi.subagent.db import (
     create_cost_event,
@@ -33,7 +36,7 @@ def _resolve_args(scoped_input: dict, tool_decl: dict) -> dict:
     if args_from:
         # Simple dotted path resolution: "scoped_input.criteria" -> scoped_input["criteria"]
         parts = args_from.split(".")
-        obj = scoped_input
+        obj: Any = scoped_input
         # Skip leading "scoped_input" if present (it's the root)
         if parts and parts[0] == "scoped_input":
             parts = parts[1:]
@@ -43,20 +46,25 @@ def _resolve_args(scoped_input: dict, tool_decl: dict) -> dict:
             else:
                 obj = None
                 break
-        if obj is not None and isinstance(obj, dict):
-            return obj
+        if isinstance(obj, dict):
+            return dict(obj)
 
-    return dict(args_default)
+    return dict(args_default)  # type: ignore[no-any-return]
 
 
-def _get_mcp_client(server_name: str, mcp_configs: list[dict] | None, active_clients: dict):
+def _get_mcp_client(
+    server_name: str,
+    mcp_configs: list[dict[str, Any]] | None,
+    active_clients: dict[str, Any],
+) -> MCPClient:
     """Get or create an MCPClient for the named server.
 
     active_clients is a dict that accumulates clients for the run's lifetime
     so they can be reused across steps and closed at the end.
     """
     if server_name in active_clients:
-        return active_clients[server_name]
+        client: MCPClient = active_clients[server_name]
+        return client
 
     if not mcp_configs:
         raise RuntimeError(f"No MCP configs provided — cannot create client for '{server_name}'")
@@ -93,6 +101,7 @@ def _close_mcp_clients(active_clients: dict) -> None:
         except Exception as e:
             logger.warning(f"Failed to close MCP client '{name}': {e}")
     active_clients.clear()
+
 
 logger = logging.getLogger(__name__)
 
@@ -168,20 +177,14 @@ def execute_checklist(
                             run.scoped_input[inject_key] = result["result"]
                             logger.info(f"Prefetch {server_name}/{tool_name} -> scoped_input.{inject_key}")
                         elif tool_decl.get("required", False):
-                            raise RuntimeError(
-                                f"Required tool {server_name}/{tool_name} failed: {result.get('error')}"
-                            )
+                            raise RuntimeError(f"Required tool {server_name}/{tool_name} failed: {result.get('error')}")
                         else:
-                            logger.warning(
-                                f"Optional tool {server_name}/{tool_name} failed: {result.get('error')}"
-                            )
+                            logger.warning(f"Optional tool {server_name}/{tool_name} failed: {result.get('error')}")
                     except RuntimeError:
                         raise  # re-raise required tool failures
                     except Exception as e:
                         if tool_decl.get("required", False):
-                            raise RuntimeError(
-                                f"Required tool {server_name}/{tool_name} error: {e}"
-                            ) from e
+                            raise RuntimeError(f"Required tool {server_name}/{tool_name} error: {e}") from e
                         logger.warning(f"Optional tool {server_name}/{tool_name} error: {e}")
 
             # --- Inject reference docs into scoped_input ---
@@ -202,8 +205,8 @@ def execute_checklist(
             # Input validation preamble — prevent hallucination of missing data
             prompt += (
                 "\nIMPORTANT: If any required input referenced in the prompt below is missing "
-                "or empty in scoped_input, return {\"error\": \"missing_input\", "
-                "\"detail\": \"<field>\"} — do NOT fabricate or hallucinate the missing data.\n"
+                'or empty in scoped_input, return {"error": "missing_input", '
+                '"detail": "<field>"} — do NOT fabricate or hallucinate the missing data.\n'
             )
             # Add skill specific prompt if available
             if "prompt" in step_cfg:
@@ -271,7 +274,7 @@ def execute_checklist(
                     run_id=run.id,
                     step_id=step.id,
                     model=response.model_id,
-                    provider=response.provider,
+                    provider=str(getattr(response, "provider", "unknown")),
                     input_tokens=response.input_tokens,
                     output_tokens=response.output_tokens,
                     cost_usd=response.cost_usd,

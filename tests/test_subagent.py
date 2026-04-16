@@ -79,7 +79,9 @@ class TestSubagent(unittest.TestCase):
         self.assertEqual(rolling, cost)
 
     def test_cancellation(self):
-        with patch("xibi.subagent.runtime.execute_checklist", side_effect=lambda run, db_path, checklist, mcp_configs=None: run):
+        with patch(
+            "xibi.subagent.runtime.execute_checklist", side_effect=lambda run, db_path, checklist, mcp_configs=None: run
+        ):
             run = spawn_subagent("agent", "manual", {}, {}, TEST_CHECKLIST, {}, self.db_path)
 
         cancel_subagent(run.id, self.db_path, reason="Killed")

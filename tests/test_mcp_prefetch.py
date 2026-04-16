@@ -1,4 +1,5 @@
 """Tests for step-84: MCP tool prefetch, reference injection, input validation."""
+
 from __future__ import annotations
 
 import unittest
@@ -7,7 +8,6 @@ from unittest.mock import MagicMock, patch
 
 from xibi.db.migrations import migrate
 from xibi.subagent.checklist import _resolve_args, execute_checklist
-from xibi.subagent.db import get_steps
 from xibi.subagent.models import SubagentRun
 from xibi.subagent.routing import RoutedResponse
 
@@ -33,6 +33,7 @@ def _mock_response(content: str = '{"status": "ok"}', cost: float = 0.001) -> Ro
         input_tokens=100,
         output_tokens=50,
         cost_usd=cost,
+        provider="test",
     )
 
 
@@ -86,9 +87,11 @@ class TestPrefetch(unittest.TestCase):
 
     def _create_run_with_steps(self, run: SubagentRun, checklist: list[dict]) -> None:
         """Helper to create run + step records in DB before executing."""
+        import uuid
+
         from xibi.subagent.db import create_run, create_step
         from xibi.subagent.models import ChecklistStep
-        import uuid
+
         create_run(self.db_path, run)
         for i, step_cfg in enumerate(checklist):
             step = ChecklistStep(
@@ -111,23 +114,27 @@ class TestPrefetch(unittest.TestCase):
         mock_call.return_value = _mock_response('{"postings": []}')
 
         run = _make_run()
-        checklist = [{
-            "skill_name": "scan",
-            "model": "haiku",
-            "trust": "L1",
-            "prompt": "Process the postings",
-            "references": {},
-            "tools": [{
-                "server": "jobspy",
-                "tool": "search_jobs",
-                "args_default": {"search_term": "PM"},
-                "inject_as": "raw_postings",
-                "required": True,
-            }],
-        }]
+        checklist = [
+            {
+                "skill_name": "scan",
+                "model": "haiku",
+                "trust": "L1",
+                "prompt": "Process the postings",
+                "references": {},
+                "tools": [
+                    {
+                        "server": "jobspy",
+                        "tool": "search_jobs",
+                        "args_default": {"search_term": "PM"},
+                        "inject_as": "raw_postings",
+                        "required": True,
+                    }
+                ],
+            }
+        ]
         self._create_run_with_steps(run, checklist)
 
-        result = execute_checklist(run, self.db_path, checklist, mcp_configs=[{"name": "jobspy", "command": ["echo"]}])
+        execute_checklist(run, self.db_path, checklist, mcp_configs=[{"name": "jobspy", "command": ["echo"]}])
 
         # Verify the tool was called
         mock_client.call_tool.assert_called_once_with("search_jobs", {"search_term": "PM"})
@@ -146,20 +153,24 @@ class TestPrefetch(unittest.TestCase):
         mock_get_client.return_value = mock_client
 
         run = _make_run()
-        checklist = [{
-            "skill_name": "scan",
-            "model": "haiku",
-            "trust": "L1",
-            "prompt": "Process the postings",
-            "references": {},
-            "tools": [{
-                "server": "jobspy",
-                "tool": "search_jobs",
-                "args_default": {},
-                "inject_as": "raw_postings",
-                "required": True,
-            }],
-        }]
+        checklist = [
+            {
+                "skill_name": "scan",
+                "model": "haiku",
+                "trust": "L1",
+                "prompt": "Process the postings",
+                "references": {},
+                "tools": [
+                    {
+                        "server": "jobspy",
+                        "tool": "search_jobs",
+                        "args_default": {},
+                        "inject_as": "raw_postings",
+                        "required": True,
+                    }
+                ],
+            }
+        ]
         self._create_run_with_steps(run, checklist)
 
         result = execute_checklist(run, self.db_path, checklist, mcp_configs=[{"name": "jobspy", "command": ["echo"]}])
@@ -179,23 +190,27 @@ class TestPrefetch(unittest.TestCase):
         mock_call.return_value = _mock_response('{"status": "ok"}')
 
         run = _make_run()
-        checklist = [{
-            "skill_name": "research",
-            "model": "haiku",
-            "trust": "L1",
-            "prompt": "Research company",
-            "references": {},
-            "tools": [{
-                "server": "webfetch",
-                "tool": "fetch",
-                "args_default": {"url": "https://example.com"},
-                "inject_as": "web_content",
-                "required": False,
-            }],
-        }]
+        checklist = [
+            {
+                "skill_name": "research",
+                "model": "haiku",
+                "trust": "L1",
+                "prompt": "Research company",
+                "references": {},
+                "tools": [
+                    {
+                        "server": "webfetch",
+                        "tool": "fetch",
+                        "args_default": {"url": "https://example.com"},
+                        "inject_as": "web_content",
+                        "required": False,
+                    }
+                ],
+            }
+        ]
         self._create_run_with_steps(run, checklist)
 
-        result = execute_checklist(run, self.db_path, checklist, mcp_configs=[{"name": "webfetch", "command": ["echo"]}])
+        execute_checklist(run, self.db_path, checklist, mcp_configs=[{"name": "webfetch", "command": ["echo"]}])
 
         # Should still complete (LLM was called despite tool failure)
         mock_call.assert_called_once()
@@ -219,9 +234,11 @@ class TestReferenceInjection(unittest.TestCase):
             self.db_path.unlink()
 
     def _create_run_with_steps(self, run: SubagentRun, checklist: list[dict]) -> None:
+        import uuid
+
         from xibi.subagent.db import create_run, create_step
         from xibi.subagent.models import ChecklistStep
-        import uuid
+
         create_run(self.db_path, run)
         for i, step_cfg in enumerate(checklist):
             step = ChecklistStep(
@@ -240,20 +257,22 @@ class TestReferenceInjection(unittest.TestCase):
         mock_call.return_value = _mock_response('{"grade": "A"}')
 
         run = _make_run()
-        checklist = [{
-            "skill_name": "evaluate",
-            "model": "sonnet",
-            "trust": "L1",
-            "prompt": "Evaluate this posting using scoring-rubric.md",
-            "references": {
-                "scoring-rubric.md": "# Scoring Rubric\n1-5 scale...",
-                "archetypes.md": "# Archetypes\nTech, Finance...",
-            },
-            "tools": [],
-        }]
+        checklist = [
+            {
+                "skill_name": "evaluate",
+                "model": "sonnet",
+                "trust": "L1",
+                "prompt": "Evaluate this posting using scoring-rubric.md",
+                "references": {
+                    "scoring-rubric.md": "# Scoring Rubric\n1-5 scale...",
+                    "archetypes.md": "# Archetypes\nTech, Finance...",
+                },
+                "tools": [],
+            }
+        ]
         self._create_run_with_steps(run, checklist)
 
-        result = execute_checklist(run, self.db_path, checklist)
+        execute_checklist(run, self.db_path, checklist)
 
         # References should be in scoped_input
         self.assertIn("references", run.scoped_input)
@@ -278,9 +297,11 @@ class TestInputValidation(unittest.TestCase):
             self.db_path.unlink()
 
     def _create_run_with_steps(self, run: SubagentRun, checklist: list[dict]) -> None:
+        import uuid
+
         from xibi.subagent.db import create_run, create_step
         from xibi.subagent.models import ChecklistStep
-        import uuid
+
         create_run(self.db_path, run)
         for i, step_cfg in enumerate(checklist):
             step = ChecklistStep(
@@ -299,14 +320,16 @@ class TestInputValidation(unittest.TestCase):
         mock_call.return_value = _mock_response('{"status": "ok"}')
 
         run = _make_run()
-        checklist = [{
-            "skill_name": "evaluate",
-            "model": "haiku",
-            "trust": "L1",
-            "prompt": "Evaluate the posting",
-            "references": {},
-            "tools": [],
-        }]
+        checklist = [
+            {
+                "skill_name": "evaluate",
+                "model": "haiku",
+                "trust": "L1",
+                "prompt": "Evaluate the posting",
+                "references": {},
+                "tools": [],
+            }
+        ]
         self._create_run_with_steps(run, checklist)
 
         execute_checklist(run, self.db_path, checklist)
@@ -335,9 +358,11 @@ class TestMCPClientLifecycle(unittest.TestCase):
             self.db_path.unlink()
 
     def _create_run_with_steps(self, run: SubagentRun, checklist: list[dict]) -> None:
+        import uuid
+
         from xibi.subagent.db import create_run, create_step
         from xibi.subagent.models import ChecklistStep
-        import uuid
+
         create_run(self.db_path, run)
         for i, step_cfg in enumerate(checklist):
             step = ChecklistStep(
@@ -361,12 +386,29 @@ class TestMCPClientLifecycle(unittest.TestCase):
 
         run = _make_run()
         tool_decl = {
-            "server": "jobspy", "tool": "search_jobs",
-            "args_default": {}, "inject_as": "raw_postings", "required": False,
+            "server": "jobspy",
+            "tool": "search_jobs",
+            "args_default": {},
+            "inject_as": "raw_postings",
+            "required": False,
         }
         checklist = [
-            {"skill_name": "scan", "model": "haiku", "trust": "L1", "prompt": "p1", "references": {}, "tools": [tool_decl]},
-            {"skill_name": "triage", "model": "haiku", "trust": "L1", "prompt": "p2", "references": {}, "tools": [tool_decl]},
+            {
+                "skill_name": "scan",
+                "model": "haiku",
+                "trust": "L1",
+                "prompt": "p1",
+                "references": {},
+                "tools": [tool_decl],
+            },
+            {
+                "skill_name": "triage",
+                "model": "haiku",
+                "trust": "L1",
+                "prompt": "p2",
+                "references": {},
+                "tools": [tool_decl],
+            },
         ]
         self._create_run_with_steps(run, checklist)
 
