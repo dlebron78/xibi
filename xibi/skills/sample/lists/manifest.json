@@ -1,0 +1,117 @@
+{
+  "name": "lists",
+  "description": "General-purpose named lists for tracking jobs, tasks, reading, shopping, or anything else. Items have custom statuses beyond done/not-done.",
+  "version": "1.0.0",
+  "tools": [
+    {
+      "name": "create_list",
+      "description": "Create a named list (e.g., 'Job Pipeline', 'Grocery', 'Reading List'). Raises an error if the name already exists.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The name of the list."
+          },
+          "description": {
+            "type": "string",
+            "description": "Optional description of the list's purpose."
+          }
+        },
+        "required": ["name"]
+      }
+    },
+    {
+      "name": "add_to_list",
+      "description": "Add an item to a named list. Creates the list automatically if it doesn't exist.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "list_name": {
+            "type": "string",
+            "description": "The name of the list to add to."
+          },
+          "label": {
+            "type": "string",
+            "description": "The item label (e.g., 'Head of Product — Anthropic (SF/Remote)')."
+          },
+          "status": {
+            "type": "string",
+            "description": "Initial status for the item (e.g., 'open', 'interested', 'applied'). Defaults to 'open'."
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Optional JSON metadata for the item (e.g., {\"company\": \"Anthropic\", \"url\": \"...\", \"ref_id\": \"...\"})."
+          }
+        },
+        "required": ["list_name", "label"]
+      }
+    },
+    {
+      "name": "remove_from_list",
+      "description": "Remove an item from a list by fuzzy name match. Hard-deletes the item.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "list_name": {
+            "type": "string",
+            "description": "The name of the list."
+          },
+          "item": {
+            "type": "string",
+            "description": "A fragment of the item label to fuzzy-match (e.g., 'ScaleAI' or 'Anthropic')."
+          }
+        },
+        "required": ["list_name", "item"]
+      }
+    },
+    {
+      "name": "update_list_item",
+      "description": "Update an item's status, label, or metadata by fuzzy name match (e.g., mark as 'applied', 'interviewing', 'rejected').",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "list_name": {
+            "type": "string",
+            "description": "The name of the list."
+          },
+          "item": {
+            "type": "string",
+            "description": "A fragment of the item label to fuzzy-match."
+          },
+          "status": {
+            "type": "string",
+            "description": "New status (e.g., 'applied', 'interviewing', 'rejected', 'evaluated')."
+          },
+          "label": {
+            "type": "string",
+            "description": "New label (to rename the item)."
+          },
+          "metadata": {
+            "type": "object",
+            "description": "New metadata to replace existing metadata."
+          }
+        },
+        "required": ["list_name", "item"]
+      }
+    },
+    {
+      "name": "show_list",
+      "description": "Show all items in a named list, with status counts. Optionally filter to a specific status.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "list_name": {
+            "type": "string",
+            "description": "The name of the list."
+          },
+          "status_filter": {
+            "type": "string",
+            "description": "Optional: only show items with this status (e.g., 'applied')."
+          }
+        },
+        "required": ["list_name"]
+      }
+    }
+  ]
+}

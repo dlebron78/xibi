@@ -6,7 +6,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 36  # increment when adding new migrations
+SCHEMA_VERSION = 37  # increment when adding new migrations
 
 
 def _safe_add_column(
@@ -108,6 +108,7 @@ class SchemaManager:
             (34, "ledger: add decay_days column", self._migration_34),
             (35, "subagent: add summary and ttl columns to subagent_runs", self._migration_35),
             (36, "signals: add metadata column + subagent_signal_dispatch table", self._migration_36),
+            (37, "checklist_instance_items: make template_item_id nullable, add status + metadata", self._migration_37),
         ]
 
         for version, description, func in migrations:
@@ -890,6 +891,44 @@ class SchemaManager:
                 FOREIGN KEY (run_id) REFERENCES subagent_runs(id) ON DELETE CASCADE
             )
         """)
+
+
+    def _migration_37(self, conn: sqlite3.Connection) -> None:
+        """Rebuild checklist_instance_items: make template_item_id nullable, add status + metadata."""
+        # Idempotency check: if 'status' column already exists, nothing to do.
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(checklist_instance_items)")}
+        if "status" in cols:
+            return
+
+        conn.execute("""
+            CREATE TABLE checklist_instance_items_new (
+                id                   TEXT PRIMARY KEY,
+                instance_id          TEXT NOT NULL,
+                template_item_id     TEXT,
+                label                TEXT NOT NULL,
+                position             INTEGER NOT NULL,
+                completed_at         DATETIME,
+                deadline_at          DATETIME,
+                deadline_action_ids  TEXT DEFAULT '[]',
+                rollover_prompted_at DATETIME,
+                status               TEXT NOT NULL DEFAULT 'open',
+                metadata             TEXT,
+                FOREIGN KEY (instance_id) REFERENCES checklist_instances(id) ON DELETE CASCADE
+            )
+        """)
+        conn.execute("""
+            INSERT INTO checklist_instance_items_new
+                (id, instance_id, template_item_id, label, position,
+                 completed_at, deadline_at, deadline_action_ids, rollover_prompted_at,
+                 status, metadata)
+            SELECT id, instance_id, template_item_id, label, position,
+                   completed_at, deadline_at, deadline_action_ids, rollover_prompted_at,
+                   'open', NULL
+            FROM checklist_instance_items
+        """)
+        conn.execute("DROP TABLE checklist_instance_items")
+        conn.execute("ALTER TABLE checklist_instance_items_new RENAME TO checklist_instance_items")
+        conn.execute("CREATE INDEX idx_cii_instance_id ON checklist_instance_items(instance_id)")
 
 
 def migrate(db_path: Path) -> list[int]:
