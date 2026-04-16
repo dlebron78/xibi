@@ -100,6 +100,12 @@ Opus subagent revising the spec or fixing the code. No escalation needed.
 - Specs and code live in the same repo. Spec changes can be committed
   directly to `main` via Cowork writing into the Mac mount (no PR needed
   for pure spec moves). Code changes go through PR + review.
+- **Push only when NucBox needs the code.** Pushing to `origin/main`
+  triggers the NucBox watcher (and any GitHub Actions). Only push when
+  implementation code is ready to deploy. Spec drafts, TRR promotions,
+  and pipeline config changes stay as local commits (or uncommitted on
+  disk) until they ride along with the next code push. This avoids
+  triggering external workflows (e.g. Jules) on non-code changes.
 - After a NucBox overnight session, the Mac's local tree is stale until the
   next session-start pull. A `sleepwatcher` hook or manual `xs` alias can
   close that gap outside of Claude Code sessions.
