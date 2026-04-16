@@ -1032,3 +1032,119 @@ Additional v2 additions not in original conditions:
 - §What This Step Does NOT Build — added cost tracking exclusion
 - §Telegram Dispatch — TRR-S3 (polling via tool-result JSON), TRR-S4 (YELLOW tier), TRR-H5 (evaluate via persisted metadata)
 - §Job Signal Surfacing — TRR-H2 (config-based detection), TRR-H3 (deduplicated rendering)
+
+---
+
+## TRR Record — Opus, 2026-04-16 (v2)
+
+**Verdict:** ACCEPT WITH CONDITIONS (addressable in text — two tightening fixes, no scope change)
+
+**Summary:** The v2 revision resolves 9 of 10 prior conditions cleanly; the
+remaining one (condition 3, skill manifest) is resolved in *intent* but the
+manifest JSON shown in the spec is schema-inconsistent with the existing
+codebase pattern (e.g. `nudge/manifest.json`) and would fail the
+`SkillRegistry.validate()` checks. Additionally, the spec assumes a
+manifest-level `tier` field is enforced at runtime — it is not; `resolve_tier`
+reads from a hardcoded `TOOL_TIERS` dict in `xibi/tools.py`. Both are tight
+textual fixes, not structural.
+
+**Confidence:**
+- Vision: High — L2 autonomy framing + security posture consistent.
+- Code: Medium-High — file/line citations are accurate; two schema mismatches below.
+- Specificity: High — dispatch timing, dedup timing, score parsing all pinned.
+- Observability: High — spans, logs, dashboard queries, failure paths all specified.
+- Pipeline: High — step-87A merged (0329225), step-84 merged, ordering correct.
+- Bregger: High — correctly forbids edits; TelegramAdapter path confirmed.
+- Deploy: High — xibi-heartbeat.service name matches systemd/xibi-heartbeat.service.
+
+### v1 condition verification
+
+| # | Status | Where resolved |
+|---|--------|----------------|
+| 1 (retarget `_build_review_dump`) | **SATISFIED** | §Architecture Job Signal Surfacing, TRR-C1 callout; Files Changed table targets line 534 only. `_build_batch_dump` correctly called out as dead code. |
+| 2 (metadata persistence) | **SATISFIED** | §Database Migration adds `_safe_add_column(conn, "signals", "metadata", "TEXT")`; §Files Changed extends `log_signal_with_conn` (rules.py:392) and threads through poller.py:515/:813. TRR-H5 confirms evaluate dispatch reads persisted metadata. |
+| 3 (skill manifest, not executor.py) | **PARTIAL** — see C2-new below. Intent correct (no executor.py in Files Changed), but proposed manifest JSON is schema-incompatible with the existing per-tool pattern. |
+| 4 (`signal_ids` in `subagent_spawns`) | **SATISFIED** | §Dispatch Guidance shows updated schema (lines 307-314); AC#5 references dedup via signal_ids; TRR-H4 wires dispatch loop. |
+| 5 (dispatch timing + score rendering) | **SATISFIED** | TRR-S1 (rows before spawn, tx rollback), TRR-S2 (explicit status mapping with score sources), TRR-C5 (structured parsing replacing `[:200]`) all spelled out. |
+| 6 (cost-check phrase) | **SATISFIED** | TRR-C4 callout at line 261-263; no "check subagent cost" phrase remains in dispatch rules. Cost exclusion documented in §What This Step Does NOT Build. |
+| 7 (User Journey + Observability) | **SATISFIED** | Both sections present (lines 39-71 and 152-182), cover trigger/interaction/outcome/verification and span/log/dashboard/failure. |
+| 8 (Q1 — which heartbeat) | **SATISFIED** | §TRR Addendum (lines 919-948) resolves: xibi-heartbeat live, bregger-heartbeat disabled 2026-03-30. |
+| 9 (step-87A merged + deployed) | **SATISFIED** | §Constraints lines 495-498 cites commit `0329225`, confirms doctor verified 2026-04-16. Matches repo state (`_safe_add_column` in xibi/db/migrations.py:12-51, SCHEMA_VERSION=35 ready for bump to 36). |
+| 10 (ALTERs via `_safe_add_column`) | **SATISFIED** | §Database Migration line 535 uses the helper; §Constraints line 499-502 forbids raw suppress. |
+
+### New findings
+
+**[C2-new] Skill manifest JSON is schema-inconsistent with the existing pattern.**
+Spec §Telegram Dispatch (lines 413-423) proposes:
+```json
+{ "name": "subagent", "description": "...", "tier": "YELLOW",
+  "access": "operator", "output_type": "action",
+  "tools": ["spawn_subagent"] }
+```
+But every existing manifest (e.g. `xibi/skills/sample/nudge/manifest.json`,
+`schedule/manifest.json`) puts `tier`, `access`, `output_type`, `timeout_secs`
+at the **per-tool** level and `tools` is an **array of tool objects with
+`name`, `description`, `input_schema`, `output_type`**, not an array of
+strings. `SkillRegistry.validate()` (registry.py:102-114) explicitly warns
+when a tool is missing `name`, `description`, or `output_type`. The spec's
+proposed shape would produce validation warnings and likely break
+`get_tool_meta` lookups (registry.py:46-52) that callers depend on.
+**Fix:** Restate the manifest with the per-tool shape:
+```json
+{
+  "name": "subagent",
+  "description": "Dispatch a domain agent to perform deep work",
+  "tools": [{
+    "name": "spawn_subagent",
+    "description": "...",
+    "input_schema": {...},
+    "output_type": "action",
+    "tier": "YELLOW",
+    "access": "operator",
+    "timeout_secs": 30
+  }]
+}
+```
+
+**[C2-new] `tier: YELLOW` in the manifest is not enforced at runtime unless
+`spawn_subagent` is also added to `TOOL_TIERS` in `xibi/tools.py`.**
+`resolve_tier` (tools.py:70-84) consults a hardcoded `TOOL_TIERS` dict and
+falls back to `DEFAULT_TIER = RED` for unknown tools. The manifest's `tier`
+field is not read by `resolve_tier`. This means the spec's TRR-S4 intent
+("match `nudge`") requires two changes, not one: (a) manifest declaration,
+(b) add `"spawn_subagent": PermissionTier.YELLOW` to `TOOL_TIERS` and
+`WRITE_TOOLS` at `xibi/tools.py:17-67`. AC#9 and AC#12 implicitly assume
+this works. **Fix:** Add a row to §Files Changed for `xibi/tools.py`
+(register `spawn_subagent` in `TOOL_TIERS` and `WRITE_TOOLS`) and call out
+in §Architecture that manifest-declared tier is documentation until
+reflected in `tools.py`. Note: if left RED, Roberto cannot call the tool
+in non-interactive paths.
+
+**[C3-nit] `subagent_signal_dispatch` table lacks a `FOREIGN KEY` to
+`subagent_runs(id)`.** The schema in §Database Migration (lines 344-353)
+defines `run_id TEXT NOT NULL` but no FK constraint, unlike
+`subagent_checklist_steps` (migrations.py:813 — `REFERENCES subagent_runs(id)`).
+Not blocking given TRR-S1's ordering (row written before spawn with nullable
+intent), but consider adding `REFERENCES subagent_runs(id) ON DELETE CASCADE`
+for consistency — or explicitly document why the FK is omitted.
+
+**[C3-nit] Dispatch timing vs. spawn_subagent idempotency.** §Posting Dedup
+step 1 opens a transaction, writes dispatch rows, then calls
+`spawn_subagent()`. But `spawn_subagent` itself writes a `subagent_runs` row
+before returning a `run_id`. If dispatch rows are written first (before
+the run exists), the `run_id` is not yet known. The flow at lines 328-337
+says "Updates the dispatch rows with the run_id" in step 4 — that's fine,
+but implementers should note the dispatch row's `run_id` column must be
+nullable at insert time (or use a placeholder). §Database Migration
+declares `run_id TEXT NOT NULL` which conflicts with step 2→3 ordering.
+**Fix:** Either drop `NOT NULL` on `run_id`, or write dispatch rows *after*
+`spawn_subagent` returns (simpler) and document rollback semantics
+accordingly.
+
+### Independence note
+
+This TRR was conducted by a fresh Opus subagent with no draft-authoring
+context. The v1 findings, addendum, and v2 revision were read as
+pre-fetched input; all code citations were independently verified against
+HEAD (observation.py, rules.py, migrations.py, skills/registry.py,
+tools.py, skills/sample/nudge/manifest.json, systemd/xibi-heartbeat.service).
