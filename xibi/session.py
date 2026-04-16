@@ -228,6 +228,16 @@ Exchanges:
                 (str(uuid.uuid4()), self.session_id, query, answer),
             )
 
+    def add_nudge_turn(self, nudge_text: str) -> None:
+        """Record an outbound nudge so it appears in conversation history."""
+        with open_db(self.db_path) as conn, conn:
+            conn.execute(
+                """INSERT INTO session_turns
+                   (turn_id, session_id, query, answer, tools_called, exit_reason, summary, source)
+                   VALUES (?, ?, ?, ?, '[]', 'nudge', '', 'nudge')""",
+                (str(uuid.uuid4()), self.session_id, "", nudge_text),
+            )
+
     def _get_session_memories(self) -> str:
         """
         Fetch recent session_memory beliefs for injection into context.

@@ -300,3 +300,21 @@ def test_get_context_block_injects_memories(mock_get_model, db_path):
     block = session.get_context_block()
     assert "What I remember from before:" in block
     assert "I remember you like coffee" in block
+
+
+def test_add_nudge_turn_recorded_in_context(db_path):
+    """Nudges recorded via add_nudge_turn appear in get_context_block."""
+    ctx = SessionContext(session_id="nudge-test", db_path=db_path)
+
+    # Add a normal turn first
+    result = MagicMock()
+    result.answer = "Sure, checking now."
+    result.exit_reason = "finish"
+    result.steps = []
+    ctx.add_turn("what's new?", result)
+
+    # Record a nudge
+    ctx.add_nudge_turn("ℹ️ 3 new job postings matched your criteria")
+
+    block = ctx.get_context_block()
+    assert "3 new job postings" in block
