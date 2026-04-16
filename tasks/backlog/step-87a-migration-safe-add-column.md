@@ -401,3 +401,121 @@ called from other places (e.g. a periodic cron, step-87B's auto-reconciler)
 > step-87B (schema reconciliation) is a **parked follow-on** and is not
 > required for step-85.
 > See `WORKFLOW.md`.
+
+---
+
+## TRR Record — Opus, 2026-04-16
+
+**Verdict:** ACCEPT WITH CONDITIONS
+
+**Summary:** This spec narrows catastrophic error handling in migration code
+and adds read-only schema drift detection — the right approach to prevent
+silent migration failures like BUG-009. The core design is sound:
+`_safe_add_column` with post-ALTER verification, in-memory reference schema,
+and doctor CLI integration are all well-motivated. However, the spec
+conflates two distinct replacement patterns (ALTER TABLE ADD COLUMN vs.
+CREATE INDEX IF NOT EXISTS), leaves migration 15 unspecified, and glosses
+over SQLite type affinity in drift detection. The conditions below are
+necessary to avoid false positives and implementation ambiguity.
+
+**Findings:**
+
+[C2] **Spec conflates ALTER and INDEX suppressors.** The "17 sites" claim
+includes suppress usages around `CREATE INDEX IF NOT EXISTS` (migration 18,
+lines 507, 509, 531). These are semantically idempotent without helper
+functions — the `IF NOT EXISTS` clause already handles re-runs. Replacing
+them with `_safe_add_column(conn, "...", "...")` doesn't match the function
+signature (which expects `table`, `col_name`, `col_type`). The spec's
+"refactored individually" language papers over this. **Condition:**
+Explicitly partition the 17 sites into two categories: (a) ALTER TABLE ADD
+COLUMN sites, which become `_safe_add_column` calls, and (b) CREATE INDEX
+IF NOT EXISTS sites, which stay as bare `conn.execute()` calls (or a
+separate `_safe_create_index` if you want symmetry). Document in an inline
+code comment which category each belongs to. Recount and confirm totals in
+the PR description.
+
+[C2] **Migration 15 is unaddressed and creates re-run vulnerability.**
+`_migration_15` applies `ALTER TABLE session_turns ADD COLUMN source TEXT
+NOT NULL DEFAULT 'user'` with **no suppressor**. If a stale DB already has
+this column, re-running the migration crashes. The spec doesn't mention
+migration 15. This is either a pre-existing bug (not this spec's fault) or
+an intentional exception (run-once). **Condition:** Clarify migration 15's
+idempotency: either wrap in `_safe_add_column` as part of this spec, or
+document as single-run-only with an inline code comment explaining why.
+Test the chosen behavior.
+
+[C2] **SQLite type affinity will produce false-positive drift reports.**
+PRAGMA table_info returns the *declared* type string verbatim. A column
+created in the initial CREATE TABLE may report `INTEGER NOT NULL DEFAULT 0`
+while an ALTER-added column reports just `INTEGER`. Two identical-in-use
+columns can report different strings. Spec doesn't specify handling.
+**Condition:** Define type comparison logic in the `check_schema_drift`
+contract. At minimum, extract the base type (e.g. split on first whitespace)
+before comparing and document the rationale in a docstring. If full
+declared-type matching is intentional, say so and test that case
+explicitly.
+
+[C2] **Schema version rollback is implicit and untested.** The spec relies
+on `SchemaManager.migrate()` not committing the version bump if a migration
+raises mid-way. Current implementation wraps the entire ALTER + INSERT in a
+single `with sqlite3.connect(...)` block and commits only after both
+succeed — on exception, the connection context manager rolls back. Good, but
+there's no unit test of this. **Condition:** The already-required
+`test_migration_failure_does_not_bump_version` must explicitly: (1) inject a
+failure mid-migration (e.g. `_safe_add_column` raises), (2) call
+`SchemaManager(db_path).migrate()`, (3) assert no row in `schema_version`
+for that version, (4) assert the partial ALTER did not persist (check PRAGMA
+table_info). This test is load-bearing — it proves the entire "loud failure"
+contract.
+
+[C3] **Reference schema build uses `:memory:` without error handling.** The
+spec doesn't specify how `build_reference_schema()` handles the in-memory
+DB. A naive `SchemaManager(Path(":memory:")).migrate()` will fail because
+`Path(":memory:").exists()` is False. **Condition:** Document in the
+`build_reference_schema` docstring that it uses `sqlite3.connect(":memory:")`
+directly (not via SchemaManager), or refactor SchemaManager to accept
+optional in-memory mode. Implementation must not assume `db_path.exists()`.
+
+[C3] **Scenario 4 fixture requires SQLite 3.35+.** `ALTER TABLE ... DROP
+COLUMN` assumes sqlite3 ≥ 3.35. Python 3.11 ships with 3.37+, fine in CI.
+**Condition:** If a test needs to run on older local sqlite, fall back to
+`CREATE TABLE ... AS SELECT * FROM ...`, or explicitly require Python 3.11+
+for the test. Document the approach in `test_schema_check.py`.
+
+[C3] **"Stray DB" DoD item is operational, not verifiable in CI.** The
+final DoD checkbox ("reconcile or document `~/.xibi/xibi.db`") is a
+post-deploy manual action. **Condition:** Move to a post-deploy runbook
+note, or refine DoD language to: "If `~/.xibi/xibi.db` exists on target
+systems, it is either (a) merged into a known workdir and deleted,
+(b) renamed `.stray`, or (c) documented in post-deploy notes with
+justification."
+
+**Conditions for Promotion (numbered — copy into DoD):**
+
+1. Enumerate all 17 `contextlib.suppress(sqlite3.OperationalError)` sites
+   and partition into ALTER (use `_safe_add_column`) vs. CREATE INDEX (keep
+   as bare execute or new helper). Confirm count in PR description and add
+   inline code comments.
+2. Specify how migration 15's `ALTER TABLE session_turns ADD COLUMN source`
+   is handled: either wrap in `_safe_add_column` or document as
+   single-run-only with rationale and test.
+3. Define type comparison logic in `check_schema_drift` contract (normalize
+   base type, document choice, test both fresh and ALTER-added columns).
+4. Implement `test_migration_failure_does_not_bump_version` with explicit
+   assertions on version-row absence and partial-ALTER non-persistence.
+5. Document `build_reference_schema` implementation approach for `:memory:`
+   DB to avoid Path-existence checks.
+6. Specify drift-test fixture approach for SQLite < 3.35 or require Python
+   3.11+ in test file.
+7. Move "reconcile stray DB" from DoD to post-deploy runbook, or refine
+   language to (a), (b), or (c) above.
+
+**Confidence:** High on migration safety and loud-failure design. Medium on
+drift detection due to SQLite type affinity ambiguity — condition 3
+clarifies this. Condition 2 (migration 15) is a small gap but critical for
+re-run safety. Condition 4 (version rollback test) is essential to validate
+the core promise.
+
+**Independence note:** Spec drafted by Opus in-conversation on 2026-04-15.
+This TRR was conducted by a fresh Opus subagent with no draft-authoring
+context, per `feedback_no_selfauthor_trr.md`.
