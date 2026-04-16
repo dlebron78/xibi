@@ -2,8 +2,10 @@
 
 > **Epic:** Subagent Runtime & Domain Agent System (`tasks/EPIC-subagent.md`)
 > **Block:** 5 of 6 — Signal-to-Subagent Dispatch
-> **Phase:** 5 — depends on Block 4 (step-84, MCP prefetch)
+> **Phase:** 5 — depends on Block 4 (step-84, MCP prefetch) and step-87A (migration safety)
 > **Acceptance criteria:** see below (13 items)
+> **Hard dependency:** Step-87A must be merged and deployed before implementation begins.
+> All ALTERs in this step's migration MUST use `_safe_add_column`.
 
 ---
 
@@ -34,19 +36,169 @@ Step-84 gives career-ops the ability to consume real data (MCP prefetch, scan sk
 
 ---
 
+## User Journey
+
+> **TRR-S6 fix:** Added per template requirement.
+
+Two trigger paths, both operator-facing:
+
+### Path A: Autonomous (heartbeat observation cycle)
+
+1. **Trigger:** Heartbeat's 8-hour jobspy poll discovers new postings. Signals
+   land in the DB. Next observation cycle runs manager review.
+2. **Interaction:** Review dump shows job threads with expanded posting detail
+   and evaluation status. LLM decides to dispatch career-ops triage on
+   unevaluated postings. Dispatch happens silently — no user action required.
+3. **Outcome:** Triage scores postings. Next review cycle sees scores, dispatches
+   evaluate on top scorers. Evaluation results (grade, recommendation) surface
+   in the following review cycle and via Telegram nudge.
+4. **Verification:** `subagent_signal_dispatch` table has rows for dispatched
+   signals. Dashboard `/api/subagent_runs` shows runs with structured output.
+   Telegram digest mentions evaluation results. `xibi doctor` schema check
+   confirms new `metadata` column and `subagent_signal_dispatch` table.
+
+### Path B: User-initiated (Telegram)
+
+1. **Trigger:** Daniel sends Roberto a message like "evaluate this posting" or
+   "triage these jobs" with posting details or a reference to a known thread.
+2. **Interaction:** Roberto calls the `spawn_subagent` tool, dispatches
+   career-ops with the posting data from `signals.metadata`. Responds with
+   "Running career-ops evaluate — I'll have results shortly."
+3. **Outcome:** On next interaction, Roberto checks the run status and surfaces
+   results: grade, score, recommendation.
+4. **Verification:** Session turns contain the `spawn_subagent` tool call and
+   result. `subagent_runs` has the run with output.
+
+---
+
+## Real-World Test Scenarios
+
+### Scenario 1: Heartbeat discovers jobs → review cycle dispatches triage
+
+**What you do:** Wait for the next 8-hour jobspy poll cycle (or trigger
+manually: `systemctl --user restart xibi-heartbeat.service`). Let the
+observation cycle run its manager review.
+
+**What Roberto does:** Heartbeat polls jobspy, writes signals with full
+metadata JSON. Manager review builds the review dump with expanded posting
+blocks. LLM sees `[NOT_EVALUATED]` postings, dispatches career-ops triage
+with signal_ids and scoped_input.
+
+**What you see:** Nothing immediately — this is autonomous. Check after:
+```bash
+sqlite3 ~/xibi/data/xibi.db "SELECT signal_id, skill, run_id FROM subagent_signal_dispatch ORDER BY dispatched_at DESC LIMIT 10"
+```
+
+**How you know it worked:** `subagent_signal_dispatch` has rows. `subagent_runs`
+has a triage run with `status='DONE'` and `output` containing `scored_pipeline`.
+Dashboard `/api/subagent_runs` shows the run.
+
+### Scenario 2: Triage results → review cycle dispatches evaluate on top scorers
+
+**What you do:** Wait for the next observation cycle after triage completes.
+
+**What Roberto does:** Review dump shows triage results with scores (not
+truncated). LLM sees top scorers (≥ 4.0), dispatches career-ops evaluate
+with posting data from `signals.metadata`.
+
+**What you see:** After the cycle:
+```bash
+sqlite3 ~/xibi/data/xibi.db "SELECT * FROM subagent_signal_dispatch WHERE skill='evaluate'"
+```
+
+**How you know it worked:** Evaluate runs exist with structured output
+(grade, composite_score, recommendation). The posting was not re-fetched —
+data came from `signals.metadata`.
+
+### Scenario 3: Telegram — "evaluate this posting"
+
+**What you do:** Send Roberto a message:
+```
+Daniel: evaluate the Anthropic Head of Product posting
+```
+
+**What Roberto does:** Looks up the signal by thread/keyword, reads
+`signals.metadata` for full posting data, calls `spawn_subagent` tool with
+`agent_id="career-ops"`, `skills=["evaluate"]`, `scoped_input={"posting": ...}`.
+
+**What you see:**
+```
+Roberto: Running career-ops evaluate on Head of Product, Agentic AI at Anthropic — I'll send results when it's done.
+```
+
+On next message:
+```
+Roberto: Evaluation complete — Grade: A-, Score: 4.5/5.0, Recommendation: Strong apply. Remote-friendly, AI-native role, aligns with your agent architecture background.
+```
+
+**How you know it worked:** Session turns contain the `spawn_subagent` tool
+call. `subagent_runs` has the evaluate run with output.
+
+### Scenario 4: Dedup — re-run does not re-dispatch
+
+**What you do:** Trigger a second observation cycle after Scenario 1.
+
+**What Roberto does:** Review dump shows the same postings but now tagged
+`[TRIAGE: 4.2]` instead of `[NOT_EVALUATED]`. LLM sees they've been
+processed and does not re-dispatch triage.
+
+**What you see:** No new `subagent_signal_dispatch` rows for the same
+`(signal_id, 'triage')` pairs.
+
+**How you know it worked:** `SELECT COUNT(*) FROM subagent_signal_dispatch
+WHERE signal_id='sig-456' AND skill='triage'` returns 1, not 2.
+
+---
+
+## Observability
+
+> **TRR-S5 fix:** Added per template requirement.
+
+1. **Trace integration:** Emit span `subagent.dispatched` on each
+   `spawn_subagent()` call with attributes `{trigger, agent_id, skills,
+   signal_ids, run_id}`. The existing `spawn_subagent` may already emit a
+   span — verify and extend with `signal_ids` if not present.
+
+2. **Log coverage:**
+   - INFO on dispatch decision: "review cycle dispatched career-ops triage
+     with N postings, run=<run_id>, signals=<signal_ids>"
+   - INFO on result feedback: "career-ops triage completed, N postings scored,
+     top score=X.X"
+   - WARNING on dispatch failure: "spawn_subagent raised for career-ops triage:
+     <error>" (observation.py:1116–1118 already logs errors — verify sufficient)
+   - INFO on Telegram dispatch: "Roberto dispatched career-ops evaluate via
+     spawn_subagent tool, run=<run_id>"
+
+3. **Dashboard/query surface:** `subagent_signal_dispatch` table joinable to
+   `subagent_runs.output` to see which postings were triaged/evaluated with
+   what score. Existing dashboard endpoints (`/api/subagent_runs`,
+   `/api/subagent_cost_breakdown`) already surface run data.
+
+4. **Failure visibility:** If dispatch fails, `spawn_subagent` raises and
+   observation.py:1116–1118 records the error in `result.errors`. The LLM sees
+   the failure in the next review cycle's result feedback section and can
+   decide whether to retry. For Telegram path, the tool returns an error
+   response and Roberto tells Daniel directly.
+
+---
+
 ## Architecture
 
 ### Job Signal Surfacing (observation.py change)
 
-The review dump builder (`_build_batch_dump`, line 972) currently shows threads as:
+> **TRR-C1 fix:** All changes target `_build_review_dump` (observation.py:534),
+> which is the live function called by `_run_manager_review` (line 1026).
+> `_build_batch_dump` (line 972) is dead code — do not edit it.
 
-```
-[thread-123] Remote PM roles
-  priority=medium | owner=unclear | signals=4
-  summary: 4 new postings from Indeed matching PM Director criteria
-```
+The live review dump (`_build_review_dump`) currently shows threads with
+source channels and recent signals listed separately (observation.py:688–711).
+For job signal threads, replace the generic signal listing with an expanded
+posting block so the LLM sees structured data:
 
-For job signal threads, expand to include the underlying postings:
+> **TRR-H3 fix:** For job-source threads, render the posting block **as** the
+> signal listing. Do not show the same signals twice (once in the generic
+> recent-signals section and again in the posting block). This saves tokens
+> and eliminates duplication the LLM would have to reconcile.
 
 ```
 [thread-123] Remote PM roles
@@ -59,15 +211,55 @@ For job signal threads, expand to include the underlying postings:
     [sig-459] Head of Product, Agentic AI — Anthropic (SF/Remote) [NOT_EVALUATED]
 ```
 
-**How to detect job signal threads:** The heartbeat's job sources use `signal_extractor: "jobs"` in config.json. Signals from these sources have a `source_type` or `channel` that identifies them as job postings. The review dump builder checks the thread's `source_channels` field — if it includes a job source, expand with posting detail.
+**How to detect job signal threads (TRR-H2 fix):** Do not hardcode `"jobspy"`.
+Build a helper that iterates `self.config["sources"]` and collects source
+names where `signal_extractor == "jobs"`. A thread is a "job thread" iff any
+of those source names appear in its `source_channels` JSON array. This
+future-proofs for Greenhouse/Lever/Ashby when wired later.
 
-**Where the posting data comes from:** Job signals are stored in the `signals` table with structured content (title, company, location, etc.) extracted by the jobs signal extractor (`xibi/heartbeat/extractors.py`). The dump builder reads recent signals for job threads and formats them inline.
+```python
+def _job_source_names(self) -> set[str]:
+    """Source names configured with signal_extractor='jobs'."""
+    return {
+        name for name, cfg in self.config.get("sources", {}).items()
+        if cfg.get("signal_extractor") == "jobs"
+    }
+```
 
-**Evaluation status:** For each posting signal, check `subagent_runs` and `subagent_checklist_steps` for a prior evaluate or triage run that included this posting. Show `[EVALUATED: score]` or `[NOT_EVALUATED]`. This prevents the LLM from re-dispatching already-evaluated jobs.
+**Where the posting data comes from (TRR-C2 fix):** Today, `extract_job_signals`
+(extractors.py:438–491) builds a metadata dict with `{title, company,
+location, salary_min, salary_max, url, posted_at, job}` but `log_signal_with_conn`
+(rules.py:392) does not persist it — the metadata is dropped. Only
+`content_preview` (a `"{title} | {company} | {location} | {salary}"` string)
+and `ref_id` are stored. **URL and description are lost.**
+
+**Fix:** Add a `metadata JSON` column to the `signals` table (see §Database
+Migration below). Extend `log_signal_with_conn` to accept and persist
+`metadata: dict | None`. Thread the extractor's metadata dict through the
+two call sites (poller.py:515, :813). The review dump builder then reads
+`signals.metadata` JSON to render the expanded posting block with full
+structured data.
+
+**Evaluation status (TRR-S2 fix):** For each posting signal, check the
+`subagent_signal_dispatch` table for prior dispatch records. Status mapping:
+
+- `subagent_signal_dispatch` has row with `skill='evaluate'` → `[EVALUATED: score]`
+  (score parsed from `subagent_runs.output` JSON, matched by run_id)
+- `subagent_signal_dispatch` has row with `skill='triage'` only → `[TRIAGE: score]`
+  (score from `scored_pipeline[].score` in triage output)
+- No row → `[NOT_EVALUATED]`
 
 ### Dispatch Guidance (review prompt change)
 
-Add a specific section to `_build_review_system_prompt` (line 820):
+Add a specific section to `_build_review_system_prompt` (observation.py:820):
+
+> **TRR-H1 fix:** The `subagent_spawns` schema now requires a `signal_ids`
+> array alongside `scoped_input`. This lets the dispatch loop record which
+> signals were dispatched (for dedup) without parsing LLM-produced JSON.
+
+> **TRR-C4 fix:** Removed "check subagent cost in the review dump" — cost
+> is not currently in the dump. Cost tracking is derived from token usage
+> after the fact, not a dispatch-time LLM concern for v1.
 
 ```
 ## Career-Ops Dispatch Rules
@@ -78,6 +270,7 @@ When you see job signal threads with NOT_EVALUATED postings:
    "subagent_spawns": [{
      "agent_id": "career-ops",
      "reason": "4 unevaluated postings in Remote PM roles thread",
+     "signal_ids": ["sig-456", "sig-457", "sig-458", "sig-459"],
      "scoped_input": {"postings": [<posting objects from the thread>]},
      "skills": ["triage"]
    }]
@@ -86,7 +279,8 @@ When you see job signal threads with NOT_EVALUATED postings:
    "subagent_spawns": [{
      "agent_id": "career-ops",
      "reason": "Strong match: Director of Product at ScaleAI",
-     "scoped_input": {"posting": <posting object>},
+     "signal_ids": ["sig-456"],
+     "scoped_input": {"posting": <posting object with title, company, location, url, description from metadata>},
      "skills": ["evaluate"]
    }]
 
@@ -95,21 +289,55 @@ When you see job signal threads with NOT_EVALUATED postings:
 4. Do NOT dispatch if:
    - All postings in the thread are already EVALUATED
    - The thread was reviewed less than 24 hours ago and no new signals arrived
-   - Budget would be exceeded (check subagent cost in the review dump)
 
-Include the actual posting data in scoped_input — title, company, location, description text.
-Do NOT dispatch with empty scoped_input.
+5. ALWAYS include:
+   - signal_ids: the signal IDs from the posting block (used for dedup tracking)
+   - Actual posting data in scoped_input — title, company, location, url, description
+   - Do NOT dispatch with empty scoped_input or missing signal_ids
 ```
 
-This is guidance, not hardcoded logic — the LLM decides. But it's specific enough that the LLM knows what "dispatch career-ops" actually means in terms of JSON structure.
+This is guidance, not hardcoded logic — the LLM decides. But it's specific
+enough that the LLM knows what "dispatch career-ops" actually means in terms
+of JSON structure.
+
+**Updated `subagent_spawns` schema** (observation.py:926–933) — add
+`signal_ids` as a required field:
+
+```python
+"subagent_spawns": [{
+    "agent_id": "string — registered agent name",
+    "reason": "string — why you're dispatching",
+    "signal_ids": ["string — signal IDs being dispatched"],
+    "scoped_input": {"object — data the agent needs"},
+    "skills": ["string — which skills to run"]
+}]
+```
+
+> **TRR-H4 fix:** The dispatch loop at observation.py:1097–1107 must pass
+> `signal_ids` through to the dedup recording. After `spawn_subagent()`
+> returns a run_id, iterate `signal_ids` and write one
+> `subagent_signal_dispatch` row per `(signal_id, skill)`.
 
 ### Posting Deduplication
 
-Add a `dispatched_postings` tracking mechanism:
+> **TRR-S1 fix:** Dispatch rows are written **before** `spawn_subagent()`
+> runs (on SPAWNED status) so a failed/retried run still marks the signal
+> as dispatched. If `spawn_subagent()` raises, roll back the dispatch rows
+> in the same transaction.
 
-- When the observation cycle dispatches career-ops with postings in `scoped_input`, record a mapping: `signal_id → run_id` in a new table or in the signal's metadata
-- The review dump builder checks this mapping when showing posting status (`[EVALUATED]` vs `[NOT_EVALUATED]`)
-- The LLM sees which postings have already been processed and skips them
+When the observation cycle dispatches career-ops, the dispatch loop:
+
+1. Opens a transaction
+2. Writes one `subagent_signal_dispatch` row per `(signal_id, skill)` from
+   the LLM's `signal_ids` array
+3. Calls `spawn_subagent()` — returns run_id
+4. Updates the dispatch rows with the run_id
+5. Commits
+6. If step 3 raises, the transaction rolls back (dispatch rows disappear),
+   and the signals remain `[NOT_EVALUATED]` for the next review cycle
+
+The review dump builder checks this table when rendering posting status
+(see §Evaluation status above).
 
 **Schema:**
 
@@ -126,26 +354,79 @@ CREATE TABLE IF NOT EXISTS subagent_signal_dispatch (
 
 ### Result Feedback Loop
 
-The observation cycle already injects subagent results into the review dump (observation.py line 719-737). Extend this to include career-ops specifics:
+> **TRR-C5 fix:** The current injection at observation.py:732 truncates
+> output to `str(run["output"])[:200]`, which clips structured JSON
+> mid-token. Replace with skill-aware structured parsing.
 
-- For career-ops triage runs: show scored_pipeline with scores
-- For career-ops evaluate runs: show grade, composite_score, recommendation
-- For failed runs: show error detail so the LLM can reason about retries
+The observation cycle already injects subagent results into the review dump
+(observation.py:718–737). Replace the blunt `[:200]` truncation with
+structured extraction for career-ops runs:
 
-The LLM then sees: "triage scored 4 postings, 2 scored above 4.0 — dispatch evaluate on those two."
+- **For career-ops triage runs:** Parse `run.output` JSON, extract
+  `scored_pipeline` array. Render as:
+  ```
+  [run-abc] career-ops triage (DONE, 4 postings):
+    sig-456 Director of Product, ScaleAI — score: 4.2
+    sig-457 VP Product, Trade Desk — score: 2.8
+    sig-458 Senior PM, Stripe — score: 3.5
+    sig-459 Head of Product, Anthropic — score: 4.7
+  ```
+- **For career-ops evaluate runs:** Parse `run.output` JSON, extract
+  `evaluation.composite_score`, `evaluation.grade`, `evaluation.recommendation`.
+  Render as:
+  ```
+  [run-def] career-ops evaluate (DONE):
+    sig-456 Director of Product, ScaleAI — grade: B+, score: 4.2, rec: Apply
+  ```
+- **For failed runs:** Show `run.error` detail so the LLM can reason about
+  retries.
+- **For non-career-ops runs:** Keep the existing `str(output)[:200]`
+  truncation as a fallback.
+
+The LLM then sees: "triage scored 4 postings, 2 scored above 4.0 — dispatch
+evaluate on those two." This cross-cycle reasoning is the core value of the
+feedback loop.
 
 ---
 
-### Telegram Dispatch (react.py change)
+### Telegram Dispatch (skill manifest, not executor.py)
 
-The second trigger path: Daniel messages Roberto "evaluate this posting" or "triage these jobs" and Roberto dispatches career-ops directly.
+> **TRR-C3 fix:** Do not add `spawn_subagent` handling in `xibi/executor.py`.
+> The executor resolves every tool name to a skill manifest. Create a new
+> skill manifest instead — zero changes to executor.py.
 
-**Current state:** `xibi/channels/telegram.py` → `xibi/react.py`. Roberto's react loop has tools (nudge, create_task, etc.) but no `spawn_subagent` tool. Meanwhile, `bregger_core.py` has hardcoded subagent handlers (lines 2686-2900) that only support `test-echo` — these are dead code. The live Telegram service uses `TelegramAdapter`, not `BreggerCore`.
+> **TRR-S4 fix:** The skill manifest declares `tier: "YELLOW"` (command-layer
+> gates), `access: "operator"`, and `output_type: "action"` to match `nudge`.
+> Career-ops evaluate spins up an LLM run that can cost $1+ and take 10 min.
 
-**What to build:** Add a `spawn_subagent` tool to the react loop's tool registry:
+The second trigger path: Daniel messages Roberto "evaluate this posting" or
+"triage these jobs" and Roberto dispatches career-ops directly.
+
+**Current state:** `xibi/channels/telegram.py` → `xibi/react.py`. Roberto's
+react loop has tools (nudge, create_task, etc.) but no `spawn_subagent` tool.
+The live Telegram service uses `TelegramAdapter`, not `BreggerCore`. The
+subagent handlers in `bregger_core.py` (lines 2686–2900) are dead code — do
+not extend them.
+
+**What to build:** A new skill manifest at
+`xibi/skills/sample/subagent/manifest.json`:
+
+```json
+{
+    "name": "subagent",
+    "description": "Dispatch a domain agent to perform deep work",
+    "tier": "YELLOW",
+    "access": "operator",
+    "output_type": "action",
+    "tools": ["spawn_subagent"]
+}
+```
+
+With a matching tool implementation at
+`xibi/skills/sample/subagent/tools/spawn_subagent.py`:
 
 ```python
-# In react.py tool definitions
+# Tool schema
 {
     "name": "spawn_subagent",
     "description": "Dispatch a domain agent to perform deep work. Use when a task requires "
@@ -159,19 +440,42 @@ The second trigger path: Daniel messages Roberto "evaluate this posting" or "tri
 }
 ```
 
-When Roberto calls this tool, the executor:
-1. Validates `agent_id` exists in the registry
-2. Calls `spawn_subagent()` with `trigger="telegram"` and `trigger_context={"chat_id": ..., "message_id": ...}`
+The tool implementation imports `xibi.subagent.runtime.spawn_subagent` and
+returns `{run_id, status}`. The executor's standard skill-tool dispatch
+handles it without any changes to executor.py.
+
+When Roberto calls this tool:
+1. Executor validates `agent_id` exists in the registry (standard skill flow)
+2. Tool calls `spawn_subagent()` with `trigger="telegram"` and
+   `trigger_context={"chat_id": ..., "message_id": ...}`
 3. Returns the run ID and initial status to Roberto
-4. Roberto tells Daniel: "Running career-ops evaluate on that posting — I'll send results when it's done."
+4. Roberto tells Daniel: "Running career-ops evaluate on that posting — I'll
+   send results when it's done."
 
-**Result surfacing:** When the run completes (DONE or FAILED), the result needs to reach Roberto for the next Telegram message. Two options:
-- **Polling (simple):** Roberto checks `subagent_runs` for the run_id on next interaction
-- **Callback (better):** The executor writes a signal to the signals table when the run completes, which the observation cycle picks up and nudges via Telegram
+> **TRR-S3 fix:** Result surfacing via polling. The `spawn_subagent` tool
+> returns `{run_id, status}` in its tool-result JSON. This is naturally
+> persisted in the session context (session turns record tool results).
+> On Roberto's next interaction, the react loop's session context contains
+> the run_id. Roberto checks `subagent_runs` for that run_id and surfaces
+> results if the run completed. No separate run_id storage mechanism needed.
 
-This step implements polling. The callback path is a natural extension but not required for v1.
+This step implements polling. The callback path (executor writes a completion
+signal → observation cycle nudges via Telegram) is a natural extension but
+not required for v1.
 
-**Anti-pattern — do NOT wire into bregger_core.py.** The subagent handlers in `bregger_core.py` (subagent_spawn, subagent_status, subagent_cancel at lines 2686-2900) are dead code. `xibi-telegram.service` does not use `BreggerCore`. All Telegram dispatch goes through `TelegramAdapter` → `react.py`. The bregger handlers should be removed or ignored, never extended.
+> **TRR-H5 fix:** Evaluate dispatches from Telegram use posting data from the
+> persisted `signals.metadata` JSON (added in §Database Migration below).
+> When Daniel says "evaluate this posting," Roberto looks up the signal by
+> ref_id or thread, reads its metadata, and passes the full posting object
+> (title, company, location, url, description) as `scoped_input.posting`.
+> This satisfies evaluate's `standalone_input` requirement (agent.yml:110–115)
+> without needing to re-fetch via MCP.
+
+**Anti-pattern — do NOT wire into bregger_core.py.** The subagent handlers in
+`bregger_core.py` (lines 2686–2900) are dead code. `xibi-telegram.service`
+does not use `BreggerCore`. All Telegram dispatch goes through
+`TelegramAdapter` → `react.py`. The bregger handlers should be removed or
+ignored, never extended.
 
 ---
 
@@ -186,6 +490,24 @@ The long-term goal is migrating dashboard endpoints out of `bregger_dashboard.py
 
 ---
 
+## Constraints
+
+- **Step-87A hard dependency (condition 9).** Step-87A must be merged and
+  deployed before implementation begins. Verified by `python3 -m xibi doctor`
+  reporting schema-drift OK on NucBox. ✅ **Satisfied:** step-87A merged at
+  commit `0329225`, deployed, doctor verified 2026-04-16.
+- **All ALTERs use `_safe_add_column` (condition 10).** Migration 36's
+  `ALTER TABLE signals ADD COLUMN metadata TEXT` goes through
+  `_safe_add_column(conn, "signals", "metadata", "TEXT")`. No raw
+  `contextlib.suppress(sqlite3.OperationalError)` anywhere in this step.
+- **No bregger file edits.** All new code lives in `xibi/` packages. The
+  subagent handlers in `bregger_core.py` are dead code — do not extend.
+- **No coded intelligence.** Dispatch decisions are LLM-driven via prompt
+  guidance, not hardcoded if/else rules.
+- **No LLM content injected into scratchpad.** Side-channel architecture only.
+
+---
+
 ## What This Step Does NOT Build
 
 - **Automatic scheduling** — The observation cycle dispatches when it runs (every heartbeat). This step doesn't add a separate cron for career-ops.
@@ -193,20 +515,59 @@ The long-term goal is migrating dashboard endpoints out of `bregger_dashboard.py
 - **Pipeline orchestration** — The scan → triage → evaluate pipeline is step-84's `default_sequence`. This step dispatches individual skills based on what the review dump shows.
 - **Bregger migration** — Dashboard code stays in `bregger_dashboard.py` for now. Migration to `xibi/dashboard/` is separate work.
 - **Subagent completion callback** — Result surfacing via polling, not event-driven callback. Callback is a future enhancement.
+- **Cost tracking in review dump** — Cost is derived from token usage after the fact. Not a dispatch-time LLM concern for v1.
 
 ---
 
-## Files Changed
+## Database Migration
+
+> **TRR-C2 fix + condition 10:** Both migrations use `_safe_add_column`
+> from step-87A. Raw `contextlib.suppress(sqlite3.OperationalError)` is
+> forbidden.
+
+Two schema changes in a single migration (migration 36,
+`SCHEMA_VERSION` bumped to 36):
+
+**1. `signals.metadata` column (TRR-C2):**
+
+```python
+# In _migration_36
+_safe_add_column(conn, "signals", "metadata", "TEXT")
+```
+
+Stores the full extractor-produced metadata dict as JSON. Nullable — existing
+signals without metadata are fine (they predate the field). The review dump
+builder reads this column when expanding job signal threads.
+
+**2. `subagent_signal_dispatch` table:**
+
+```sql
+CREATE TABLE IF NOT EXISTS subagent_signal_dispatch (
+    signal_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    agent_id TEXT NOT NULL,
+    skill TEXT NOT NULL,
+    dispatched_at TEXT NOT NULL,
+    PRIMARY KEY (signal_id, skill)
+);
+```
+
+---
+
+## Files to Create/Modify
 
 | File | Change |
 |------|--------|
-| `xibi/observation.py` | `_build_batch_dump`: expand job signal threads with posting detail; `_build_review_system_prompt`: add career-ops dispatch guidance; result feedback for career-ops runs; record signal→run mapping after dispatch |
-| `xibi/react.py` | Add `spawn_subagent` tool to react loop tool registry |
-| `xibi/executor.py` | Handle `spawn_subagent` tool calls — validate agent, call runtime, return status |
-| `xibi/db/migrations/00XX_subagent_signal_dispatch.sql` | New table tracking which signals were dispatched to which runs |
-| `xibi/heartbeat/extractors.py` | Verify jobs extractor stores enough structured data (title, company, location, text) in signal content |
-| `tests/test_observation_dispatch.py` | Tests for job signal surfacing, dispatch construction, dedup |
-| `tests/test_react_subagent.py` | Tests for Telegram-triggered spawn_subagent tool |
+| `xibi/observation.py` | `_build_review_dump` (line 534): expand job signal threads with posting detail from `signals.metadata`; suppress generic signal listing for job threads (TRR-H3); `_build_review_system_prompt` (line 820): add career-ops dispatch guidance with `signal_ids` field; result feedback with structured parsing for career-ops runs (replace `[:200]` truncation); dispatch loop records `signal_ids → run_id` mapping after spawn |
+| `xibi/observation.py` | Add `_job_source_names()` helper (TRR-H2) |
+| `xibi/alerting/rules.py` | Extend `log_signal_with_conn` signature with `metadata: dict \| None = None`; JSON-serialize and persist to `signals.metadata` column |
+| `xibi/heartbeat/poller.py` | Thread extractor metadata dict through call sites at lines 515 and 813 to `log_signal_with_conn` |
+| `xibi/db/migrations.py` | Migration 36: `_safe_add_column(conn, "signals", "metadata", "TEXT")` + `CREATE TABLE IF NOT EXISTS subagent_signal_dispatch`. Bump `SCHEMA_VERSION` to 36. |
+| `xibi/skills/sample/subagent/manifest.json` | **New.** Skill manifest for `spawn_subagent` tool. Tier YELLOW, access operator. |
+| `xibi/skills/sample/subagent/tools/spawn_subagent.py` | **New.** Tool implementation: validates agent_id, calls `spawn_subagent()`, returns `{run_id, status}`. |
+| `tests/test_observation_dispatch.py` | **New.** Tests for job signal surfacing, dispatch construction, dedup, structured result feedback |
+| `tests/test_react_subagent.py` | **New.** Tests for Telegram-triggered spawn_subagent tool |
+| `tests/test_signal_metadata.py` | **New.** Tests for metadata persistence round-trip (write via log_signal_with_conn, read back, verify JSON) |
 
 ---
 
@@ -237,7 +598,7 @@ The long-term goal is migrating dashboard endpoints out of `bregger_dashboard.py
 9. React loop has a `spawn_subagent` tool available to Roberto
 10. Roberto can dispatch career-ops skills when Daniel sends a relevant message ("evaluate this posting", "research Anthropic")
 11. Roberto responds with run status and surfaces results on next interaction
-12. All dispatch goes through `react.py` / `executor.py` — zero changes to `bregger_core.py`
+12. All dispatch goes through `react.py` / skill manifest — zero changes to `bregger_core.py` or `executor.py`
 
 **General:**
 13. All changes pass existing tests; new tests cover observation dispatch, Telegram dispatch, and dedup
@@ -642,7 +1003,32 @@ Replaces the file/line references in the original TRR-C2 entry:
 
 ### Status
 
-Not yet promoted to `pending/`. Conditions 1–7 and 9–10 remain. Q1 is
-resolved. Next action: amend §Architecture, §Files Changed, §Database
-Migration, §User Journey, §Observability, §Acceptance Criteria inline per
-all conditions, then re-run TRR.
+**v2 spec revision completed 2026-04-16 by Opus (Cowork).** All 10 promotion
+conditions addressed inline. Ready for re-TRR by a fresh Opus subagent in
+Claude Code.
+
+---
+
+## v2 Condition Resolution Summary
+
+For the re-TRR reviewer — where each condition was addressed:
+
+| # | Condition | Section | Resolution |
+|---|-----------|---------|------------|
+| 1 | Retarget `_build_batch_dump` → `_build_review_dump` | §Architecture, Job Signal Surfacing | TRR-C1 callout; all references now target `_build_review_dump` (line 534) |
+| 2 | Metadata persistence (Q3) | §Database Migration, §Architecture | Added `signals.metadata TEXT` column (migration 36); extended `log_signal_with_conn`; threaded extractor metadata through call sites |
+| 3 | Skill manifest for `spawn_subagent` | §Architecture, Telegram Dispatch | New skill at `xibi/skills/sample/subagent/`; executor.py removed from Files Changed |
+| 4 | `signal_ids` in `subagent_spawns` schema | §Architecture, Dispatch Guidance | Added `signal_ids` as required field; dispatch loop writes dedup rows per signal_id |
+| 5 | Dispatch timing + score rendering | §Architecture, Posting Dedup + Result Feedback | S1: dispatch rows written before spawn, rolled back on failure. S2: explicit status mapping. C5: structured output parsing replaces [:200] truncation |
+| 6 | Cost-check phrase | §Architecture, Dispatch Guidance | Removed. Cost derived from token usage after the fact. |
+| 7 | User Journey + Observability | §User Journey, §Observability | Both sections added per template |
+| 8 | Q1 — which heartbeat writes signals | §TRR Addendum | Resolved: xibi-heartbeat is live, bregger-heartbeat disabled since 2026-03-30 |
+| 9 | Step-87A merged + deployed | §Constraints | ✅ Satisfied: merged commit 0329225, doctor verified 2026-04-16 |
+| 10 | All ALTERs use `_safe_add_column` | §Database Migration, §Constraints | Migration 36 uses `_safe_add_column`; raw suppress forbidden |
+
+Additional v2 additions not in original conditions:
+- §Real-World Test Scenarios (4 scenarios per template)
+- §Constraints section
+- §What This Step Does NOT Build — added cost tracking exclusion
+- §Telegram Dispatch — TRR-S3 (polling via tool-result JSON), TRR-S4 (YELLOW tier), TRR-H5 (evaluate via persisted metadata)
+- §Job Signal Surfacing — TRR-H2 (config-based detection), TRR-H3 (deduplicated rendering)
