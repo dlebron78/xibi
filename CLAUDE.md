@@ -90,9 +90,11 @@ Opus subagent revising the spec or fixing the code. No escalation needed.
   fast-forwardable (local has divergent uncommitted or committed work),
   stop and surface the state to Daniel — do not attempt to resolve
   automatically.
-- Feature branches are fine for implementation. When CI is green and review
-  passes, **merge locally** (`git merge --ff-only` preferred) and push to
-  `origin/main`.
+- **Semi-automatic merge policy:** On code review APPROVE or APPROVE WITH
+  NITS, merge immediately (`git merge --ff-only`) and push to `origin/main`
+  without waiting for user confirmation. Send a telegram confirmation:
+  `[MERGED] step-X → main`. On any other verdict (CHANGES REQUESTED,
+  REJECT, ESCALATE), stop and telegram for user decision.
 - Never merge via GitHub UI. The NucBox watcher expects merges to appear on
   `origin/main` via local push.
 - Specs and code live in the same repo. Spec changes can be committed
@@ -110,9 +112,14 @@ Opus subagent revising the spec or fixing the code. No escalation needed.
 tasks/backlog/   ← Cowork drafts here
    ↓ TRR
 tasks/pending/   ← TRR ACCEPT moves it here; ready for implementation
-   ↓ Implementation + CI + review
-tasks/done/      ← Post-merge, after deploy verification
+   ↓ Implementation + CI + review + merge
+tasks/done/      ← Moved here as part of the merge commit (automatic)
 ```
+
+The `git mv pending/ → done/` is part of the APPROVE merge flow (see
+`.claude/skills/code-review.md`), not a separate manual step. If a spec is
+still in `pending/` after its code merged, something went wrong — clean it
+up immediately.
 
 Specs can be **parked** freely (leave in `backlog/` with a park note). Don't
 feel pressure to promote — TRR gates exist to filter quality.

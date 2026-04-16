@@ -116,11 +116,37 @@ Keep output proportional to diff size. 10-line diff → 50-word review.
 
 | Verdict | Action |
 |---|---|
-| APPROVE | Merge to main (`git merge --ff-only`), push. |
-| APPROVE WITH NITS | Reviewer already fixed them. Commit nits with message like "review: apply nits from Opus". Merge. |
-| CHANGES REQUESTED | Send kick-back to implementer (new Claude Code session turn) with findings. Iterate. Re-review when ready. |
-| REJECT | **Escalate to telegram.** |
-| ESCALATE (scope drift) | **Escalate to telegram.** Pause. |
+| APPROVE | **Merge immediately** — `git merge --ff-only`, push. Move spec to done (`git mv tasks/pending/step-X.md tasks/done/`), commit + push. Then send enriched telegram (see below). No user confirmation required. |
+| APPROVE WITH NITS | Reviewer already fixed them. Commit nits with message like "review: apply nits from Opus". **Merge immediately**, move spec to done, send enriched telegram. |
+| CHANGES REQUESTED | **Stop.** Send kick-back to implementer (new Claude Code session turn) with findings. Iterate. Re-review when ready. |
+| REJECT | **Stop. Escalate to telegram.** |
+| ESCALATE (scope drift) | **Stop. Escalate to telegram.** Pause. |
+
+---
+
+## Enriched merge telegram
+
+On APPROVE or APPROVE WITH NITS, the merge telegram must include test
+scenarios so the recipient can validate the deploy immediately. Format:
+
+```
+[MERGED] step-X → main
+
+What to test:
+1. [action from spec's Real-World Test Scenarios — exact command or step]
+2. [next scenario]
+3. [...]
+
+Expected: [1-line summary of what "green" looks like]
+```
+
+Pull these directly from the spec's `## Real-World Test Scenarios` section.
+Condense each scenario to its "What you do" + "How you know it worked" —
+skip the internal "What Roberto does" details. Keep it actionable for
+someone reading on their phone.
+
+If the spec has no test scenarios (should not happen — TRR blocks this),
+flag it: `[MERGED] step-X → main — ⚠️ no test scenarios in spec`.
 
 ---
 
