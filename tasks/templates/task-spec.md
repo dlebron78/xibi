@@ -105,6 +105,125 @@ Roberto: [expected response]
    [e.g. "Kernel logs consecutive failure count; auto-disables at 10;
    CRITICAL log line triggers operator attention"]
 
+## Post-Deploy Verification
+<!-- Required. Real-World Test Scenarios prove the logic in a dev checkout
+     PRE-merge. This section proves the change landed correctly and still
+     behaves in production AFTER NucBox auto-deploys from origin/main.
+
+     Every check must be:
+       (1) runnable verbatim from a terminal (no hand-waving),
+       (2) have a specific pass/fail signal (exit code, exact output,
+           row count, log line, telegram message shape), and
+       (3) name the rollback/escalation if it fails.
+
+     ❌ SHALLOW — TRR will reject:
+        "verify services are up"
+        "check the dashboard"
+        "confirm the migration ran"
+        "make sure it works"
+        "smoke test in production"
+
+     ✅ THOROUGH — required:
+        exact command  →  expected output  →  what to do on failure.
+
+     Fill every subsection below. Pure doc/spec/template changes with zero
+     deployed runtime surface may write a single `N/A — pure X change, no
+     deployed artifact` at the top and skip subsections — TRR will verify
+     the justification.
+
+     Post-Deploy Verification is orthogonal to pre-merge test scenarios:
+     a feature that passes RWTS in dev but has no way to verify it landed
+     on NucBox is half-shipped. -->
+
+### Schema / migration (DB state)
+<!-- For steps with DB schema or data changes. Delete this subsection only
+     if the step has genuinely no schema or data changes. -->
+
+- Schema version bumped:
+  ```
+  ssh dlebron@100.125.95.42 "sqlite3 /path/to/xibi.db \"SELECT value FROM meta WHERE key = 'schema_version'\""
+  ```
+  Expected: `N` (the migration number this step added)
+
+- New table(s) / columns present with correct shape:
+  ```
+  ssh ... "sqlite3 /path/to/xibi.db \".schema <table_name>\""
+  ```
+  Expected: [exact column list + types]
+
+- Backfill completed (if applicable):
+  ```
+  ssh ... "sqlite3 /path/to/xibi.db \"SELECT COUNT(*) FROM <table> WHERE <new_col> IS NULL\""
+  ```
+  Expected: `0`
+
+### Runtime state (services, endpoints, agent behavior)
+
+- Service health after the deploy pulse:
+  ```
+  ssh ... "systemctl --user is-active xibi-heartbeat xibi-telegram"
+  ```
+  Expected: `active\nactive`
+
+- Service restart count sane (no flap):
+  ```
+  ssh ... "systemctl --user show xibi-telegram -p NRestarts --value"
+  ```
+  Expected: `0` or `1` (the deploy restart itself)
+
+- End-to-end: trigger the new code path and observe the expected output:
+  ```
+  [exact telegram message / curl / sqlite insert / agent invocation]
+  ```
+  Expected: [specific observable signal — exact response shape, new row,
+  dashboard entry, etc.]
+
+### Observability — the feature actually emits what the spec promised
+
+<!-- Cross-check against the Observability section above. Every span and
+     log line promised there must be visibly firing in production. -->
+
+- New spans appear in the traces table:
+  ```
+  ssh ... "sqlite3 /path/to/xibi.db \"SELECT operation_name, COUNT(*), MAX(started_at) FROM spans WHERE operation_name = '<span.name>' AND started_at > datetime('now', '-5 minutes')\""
+  ```
+  Expected: at least 1 row within the last 5 minutes after a triggering
+  action
+
+- New log lines grep-able in journal:
+  ```
+  ssh ... "journalctl --user -u xibi-heartbeat --since '5 minutes ago' | grep '<expected log fragment>'"
+  ```
+  Expected: at least 1 matching line
+
+### Failure-path exercise
+<!-- Deliberately induce the error branch and confirm the expected failure
+     signal fires. A feature whose failure mode was never observed in
+     production is unverified. Skip only if the step has literally no
+     error path and justify in one line. -->
+
+- Trigger the error path:
+  ```
+  [exact command / input / state that induces the failure]
+  ```
+  Expected observable — one or more of:
+    - log line: `<exact log string>`
+    - telegram message: `<exact message shape>`
+    - dashboard state: `<exact state>`
+    - CRITICAL/WARNING in journal with `<grep pattern>`
+
+### Rollback
+
+- **If any check above fails**, revert with:
+  ```
+  [exact git revert / sqlite rollback / systemctl stop / stash restore
+   command — not "revert the commit"]
+  ```
+- **Escalation**: telegram `[DEPLOY VERIFY FAIL] step-N — <1-line what failed>`
+- **Gate consequence**: no onward pipeline work (no new specs promoted
+  from pending/, no dependent steps picked up) until the failure is
+  resolved.
+
 ## Constraints
 - [Hard requirements: no hardcoded model names, must use get_model(), etc.]
 - [Dependencies: requires Step N-1 to be merged]
@@ -127,6 +246,19 @@ Roberto: [expected response]
 - [ ] Input validation: required fields produce clear errors, not hallucinated output
 - [ ] All acceptance criteria traceable through the codebase (reviewer can find the wiring)
 - [ ] Real-world test scenarios walkable end-to-end (reviewer traces each scenario through code)
+- [ ] Post-Deploy Verification section present; every subsection filled
+      with a concrete runnable command (or an explicit `N/A — <reason>`
+      with justification). No hand-waving — if the reviewer cannot
+      copy-paste a command and see a pass/fail signal, it's shallow.
+- [ ] Every Post-Deploy Verification check names its exact expected
+      output (row count, exit code, log line, telegram shape) — not
+      just *what* to check but *what "passing" looks like*.
+- [ ] Failure-path exercise present (deliberately trigger the error
+      branch in production) — or one-line justification for why the
+      step has no error path at all.
+- [ ] Rollback is a concrete command (`git revert <sha>`, `systemctl
+      stop`, `sqlite3 ... ROLLBACK`) — not "revert the commit" in
+      the abstract. Escalation telegram shape filled in.
 
 **Step-specific gates:**
 - [ ] [Add step-specific TRR checks here]

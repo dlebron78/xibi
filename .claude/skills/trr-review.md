@@ -63,6 +63,42 @@ subagent prompt template. Instead, Cowork Opus reads the spec and code
 files directly from the repo mount, applies the protocol below, and
 writes the TRR Record.
 
+### Named review pillars
+
+Every TRR must explicitly evaluate each of these. A pass on all five is
+the floor for READY / READY WITH CONDITIONS. Weakness on any one is
+grounds for a finding; absence of one is NOT READY.
+
+1. **Contract** — function signatures, schemas, config keys, and error
+   shapes are concrete enough that Claude Code can implement without
+   interpretation. Every acceptance criterion traces to a specific file
+   or module.
+
+2. **Real-World Test Scenarios (pre-merge)** — runnable against a dev
+   checkout; cover happy path + error path + idempotency/dedup where
+   relevant. Each scenario is traceable through the codebase to the
+   wiring that would make it pass.
+
+3. **Post-Deploy Verification (post-merge)** — runnable against the
+   NucBox production checkout after auto-deploy; proves the change
+   landed AND still behaves, with a concrete rollback path. Every
+   check must be a verbatim command with a named pass/fail signal.
+   Shallow or missing Post-Deploy Verification is a **NOT READY**
+   trigger (see Anti-patterns). A single `N/A — <reason>` is only
+   acceptable for pure doc/spec/template changes with zero deployed
+   runtime surface — and the reviewer must confirm that justification
+   by inspecting the file list.
+
+4. **Observability** — the feature's failures are *visible* in
+   production. New spans in the traces table, log lines grep-able in
+   journal, or dashboard/query surface. Cross-check: every span and
+   log line promised in the Observability section must have a
+   corresponding verification command in Post-Deploy Verification.
+
+5. **Constraints & DoD alignment** — no hidden scope creep from the
+   Objective paragraph; DoD items are verifiable and match the
+   Contract and Tests Required sections.
+
 ### Deliverable format
 
 ```
@@ -149,6 +185,19 @@ When in doubt, NOT READY — Daniel prefers to see scope decisions.
 - Vague conditions: "spec should clarify X" is not a directive. If you
   can't write the condition as an imperative instruction Sonnet can
   follow, the finding belongs under NOT READY.
+- **Shallow Post-Deploy Verification:** "check the dashboard," "verify
+  services are up," "confirm it works," "smoke test in production."
+  If the reviewer cannot copy-paste a command from the Post-Deploy
+  Verification section and observe a concrete pass/fail signal, the
+  section is shallow — **NOT READY.** Applies equally to missing
+  Rollback subsection, missing Failure-path exercise, and any check
+  that names *what* to verify but not *what passing looks like*.
+- **Missing Post-Deploy Verification:** spec changes deployed state
+  (any file outside `tasks/`, `docs/`, or `.claude/`) but has no
+  Post-Deploy Verification section. **NOT READY.** Pure doc/spec/
+  template-only changes may use a single `N/A — <reason>` header in
+  the section, but reviewer must verify the file list confirms zero
+  deployed runtime surface.
 
 ---
 
