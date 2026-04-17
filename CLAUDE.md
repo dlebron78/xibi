@@ -79,6 +79,39 @@ via Claude Code, then push to origin. The NucBox watcher script picks up
      code, same as DoD items. Do not edit the spec body to "absorb"
      conditions.
 
+8. **Hotfix lane for main-unbreak PRs.** Some fixes *restore* a state
+   the codebase was already supposed to be in — no new behavior, no
+   schema change, no user-observable surface. For that narrow class,
+   Claude Code may open a PR without a spec in `tasks/pending/`,
+   provided all of the following hold:
+
+   - **Eligible:** test files missed by a rename, call-signature
+     mismatches between caller and callee, import/typo fixes, config
+     corrections, CI-config repairs, shell-script bugs whose fix
+     reproduces already-documented behavior. The question to ask is
+     *"does this fix restore intent, or introduce intent?"* Only the
+     former is hotfix-eligible.
+   - **NOT eligible:** new features, DB migrations, prompt changes,
+     tool additions, model-behavior changes, new tables/columns, any
+     LLM-facing surface edit. When in doubt, spec it — the cost of an
+     unnecessary spec is small; the cost of normalizing spec-less
+     feature work is large.
+   - **PR hygiene:** branch name prefixed `hotfix/`; PR title prefixed
+     `hotfix:`; PR body states the intent-restored-not-introduced
+     rationale in 1–3 lines and links the commit that introduced the
+     broken state (or the originating drift-audit/incident note).
+   - **Gates that still apply:** full Opus code review (fresh context,
+     rule #2 applies); CI must be green; `git merge --ff-only` + push
+     origin main as usual. Code-review rejection or scope-drift
+     findings escalate per rule #2 and the escalation table.
+   - **Announce on merge:** telegram `[HOTFIX] <branch> → main —
+     <1-line rationale>` instead of the normal `[MERGED]` pulse. Keeps
+     spec-less merges distinguishable in the channel.
+   - **Scope-drift trap:** if mid-implementation the fix turns out to
+     require any NOT-eligible change (migration, prompt change, new
+     surface), **stop** — drop the hotfix branch and escalate for a
+     proper spec. Do not grow a hotfix into a feature.
+
 ---
 
 ## Escalation to Telegram
@@ -97,11 +130,14 @@ Some decisions require Daniel. Send a telegram via xibi's admin channel
 | CI stuck: same failure class 3x in a row | `[CI STUCK] step-X — failing on <error class>` |
 | CI flaky | `[CI FLAKY] step-X — test Y intermittent` |
 | CI blocked by infra (not code) | `[CI INFRA] step-X — <what's broken>` |
+| Hotfix scope drift: the fix needs migration, prompt change, or new surface | `[HOTFIX SCOPE DRIFT] <branch> — needs <X>; dropping branch, spec required` |
 
 READY WITH CONDITIONS is **not** an escalation — Cowork promotes directly
 to `pending/` and Claude Code follows the conditions during implementation.
 Minor review nits are handled **in-session** by the reviewer fixing in
-place. No escalation needed.
+place. No escalation needed. The `[HOTFIX] <branch> → main` merge pulse
+(rule #8) is likewise **informational, not an escalation** — same shape
+as `[MERGED]`, just distinguishable for spec-less merges.
 
 ---
 
