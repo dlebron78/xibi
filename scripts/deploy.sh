@@ -30,13 +30,25 @@ send_telegram() {
 
 cd "$REPO_DIR" || exit 1
 
+# Safety: only deploy when the checkout is actually on the expected branch.
+# If a human/agent left the tree on a feature branch (e.g. fix-*), comparing
+# HEAD against origin/main would never match and we'd loop every cycle.
+CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+if [ "$CURRENT_BRANCH" != "$BRANCH" ]; then
+    logger -t "$LOG_TAG" "not on $BRANCH (on $CURRENT_BRANCH); skipping"
+    exit 0
+fi
+
 # Fetch latest from origin
 git fetch origin "$BRANCH" --quiet 2>/dev/null || {
     logger -t "$LOG_TAG" "git fetch failed"
     exit 1
 }
 
-LOCAL_HEAD=$(git rev-parse HEAD)
+# Compare local $BRANCH ref (not HEAD) against origin/$BRANCH. Even if the
+# branch-guard above is removed or bypassed someday, this keeps the tip-vs-tip
+# compare honest.
+LOCAL_HEAD=$(git rev-parse "refs/heads/$BRANCH")
 REMOTE_HEAD=$(git rev-parse "origin/$BRANCH")
 
 # Nothing new — exit silently
