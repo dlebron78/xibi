@@ -8,6 +8,11 @@ REPO_DIR="${XIBI_DEPLOY_DIR:-$HOME/xibi}"
 BRANCH="main"
 LOG_TAG="xibi-deploy"
 
+# Single source of truth for services restarted + health-checked on deploy.
+# Add / remove entries here when a long-running xibi systemd unit joins or
+# leaves the set. Word-splitting is deliberate; keep this unquoted in loops.
+LONG_RUNNING_SERVICES="xibi-heartbeat.service xibi-telegram.service xibi-dashboard.service"
+
 # Source secrets for Telegram token + chat ID
 if [ -f "$HOME/.xibi/secrets.env" ]; then
     set -a
@@ -71,12 +76,16 @@ git pull origin "$BRANCH" --quiet 2>/dev/null || {
 
 # Restart services
 RESTART_FAILED=""
-for svc in xibi-heartbeat.service xibi-telegram.service; do
+RESTART_SKIPPED=""
+for svc in $LONG_RUNNING_SERVICES; do
     if systemctl --user is-enabled "$svc" > /dev/null 2>&1; then
         systemctl --user restart "$svc" 2>/dev/null || {
             RESTART_FAILED="${RESTART_FAILED} ${svc}"
             logger -t "$LOG_TAG" "Failed to restart $svc"
         }
+    else
+        RESTART_SKIPPED="${RESTART_SKIPPED} ${svc}"
+        logger -t "$LOG_TAG" "Skipped (not enabled): $svc"
     fi
 done
 
@@ -93,10 +102,15 @@ if [ -n "$RESTART_FAILED" ]; then
 ⚠️ Failed to restart:${RESTART_FAILED}"
 fi
 
+if [ -n "$RESTART_SKIPPED" ]; then
+    MSG="${MSG}
+ℹ️ Not enabled (skipped):${RESTART_SKIPPED}"
+fi
+
 # Check service health after restart
 sleep 2
 HEALTH=""
-for svc in xibi-heartbeat.service xibi-telegram.service; do
+for svc in $LONG_RUNNING_SERVICES; do
     if systemctl --user is-enabled "$svc" > /dev/null 2>&1; then
         STATUS=$(systemctl --user is-active "$svc" 2>/dev/null || echo "unknown")
         HEALTH="${HEALTH}

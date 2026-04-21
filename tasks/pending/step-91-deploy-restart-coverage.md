@@ -172,12 +172,15 @@ N/A — no schema changes.
   first list but not the second = deploy drift; any in the second but
   not the first = stale list.
 
-- Every service restarted on the step-91 deploy itself:
+- Every service restarted on the step-91 deploy itself (sourced from
+  the deployed script, matching the check above):
   ```
-  ssh ... "for svc in xibi-heartbeat.service xibi-telegram.service xibi-dashboard.service; do echo -n \"\$svc: \"; systemctl --user show \$svc --property=ActiveEnterTimestamp --value; done"
+  ssh ... "for svc in \$(grep -oP 'LONG_RUNNING_SERVICES=\"\K[^\"]+' ~/xibi/scripts/deploy.sh); do echo -n \"\$svc: \"; systemctl --user show \"\$svc\" --property=ActiveEnterTimestamp --value; done"
   ```
   Expected: each timestamp is after the step-91 merge-commit
-  `committer-date` on `origin/main`.
+  `committer-date` on `origin/main`. Service list is derived from
+  deploy.sh — if a new long-running unit is added, this check
+  automatically covers it.
 
 - Deploy telegram shape enumerates all three services:
   ```
@@ -229,7 +232,7 @@ N/A — no schema changes.
 
 ## Constraints
 
-- No change to deploy.sh's branch-guard logic (owned by step-89).
+- No change to deploy.sh's fetch / pull / stash sequencing.
 - No change to the `CURRENT_BRANCH`, `LOCAL_HEAD`, or pull sequencing.
 - `LONG_RUNNING_SERVICES` must not be sourced from a separate config file
   (adds moving parts). Declared inline at top of script is deliberate.

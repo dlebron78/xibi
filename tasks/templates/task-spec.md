@@ -159,17 +159,37 @@ Roberto: [expected response]
 
 ### Runtime state (services, endpoints, agent behavior)
 
-- Service health after the deploy pulse:
+<!-- Enumerate services via discovery, not a hardcoded list. The sole
+     source of truth for which long-running units deploy restarts is
+     `LONG_RUNNING_SERVICES` in `scripts/deploy.sh`. Compare that list
+     against what's actually active on NucBox; divergence = drift.
+     If this spec adds a new long-running `xibi-*.service` unit, the
+     author MUST also add it to `LONG_RUNNING_SERVICES` in the same PR. -->
+
+- Deploy service list and actually-active services align:
   ```
-  ssh ... "systemctl --user is-active xibi-heartbeat xibi-telegram"
+  ssh dlebron@100.125.95.42 "grep -oP 'LONG_RUNNING_SERVICES=\"\K[^\"]+' ~/xibi/scripts/deploy.sh | tr ' ' '\n' | sort"
+  ssh dlebron@100.125.95.42 "systemctl --user list-units --state=active 'xibi-*.service' --no-legend | awk '{print \$1}' | sort"
   ```
-  Expected: `active\nactive`
+  Expected: the two outputs match line-for-line. Any service in the
+  second list but not the first = deploy drift (new unit not yet added
+  to `LONG_RUNNING_SERVICES`); any in the first but not the second =
+  stale list (unit retired but not cleaned up).
+
+- Every service in the deploy list was restarted on this deploy:
+  ```
+  ssh dlebron@100.125.95.42 "for svc in \$(grep -oP 'LONG_RUNNING_SERVICES=\"\K[^\"]+' ~/xibi/scripts/deploy.sh); do echo -n \"\$svc: \"; systemctl --user show \"\$svc\" --property=ActiveEnterTimestamp --value; done"
+  ```
+  Expected: each `ActiveEnterTimestamp` is after this step's merge-commit
+  `committer-date` on `origin/main`. A timestamp older than the merge =
+  service silently skipped the restart.
 
 - Service restart count sane (no flap):
   ```
-  ssh ... "systemctl --user show xibi-telegram -p NRestarts --value"
+  ssh ... "systemctl --user show <svc> -p NRestarts --value"
   ```
-  Expected: `0` or `1` (the deploy restart itself)
+  Expected: `0` or `1` (the deploy restart itself) for each service in
+  `LONG_RUNNING_SERVICES`.
 
 - End-to-end: trigger the new code path and observe the expected output:
   ```
