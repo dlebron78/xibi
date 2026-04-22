@@ -11,7 +11,8 @@ import yaml
 import xibi.db
 from xibi.channels.telegram import TelegramAdapter
 from xibi.cli import cmd_doctor
-from xibi.cli.caretaker import cmd_caretaker, register as register_caretaker
+from xibi.cli.caretaker import cmd_caretaker
+from xibi.cli.caretaker import register as register_caretaker
 from xibi.cli.init import cmd_init
 from xibi.cli.skill_test import cmd_skill_test
 from xibi.executor import LocalHandlerExecutor

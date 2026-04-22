@@ -27,9 +27,8 @@ def _load_user_config(args: argparse.Namespace, workdir: Path) -> dict:
         return {}
     try:
         with config_path.open() as f:
-            if config_path.suffix == ".yaml":
-                return yaml.safe_load(f) or {}
-            return json.load(f)
+            loaded = yaml.safe_load(f) or {} if config_path.suffix == ".yaml" else json.load(f)
+        return loaded if isinstance(loaded, dict) else {}
     except Exception:
         return {}
 

@@ -116,7 +116,8 @@ class Caretaker:
                 "INSERT INTO caretaker_pulses (started_at, status) VALUES (?, ?)",
                 (_utcnow_iso(), "running"),
             )
-            return int(cur.lastrowid)
+            assert cur.lastrowid is not None
+            return cur.lastrowid
 
     def _finish_pulse_row(
         self,
