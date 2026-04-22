@@ -53,11 +53,10 @@ def normalize_topic(topic: str | None) -> str | None:
 def get_active_threads(db_path: Path, window_days: int = 7, min_count: int = 2, limit: int = 7) -> list:
     """Return topics seen min_count+ times in the last window_days days.
 
-    Single source of truth used by both bregger_core (prompt injection) and
-    bregger_heartbeat (cross-channel escalation).  All aggregation is done in
-    Python after fetching raw rows so normalize_topic() is applied uniformly
-    and multi-source counts are correct (avoids the SQL GROUP BY / arbitrary
-    source-column ambiguity issue).
+    All aggregation is done in Python after fetching raw rows so
+    normalize_topic() is applied uniformly and multi-source counts are
+    correct (avoids the SQL GROUP BY / arbitrary source-column ambiguity
+    issue).
 
     Returns a list of dicts: [{topic, count, sources: list[str], last_seen}]
     sorted by count descending.
@@ -122,10 +121,7 @@ def get_pinned_topics(db_path: Path) -> list:
 
 
 def ensure_signals_schema(db_path: Path | str) -> None:
-    """Single source of truth for the signals table schema.
-
-    Called by both bregger_core._ensure_signals_table() and bregger_heartbeat.log_signal()
-    so the schema is defined in exactly one place. Any new columns must be added here only.
+    """Define the signals table schema in a single place.
 
     Uses ALTER TABLE migrations (try/except) for columns added after the initial release,
     so existing live DBs upgrade in-place without data loss.

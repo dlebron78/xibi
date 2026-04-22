@@ -64,7 +64,7 @@ def get_recent_errors(conn: sqlite3.Connection, limit: int = 20) -> list[dict]:
     # Let me check if 'error' column was added in any migration or if it refers to something else.
     # Migration 1 creates 'traces' with: id, intent, plan, act_results, status, created_at, steps_detail, route, model, raw_prompt, started_at, total_ms, step_count, total_prompt_tokens, total_response_tokens, overall_tok_per_sec, final_answer_length, ram_start_pct, ram_end_pct, proc_rss_mb, tier2_shadow.
     # No 'error' column.
-    # However, bregger_dashboard.py used `je.value->>'error' as err_msg` from `json_each(steps_detail)`.
+    # The historical dashboard used `je.value->>'error' as err_msg` from `json_each(steps_detail)`.
     # But the prompt specifically says: `traces WHERE error IS NOT NULL ORDER BY created_at DESC LIMIT 20`
     # Maybe I should check if 'error' column exists.
     cursor = conn.execute("PRAGMA table_info(traces)")
