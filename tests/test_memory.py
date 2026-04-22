@@ -42,7 +42,9 @@ def test_remember_maps_decay_days(fresh_db):
         assert cursor.fetchone()[0] is None
 
 
-@pytest.mark.skip(reason="coverage gap: no xibi equivalent for _run_memory_decay (tracked: bregger invoker retirement, step-96)")
+@pytest.mark.skip(
+    reason="coverage gap: no xibi equivalent for _run_memory_decay (tracked: bregger invoker retirement, step-96)"
+)
 def test_memory_decay_placeholder():
     pass
 
