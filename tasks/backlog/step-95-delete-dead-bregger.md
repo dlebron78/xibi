@@ -1,3 +1,29 @@
+# PARKED — 2026-04-22
+
+Spec returned to backlog during implementation. The TRR verdict recorded at the end of this file (READY WITH CONDITIONS, 2026-04-22) is **INVALIDATED** by the following material finding.
+
+**TRR scope miss.** The dead-code grep scope accepted by the TRR (`xibi/ skills/ scripts/ systemd/ tests/`) excludes the repo root. `bregger_core.py` is in fact **live** via:
+
+    systemd/bregger-telegram.service  →  bregger_telegram.py (repo root, imports BreggerCore at L12)  →  bregger_core.BreggerCore
+
+`systemd/bregger-heartbeat.service → bregger_heartbeat.py` is also live in the same deployment family. The spec's premise that no systemd unit invokes these files is incorrect.
+
+`bregger_dashboard.py` **is** truly dead (no imports, no systemd unit, fully superseded by `xibi/dashboard/`) — that half of the spec still holds.
+
+Claude Code caught this during implementation, aborted the `step-95-delete-dead-bregger` branch clean (no commits, no pushes), and escalated back to Cowork. Abort was the correct call per CLAUDE.md rule #1 (no shallow work) and rule #7 (Claude Code does not revise specs).
+
+## Unpark triggers (one of)
+
+1. **Bregger deployment retirement spec ships.** A separate spec (provisionally the new step-96) retires `bregger_telegram.py` + `bregger_heartbeat.py` + both systemd units atomically, with their xibi/ replacements verified live on NucBox. Once merged, `bregger_core.py` becomes truly dead and step-95 as currently scoped can unpark against a fresh TRR.
+
+2. **Respec shrinks step-95 to `bregger_dashboard` only.** Rewrite to delete only `bregger_dashboard.py` + `tests/test_react_reasoning.py` + `tests/reasoning_benchmark_v2.py` (the truly dead pieces). Drop all `bregger_core` language. Fresh TRR required.
+
+Either path requires a new TRR in Cowork (CLAUDE.md rule #2 — fresh Opus context). Do NOT unpark by editing this spec directly.
+
+Original spec body + 6 inline TRR callouts + invalidated TRR Record are preserved below for historical context and to save respec effort on the `bregger_dashboard` half.
+
+---
+
 # step-95: Delete dead bregger_core.py + bregger_dashboard.py
 
 ## Objective
