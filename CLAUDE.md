@@ -111,12 +111,9 @@ via Claude Code, then push to origin. The NucBox watcher script picks up
      rule #2 applies); CI must be green; `git merge --ff-only` + push
      origin main as usual. Code-review rejection or scope-drift
      findings escalate per rule #2 and the escalation table.
-   - **Announce on merge (best-effort):** if telegram creds are on the
-     host, send `[HOTFIX] <branch> → main — <1-line rationale>` to
-     distinguish the spec-less lane from regular merges. If creds are
-     absent, skip — NucBox's `🚀 Deployed` watcher pulse still
-     announces the push. Missing creds never block the merge (see
-     "Telegram availability").
+   - **Announce on merge (best-effort):** send `[HOTFIX] <branch> → main
+     — <1-line rationale>` if telegram creds are present; otherwise
+     silent (see "Telegram availability").
    - **Scope-drift trap:** if mid-implementation the fix turns out to
      require any NOT-eligible change (migration, prompt change, new
      surface), **stop** — drop the hotfix branch and escalate for a
@@ -194,12 +191,10 @@ are missing.
   user decision (see "Telegram availability" below if creds are missing).
 - Never merge via GitHub UI. The NucBox watcher expects merges to appear on
   `origin/main` via local push.
-- Specs and code live in the same repo. Cowork authors specs as file
-  writes into the Mac mount (`~/Documents/Xibi`) without attempting git
-  operations in its sandbox. Claude Code promotes them via `xs-promote`,
-  which atomically commits the rename + Cowork's on-disk content
-  (including the appended TRR Record) and pushes to `origin/main`. Code
-  changes go through PR + review.
+- Specs travel through git the same as code — Cowork writes file content
+  into `~/Documents/Xibi` only (no git in sandbox); `xs-promote` commits
+  the backlog→pending rename + TRR Record atomically and pushes to
+  `origin/main`. Code changes go through PR + review.
 - **Feature branch workflow.** Implementation always happens on a feature
   branch off `main` (e.g., `step-86-list-api`). After implementation,
   push the branch with `git push -u origin <branch>` and open a PR with
@@ -214,9 +209,6 @@ are missing.
   Spec drafts, TRR promotions, and pipeline config changes stay as local
   commits (or uncommitted on disk) until they ride along with the next
   code push to `main`.
-- After a NucBox overnight session, the Mac's local tree is stale until the
-  next session-start pull. A `sleepwatcher` hook or manual `xs` alias can
-  close that gap outside of Claude Code sessions.
 
 ---
 
@@ -241,10 +233,6 @@ bypassed. `xs-promote` refuses NOT READY verdicts and missing Records.
 **One-pass TRR.** There is no v1/v2 iteration loop. Cowork produces one
 verdict per review session. If the verdict is NOT READY and Daniel/Cowork
 later revises the spec, that's a fresh TRR in a fresh Cowork session.
-
-**READY WITH CONDITIONS ≠ iteration.** The conditions travel with the
-spec into `pending/`. Claude Code reads them on pickup and follows them
-during implementation. They do not become spec-body edits.
 
 The `git mv pending/ → done/` is part of the APPROVE merge flow (see
 `.claude/skills/code-review.md`), not a separate manual step. If a spec is
