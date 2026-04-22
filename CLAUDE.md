@@ -22,7 +22,7 @@ Key design docs live outside this repo at `~/Documents/Dev Docs/Xibi/`.
 |---|---|---|
 | Spec authoring | Cowork (desktop app) | Opus, writes into `tasks/backlog/` |
 | TRR | Cowork (desktop app) | Opus reviews spec against codebase |
-| Promote to pending | Cowork | `git mv backlog → pending` on TRR READY or READY WITH CONDITIONS |
+| Promote to pending | Claude Code | `xs-promote <step-id>` from `~/Documents/Xibi` — verifies TRR Record + verdict, commits rename, pushes origin/main |
 | Implementation | Claude Code | Main session on a feature branch, Sonnet is fine |
 | Push branch + open PR | Claude Code | `git push -u origin <branch>` + `gh pr create --base main` |
 | CI iteration | Claude Code | Main session, polls `gh pr checks`, loops until green |
@@ -64,14 +64,21 @@ via Claude Code, then push to origin. The NucBox watcher script picks up
 6. **No LLM-generated content injected into scratchpads.** Side-channel
    architecture only.
 
-7. **Claude Code entry rules for specs.** Claude Code only operates on
-   specs in `tasks/pending/`. Before starting any work on step-X:
-   - Verify the spec file lives in `tasks/pending/step-X.md`. If it's in
-     `tasks/backlog/`, **stop** — that's Cowork's territory. Telegram
-     Daniel and await promotion.
-   - `grep "^## TRR Record"` the spec. A TRR Record must be present with
+7. **Claude Code entry rules for specs.** Claude Code implements specs
+   from `tasks/pending/` and may promote specs from `tasks/backlog/` via
+   `xs-promote <step-id>`. Before starting any work on step-X:
+   - Locate the spec. If it's in `tasks/pending/step-X-*.md`, proceed.
+     If it's in `tasks/backlog/step-X-*.md`, run `xs-promote step-X`
+     from `~/Documents/Xibi` first — the tool verifies the TRR Record +
+     verdict, commits the rename together with any on-disk TRR Record
+     content (Cowork's append never needs a separate commit), and pushes
+     to `origin/main`. If `xs-promote` refuses (no Record, verdict
+     NOT READY, ambiguous spec, etc.), **stop** and telegram — do not
+     hand-promote around the tool.
+   - After promote (or for specs already in `pending/`),
+     `grep "^## TRR Record"` the spec. A TRR Record must be present with
      verdict `READY` or `READY WITH CONDITIONS`. If missing, **stop** and
-     telegram — something in the pipeline broke.
+     telegram — pipeline error.
    - **Never run or re-run TRR**, including via subagent. If the spec
      needs review, escalate to Cowork. The TRR skill file is Cowork-only.
    - If the verdict is `READY WITH CONDITIONS`, read the numbered
@@ -125,7 +132,7 @@ Some decisions require Daniel. Send a telegram via xibi's admin channel
 | Trigger | Message shape |
 |---|---|
 | TRR verdict = NOT READY | `[TRR NOT READY] step-X — <1-line blocker>. See tasks/backlog/step-X.md#trr` |
-| Claude Code handed a spec still in `backlog/` | `[PIPELINE] step-X — spec in backlog, Cowork owns; awaiting promotion` |
+| `xs-promote` refuses to promote (no TRR Record, verdict NOT READY, ambiguous spec, etc.) | `[PIPELINE] step-X — xs-promote refused: <reason>; awaiting Cowork revision` |
 | Claude Code handed a spec in `pending/` without a TRR Record | `[PIPELINE] step-X — in pending but no TRR Record present; pipeline error` |
 | Someone asks Claude Code to run TRR | `[PIPELINE] step-X — TRR requested in Claude Code; TRR runs in Cowork only` |
 | Code review verdict = CHANGES REQUESTED with scope drift | `[REVIEW SCOPE DRIFT] step-X — implementer diverged from spec on <X>` |
@@ -187,9 +194,12 @@ are missing.
   user decision (see "Telegram availability" below if creds are missing).
 - Never merge via GitHub UI. The NucBox watcher expects merges to appear on
   `origin/main` via local push.
-- Specs and code live in the same repo. Spec changes can be committed
-  directly to `main` via Cowork writing into the Mac mount (no PR needed
-  for pure spec moves). Code changes go through PR + review.
+- Specs and code live in the same repo. Cowork authors specs as file
+  writes into the Mac mount (`~/Documents/Xibi`) without attempting git
+  operations in its sandbox. Claude Code promotes them via `xs-promote`,
+  which atomically commits the rename + Cowork's on-disk content
+  (including the appended TRR Record) and pushes to `origin/main`. Code
+  changes go through PR + review.
 - **Feature branch workflow.** Implementation always happens on a feature
   branch off `main` (e.g., `step-86-list-api`). After implementation,
   push the branch with `git push -u origin <branch>` and open a PR with
@@ -213,18 +223,20 @@ are missing.
 ## Spec lifecycle
 
 ```
-tasks/backlog/   ← Cowork drafts here
+tasks/backlog/   ← Cowork drafts here (file writes only, no git in sandbox)
    ↓ TRR in Cowork — one pass, verdict: READY / READY WITH CONDITIONS / NOT READY
-tasks/pending/   ← Cowork promotes on READY or READY WITH CONDITIONS
-   ↓ Implementation (Claude Code) + CI + code review + merge
+   ↓ Claude Code runs `xs-promote` on pickup (atomic commit: rename + TRR Record)
+tasks/pending/   ← Claude Code implements
+   ↓ Implementation + CI + code review + merge
 tasks/done/      ← Moved here as part of the merge commit (automatic)
 ```
 
 **Directory is the green-light signal.** A spec in `pending/` has a TRR
-Record with verdict READY or READY WITH CONDITIONS; Claude Code operates
-on it. A spec in `backlog/` is not green — even if a TRR Record is
-present (could be an old NOT READY review). Claude Code does not touch
-`backlog/`.
+Record with verdict READY or READY WITH CONDITIONS; Claude Code
+implements it. A spec in `backlog/` is Cowork's authoring territory, but
+Claude Code may promote one to `pending/` via `xs-promote` — the tool
+verifies the TRR Record and verdict mechanically, so the gate isn't
+bypassed. `xs-promote` refuses NOT READY verdicts and missing Records.
 
 **One-pass TRR.** There is no v1/v2 iteration loop. Cowork produces one
 verdict per review session. If the verdict is NOT READY and Daniel/Cowork
