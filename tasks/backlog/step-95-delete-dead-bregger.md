@@ -945,3 +945,200 @@ inline as ‼️ TRR callouts at the relevant spec locations. The
 amended spec is ready for promotion to `tasks/pending/` and Claude
 Code implementation. The DoD grep will resolve to zero on the
 merged branch assuming the implementer follows the amended scopes.
+
+---
+
+## TRR Record (post-step-96 re-review) — Opus, 2026-04-22
+
+This TRR was conducted by a fresh Opus context in Cowork, with no
+spec-authoring history for step-95 and no involvement in the prior
+2026-04-22 parked TRR (that review ran in a separate Cowork session).
+Pre-flight: local HEAD `e0ee5c3` matches `origin/main` post step-96
+merge; `tasks/pending/` empty; `tasks/done/step-96-retire-bregger-
+invokers.md` present. Unpark trigger #1 from the PARKED notice
+("Bregger deployment retirement spec ships") is satisfied by
+step-96's merge (PR #103, commits `2183351` + `5a2c458` + `e0ee5c3`).
+
+**Verdict:** NOT READY
+
+**Summary:** The spec's core intent — delete `bregger_core.py` +
+`bregger_dashboard.py` once nothing imports them at runtime — is
+now achievable (step-96 retired the invoker chain). However,
+step-96's PR also deleted four files this spec targets
+(`tests/test_bregger.py`, `tests/test_tasks.py`,
+`tests/test_reflection.py`, `tests/test_signal_pipeline.py`).
+Roughly half of step-95's body — a ~140-line fixture-rewrite
+section, the Coverage Preservation matrix, ~7 of 22 DoD items,
+and several out-of-scope constraints — now targets files that do
+not exist on HEAD. Additionally, `bregger_shadow.py` (imported
+only by `bregger_core.py:38`) becomes orphan on this step and is
+missing from the deletion set. Rendering these findings as
+conditions would require instructing Claude Code to skip entire
+spec sections — a substantive spec rewrite framed as directives —
+which is the NOT READY threshold per `trr-review.md`.
+
+**Findings:**
+
+- **[C1 blocker] "Files to Modify" section (L301-443) is entirely
+  obsolete.** Both `tests/test_reflection.py` and
+  `tests/test_signal_pipeline.py` were deleted by step-96 commit
+  `2183351` (verified via `git log --name-status`). The rewrite-
+  fixture directive, the preserved-tests checklist, the trim-scope
+  guidance — all reference files that no longer exist. The
+  corresponding DoD lines (L740-743, L747, L749-750) are no-ops.
+
+- **[C2 blocker] Several DoD items vacuously true against HEAD.**
+  `tests/test_bregger.py` and `tests/test_tasks.py` were deleted
+  by step-96; their "deleted" DoD checks are already satisfied but
+  semantically misleading for a human reading the spec.
+  `python3 -m py_compile bregger_heartbeat.py exits 0` (L751) is a
+  no-op — the file is gone. The `bregger_heartbeat.py … byte-
+  identical to origin/main` guard in L752 is structurally wrong
+  (file doesn't exist on origin/main either).
+
+- **[H1 must-address] `bregger_shadow.py` is unmentioned but
+  becomes orphan on bregger_core deletion.** Its only runtime
+  importer is `bregger_core.py:38` (`from bregger_shadow import
+  ShadowMatcher`). Verified via `grep -rn -E "(from|import)\s+bregger_shadow"
+  --include="*.py" --exclude-dir=".claude" .`. Leaving it at repo
+  root post-merge creates a dead module the DoD grep wouldn't
+  catch (token not in the grep pattern). Adding it to scope is
+  an "add a major DoD item" change — NOT READY trigger per
+  `trr-review.md`.
+
+- **[H2 must-address] DoD dead-code grep needs `bregger_shadow`
+  in its token set** if the file is kept (to assert zero refs in
+  runtime surface) or deleted per H1 (to catch stragglers). Spec
+  currently searches only `"bregger_core\|bregger_dashboard"`.
+
+- **[C3 nit] Coverage Preservation Analysis (L80-118) is stale.**
+  The "Preserved by rewrite" rows claim to preserve
+  `bregger_heartbeat.should_propose` / `reflect` coverage via a
+  `test_reflection.py` rewrite. Step-96 deleted
+  `bregger_heartbeat.py` entirely and did not port that coverage
+  to `xibi/heartbeat/`. A respec should decide whether the gap
+  warrants new xibi-side coverage or is accepted debt.
+
+- **[C4 nit] Footer sequence narrative (L784-796) is stale.**
+  "step-96 (TBD) — retire bregger_heartbeat.py + systemd/bregger-
+  heartbeat.service after parity audit" describes work merged
+  2026-04-22 as PR #103. Cosmetically misleading; no functional
+  impact.
+
+- **[C5 nit] Out-of-scope constraints (L641-646) reference files
+  step-96 deleted.** "Do not touch `bregger_heartbeat.py` or
+  `systemd/bregger-heartbeat.service`" — both gone. The
+  `bregger_utils.py` rationale ("still imported by
+  bregger_heartbeat") is also wrong — the live importer post
+  step-96 is `tests/test_memory.py:10` (`from bregger_utils import
+  get_active_threads`, installed by step-96's fixture rewrite).
+  bregger_utils is correctly out-of-scope, but the reason is
+  different.
+
+- **[V1 vision] `bregger_cli.py` (9.3K at repo root) is fully
+  dead and unmentioned.** `grep -rn -E "(from|import)\s+bregger_cli"`
+  returns zero runtime hits. The file could fold into this spec
+  (one more `.py` delete) or defer to its own cleanup spec.
+  Daniel's call at respec time, but the spec should acknowledge it.
+
+- **[S1 specificity] `xibi/dashboard/queries.py:67` comment edit
+  remains valid and required on HEAD `e0ee5c3`.** The prior TRR's
+  H3 guidance (rephrase-past-tense or delete; withdraw
+  "leave untouched") stands. This is one of the few parts of the
+  spec that survives post-step-96 cleanly.
+
+- **[S2 specificity, NucBox-verified] `bregger_utils.py` docstrings
+  contain stale `bregger_core` / `bregger_heartbeat` references.**
+  NucBox SSH check (HEAD `e0ee5c3`, Tailscale 100.125.95.42) shows
+  two docstring mentions inside `bregger_utils.py`:
+  - L56: "Single source of truth used by both bregger_core (prompt
+    injection) and…"
+  - L127: "Called by both bregger_core._ensure_signals_table() and
+    bregger_heartbeat.log_signal()"
+  Both claims are stale: `bregger_heartbeat.py` was deleted by
+  step-96 (commit `2183351`); `bregger_core.py` will be deleted by
+  step-95-v2. If the v2 DoD grep includes repo-root `*.py`, these
+  docstring tokens will trip it. Recommend folding a 2-line
+  docstring refresh into step-95-v2 (keeps `bregger_utils.py`
+  still-live and out-of-scope for deletion, but accurate).
+
+**Additional NucBox verification (beyond the Findings above):**
+
+- NucBox HEAD matches `origin/main` at `e0ee5c3` — step-96 deploy
+  landed cleanly.
+- `xibi-heartbeat.service`, `xibi-telegram.service`,
+  `xibi-dashboard.service` all `active`.
+- `xibi-caretaker.service` is a timer-triggered oneshot (not a
+  long-running daemon). `Pulse #42` landed 12 min before this
+  check (`status=0/SUCCESS`). The `Not enabled (skipped)` note in
+  the deploy telegram reflects `deploy.sh`'s naive oneshot
+  handling, not a caretaker breakage — caretaker is functional on
+  the box. Step-97 (deploy-sync-systemd-units) still wants to
+  generalize the deploy restart logic.
+- `bregger-heartbeat.service` and `bregger-telegram.service` unit
+  files remain installed in `disabled` state on NucBox at
+  `~/.config/systemd/user/`. Step-96 deleted them from the repo
+  but `deploy.sh` does not remove old installed units. Benign
+  (disabled, not running) and out of scope for step-95-v2 — this
+  is step-97's territory.
+- `bregger_cli.py` has **zero** references anywhere in NucBox
+  runtime surface (confirms V1 above). Folding it into step-95-v2
+  is a 1-line add to the delete list; deferring it to its own
+  spec is also clean. Daniel's call.
+
+**Conditions:** N/A — NOT READY.
+
+**Inline fixes applied during review:** none. The scope drift is
+too large for condition-form corrections; amending inline would
+entangle the v1 parked TRR's callouts with new v2 findings and
+further muddy the spec body.
+
+**Confidence:**
+- Contract: High — surviving delete targets are concrete.
+- RWTS: Medium — Scenario 2 (`bregger-heartbeat.service`)
+  references a deleted unit.
+- PDV: Medium — dead-code grep and `xibi-*` service checks
+  survive; `bregger-heartbeat.service` checks are dead.
+- Observability: High — N/A pattern is honest.
+- DoD: Low — ~7 of 22 items no-op against current HEAD.
+
+**Recommended path forward — respec `step-95-v2`:**
+
+A fresh ~1-page spec scoped to what actually remains post step-96:
+
+- **Delete (6 files):** `bregger_core.py` (182K, 3,913 lines),
+  `bregger_dashboard.py` (24K, 649 lines), `bregger_shadow.py`
+  (5.1K, only importer is `bregger_core:38`),
+  `tests/test_react_reasoning.py` (sole live `bregger_core`
+  importer), `tests/reasoning_benchmark_v2.py` (orphan after
+  `test_react_reasoning` delete + has `bregger_core` docstring
+  refs), `tests/fixtures/reasoning_seeds.py` (orphan).
+- **Modify (1 file):** `xibi/dashboard/queries.py:67` — rephrase
+  past-tense or delete the `bregger_dashboard.py` comment.
+- **Out of scope (explicitly):** `bregger_utils.py` (still
+  imported by `tests/test_memory.py:10`); `bregger_cli.py` (dead
+  but own decision point); historical docs (`CHANGELOG.md`,
+  `reviews/`, `public/`, `README.md`, `tasks/done/`).
+- **DoD:** 6 file-absence checks + 1 comment check + dead-code
+  grep `"bregger_core\|bregger_dashboard\|bregger_shadow"` over
+  `xibi/ skills/ scripts/ systemd/ tests/ *.py` returns zero +
+  `pytest --collect-only` clean + `xibi-heartbeat` +
+  `xibi-telegram` + `xibi-dashboard` services active post-deploy.
+
+Estimated respec effort: ~15-20 min Opus in Cowork. Estimated
+implementation effort for the respec'd version: under an hour
+(6 deletions + 1 comment edit; no fixture rewrites, no coverage
+preservation).
+
+**Spec stays in `tasks/backlog/`.** The PARKED notice at the top
+remains accurate in spirit (unpark trigger #1 satisfied; scope-
+drift reason has shifted from "bregger_core live via bregger-
+telegram" to "spec body references files deleted by step-96") but
+the original notice is left unedited as historical record. No
+promotion until respec (or explicit Daniel override accepting the
+READY WITH CONDITIONS path with directives drawn from this TRR's
+Recommended section).
+
+**Gap types covered:** correctness (C1-C5), hazards (H1/H2),
+specificity (S1), vision (V1). No pipeline-relevance (P) findings
+— sequencing (step-96 before step-95-v2) is correct.

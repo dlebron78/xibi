@@ -104,9 +104,12 @@ via Claude Code, then push to origin. The NucBox watcher script picks up
      rule #2 applies); CI must be green; `git merge --ff-only` + push
      origin main as usual. Code-review rejection or scope-drift
      findings escalate per rule #2 and the escalation table.
-   - **Announce on merge:** telegram `[HOTFIX] <branch> → main —
-     <1-line rationale>` instead of the normal `[MERGED]` pulse. Keeps
-     spec-less merges distinguishable in the channel.
+   - **Announce on merge (best-effort):** if telegram creds are on the
+     host, send `[HOTFIX] <branch> → main — <1-line rationale>` to
+     distinguish the spec-less lane from regular merges. If creds are
+     absent, skip — NucBox's `🚀 Deployed` watcher pulse still
+     announces the push. Missing creds never block the merge (see
+     "Telegram availability").
    - **Scope-drift trap:** if mid-implementation the fix turns out to
      require any NOT-eligible change (migration, prompt change, new
      surface), **stop** — drop the hotfix branch and escalate for a
@@ -135,9 +138,35 @@ Some decisions require Daniel. Send a telegram via xibi's admin channel
 READY WITH CONDITIONS is **not** an escalation — Cowork promotes directly
 to `pending/` and Claude Code follows the conditions during implementation.
 Minor review nits are handled **in-session** by the reviewer fixing in
-place. No escalation needed. The `[HOTFIX] <branch> → main` merge pulse
-(rule #8) is likewise **informational, not an escalation** — same shape
-as `[MERGED]`, just distinguishable for spec-less merges.
+place. No escalation needed. Merge-pulse telegrams (`[MERGED]`,
+`[HOTFIX]`) are **informational, not required** — NucBox's `🚀 Deployed`
+watcher pulse already announces every `origin/main` push to the same
+channel. Send them if the host has telegram creds; skip silently if not
+(see "Telegram availability" below).
+
+### Telegram availability — creds may be absent on the Claude Code host
+
+Claude Code often runs from a fresh session-dir clone that does not have
+`~/.xibi/secrets.env` loaded. **This is expected, not a pipeline failure.**
+Do not stall, loop, or refuse to continue because telegram credentials
+are missing.
+
+- **Required escalations** (`[TRR NOT READY]`, `[PIPELINE …]`,
+  `[CI STUCK|FLAKY|INFRA]`, `[REVIEW SCOPE DRIFT|REJECT]`,
+  `[HOTFIX SCOPE DRIFT]`) — if telegram creds are unavailable, surface
+  the same bracketed message to session stdout. Daniel is reading the
+  terminal; the escalation reaches him either way. Never block work on
+  the side-channel.
+- **Informational pulses** (`[MERGED]`, `[HOTFIX]`) — skip silently if
+  creds are unavailable. NucBox's `🚀 Deployed` telegram already
+  announces every `origin/main` movement, so a manual duplicate is
+  noise. If creds ARE on the host, `[HOTFIX]` is still worth sending
+  (distinguishes the spec-less lane from normal merges); its absence is
+  not a failure.
+- **Never treat missing telegram creds as a merge gate, review gate, or
+  pipeline gate.** Telegram is the notification transport, not a
+  decision gate. Merge, proceed, and let Daniel see the outcome in
+  stdout or the next `🚀 Deployed` pulse.
 
 ---
 
@@ -151,9 +180,11 @@ as `[MERGED]`, just distinguishable for spec-less merges.
   automatically.
 - **Semi-automatic merge policy:** On code review APPROVE or APPROVE WITH
   NITS, merge immediately (`git merge --ff-only`) and push to `origin/main`
-  without waiting for user confirmation. Send a telegram confirmation:
-  `[MERGED] step-X → main`. On any other verdict (CHANGES REQUESTED,
-  REJECT, ESCALATE), stop and telegram for user decision.
+  without waiting for user confirmation. NucBox's deploy watcher auto-
+  announces every `origin/main` movement via its `🚀 Deployed` telegram
+  pulse — **no manual `[MERGED]` telegram is required**. On any other
+  verdict (CHANGES REQUESTED, REJECT, ESCALATE), stop and telegram for
+  user decision (see "Telegram availability" below if creds are missing).
 - Never merge via GitHub UI. The NucBox watcher expects merges to appear on
   `origin/main` via local push.
 - Specs and code live in the same repo. Spec changes can be committed
