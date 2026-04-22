@@ -63,11 +63,59 @@ subagent prompt template. Instead, Cowork Opus reads the spec and code
 files directly from the repo mount, applies the protocol below, and
 writes the TRR Record.
 
+### Fast-TRR mode — for trivial specs
+
+Not every spec warrants the full five-pillar protocol. When the spec
+meets **all** of the criteria below, the reviewer may run an abbreviated
+Fast-TRR instead:
+
+- Declared deliverable is ≤ ~30 lines of new/changed content.
+- Touches none of: Python under `xibi/`, prompts, `schema.sql`,
+  migrations, or any LLM-facing surface.
+- DoD is verifiable by byte-identity (`cmp -s`), behavior-identity (e.g.
+  lifting a production-deployed unit file into the repo), or a single
+  verbatim command with a named pass/fail signal.
+- Post-Deploy Verification is one or two commands, not a protocol.
+
+Typical cases: capturing a production-deployed config or unit file into
+the repo, renaming a doc, adding a `.gitignore` entry, fixing a comment
+typo that clarifies already-correct behavior.
+
+**Protocol:** Read the spec and the file(s) it names. Write a single-
+paragraph TRR Record covering only **Contract** (is the change specified
+precisely enough to implement?) and **Post-Deploy Verification** (is
+there a concrete pass/fail signal?). Skip the other three pillars unless
+you spot a problem there. Target < 5 minutes reviewer time.
+
+**Escape valve:** If mid-review the spec drifts out of the criteria
+(touches Python, expands past ~30 lines, PDV grows into a protocol),
+abandon Fast-TRR and run the full protocol. Do not stretch Fast-TRR to
+cover work it wasn't sized for — that's the failure mode this mode is
+most at risk of.
+
+**Deliverable format (Fast-TRR):**
+
+```
+## TRR Record — Opus, YYYY-MM-DD (Fast-TRR)
+**Verdict:** READY | READY WITH CONDITIONS | NOT READY
+**Summary:** 2–3 sentences covering Contract and Post-Deploy Verification.
+**Findings (if any):** bullet list with severity.
+**Conditions (if READY WITH CONDITIONS):** numbered directives, same
+format as full TRR.
+**Independence:** one-line confirmation that this was a fresh Opus context.
+```
+
+Fast-TRR Records still start with `## TRR Record`, so `xs-promote` and
+CLAUDE.md's `grep "^## TRR Record"` gate match unchanged. The
+`(Fast-TRR)` parenthetical is informational for the audit trail, not a
+separate verdict class.
+
 ### Named review pillars
 
-Every TRR must explicitly evaluate each of these. A pass on all five is
-the floor for READY / READY WITH CONDITIONS. Weakness on any one is
-grounds for a finding; absence of one is NOT READY.
+**Full TRR must** explicitly evaluate each of these. A pass on all five
+is the floor for READY / READY WITH CONDITIONS. Weakness on any one is
+grounds for a finding; absence of one is NOT READY. (Fast-TRR
+abbreviates to pillars 1 and 3 only — see above.)
 
 1. **Contract** — function signatures, schemas, config keys, and error
    shapes are concrete enough that Claude Code can implement without
