@@ -16,7 +16,7 @@ SMTP_PASS = os.environ.get("BREGGER_SMTP_PASS", "")
 def run(params):
     """Phase 1: Validate and preview the email.
     Does NOT send. Returns a preview and raw payload for the confirmation gate.
-    When the user confirms, bregger_core.py calls send_smtp() directly.
+    When the user confirms, the core agent calls send_smtp() directly.
     """
     to = params.get("to")
     subject = params.get("subject")
@@ -130,7 +130,7 @@ def _track_outbound(to: str, db_path: str):
 
 def send_smtp(payload: dict) -> dict:
     """Phase 2: Actually send the email via SMTP.
-    Called by bregger_core.py after the user confirms. Never called by the LLM.
+    Called by the core agent after the user confirms. Never called by the LLM.
     """
     to = payload["to"]
     cc = payload.get("cc", "").strip()

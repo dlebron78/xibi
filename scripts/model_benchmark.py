@@ -8,7 +8,7 @@ Usage:
 
 Output:
   - Terminal: Pretty-printed leaderboard table
-  - JSON: ~/bregger_deployment/benchmarks/benchmark_<timestamp>.json
+  - JSON: ~/xibi/benchmarks/benchmark_<timestamp>.json
 
 Scoring system:
   Score = (Accuracy * 0.5) + (Speed * 0.3) + (Efficiency * 0.2)
@@ -27,7 +27,7 @@ from datetime import datetime
 from pathlib import Path
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-OUTPUT_DIR = Path.home() / "bregger_deployment" / "benchmarks"
+OUTPUT_DIR = Path.home() / "xibi" / "benchmarks"
 
 # ---------------------------------------------------------------------------
 # Thinking Mode Config

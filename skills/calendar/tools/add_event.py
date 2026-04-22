@@ -10,7 +10,7 @@ try:
 except ImportError:
     from ._google_auth import gcal_request, load_calendar_config, resolve_calendar_id
 
-from bregger_utils import parse_semantic_datetime
+from xibi.utils.time import parse_semantic_datetime
 
 
 def run(params: dict) -> dict:

@@ -17,7 +17,7 @@ def run(params):
 
     # Secrets file path on k12
     # We use environment variable for deployment stability
-    deploy_dir = os.environ.get("XIBI_DEPLOY_DIR", os.path.join(os.path.expanduser("~"), "bregger_deployment"))
+    deploy_dir = os.environ.get("XIBI_DEPLOY_DIR", os.path.join(os.path.expanduser("~"), "xibi"))
     secrets_path = Path(deploy_dir) / "secrets.env"
 
     try:
