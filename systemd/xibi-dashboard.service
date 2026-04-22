@@ -1,0 +1,18 @@
+[Unit]
+Description=Xibi Dashboard
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/xibi
+ExecStart=/usr/bin/python3 %h/xibi/run_dashboard.py
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=xibi-dashboard
+
+[Install]
+WantedBy=default.target
