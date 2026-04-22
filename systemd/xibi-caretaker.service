@@ -1,0 +1,18 @@
+[Unit]
+Description=Xibi Caretaker (failure-visibility watchdog)
+After=network.target
+Wants=network.target
+OnFailure=xibi-caretaker-onfail.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/xibi
+EnvironmentFile=%h/.xibi/secrets.env
+ExecStart=/usr/bin/python3 -m xibi --config %h/.xibi/config.json --workdir %h/.xibi caretaker run
+TimeoutStartSec=120
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=xibi-caretaker
+
+[Install]
+WantedBy=default.target

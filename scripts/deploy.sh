@@ -11,7 +11,7 @@ LOG_TAG="xibi-deploy"
 # Single source of truth for services restarted + health-checked on deploy.
 # Add / remove entries here when a long-running xibi systemd unit joins or
 # leaves the set. Word-splitting is deliberate; keep this unquoted in loops.
-LONG_RUNNING_SERVICES="xibi-heartbeat.service xibi-telegram.service xibi-dashboard.service"
+LONG_RUNNING_SERVICES="xibi-heartbeat.service xibi-telegram.service xibi-dashboard.service xibi-caretaker.service"
 
 # Source secrets for Telegram token + chat ID
 if [ -f "$HOME/.xibi/secrets.env" ]; then

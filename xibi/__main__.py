@@ -11,6 +11,7 @@ import yaml
 import xibi.db
 from xibi.channels.telegram import TelegramAdapter
 from xibi.cli import cmd_doctor
+from xibi.cli.caretaker import cmd_caretaker, register as register_caretaker
 from xibi.cli.init import cmd_init
 from xibi.cli.skill_test import cmd_skill_test
 from xibi.executor import LocalHandlerExecutor
@@ -232,6 +233,9 @@ def main() -> None:
     test_parser = skill_subparsers.add_parser("test", help="Test a skill manifest")
     test_parser.add_argument("name", help="Name of the skill to test")
 
+    # caretaker
+    register_caretaker(subparsers)
+
     args = parser.parse_args()
 
     if args.command == "init":
@@ -244,6 +248,8 @@ def main() -> None:
         cmd_heartbeat(args)
     elif args.command == "skill" and args.skill_command == "test":
         cmd_skill_test(args)
+    elif args.command == "caretaker":
+        cmd_caretaker(args)
 
 
 if __name__ == "__main__":

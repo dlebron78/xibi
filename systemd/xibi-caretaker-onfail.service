@@ -1,0 +1,13 @@
+[Unit]
+Description=Xibi Caretaker — on-failure telegram alert
+# Meta-monitoring hook: if xibi-caretaker.service crashes, this fires a
+# telegram so silence from the watchdog doesn't go unnoticed. Uses the
+# same TELEGRAM_TOKEN / CHAT_ID env vars as scripts/deploy.sh.
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.xibi/secrets.env
+ExecStart=/usr/bin/env bash -c 'TOKEN="${XIBI_TELEGRAM_TOKEN:-}"; CHAT="${XIBI_TELEGRAM_ALLOWED_CHAT_IDS:-}"; if [ -n "$TOKEN" ] && [ -n "$CHAT" ]; then curl -s -X POST "https://api.telegram.org/bot$TOKEN/sendMessage" -d "chat_id=$CHAT" -d "text=\xE2\x9A\xA0\xEF\xB8\x8F xibi-caretaker.service failed \xE2\x80\x94 check journalctl --user -u xibi-caretaker" > /dev/null 2>&1 || true; fi'
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=xibi-caretaker-onfail

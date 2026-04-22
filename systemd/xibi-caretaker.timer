@@ -1,0 +1,12 @@
+[Unit]
+Description=Xibi Caretaker Timer (every 15 minutes)
+Requires=xibi-caretaker.service
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=15min
+Unit=xibi-caretaker.service
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

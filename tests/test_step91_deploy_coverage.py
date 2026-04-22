@@ -31,6 +31,7 @@ def test_long_running_services_initial_value_covers_known_units() -> None:
         "xibi-heartbeat.service",
         "xibi-telegram.service",
         "xibi-dashboard.service",
+        "xibi-caretaker.service",
     }, f"initial LONG_RUNNING_SERVICES diverged from the known set: {services}"
 
 

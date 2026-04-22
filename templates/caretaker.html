@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Caretaker — Xibi</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 p-6">
+    <div class="max-w-5xl mx-auto space-y-6">
+        <header class="flex items-center justify-between">
+            <h1 class="text-2xl font-semibold">Caretaker</h1>
+            <button id="run-pulse" class="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded text-sm">
+                Run pulse now
+            </button>
+        </header>
+
+        <section class="bg-gray-800 rounded p-4">
+            <div class="flex items-baseline justify-between">
+                <h2 class="text-lg font-medium">Last pulse</h2>
+                <span id="last-pulse-ago" class="text-sm text-gray-400"></span>
+            </div>
+            <div id="last-pulse" class="mt-2 text-sm text-gray-300">loading…</div>
+        </section>
+
+        <section class="bg-gray-800 rounded p-4">
+            <h2 class="text-lg font-medium mb-2">Active drift items</h2>
+            <div id="drift-list" class="text-sm text-gray-300">loading…</div>
+        </section>
+
+        <section class="bg-gray-800 rounded p-4">
+            <h2 class="text-lg font-medium mb-2">Recent pulses</h2>
+            <table class="w-full text-sm">
+                <thead class="text-gray-400 text-left">
+                    <tr>
+                        <th class="py-1">Started</th>
+                        <th>Status</th>
+                        <th>Findings</th>
+                        <th>Duration (ms)</th>
+                    </tr>
+                </thead>
+                <tbody id="pulses-body"></tbody>
+            </table>
+        </section>
+    </div>
+
+    <script>
+        const SEV_COLOR = { critical: 'text-red-400', warning: 'text-yellow-400' };
+        const STATUS_COLOR = {
+            clean: 'text-green-400', findings: 'text-red-400',
+            repeat: 'text-yellow-400', resolved: 'text-green-400',
+            error: 'text-red-400', running: 'text-gray-400'
+        };
+
+        function fmtAgo(iso) {
+            if (!iso) return '';
+            const t = new Date(iso.replace(' ', 'T') + 'Z');
+            const diffMin = Math.floor((Date.now() - t.getTime()) / 60000);
+            if (diffMin < 1) return 'just now';
+            if (diffMin < 60) return `${diffMin} min ago`;
+            const h = Math.floor(diffMin / 60);
+            return `${h} h ago`;
+        }
+
+        async function refresh() {
+            const [pulses, drift] = await Promise.all([
+                fetch('/api/caretaker/pulses?limit=20').then(r => r.json()),
+                fetch('/api/caretaker/drift').then(r => r.json()),
+            ]);
+
+            const latest = pulses.pulses[0];
+            const lastEl = document.getElementById('last-pulse');
+            const agoEl = document.getElementById('last-pulse-ago');
+            if (latest) {
+                const color = STATUS_COLOR[latest.status] || '';
+                lastEl.innerHTML = `
+                    <span class="${color} font-medium">${latest.status}</span>
+                    — ${latest.findings_count} finding(s)
+                    — ${latest.duration_ms} ms
+                    — ${latest.started_at}
+                `;
+                agoEl.textContent = fmtAgo(latest.started_at);
+            } else {
+                lastEl.textContent = 'never';
+                agoEl.textContent = '';
+            }
+
+            const driftEl = document.getElementById('drift-list');
+            if (!drift.active.length) {
+                driftEl.textContent = 'none — all checks green';
+            } else {
+                driftEl.innerHTML = drift.active.map(d => {
+                    const c = SEV_COLOR[d.severity] || '';
+                    const accepted = d.accepted_at ? ' <span class="text-xs text-gray-500">(accepted)</span>' : '';
+                    return `<div class="py-1">
+                        <span class="${c} font-medium">[${d.severity}]</span>
+                        <span class="font-mono">${d.dedup_key}</span>
+                        — first observed ${d.first_observed_at}${accepted}
+                    </div>`;
+                }).join('');
+            }
+
+            const body = document.getElementById('pulses-body');
+            body.innerHTML = pulses.pulses.map(p => {
+                const color = STATUS_COLOR[p.status] || '';
+                return `<tr class="border-t border-gray-700">
+                    <td class="py-1">${p.started_at}</td>
+                    <td class="${color}">${p.status}</td>
+                    <td>${p.findings_count}</td>
+                    <td>${p.duration_ms ?? ''}</td>
+                </tr>`;
+            }).join('');
+        }
+
+        document.getElementById('run-pulse').addEventListener('click', async () => {
+            const btn = document.getElementById('run-pulse');
+            btn.disabled = true;
+            btn.textContent = 'Running…';
+            try {
+                await fetch('/api/caretaker/run', { method: 'POST' });
+                await refresh();
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Run pulse now';
+            }
+        });
+
+        refresh();
+        setInterval(refresh, 30000);
+    </script>
+</body>
+</html>

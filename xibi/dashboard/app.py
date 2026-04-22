@@ -397,4 +397,42 @@ def create_app(config: DashboardConfig) -> Flask:
     def index() -> str:
         return render_template("index.html")
 
+    @app.route("/caretaker")
+    def caretaker_page() -> str:
+        return render_template("caretaker.html")
+
+    @app.route("/api/caretaker/pulses")
+    def caretaker_pulses() -> Any:
+        limit = int(request.args.get("limit", "20"))
+        from xibi.caretaker.pulse import Caretaker
+
+        workdir = app.config["DB_PATH"].parent.parent
+        ct = Caretaker(db_path=app.config["DB_PATH"], workdir=workdir)
+        return jsonify({"pulses": ct.recent_pulses(limit=limit)})
+
+    @app.route("/api/caretaker/drift")
+    def caretaker_drift() -> Any:
+        from xibi.caretaker import dedup as _dedup
+
+        return jsonify({"active": _dedup.list_active(app.config["DB_PATH"])})
+
+    @app.route("/api/caretaker/run", methods=["POST"])
+    def caretaker_run() -> Any:
+        """Run one pulse on demand (dashboard button)."""
+        from xibi.caretaker.pulse import Caretaker
+
+        workdir = app.config["DB_PATH"].parent.parent
+        ct = Caretaker(db_path=app.config["DB_PATH"], workdir=workdir)
+        result = ct.pulse()
+        return jsonify(
+            {
+                "pulse_id": result.pulse_id,
+                "status": result.status,
+                "findings_count": len(result.findings),
+                "repeat_count": len(result.repeats),
+                "resolved_count": len(result.resolved_keys),
+                "duration_ms": result.duration_ms,
+            }
+        )
+
     return app

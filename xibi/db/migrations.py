@@ -6,7 +6,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 37  # increment when adding new migrations
+SCHEMA_VERSION = 38  # increment when adding new migrations
 
 
 def _safe_add_column(
@@ -109,6 +109,7 @@ class SchemaManager:
             (35, "subagent: add summary and ttl columns to subagent_runs", self._migration_35),
             (36, "signals: add metadata column + subagent_signal_dispatch table", self._migration_36),
             (37, "checklist_instance_items: make template_item_id nullable, add status + metadata", self._migration_37),
+            (38, "caretaker: caretaker_pulses + caretaker_drift_state tables", self._migration_38),
         ]
 
         for version, description, func in migrations:
@@ -927,6 +928,34 @@ class SchemaManager:
         conn.execute("DROP TABLE checklist_instance_items")
         conn.execute("ALTER TABLE checklist_instance_items_new RENAME TO checklist_instance_items")
         conn.execute("CREATE INDEX idx_cii_instance_id ON checklist_instance_items(instance_id)")
+
+    def _migration_38(self, conn: sqlite3.Connection) -> None:
+        """Caretaker failure-visibility watchdog: pulse log + drift state."""
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS caretaker_pulses (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at     TEXT NOT NULL,
+                finished_at    TEXT,
+                status         TEXT NOT NULL,
+                duration_ms    INTEGER,
+                findings_count INTEGER NOT NULL DEFAULT 0,
+                findings_json  TEXT
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_caretaker_pulses_started ON caretaker_pulses(started_at DESC)"
+        )
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS caretaker_drift_state (
+                dedup_key         TEXT PRIMARY KEY,
+                check_name        TEXT NOT NULL,
+                severity          TEXT NOT NULL,
+                first_observed_at TEXT NOT NULL,
+                last_observed_at  TEXT NOT NULL,
+                accepted_at       TEXT,
+                metadata_json     TEXT
+            )
+        """)
 
 
 def migrate(db_path: Path) -> list[int]:
