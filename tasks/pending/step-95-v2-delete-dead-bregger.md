@@ -365,3 +365,61 @@ live somewhere the grep missed.**
 > — it cleans up orphan systemd unit files on NucBox (disabled but
 > still installed after step-96) and is not a prerequisite for this
 > spec.
+
+---
+
+## TRR Record — Opus, 2026-04-22
+
+**Independence attestation:** This TRR was conducted by a fresh Opus
+context in Cowork with no spec-authoring history for step-95-v2. I did
+not draft, outline, or pre-read this spec; all claims were verified
+against the live tree at `origin/main` HEAD `21479cf`.
+
+**Verdict:** READY
+
+**Summary:** Every load-bearing claim in the spec checks out against the
+live tree at HEAD `21479cf`. The 7 file deletions exist at the stated
+line counts (3913/649/140/272 + 256/403/39 = 5,672 lines, exactly as
+claimed); the importer graph is exactly the 4 refs the spec enumerates;
+the "before" text for both `bregger_utils.py` docstring edits and the
+`xibi/dashboard/queries.py:67` comment are verbatim matches; and a
+simulated post-spec DoD grep (the two required greps, applied with the
+deletions and edits virtually applied) returns zero hits. Post-Deploy
+Verification, Rollback, and Failure-path exercise are concrete with
+named pass/fail signals. Observability `N/A` is legitimate (pure
+deletion, no deployed runtime surface beyond the tree shrinking).
+
+**Findings:**
+
+- **[C3 nit]** Spec heading "Line 55-60 (inside `get_active_threads`
+  docstring)" is slightly off — the docstring opens at L54 (the `"""`)
+  and runs through L64; the relevant sentences to remove sit at L56-L58.
+  Similarly "Line 124-130" — actual docstring span is L125-L131. Not
+  load-bearing because the spec gives verbatim before/after text and
+  the implementer will anchor on content, not line numbers. No fix
+  required.
+
+- **[C3 nit]** The `deploy.sh` PDV baseline check lists
+  `xibi-caretaker.service` among `LONG_RUNNING_SERVICES` (confirmed at
+  `scripts/deploy.sh:14`) while the spec correctly notes caretaker is a
+  timer-triggered oneshot and "correctly absent from `active` list."
+  That framing is accurate but the subsequent
+  `LONG_RUNNING_SERVICES` ActiveEnterTimestamp check will produce a
+  caretaker entry whose timestamp may predate the merge (since oneshots
+  don't restart on deploy unless manually kicked). Implementer should
+  treat a caretaker-older-than-merge as expected, not a silent skip —
+  this is not a condition, just a runtime reading tip.
+
+**Conditions (if READY WITH CONDITIONS):** None — verdict is READY
+without conditions.
+
+**Inline fixes applied during review:** None.
+
+**Confidence:**
+- Contract: High — every deletion cites file + line count + importer evidence.
+- RWTS: High — 4 scenarios, each grounded in a concrete command and observable signal.
+- Post-Deploy Verification: High — verbatim commands, named expected outputs, rollback shape filled in.
+- Observability: High — honest `N/A` with file-list justification.
+- Constraints & DoD alignment: High — DoD items 1-for-1 mirror Files to Delete + Files to Modify + Contract; zero hidden scope.
+
+Promote to `tasks/pending/`.
