@@ -5,10 +5,9 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
-# Ensure the root project dir is in the load path so we can import bregger_heartbeat
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import bregger_heartbeat
+from bregger_utils import get_active_threads
 from skills.memory.tools import archive, recall, remember
 from xibi.db import init_workdir
 
@@ -43,37 +42,9 @@ def test_remember_maps_decay_days(fresh_db):
         assert cursor.fetchone()[0] is None
 
 
-def test_memory_decay_job(fresh_db):
-    """Verifies that the heartbeat decay job reliably updates expired rows."""
-    db_path = fresh_db["db_path"]
-    workdir = fresh_db["workdir"]
-
-    # Seed data
-    remember.run({"category": "deadline", "content": "Recent deadline", "_workdir": workdir})
-
-    # Manually insert a stale deadline (8 days old, needs 7 to decay)
-    with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            """
-            INSERT INTO ledger (id, category, content, created_at, decay_days)
-            VALUES (?, ?, ?, datetime('now', '-8 days'), ?)
-        """,
-            ("stale_id", "deadline", "Old deadline", 7),
-        )
-        conn.commit()
-
-    # Run the decay job
-    bregger_heartbeat._run_memory_decay(db_path)
-
-    # Verify
-    with sqlite3.connect(db_path) as conn:
-        rows = conn.execute("SELECT id, status FROM ledger").fetchall()
-
-        for id_, status in rows:
-            if id_ == "stale_id":
-                assert status == "expired"
-            else:
-                assert status in (None, "")
+@pytest.mark.skip(reason="coverage gap: no xibi equivalent for _run_memory_decay (tracked: bregger invoker retirement, step-96)")
+def test_memory_decay_placeholder():
+    pass
 
 
 def test_recall_filters_expired(fresh_db):
@@ -113,7 +84,7 @@ def test_get_active_threads_pure_sql(fresh_db):
             )
         conn.commit()
 
-    threads = bregger_heartbeat._get_active_threads(db_path)
+    threads = get_active_threads(db_path)
 
     assert len(threads) == 1
     assert threads[0]["topic"] == "topic"
