@@ -93,9 +93,7 @@ def accept(db_path: Path, dedup_key: str) -> None:
 
 def active_keys(db_path: Path) -> set[str]:
     with open_db(db_path) as conn:
-        rows = conn.execute(
-            "SELECT dedup_key FROM caretaker_drift_state"
-        ).fetchall()
+        rows = conn.execute("SELECT dedup_key FROM caretaker_drift_state").fetchall()
         return {r[0] for r in rows}
 
 

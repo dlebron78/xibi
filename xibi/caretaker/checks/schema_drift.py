@@ -27,8 +27,7 @@ def check(db_path: Path) -> list[Finding]:
                 severity=Severity.CRITICAL,
                 dedup_key=f"schema_drift:{item.table}.{item.column}",
                 message=(
-                    f"{item.table} table {action} column: {item.column} "
-                    f"({detail})\nRun `xibi doctor` for full report."
+                    f"{item.table} table {action} column: {item.column} ({detail})\nRun `xibi doctor` for full report."
                 ),
                 metadata={
                     "table": item.table,

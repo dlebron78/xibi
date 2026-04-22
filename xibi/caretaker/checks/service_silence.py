@@ -87,7 +87,7 @@ def check(db_path: Path, cfg: ServiceSilenceConfig) -> list[Finding]:
 
         msg_lines = [
             f"{svc} hasn't emitted a span in "
-            f"{silence_min if silence_min is not None else '>'+str(cfg.silence_threshold_min)} min "
+            f"{silence_min if silence_min is not None else '>' + str(cfg.silence_threshold_min)} min "
             f"(threshold: {cfg.silence_threshold_min} min)",
             f"Last span: {last_line}",
         ]

@@ -942,9 +942,7 @@ class SchemaManager:
                 findings_json  TEXT
             )
         """)
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_caretaker_pulses_started ON caretaker_pulses(started_at DESC)"
-        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_caretaker_pulses_started ON caretaker_pulses(started_at DESC)")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS caretaker_drift_state (
                 dedup_key         TEXT PRIMARY KEY,

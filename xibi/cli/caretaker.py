@@ -108,21 +108,14 @@ def _status(db_path: Path, workdir: Path, user_config: dict) -> None:
     last = caretaker.last_pulse()
     active = _dedup.list_active(db_path)
     if last:
-        print(
-            f"Last pulse: {last['started_at']}  "
-            f"Status: {last['status']}  "
-            f"Findings: {last['findings_count']}"
-        )
+        print(f"Last pulse: {last['started_at']}  Status: {last['status']}  Findings: {last['findings_count']}")
     else:
         print("Last pulse: never")
     if active:
         print(f"\nActive drift items ({len(active)}):")
         for row in active:
             accepted = "(accepted)" if row["accepted_at"] else ""
-            print(
-                f"  [{row['severity']}] {row['dedup_key']}"
-                f"  first={row['first_observed_at']} {accepted}"
-            )
+            print(f"  [{row['severity']}] {row['dedup_key']}  first={row['first_observed_at']} {accepted}")
     else:
         print("\nActive drift items: none")
 

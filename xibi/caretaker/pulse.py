@@ -184,18 +184,22 @@ class Caretaker:
         repeat_findings: list[Finding] = []
 
         check_runs = [
-            ("service_silence", "caretaker.check.service_silence",
-             lambda: service_silence.check(self.db_path, self.config.service_silence),
-             {"watched_operations_count": len(self.config.service_silence.watched_operations)}),
-            ("config_drift", "caretaker.check.config_drift",
-             lambda: config_drift.check(self.workdir, self.config.config_drift),
-             {"watched_paths_count": len(self.config.config_drift.watched_paths)}),
+            (
+                "service_silence",
+                "caretaker.check.service_silence",
+                lambda: service_silence.check(self.db_path, self.config.service_silence),
+                {"watched_operations_count": len(self.config.service_silence.watched_operations)},
+            ),
+            (
+                "config_drift",
+                "caretaker.check.config_drift",
+                lambda: config_drift.check(self.workdir, self.config.config_drift),
+                {"watched_paths_count": len(self.config.config_drift.watched_paths)},
+            ),
         ]
         if self.config.schema_drift.enabled:
             check_runs.append(
-                ("schema_drift", "caretaker.check.schema_drift",
-                 lambda: schema_drift.check(self.db_path),
-                 {}),
+                ("schema_drift", "caretaker.check.schema_drift", lambda: schema_drift.check(self.db_path), {}),
             )
 
         for _name, op, runner, extra_attrs in check_runs:
