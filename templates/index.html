@@ -20,8 +20,14 @@
         <!-- Header & Health -->
         <div class="flex justify-between items-center mb-8">
             <h1 class="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400">Xibi Command Center</h1>
-            <div id="health-chips" class="flex gap-4">
-                <!-- Populated by JS -->
+            <div class="flex gap-4 items-center">
+                <div id="health-chips" class="flex gap-4">
+                    <!-- Populated by JS -->
+                </div>
+                <a id="caretaker-chip" href="/caretaker"
+                   class="bg-slate-800 px-3 py-1 rounded border border-slate-700 text-[10px] font-bold tracking-widest uppercase no-underline"
+                   style="display:none;"
+                   title="">Caretaker</a>
             </div>
         </div>
 
@@ -224,6 +230,7 @@
         async function init() {
             loadModelConfig();
             refreshHealth();
+            refreshCaretakerChip();
             refreshInference();
             refreshTrust();
             refreshAudit();
@@ -235,6 +242,7 @@
 
             // Auto-refresh loops
             setInterval(refreshHealth, 15000);
+            setInterval(refreshCaretakerChip, 60000);
             setInterval(() => {
                 refreshInference();
                 refreshTrust();
@@ -245,6 +253,55 @@
                 refreshRecent();
                 refreshSignals();
             }, 60000);
+        }
+
+        // Keep in sync with xibi/caretaker config pulse_interval_min (v1 = 15 min).
+        const SILENT_THRESHOLD_MIN = 30;
+
+        async function refreshCaretakerChip() {
+            const chip = document.getElementById('caretaker-chip');
+            if (!chip) return;
+            try {
+                const [pulsesRes, driftRes] = await Promise.all([
+                    fetch('/api/caretaker/pulses?limit=1'),
+                    fetch('/api/caretaker/drift'),
+                ]);
+                if (!pulsesRes.ok || !driftRes.ok) {
+                    chip.style.display = 'none';
+                    return;
+                }
+                const pulsesJson = await pulsesRes.json();
+                const driftJson = await driftRes.json();
+                const lastPulse = pulsesJson.pulses && pulsesJson.pulses[0];
+                const activeDriftRows = (driftJson.active || []).filter(d => d.accepted_at === null);
+                const activeDrift = activeDriftRows.length;
+
+                if (!lastPulse) {
+                    chip.className = 'bg-slate-800 px-3 py-1 rounded border border-red-500/60 text-red-300 text-[10px] font-bold tracking-widest uppercase no-underline';
+                    chip.textContent = '🔴 Caretaker · no pulses yet';
+                    chip.title = `No pulses recorded; threshold ${SILENT_THRESHOLD_MIN} min.`;
+                    chip.style.display = '';
+                    return;
+                }
+
+                const ageMin = Math.round((Date.now() - new Date(lastPulse.started_at).getTime()) / 60000);
+                if (ageMin > SILENT_THRESHOLD_MIN) {
+                    chip.className = 'bg-slate-800 px-3 py-1 rounded border border-red-500/60 text-red-300 text-[10px] font-bold tracking-widest uppercase no-underline';
+                    chip.textContent = `🔴 Caretaker · silent ${ageMin}m`;
+                    chip.title = `Last pulse at ${lastPulse.started_at}; threshold ${SILENT_THRESHOLD_MIN} min.`;
+                } else if (activeDrift > 0) {
+                    chip.className = 'bg-slate-800 px-3 py-1 rounded border border-amber-500/60 text-amber-300 text-[10px] font-bold tracking-widest uppercase no-underline';
+                    chip.textContent = `🟡 Caretaker · ${activeDrift} drift`;
+                    chip.title = activeDriftRows.map(d => d.dedup_key).join('\n');
+                } else {
+                    chip.className = 'bg-slate-800 px-3 py-1 rounded border border-emerald-500/60 text-emerald-300 text-[10px] font-bold tracking-widest uppercase no-underline';
+                    chip.textContent = `🟢 Caretaker · ${ageMin}m ago`;
+                    chip.title = `Last pulse ${ageMin}m ago.`;
+                }
+                chip.style.display = '';
+            } catch (err) {
+                chip.style.display = 'none';
+            }
         }
 
         async function refreshHealth() {
