@@ -164,7 +164,14 @@ Roberto: [expected response]
      `LONG_RUNNING_SERVICES` in `scripts/deploy.sh`. Compare that list
      against what's actually active on NucBox; divergence = drift.
      If this spec adds a new long-running `xibi-*.service` unit, the
-     author MUST also add it to `LONG_RUNNING_SERVICES` in the same PR. -->
+     author MUST also add it to `LONG_RUNNING_SERVICES` in the same PR.
+
+     If this spec adds a new `xibi-*.service` or `xibi-*.timer` file to
+     `systemd/`, the PDV must include a
+     `systemctl --user list-unit-files <new-unit>` check proving the
+     auto-sync (step-97) installed and (where applicable) enabled it.
+     Merged ≠ deployed until this PDV check passes — the auto-sync is
+     what closes the gap and the PDV is how you prove the gap closed. -->
 
 - Deploy service list and actually-active services align:
   ```
