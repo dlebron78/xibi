@@ -1,3 +1,11 @@
+# SUPERSEDED by step-95-v2 — 2026-04-22
+
+This spec has been replaced by `tasks/backlog/step-95-v2-delete-dead-bregger.md`. The v2 respec was authored in Cowork (Opus) on 2026-04-22 following the post-step-96 TRR NOT READY verdict (at the bottom of this file). The v2 scope is the same goal (delete dead bregger libraries) with a cleaned-up file list that matches current HEAD `071f89e`. The original spec body below is preserved unedited for audit history — do not implement against it.
+
+Do not unpark or promote THIS file. Route TRR + implementation to `step-95-v2-delete-dead-bregger.md` instead.
+
+---
+
 # PARKED — 2026-04-22
 
 Spec returned to backlog during implementation. The TRR verdict recorded at the end of this file (READY WITH CONDITIONS, 2026-04-22) is **INVALIDATED** by the following material finding.
