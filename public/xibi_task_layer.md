@@ -6,7 +6,7 @@
 
 ## The Problem
 
-Every interaction with Bregger is one-and-done. The ReAct loop runs, responds, and the context dies. Three systems exist in isolation:
+Every interaction with Xibi is one-and-done. The ReAct loop runs, responds, and the context dies. Three systems exist in isolation:
 
 | System | Can... | Can't... |
 |---|---|---|
@@ -225,7 +225,7 @@ Context compression uses the same `_compress_scratchpad()` that already runs dur
 
 - `tasks` table + migration
 - Two new ReAct exit types
-- `resume_task()` function in `BreggerCore`
+- `resume_task()` function in `XibiCore`
 - Message handler check: "is there a paused task for this chat?"
 - Heartbeat: fire scheduled tasks + nudge paused tasks + expire stale tasks
 - ~150-200 lines of code
@@ -282,26 +282,26 @@ Adds friction to the common case (single paused task) to solve an edge case (mul
 
 ```
 You: "Draft a marketing email about our product and send it to Jake"
-Bregger: "Here's a draft for Jake. Should I send it?"
+Xibi: "Here's a draft for Jake. Should I send it?"
 (you go to lunch, come back 2 hours later)
 You: "Yes, send it"
-Bregger: "Sent ✅"
+Xibi: "Sent ✅"
 ```
 
 ```
 You: "Remind me next Thursday to renew my domains"
-Bregger: "Got it — I'll remind you Thursday."
+Xibi: "Got it — I'll remind you Thursday."
 (Thursday morning, heartbeat tick)
-Bregger: "⏰ Your Namecheap domains expire April 1st.
+Xibi: "⏰ Your Namecheap domains expire April 1st.
           Want me to check your email for a renewal link?"
 You: "Yeah check"
-Bregger: searches email → "Found it — here's the renewal link: ..."
+Xibi: searches email → "Found it — here's the renewal link: ..."
 ```
 
 ```
 You: "Let me know when Jake replies about the budget"
 (3 days later, Jake's email arrives)
-Bregger: "Jake replied about the budget. He approved $12k
+Xibi: "Jake replied about the budget. He approved $12k
           for Q2. Want me to forward this to the team?"
 ```
 

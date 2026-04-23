@@ -1,6 +1,6 @@
 # Signal Intelligence & Thread Architecture
 
-> **Status:** Design doc. Covers Phase 2.5 (Signal Intelligence) and Phase 2.6 (Thread Materialization). See `bregger_roadmap_v2.md` for the full Phase 2 vision.
+> **Status:** Design doc. Covers Phase 2.5 (Signal Intelligence) and Phase 2.6 (Thread Materialization). See `public/xibi_roadmap.md` for the full Phase 2 vision.
 
 ---
 

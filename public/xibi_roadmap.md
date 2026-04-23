@@ -692,7 +692,7 @@ Flip the repo to public once the codebase looks like a clean project, not a mono
 - [ ] `requirements.txt` or `pyproject.toml` — dependency manifest
 - [ ] CONTRIBUTING.md — how to submit PRs, CLA note, code style, AI disclosure
 - [ ] NOTICE file — required by Apache 2.0 for attribution
-- [ ] Clean or archive old `public/bregger_*.md` docs (superseded by `xibi_*.md`)
+- [x] Old deprecated `public/` design docs removed, superseded by the current `xibi_*.md` set (step-100)
 - [ ] Legacy `bregger_*.py` files removed or clearly marked (Step 4 should handle this)
 - [ ] Privacy statement in README — "no telemetry, no data collection, no phone-home"
 - [ ] Dependency license audit — no GPL dependencies in an Apache 2.0 project

@@ -95,7 +95,7 @@
 
 ## Gate 7: Autonomy Direction
 
-**The principle:** Xibi tracks progress on two axes: autonomy (what the agent can do) and trust (why you should let it). See the Autonomy-Trust Matrix in bregger_vision.md. Each PR should either hold both levels steady or advance at least one without regressing the other. Increasing autonomy without maintaining trust is a regression.
+**The principle:** Xibi tracks progress on two axes: autonomy (what the agent can do) and trust (why you should let it). See the Autonomy-Trust Matrix in xibi_vision.md. Each PR should either hold both levels steady or advance at least one without regressing the other. Increasing autonomy without maintaining trust is a regression.
 
 **Review questions (answer each explicitly):**
 - Does this PR add new autonomous capabilities (heartbeat actions, observation cycle tools, proactive signals)? If so, are they properly gated by the permission tier system?
@@ -144,7 +144,7 @@
 
 > **Purpose:** The pipeline builds infrastructure horizontally (more sources, more resilience, more entity awareness). This section ensures it also considers vertical progress toward real use cases.
 
-Xibi has three reference deployments that validate the architecture (see bregger_vision.md):
+Xibi has three reference deployments that validate the architecture (see xibi_vision.md):
 
 1. **Chief of Staff** (L2/T2) — cross-source monitoring, signal intelligence, proactive nudges
 2. **Job Search Assistant** (L1/T1) — MCP source polling, profile-based filtering, application tracking
