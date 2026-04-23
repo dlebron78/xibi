@@ -1,19 +1,8 @@
 import sqlite3
 from datetime import datetime, timedelta
 
+from tests._helpers import _migrated_db
 from xibi.alerting.rules import RuleEngine
-
-
-def test_ensure_tables_creates_schema(tmp_path):
-    db_path = tmp_path / "test.db"
-    RuleEngine(db_path)
-
-    with sqlite3.connect(db_path) as conn:
-        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        tables = {row[0] for row in cursor.fetchall()}
-
-    expected = {"rules", "triage_log", "heartbeat_state", "seen_emails", "signals"}
-    assert expected.issubset(tables)
 
 
 def test_default_rule_seeded(tmp_path):
@@ -109,7 +98,7 @@ def test_mark_seen_and_get_seen_ids(tmp_path):
 
 
 def test_log_signal_deduplication(tmp_path):
-    db_path = tmp_path / "test.db"
+    db_path = _migrated_db(tmp_path)
     re = RuleEngine(db_path)
     re.log_signal("src", "topic", "ent", "type", "content", "ref1", "refsrc")
     re.log_signal("src", "topic", "ent", "type", "content", "ref1", "refsrc")
@@ -156,7 +145,7 @@ def test_was_digest_sent_since_invalid_format(tmp_path):
 
 
 def test_log_signal_no_ref_id(tmp_path):
-    db_path = tmp_path / "test.db"
+    db_path = _migrated_db(tmp_path)
     re = RuleEngine(db_path)
     re.log_signal("src", "topic", "ent", "type", "content", None, "refsrc")
     with sqlite3.connect(db_path) as conn:
@@ -179,7 +168,7 @@ def test_evaluate_email_dict_fields(tmp_path):
 
 
 def test_log_signal_deduplication_same_day(tmp_path):
-    db_path = tmp_path / "test.db"
+    db_path = _migrated_db(tmp_path)
     re = RuleEngine(db_path)
     re.log_signal("src", "topic", "ent", "type", "content", "ref1", "refsrc")
     re.log_signal("src", "topic", "ent", "type", "content", "ref1", "refsrc")

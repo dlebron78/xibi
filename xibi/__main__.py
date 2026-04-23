@@ -64,6 +64,10 @@ def cmd_telegram(args: argparse.Namespace) -> None:
 
     from xibi.db import migrate
 
+    # Load-bearing: migrate() must run before RuleEngine() so the 29-
+    # column signals schema (including proposal_status, dismissed_at,
+    # env, and all migration-18/25/27 enrichment columns) is in place
+    # before any log_signal call. See step-101.
     migrate(db_path)
 
     init_telemetry(db_path, tracer=Tracer(db_path))
@@ -131,6 +135,10 @@ def cmd_heartbeat(args: argparse.Namespace) -> None:
 
     from xibi.db import migrate
 
+    # Load-bearing: migrate() must run before RuleEngine() so the 29-
+    # column signals schema (including proposal_status, dismissed_at,
+    # env, and all migration-18/25/27 enrichment columns) is in place
+    # before any log_signal call. See step-101.
     migrate(db_path)
 
     init_telemetry(db_path, tracer=Tracer(db_path))

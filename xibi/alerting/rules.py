@@ -64,27 +64,6 @@ class RuleEngine:
                         seen_at  DATETIME DEFAULT CURRENT_TIMESTAMP
                     )
                 """)
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS signals (
-                        id             INTEGER PRIMARY KEY AUTOINCREMENT,
-                        source         TEXT,
-                        topic          TEXT,
-                        topic_hint     TEXT,
-                        entity_text    TEXT,
-                        entity_type    TEXT,
-                        content_preview TEXT,
-                        ref_id         TEXT,
-                        ref_source     TEXT,
-                        summary        TEXT,
-                        summary_model  TEXT,
-                        summary_ms     INTEGER,
-                        sender_trust   TEXT,
-                        sender_contact_id TEXT,
-                        classification_reasoning TEXT,
-                        deep_link_url  TEXT,
-                        timestamp      DATETIME DEFAULT CURRENT_TIMESTAMP
-                    )
-                """)
         except Exception as e:
             logger.warning(f"RuleEngine ensure_tables error: {e}", exc_info=True)
 
