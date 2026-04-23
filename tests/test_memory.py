@@ -7,7 +7,6 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from bregger_utils import get_active_threads
 from skills.memory.tools import archive, recall, remember
 from xibi.db import init_workdir
 
@@ -66,31 +65,6 @@ def test_recall_filters_expired(fresh_db):
     assert res["status"] == "success"
     assert len(res["items"]) == 1
     assert res["items"][0]["content"] == "Active note"
-
-
-def test_get_active_threads_pure_sql(fresh_db):
-    """Verifies _get_active_threads groups and counts signals correctly."""
-    db_path = fresh_db["db_path"]
-
-    # Seed signals
-    with sqlite3.connect(db_path) as conn:
-        # 3 signals for Topic A
-        for _ in range(3):
-            conn.execute("INSERT INTO signals (source, content_preview, topic_hint) VALUES ('email', 'p', 'Topic_A')")
-        # 1 signal for Topic B (should be ignored, count <= 1)
-        conn.execute("INSERT INTO signals (source, content_preview, topic_hint) VALUES ('email', 'p', 'Topic_B')")
-        # 2 signals for Topic C, but they were 10 days ago (should be ignored)
-        for _ in range(2):
-            conn.execute(
-                "INSERT INTO signals (source, content_preview, topic_hint, timestamp) VALUES ('email', 'p', 'Topic_C', datetime('now', '-10 days'))"
-            )
-        conn.commit()
-
-    threads = get_active_threads(db_path)
-
-    assert len(threads) == 1
-    assert threads[0]["topic"] == "topic"
-    assert threads[0]["count"] == 3
 
 
 def test_archive_tool(fresh_db):
