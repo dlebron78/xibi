@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from xibi.command_layer import CommandLayer
 from xibi.errors import XibiError
 from xibi.handles import HandleStore
 from xibi.react import _run_async, dispatch
@@ -22,13 +23,23 @@ def mock_executor():
     return executor
 
 
+@pytest.fixture
+def permissive_cl():
+    # Post-step-102: dispatch requires a command_layer. These tests exercise
+    # the handle/wrapping path, not the permission gate, so use a permissive
+    # interactive CommandLayer so the call reaches the executor.
+    return CommandLayer(interactive=True)
+
+
 @pytest.mark.asyncio
-async def test_large_output_wrapped_in_handle(mock_config, mock_executor):
+async def test_large_output_wrapped_in_handle(mock_config, mock_executor, permissive_cl):
     store = HandleStore()
     large_payload = {"data": [i for i in range(100)]}
     mock_executor.execute.return_value = large_payload
 
-    result = dispatch("test_tool", {}, [], executor=mock_executor, handle_store=store)
+    result = dispatch(
+        "test_tool", {}, [], executor=mock_executor, command_layer=permissive_cl, handle_store=store
+    )
 
     assert "handle" in result
     assert result["handle"].startswith("h_")
@@ -36,12 +47,14 @@ async def test_large_output_wrapped_in_handle(mock_config, mock_executor):
 
 
 @pytest.mark.asyncio
-async def test_small_output_inlined(mock_config, mock_executor):
+async def test_small_output_inlined(mock_config, mock_executor, permissive_cl):
     store = HandleStore()
     small_payload = {"foo": "bar"}
     mock_executor.execute.return_value = small_payload
 
-    result = dispatch("test_tool", {}, [], executor=mock_executor, handle_store=store)
+    result = dispatch(
+        "test_tool", {}, [], executor=mock_executor, command_layer=permissive_cl, handle_store=store
+    )
 
     assert result == small_payload
     assert "handle" not in result
@@ -86,9 +99,10 @@ async def test_per_run_isolation(mock_config, mock_executor):
         patch.object(HandleStore, "__init__", autospec=True, side_effect=patched_init),
     ):
         # Run two concurrent tasks
+        cl = CommandLayer(interactive=True)
         res1, res2 = await asyncio.gather(
-            _run_async("q1", mock_config, [], executor=mock_executor),
-            _run_async("q2", mock_config, [], executor=mock_executor),
+            _run_async("q1", mock_config, [], executor=mock_executor, command_layer=cl),
+            _run_async("q2", mock_config, [], executor=mock_executor, command_layer=cl),
         )
 
         assert len(captured_stores) == 2

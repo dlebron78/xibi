@@ -374,57 +374,74 @@ def dispatch(
     prev_step_source: str | None = None,
     handle_store: HandleStore | None = None,
 ) -> Any:
-    """Invoke a tool from the registry."""
+    """Invoke a tool from the registry, gated by command_layer.
+
+    command_layer is effectively REQUIRED in production. If None is passed,
+    dispatch fails closed — logs CRITICAL and returns a blocked shape.
+    Production callers (chat.py, telegram.py) MUST construct one with the
+    appropriate `interactive` flag. Tests that want raw executor access
+    should use `executor.execute()` directly, not `dispatch()`.
+    """
     # 0. Resolve handles in input
     resolved_input = _resolve_handles_in_input(tool_input, handle_store)
 
-    if command_layer is not None:
-        # Resolve the tool's manifest_schema from skill_registry
-        # skill_registry is a list of skill manifests, each having a 'tools' list
-        tool_manifest = None
-        for skill in skill_registry:
-            for tool in skill.get("tools", []):
-                if tool.get("name") == tool_name:
-                    tool_manifest = tool
-                    break
-            if tool_manifest:
-                break
-
-        manifest_schema = tool_manifest.get("inputSchema") if tool_manifest else None
-
-        result = command_layer.check(tool_name, resolved_input, manifest_schema, prev_step_source=prev_step_source)
-        if not result.allowed:
-            if result.validation_errors:
-                return {"status": "error", "message": result.retry_hint, "retry": True}
-            if result.dedup_suppressed:
-                return {"status": "suppressed", "message": "duplicate action suppressed"}
-            if result.block_reason:
-                return {"status": "blocked", "message": result.block_reason}
-
-        output = (
-            executor.execute(tool_name, resolved_input) if executor is not None else {"status": "ok", "message": "stub"}
+    if command_layer is None:
+        logger.critical(
+            "dispatch called without command_layer — fail-closed. "
+            "A caller is bypassing permission gates. tool=%s",
+            tool_name,
         )
-        if result.allowed and result.audit_required:
-            command_layer.audit(
-                tool_name,
-                resolved_input,
-                output,
-                prev_step_source=prev_step_source,
-                source_bumped=result.source_bumped,
-                base_tier=str(resolve_tier(tool_name, command_layer.profile)),
-                effective_tier=str(result.tier),
-            )
-        return _maybe_wrap_in_handle(tool_name, output, handle_store)
+        # legacy stub-path — Step 02 tests only; unreachable in prod post-step-102
+        if executor is None:
+            tool_manifest = next((t for t in skill_registry if t.get("name") == tool_name), None)
+            if not tool_manifest:
+                return {"status": "error", "message": f"Unknown tool: {tool_name}"}
+            return {"status": "ok", "message": "stub"}
+        return {
+            "status": "blocked",
+            "message": (
+                "dispatch requires a command_layer — call was bypassing "
+                "permission gates"
+            ),
+            "fail_closed": True,
+        }
 
-    if executor is not None:
-        output = executor.execute(tool_name, resolved_input)
-        return _maybe_wrap_in_handle(tool_name, output, handle_store)
+    # Resolve the tool's manifest_schema from skill_registry.
+    # skill_registry is a list of skill manifests, each having a 'tools' list.
+    tool_manifest = None
+    for skill in skill_registry:
+        for tool in skill.get("tools", []):
+            if tool.get("name") == tool_name:
+                tool_manifest = tool
+                break
+        if tool_manifest:
+            break
 
-    # Fallback: stub path (retained for backward compat with Step 02 tests)
-    tool_manifest = next((t for t in skill_registry if t.get("name") == tool_name), None)
-    if not tool_manifest:
-        return {"status": "error", "message": f"Unknown tool: {tool_name}"}
-    return {"status": "ok", "message": "stub"}
+    manifest_schema = tool_manifest.get("inputSchema") if tool_manifest else None
+
+    result = command_layer.check(tool_name, resolved_input, manifest_schema, prev_step_source=prev_step_source)
+    if not result.allowed:
+        if result.validation_errors:
+            return {"status": "error", "message": result.retry_hint, "retry": True}
+        if result.dedup_suppressed:
+            return {"status": "suppressed", "message": "duplicate action suppressed"}
+        if result.block_reason:
+            return {"status": "blocked", "message": result.block_reason}
+
+    output = (
+        executor.execute(tool_name, resolved_input) if executor is not None else {"status": "ok", "message": "stub"}
+    )
+    if result.allowed and result.audit_required:
+        command_layer.audit(
+            tool_name,
+            resolved_input,
+            output,
+            prev_step_source=prev_step_source,
+            source_bumped=result.source_bumped,
+            base_tier=str(resolve_tier(tool_name, command_layer.profile)),
+            effective_tier=str(result.tier),
+        )
+    return _maybe_wrap_in_handle(tool_name, output, handle_store)
 
 
 def handle_intent(decision: RoutingDecision) -> str:

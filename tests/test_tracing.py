@@ -135,11 +135,14 @@ def test_react_run_emits_tool_spans(tmp_path: Path):
             with patch.object(Executor, "_execute_with_timeout") as mock_exec_inner:
                 mock_exec_inner.return_value = {"status": "ok", "content": "tool_result"}
 
+                from xibi.command_layer import CommandLayer
+
                 result = run(
                     "query",
                     config,
                     [{"name": "my_tool", "tools": [{"name": "my_tool"}]}],
                     executor=executor,
+                    command_layer=CommandLayer(interactive=True),
                     tracer=tracer,
                 )
 

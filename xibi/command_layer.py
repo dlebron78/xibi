@@ -157,14 +157,15 @@ class CommandLayer:
             )
         except Exception as e:
             logger.exception(f"CommandLayer.check internal error: {e}")
-            # Safe default: allow but log error
+            # Fail-closed: treat as blocked. Never mask a would-have-been-RED
+            # block behind an internal exception.
             return CommandResult(
-                allowed=True,
-                tier=PermissionTier.GREEN,
+                allowed=False,
+                tier=PermissionTier.RED,
                 validation_errors=[],
                 dedup_suppressed=False,
                 audit_required=False,
-                block_reason="",
+                block_reason=f"CommandLayer internal error: {e}",
                 retry_hint="",
             )
 

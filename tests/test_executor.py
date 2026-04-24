@@ -101,10 +101,19 @@ def test_execute_missing_run_function(tmp_path):
 
 
 def test_dispatch_uses_executor_when_provided():
+    from xibi.command_layer import CommandLayer
+
     mock_executor = MagicMock()
     mock_executor.execute.return_value = {"status": "ok", "from_mock": True}
 
-    result = dispatch("tool", {"input": 1}, [], executor=mock_executor)
+    # Post-step-102: dispatch requires a command_layer to reach the executor.
+    result = dispatch(
+        "tool",
+        {"input": 1},
+        [],
+        executor=mock_executor,
+        command_layer=CommandLayer(interactive=True),
+    )
     assert result == {"status": "ok", "from_mock": True}
     mock_executor.execute.assert_called_once_with("tool", {"input": 1})
 

@@ -1,10 +1,42 @@
 from __future__ import annotations
 
-from xibi.tools import PermissionTier, resolve_tier, validate_schema
+from xibi.tools import DEFAULT_TIER, TOOL_TIERS, WRITE_TOOLS, PermissionTier, resolve_tier, validate_schema
 
 
 def test_default_tier_for_unknown_tool():
-    assert resolve_tier("unknown_tool_xyz") == PermissionTier.RED
+    # Denylist model: unlisted tools resolve to GREEN (see DEFAULT_TIER).
+    assert resolve_tier("unknown_tool_xyz") == PermissionTier.GREEN
+
+
+def test_default_tier_is_green():
+    # Guard against a silent flip back to RED (which would brick Telegram
+    # by over-blocking every unlisted tool).
+    assert DEFAULT_TIER == PermissionTier.GREEN
+
+
+def test_draft_email_resolves_yellow():
+    assert resolve_tier("draft_email") == PermissionTier.YELLOW
+
+
+def test_reply_email_resolves_red():
+    assert resolve_tier("reply_email") == PermissionTier.RED
+
+
+def test_every_write_tool_has_explicit_tier():
+    """Guard: every WRITE_TOOLS member must have an explicit TOOL_TIERS entry.
+
+    Under DEFAULT_TIER=GREEN, a write tool missing from TOOL_TIERS would
+    silently resolve to GREEN — re-opening the RED hole that step-102 closed.
+    The sensitive-content bump at command_layer.py:119-133 is a secondary
+    safety net for write tools, but it only fires on sensitive input — the
+    primary defense is an explicit TOOL_TIERS entry.
+    """
+    missing = WRITE_TOOLS - TOOL_TIERS.keys()
+    assert missing == set(), (
+        f"WRITE_TOOLS members missing explicit tier in TOOL_TIERS: {missing}. "
+        "Add each to TOOL_TIERS with YELLOW (non-destructive writes like "
+        "drafts) or RED (sends, deletes, destructive)."
+    )
 
 
 def test_known_green_tools_unchanged():

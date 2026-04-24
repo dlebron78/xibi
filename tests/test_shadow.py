@@ -165,6 +165,8 @@ def mock_config():
 
 
 def test_react_shadow_direct_calls_tool(mock_config):
+    from xibi.command_layer import CommandLayer
+
     skill_registry = [{"name": "get_weather"}]
     executor = MagicMock()
     executor.execute.return_value = {"status": "ok", "content": "Sunny"}
@@ -173,7 +175,12 @@ def test_react_shadow_direct_calls_tool(mock_config):
     shadow.build_corpus([("weather", "get_weather", "what is the weather")])
 
     result = run(
-        query="what is the weather", config=mock_config, skill_registry=skill_registry, executor=executor, shadow=shadow
+        query="what is the weather",
+        config=mock_config,
+        skill_registry=skill_registry,
+        executor=executor,
+        command_layer=CommandLayer(interactive=True),
+        shadow=shadow,
     )
 
     assert result.answer == "Sunny"

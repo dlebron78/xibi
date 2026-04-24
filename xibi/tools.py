@@ -10,8 +10,12 @@ class PermissionTier(str, Enum):
     RED = "red"  # user confirmation required; blocked in non-interactive contexts
 
 
-# Default tier for tools NOT listed below
-DEFAULT_TIER = PermissionTier.RED
+# Default tier for tools NOT listed below.
+# Denylist model: unlisted tools default to GREEN; TOOL_TIERS enumerates
+# every non-GREEN tool (YELLOW writes, RED sends/deletes). Safety interlock:
+# every WRITE_TOOLS member must also be in TOOL_TIERS
+# (see test_every_write_tool_has_explicit_tier).
+DEFAULT_TIER = PermissionTier.GREEN
 
 # Tools that perform write/destructive actions
 WRITE_TOOLS: set[str] = {
@@ -46,6 +50,7 @@ TOOL_TIERS: dict[str, PermissionTier] = {
     "recall": PermissionTier.GREEN,
     # Yellow — writes, drafts, external API queries, nudges
     "create_draft": PermissionTier.YELLOW,
+    "draft_email": PermissionTier.YELLOW,
     "update_belief": PermissionTier.YELLOW,
     "create_task": PermissionTier.YELLOW,
     "nudge": PermissionTier.YELLOW,
@@ -64,6 +69,7 @@ TOOL_TIERS: dict[str, PermissionTier] = {
     "spawn_subagent": PermissionTier.YELLOW,
     # Red — sends, deletes, financial, first-time destructive
     "send_email": PermissionTier.RED,
+    "reply_email": PermissionTier.RED,
     "send_message": PermissionTier.RED,
     "delete_email": PermissionTier.RED,
     "delete_event": PermissionTier.RED,

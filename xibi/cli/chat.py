@@ -14,6 +14,7 @@ try:
 except ImportError:
     readline = None  # type: ignore[assignment]
 
+from xibi.command_layer import CommandLayer
 from xibi.executor import LocalHandlerExecutor
 from xibi.mcp.registry import MCPServerRegistry
 from xibi.memory import compress_session_turns
@@ -314,11 +315,17 @@ def main() -> None:
                     _spinner.start()
                 try:
                     effective_format = str(args.react_format or config.get("react_format", "json"))
+                    command_layer = CommandLayer(
+                        db_path=str(_db_path),
+                        profile=profile,
+                        interactive=True,  # CLI = TTY present, RED prompts are fine
+                    )
                     result = run(
                         query,
                         config,
                         registry.get_skill_manifests(),
                         executor=executor,
+                        command_layer=command_layer,
                         control_plane=None,  # Already checked
                         shadow=None if _multi else shadow,  # skip shadow for multi-source
                         step_callback=step_callback,

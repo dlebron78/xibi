@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from xibi.command_layer import CommandLayer
 from xibi.db import open_db
 from xibi.db.migrations import SchemaManager
 from xibi.executor import Executor
@@ -468,7 +469,7 @@ def test_react_py_no_longer_emits_tool_dispatch(db_path, config):
             patch("xibi.router._check_provider_health", return_value=True),
         ):
             mock_exec_inner.return_value = {"status": "ok", "result": "done"}
-            react_run("hi", config, registry.get_skill_manifests(), tracer=tracer, executor=executor)
+            react_run("hi", config, registry.get_skill_manifests(), tracer=tracer, executor=executor, command_layer=CommandLayer(interactive=True))
 
     with open_db(db_path) as conn:
         # Should have exactly 1 tool.dispatch span (from executor)
@@ -496,7 +497,7 @@ def test_full_waterfall_llm_then_tool_then_llm(db_path, config):
         ):
             mock_exec_inner.return_value = {"status": "ok", "result": "tool worked"}
 
-            react_run("hi", config, registry.get_skill_manifests(), tracer=tracer, executor=executor)
+            react_run("hi", config, registry.get_skill_manifests(), tracer=tracer, executor=executor, command_layer=CommandLayer(interactive=True))
 
     with open_db(db_path) as conn:
         # Spans should be: llm.generate, tool.dispatch, llm.generate

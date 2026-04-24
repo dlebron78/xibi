@@ -9,8 +9,11 @@ from xibi.tools import PermissionTier, resolve_tier
 from xibi.types import ReActResult
 
 
-def test_unknown_tool_defaults_red():
-    assert resolve_tier("nonexistent_mcp_tool") == PermissionTier.RED
+def test_unknown_tool_defaults_green():
+    # Post-step-102: denylist model. Unlisted tools resolve GREEN by default.
+    # The WRITE_TOOLS ⊆ TOOL_TIERS invariant plus the sensitive-content
+    # bump keep write/send tools from silently reaching the executor.
+    assert resolve_tier("nonexistent_mcp_tool") == PermissionTier.GREEN
 
 
 def test_known_red_tools_unchanged():

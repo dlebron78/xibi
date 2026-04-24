@@ -121,6 +121,16 @@ class TelegramAdapter:
         except Exception as e:
             raise RuntimeError(f"Cannot open DB at {self.db_path}: {e}") from e
 
+        # Constructed here, after self.db_path/self.config are set, so every
+        # code path that might call react_run (including error/retry paths)
+        # sees a ready command_layer.
+        self.command_layer = CommandLayer(
+            db_path=str(self.db_path),
+            profile=self.config.get("profile", {}),
+            interactive=False,  # Telegram = no synchronous confirm path;
+            # RED fails closed until a confirmation UX ships.
+        )
+
         self.base_url = f"https://api.telegram.org/bot{self.token}"
 
         if offset_file is None:
@@ -523,6 +533,7 @@ class TelegramAdapter:
                     self.config,
                     self.skill_registry.get_skill_manifests(),
                     executor=self.executor,
+                    command_layer=self.command_layer,
                     control_plane=self.control_plane,
                     shadow=self.shadow,
                     session_context=session,

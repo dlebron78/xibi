@@ -108,6 +108,8 @@ def test_circuit_state_persists_across_instances(db_path):
 
 
 def test_react_collects_error_summary():
+    from xibi.command_layer import CommandLayer
+
     # Mock LLM and Executor
     llm = MagicMock()
     # First call: Tool call
@@ -124,7 +126,7 @@ def test_react_collects_error_summary():
     config = {"models": {"text": {"fast": {"provider": "mock", "model": "m"}}}, "providers": {"mock": {}}}
 
     with patch("xibi.react.get_model", return_value=llm):
-        result = run("query", config, [], executor=executor)
+        result = run("query", config, [], executor=executor, command_layer=CommandLayer(interactive=True))
 
     assert len(result.error_summary) == 1
     assert result.error_summary[0].category == ErrorCategory.TIMEOUT

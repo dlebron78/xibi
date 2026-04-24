@@ -125,6 +125,33 @@ def test_check_never_raises():
     assert isinstance(result, CommandResult)
 
 
+@pytest.mark.parametrize(
+    "failing_patch",
+    [
+        "xibi.command_layer.resolve_tier",
+        "xibi.command_layer.CommandLayer._check_dedup",
+    ],
+)
+def test_check_internal_error_fails_closed(monkeypatch, failing_patch):
+    """Any internal exception in check() must fail closed, not safe-default-allow.
+
+    Covers both the resolution path (resolve_tier) and the dedup path
+    (_check_dedup) — per step-102 Condition 2.
+    """
+    def boom(*_a, **_kw):
+        raise RuntimeError("synthetic failure")
+
+    monkeypatch.setattr(failing_patch, boom)
+
+    layer = CommandLayer(interactive=True)
+    result = layer.check("list_emails", {})
+
+    assert result.allowed is False
+    assert result.tier.value == "red"
+    assert "CommandLayer internal error" in result.block_reason
+    assert "synthetic failure" in result.block_reason
+
+
 def test_audit_writes_to_access_log(temp_db):
     layer = CommandLayer(db_path=str(temp_db))
     tool_input = {"thread_id": "t1", "category": "email", "refs": ["r1"]}
@@ -170,21 +197,26 @@ def test_dispatch_with_command_layer_blocks_red_non_interactive():
     mock_executor.execute.assert_not_called()
 
 
-def test_dispatch_without_command_layer_unchanged():
+def test_dispatch_without_command_layer_fails_closed():
+    # Post-step-102: passing executor without command_layer is a caller bug
+    # (bypassing the gate). Dispatch must fail closed, not silently call
+    # executor.execute.
     mock_executor = MagicMock()
     mock_executor.execute.return_value = {"status": "ok", "message": "called"}
     skill_registry = [{"name": "skill1", "tools": [{"name": "list_emails"}]}]
 
     response = dispatch("list_emails", {}, skill_registry, executor=mock_executor, command_layer=None)
 
-    assert response["status"] == "ok"
-    assert response["message"] == "called"
-    mock_executor.execute.assert_called_once_with("list_emails", {})
+    assert response["status"] == "blocked"
+    assert response.get("fail_closed") is True
+    mock_executor.execute.assert_not_called()
 
 
-def test_command_layer_blocks_mcp_tool_non_interactive():
+def test_command_layer_allows_unlisted_tool_non_interactive():
+    # Post-step-102: DEFAULT_TIER=GREEN. Unlisted tools (including MCP tools)
+    # resolve to GREEN and pass the gate. Sensitive-content bumps and explicit
+    # WRITE_TOOLS entries are the defenses against write-path abuse.
     layer = CommandLayer(interactive=False)
-    # MCP tool not in TOOL_TIERS should default to RED and be blocked
     result = layer.check("filesystem__read_file", {})
-    assert result.allowed is False
-    assert result.tier == "red"
+    assert result.allowed is True
+    assert result.tier == "green"
