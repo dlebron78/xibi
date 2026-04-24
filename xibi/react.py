@@ -387,8 +387,7 @@ def dispatch(
 
     if command_layer is None:
         logger.critical(
-            "dispatch called without command_layer — fail-closed. "
-            "A caller is bypassing permission gates. tool=%s",
+            "dispatch called without command_layer — fail-closed. A caller is bypassing permission gates. tool=%s",
             tool_name,
         )
         # legacy stub-path — Step 02 tests only; unreachable in prod post-step-102
@@ -399,10 +398,7 @@ def dispatch(
             return {"status": "ok", "message": "stub"}
         return {
             "status": "blocked",
-            "message": (
-                "dispatch requires a command_layer — call was bypassing "
-                "permission gates"
-            ),
+            "message": ("dispatch requires a command_layer — call was bypassing permission gates"),
             "fail_closed": True,
         }
 
