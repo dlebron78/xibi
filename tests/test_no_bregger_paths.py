@@ -1,5 +1,5 @@
-"""Regression guard for step-103: no ``bregger.db`` / ``.bregger`` filesystem
-references may leak back into ``skills/``.
+"""Regression guard for step-103: no ``bregger.db`` filesystem references
+may leak back into ``skills/``.
 
 The five email handlers under ``skills/email/tools/`` previously hardcoded
 ``bregger.db`` as their SQLite filename; concatenated with the executor's
@@ -47,4 +47,4 @@ def test_no_bregger_db_references_in_skills():
             if any(p.search(code) for p in FORBIDDEN_PATTERNS):
                 offenders.append(f"{path.relative_to(REPO_ROOT)}:{lineno}: {raw.strip()}")
 
-    assert not offenders, "Forbidden bregger.db / .bregger literals reintroduced in skills/:\n" + "\n".join(offenders)
+    assert not offenders, "Forbidden bregger.db literals reintroduced in skills/:\n" + "\n".join(offenders)
