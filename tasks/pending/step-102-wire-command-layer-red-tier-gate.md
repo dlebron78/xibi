@@ -580,9 +580,10 @@ N/A — no schema changes in this step.
     `command_layer`, OR the call raises `XibiError` / TypeError with
     a message about missing `command_layer`. Either is acceptable —
     whichever the implementation chose.
-  - `journalctl --user -u xibi-heartbeat --since '1 minute ago' | grep
-    'CRITICAL.*command_layer'` returns at least one line if the
-    implementation goes through the logging path.
+  - Log-path assertion (per Condition 4):
+    `journalctl -u xibi-telegram.service --since "1 min ago" | grep -c "dispatch called without command_layer"`
+    must return a count ≥ 1 if the implementation goes through the
+    logging path.
 
 ### Rollback
 
