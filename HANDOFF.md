@@ -67,8 +67,9 @@ Xibi — an AI agent wrapper (formerly Bregger). The repo is live at `github.com
 - GitHub Actions self-hosted runner: active
 - Crons (all in `~/xibi/scripts/`):
   - `*/30 * * * *` → `jules_trigger.sh --check-pending` — fires Jules on next pending task
-  - `*/5 * * * *` → `xibi_deploy.sh` — git pull + pip install when main changes
   - `*/5 * * * *` → `jules_pr_watcher.sh` — fallback PR creator (mostly redundant now)
+- Deploy timer (systemd --user):
+  - `xibi-deploy.timer` → `scripts/deploy.sh` every 30s — git pull + `sync_units` + restart long-running services + telegram pulse on `origin/main` movement
 - Env file: `~/.xibi_env` — stores JULES_API_KEY, JULES_REPO_SOURCE, GITHUB_TOKEN
 
 ### Jules Integration
@@ -118,8 +119,8 @@ Xibi — an AI agent wrapper (formerly Bregger). The repo is live at `github.com
 - Git remote: `git@github-xibi:dlebron78/xibi.git`
 
 ### Auto-deploy (NucBox)
-- Script: `~/xibi/scripts/xibi_deploy.sh`
-- Runs every 5 min, compares LOCAL vs REMOTE HEAD, pulls and `pip install -e .` if different
+- Script: `~/xibi/scripts/deploy.sh` (driven by `xibi-deploy.timer`, every 30s)
+- Compares local `refs/heads/main` vs `origin/main`; on change: `git pull --ff-only`, `sync_units` keeps `~/.config/systemd/user/` in lockstep with repo `systemd/`, restarts `LONG_RUNNING_SERVICES`, health-checks, sends `🚀 Deployed` telegram pulse. Migrations run via `xibi/__main__.py` on service startup.
 
 ---
 
