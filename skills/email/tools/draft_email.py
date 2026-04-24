@@ -1,9 +1,12 @@
 import json
+import logging
 import os
 import re
 import sqlite3
 import uuid
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def _slugify(text: str) -> str:
@@ -17,7 +20,7 @@ def _ledger_upsert(workdir: str, draft_id: str, to: str, subject: str, body: str
     any older pending drafts for that same recipient are auto-discarded to
     prevent stale draft accumulation.
     """
-    db_path = Path(workdir) / "data" / "bregger.db"
+    db_path = Path(workdir) / "data" / "xibi.db"
     if not db_path.exists():
         return
     payload = json.dumps({"to": to, "subject": subject, "body": body, "draft_id": draft_id})
@@ -45,8 +48,8 @@ def _ledger_upsert(workdir: str, draft_id: str, to: str, subject: str, body: str
                     "INSERT INTO ledger (id, category, content, entity, status) VALUES (?, ?, ?, ?, ?)",
                     (draft_id, "draft_email", payload, entity, "pending"),
                 )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("ledger upsert failed: %s", e)
 
 
 def run(params):

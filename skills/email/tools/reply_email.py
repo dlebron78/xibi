@@ -91,7 +91,7 @@ def run(params):
 
     draft_id = str(uuid.uuid4())
     workdir = params.get("_workdir") or os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.bregger"))
-    db_path = Path(workdir) / "data" / "bregger.db"
+    db_path = Path(workdir) / "data" / "xibi.db"
     try:
         payload_json = json.dumps(
             {
@@ -113,6 +113,7 @@ def run(params):
 
     # Workaround: react loop has no RED-tier confirmation gate. Send immediately.
     from skills.email.tools.send_email import send_smtp
+
     smtp_payload = {
         "to": primary_to,
         "cc": cc,

@@ -1,3 +1,4 @@
+import logging
 import mimetypes
 import os
 import smtplib
@@ -5,6 +6,8 @@ from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+
+logger = logging.getLogger(__name__)
 
 # ── SMTP config (pulled from env, falls back to Gmail defaults) ──────────────
 SMTP_HOST = os.environ.get("BREGGER_SMTP_HOST", "smtp.gmail.com")
@@ -109,8 +112,8 @@ def _track_outbound(to: str, db_path: str):
                     "UPDATE contacts SET outbound_count = outbound_count + 1, user_endorsed = 1 WHERE id = ?",
                     (contact_id,),
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("outbound_count update failed: %s", e)
     else:
         contact_id = create_contact(
             display_name=to, email=to, discovered_via="email_outbound", relationship="unknown", db_path=db_path
@@ -121,8 +124,8 @@ def _track_outbound(to: str, db_path: str):
                     conn.execute(
                         "UPDATE contacts SET outbound_count = 1, user_endorsed = 1 WHERE id = ?", (contact_id,)
                     )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("new-contact outbound_count set failed: %s", e)
 
     if contact_id:
         upsert_contact_channel(contact_id, to, "email", verified=1, db_path=db_path)
@@ -177,7 +180,7 @@ def send_smtp(payload: dict) -> dict:
         cc_note = f" (CC: {cc})" if cc else ""
         # Track outbound metrics
         _workdir = payload.get("_workdir") or os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.bregger"))
-        db_path = os.path.join(_workdir, "data", "bregger.db")
+        db_path = os.path.join(_workdir, "data", "xibi.db")
         _track_outbound(to, db_path)
 
         if attached_filename:
