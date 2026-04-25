@@ -35,7 +35,7 @@ SMTP_PASS = os.environ.get("BREGGER_SMTP_PASS", "")
 
 
 def _resolve_db_path(workdir: str | None) -> Path:
-    wd = workdir or os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.bregger"))
+    wd = workdir or os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.xibi"))
     return Path(wd) / "data" / "xibi.db"
 
 
@@ -132,7 +132,7 @@ def run(params):
         preview = f"To: {to}\n"
         if payload.get("cc"):
             preview += f"CC: {payload['cc']}\n"
-        preview += f"Subject: {payload.get('subject','')}\n\n{payload.get('body','')}"
+        preview += f"Subject: {payload.get('subject', '')}\n\n{payload.get('body', '')}"
         return {
             "status": "success",
             "draft_id": draft_id,
@@ -224,7 +224,7 @@ def send_smtp(payload: dict) -> dict:
             server.sendmail(SMTP_USER, all_recipients, msg.as_string())
 
         cc_note = f" (CC: {cc})" if cc else ""
-        _workdir = payload.get("_workdir") or os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.bregger"))
+        _workdir = payload.get("_workdir") or os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.xibi"))
         db_path = os.path.join(_workdir, "data", "xibi.db")
         _track_outbound(to, db_path)
 

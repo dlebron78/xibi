@@ -9,7 +9,7 @@ def run(params):
     if not draft_id:
         return {"status": "error", "message": "Missing draft_id."}
 
-    workdir = params.get("_workdir") or os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.bregger"))
+    workdir = params.get("_workdir") or os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.xibi"))
     db_path = Path(workdir) / "data" / "xibi.db"
 
     if not db_path.exists():

@@ -170,7 +170,7 @@ def run(params):
         }
 
     draft_id = (params.get("draft_id") or "").strip() or str(uuid.uuid4())
-    workdir = params.get("_workdir") or os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.bregger"))
+    workdir = params.get("_workdir") or os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.xibi"))
     db_path = _resolve_db_path(workdir)
 
     recipients = _split_recipients(to) + _split_recipients(cc)

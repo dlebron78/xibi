@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_db_path(workdir: str | None) -> Path:
-    wd = workdir or os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.bregger"))
+    wd = workdir or os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.xibi"))
     return Path(wd) / "data" / "xibi.db"
 
 
@@ -110,7 +110,7 @@ def run(params):
         preview = f"To: {to}\n"
         if payload.get("cc"):
             preview += f"CC: {payload['cc']}\n"
-        preview += f"Subject: {payload.get('subject','')}\n\n{payload.get('body','')}"
+        preview += f"Subject: {payload.get('subject', '')}\n\n{payload.get('body', '')}"
         return {
             "status": "success",
             "draft_id": draft_id,

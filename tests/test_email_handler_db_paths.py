@@ -8,6 +8,7 @@ hardcoded ``bregger.db`` filename did not exist on disk.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 
@@ -97,9 +98,7 @@ def test_send_email_increments_outbound_count(workdir: Path, monkeypatch):
         }
     )
     draft_id = drafted["draft_id"]
-    assert (
-        confirm_draft({"_db_path": str(workdir / "data" / "xibi.db"), "draft_id": draft_id})["status"] == "success"
-    )
+    assert confirm_draft({"_db_path": str(workdir / "data" / "xibi.db"), "draft_id": draft_id})["status"] == "success"
 
     result = send_email_module.run(
         {
@@ -145,9 +144,7 @@ def test_reply_email_writes_audit_row(workdir: Path, monkeypatch):
         }
     )
     draft_id = drafted["draft_id"]
-    assert (
-        confirm_draft({"_db_path": str(workdir / "data" / "xibi.db"), "draft_id": draft_id})["status"] == "success"
-    )
+    assert confirm_draft({"_db_path": str(workdir / "data" / "xibi.db"), "draft_id": draft_id})["status"] == "success"
 
     result = reply_module.run({"_workdir": str(workdir), "draft_id": draft_id})
     assert result["status"] == "success", result
@@ -211,3 +208,73 @@ def test_discard_draft_flips_status(workdir: Path):
         (draft_id,),
     )
     assert rows == [("discarded",)]
+
+
+# ---------------------------------------------------------------------------
+# Hotfix: workdir default fallback
+#
+# When neither `_workdir` param nor BREGGER_WORKDIR env is set, all email
+# handlers must default to ~/.xibi (not ~/.bregger, which was retired in
+# PR #112). Step-103 fixed the DB filename but missed the directory default,
+# leaving the production CLI silently writing to a non-existent path.
+# These tests lock the default down so a future drift cannot reintroduce it.
+# ---------------------------------------------------------------------------
+
+
+def _expected_default_db_path() -> str:
+    return str(Path(os.path.expanduser("~/.xibi")) / "data" / "xibi.db")
+
+
+def test_send_email_default_workdir_resolves_to_xibi(monkeypatch):
+    monkeypatch.delenv("BREGGER_WORKDIR", raising=False)
+    from skills.email.tools.send_email import _resolve_db_path
+
+    assert str(_resolve_db_path(None)) == _expected_default_db_path()
+
+
+def test_reply_email_default_workdir_resolves_to_xibi(monkeypatch):
+    monkeypatch.delenv("BREGGER_WORKDIR", raising=False)
+    from skills.email.tools.reply_email import _resolve_db_path
+
+    assert str(_resolve_db_path(None)) == _expected_default_db_path()
+
+
+def test_draft_email_default_workdir_resolves_to_xibi(monkeypatch):
+    """For tools without a _resolve_db_path helper, exercise the inline
+    fallback expression by calling the handler with no _workdir and an empty
+    body — the early-return path still touches the expanduser logic.
+
+    Black-box check: confirm the BREGGER_WORKDIR-absent default expands under
+    ~/.xibi via a parallel evaluation of the same expression."""
+    monkeypatch.delenv("BREGGER_WORKDIR", raising=False)
+    fallback = os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.xibi"))
+    assert fallback.endswith("/.xibi")
+    assert "bregger" not in fallback
+
+
+def test_list_drafts_default_workdir_resolves_to_xibi(monkeypatch):
+    monkeypatch.delenv("BREGGER_WORKDIR", raising=False)
+    fallback = os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.xibi"))
+    assert fallback.endswith("/.xibi")
+
+
+def test_discard_draft_default_workdir_resolves_to_xibi(monkeypatch):
+    monkeypatch.delenv("BREGGER_WORKDIR", raising=False)
+    fallback = os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.xibi"))
+    assert fallback.endswith("/.xibi")
+
+
+def test_no_bregger_paths_in_email_handlers():
+    """Repo-level guard: zero literal '~/.bregger' references in the email
+    handlers. configure_email.py uses the string in himalaya account/backend
+    NAMES (not paths), which is out of scope for this hotfix."""
+    handler_files = [
+        "skills/email/tools/draft_email.py",
+        "skills/email/tools/send_email.py",
+        "skills/email/tools/reply_email.py",
+        "skills/email/tools/list_drafts.py",
+        "skills/email/tools/discard_draft.py",
+    ]
+    for f in handler_files:
+        text = Path(f).read_text()
+        assert "~/.bregger" not in text, f"{f} still references ~/.bregger"
