@@ -578,9 +578,7 @@ class TelegramAdapter:
                     response = f"{review_text}\n\n{response}"
                 draft_id = self._extract_pending_draft_id(result)
                 if draft_id:
-                    self.send_message(
-                        chat_id, response, reply_markup=self._email_confirmation_keyboard(draft_id)
-                    )
+                    self.send_message(chat_id, response, reply_markup=self._email_confirmation_keyboard(draft_id))
                 else:
                     self.send_message(chat_id, response)
 

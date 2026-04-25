@@ -149,7 +149,7 @@ def test_handle_button_bad_data_format_rejected(adapter, caplog):
 def test_handle_send_calls_confirm_then_send(adapter):
     adapter.executor.execute.side_effect = [
         {"status": "success", "draft_id": "DR_abc"},  # confirm_draft
-        {"status": "success", "message": "sent"},     # send_email
+        {"status": "success", "message": "sent"},  # send_email
     ]
     adapter._handle_email_button(_callback("email_action:send:DR_abc"))
     calls = [c.args[0] for c in adapter.executor.execute.call_args_list]
@@ -178,9 +178,7 @@ def test_discard_draft_audit_logged(adapter):
     adapter._handle_email_button(_callback("email_action:discard:DR_abc"))
 
     with sqlite3.connect(adapter.db_path) as conn:
-        row = conn.execute(
-            "SELECT effective_tier FROM access_log WHERE chat_id='tool:discard_draft'"
-        ).fetchone()
+        row = conn.execute("SELECT effective_tier FROM access_log WHERE chat_id='tool:discard_draft'").fetchone()
     assert row is not None
     assert row[0] == "yellow"
 
@@ -214,9 +212,7 @@ def test_handle_send_smtp_failure_reverts_and_re_renders_buttons(adapter):
     ]
     assert len(rerender) == 1
     rendered = rerender[0].args[1]["reply_markup"]["inline_keyboard"]
-    assert any(
-        btn["callback_data"] == "email_action:send:DR_abc" for row in rendered for btn in row
-    )
+    assert any(btn["callback_data"] == "email_action:send:DR_abc" for row in rendered for btn in row)
 
 
 # ── discard ──────────────────────────────────────────────────────────────────
@@ -241,14 +237,11 @@ def test_handle_revise_no_tool_call(adapter):
 def test_handle_revise_edits_message(adapter):
     adapter._handle_email_button(_callback("email_action:revise:DR_abcd1234"))
     edit_calls = [c for c in adapter._api_call.call_args_list if c.args[0] == "editMessageText"]
-    assert any(
-        "What changes?" in c.args[1]["text"] and "DR_abcd1" in c.args[1]["text"] for c in edit_calls
-    )
+    assert any("What changes?" in c.args[1]["text"] and "DR_abcd1" in c.args[1]["text"] for c in edit_calls)
     strip_calls = [
         c
         for c in adapter._api_call.call_args_list
-        if c.args[0] == "editMessageReplyMarkup"
-        and c.args[1]["reply_markup"] == {"inline_keyboard": []}
+        if c.args[0] == "editMessageReplyMarkup" and c.args[1]["reply_markup"] == {"inline_keyboard": []}
     ]
     assert strip_calls, "buttons should be stripped on revise"
 
@@ -310,8 +303,9 @@ def test_buttons_attach_when_draft_in_steps(adapter):
     adapter.send_message = MagicMock()
     result = _result([_step(1, "draft_email", {"status": "success", "draft_id": "DR_abc"})])
 
-    with patch("xibi.channels.telegram.is_chitchat", return_value=False), patch(
-        "xibi.channels.telegram.react_run", return_value=result
+    with (
+        patch("xibi.channels.telegram.is_chitchat", return_value=False),
+        patch("xibi.channels.telegram.react_run", return_value=result),
     ):
         adapter._handle_text(123, "send daniel hi")
 
@@ -325,8 +319,9 @@ def test_buttons_omit_when_no_draft_in_steps(adapter):
     adapter.send_message = MagicMock()
     result = _result([_step(1, "list_emails", {"status": "success"})])
 
-    with patch("xibi.channels.telegram.is_chitchat", return_value=False), patch(
-        "xibi.channels.telegram.react_run", return_value=result
+    with (
+        patch("xibi.channels.telegram.is_chitchat", return_value=False),
+        patch("xibi.channels.telegram.react_run", return_value=result),
     ):
         adapter._handle_text(123, "what's in my inbox")
 
