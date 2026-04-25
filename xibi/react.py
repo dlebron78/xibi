@@ -76,7 +76,7 @@ def _pending_drafts_block(db_path: Path | str) -> str:
         short_id = (draft_id or "")[:8]
         to_disp = to_addr or "(no recipient)"
         subj_disp = subject or "(no subject)"
-        lines.append(f"  {short_id} → {to_disp} — subject: \"{subj_disp}\"")
+        lines.append(f'  {short_id} → {to_disp} — subject: "{subj_disp}"')
     lines.append(
         "\nIf you're modifying one of these, pass the matching draft_id to "
         "draft_email. If the user wants a fresh draft, omit draft_id."

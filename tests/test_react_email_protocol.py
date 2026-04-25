@@ -175,7 +175,6 @@ def test_modification_resets_status_to_pending(workdir: Path):
 
 def test_explicit_confirmation_required(workdir: Path, send_email_module):
     """Skipping confirm_draft means send_email refuses — confabulation gap closed."""
-    db = workdir / "data" / "xibi.db"
     from skills.email.tools.draft_email import run as draft_run
 
     drafted = draft_run(

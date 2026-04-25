@@ -30,8 +30,7 @@ def confirm_draft(params: dict[str, Any]) -> dict[str, Any]:
     try:
         with sqlite3.connect(str(db_path)) as conn:
             cursor = conn.execute(
-                "UPDATE ledger SET status='confirmed' "
-                "WHERE id=? AND category='draft_email' AND status='pending'",
+                "UPDATE ledger SET status='confirmed' WHERE id=? AND category='draft_email' AND status='pending'",
                 (draft_id,),
             )
             if cursor.rowcount == 0:
