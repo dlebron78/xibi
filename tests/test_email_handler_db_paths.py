@@ -83,12 +83,28 @@ def test_send_email_increments_outbound_count(workdir: Path, monkeypatch):
 
     monkeypatch.setattr(send_email_module.smtplib, "SMTP_SSL", _FakeSMTP)
 
-    result = send_email_module.run(
+    # Step-104: send_email now requires a confirmed draft. Walk the protocol:
+    # draft_email → confirm_draft → send_email(draft_id).
+    from skills.email.tools.draft_email import run as draft_run
+    from xibi.skills.drafts.handler import confirm_draft
+
+    drafted = draft_run(
         {
             "_workdir": str(workdir),
             "to": "bob-new@example.com",
             "subject": "Hi Bob",
-            "body": "Step-103 test send",
+            "body": "Step-104 test send",
+        }
+    )
+    draft_id = drafted["draft_id"]
+    assert (
+        confirm_draft({"_db_path": str(workdir / "data" / "xibi.db"), "draft_id": draft_id})["status"] == "success"
+    )
+
+    result = send_email_module.run(
+        {
+            "_workdir": str(workdir),
+            "draft_id": draft_id,
         }
     )
     assert result["status"] == "success", result
@@ -102,26 +118,16 @@ def test_send_email_increments_outbound_count(workdir: Path, monkeypatch):
 
 
 def test_reply_email_writes_audit_row(workdir: Path, monkeypatch):
+    """Step-104: reply_email no longer creates the draft (draft_email does).
+
+    The audit-row guarantee from step-103 is preserved end-to-end: by the
+    time reply_email returns success, the ledger holds a row tied to the
+    confirmed draft, now in status='sent'.
+    """
     from skills.email.tools import reply_email as reply_module
-    from skills.email.tools import summarize_email as summarize_module
-
-    def _fake_summarize(params):
-        return {
-            "status": "success",
-            "data": {
-                "from": "carol@example.com",
-                "reply_to": "",
-                "to": "me@example.com",
-                "cc": "",
-                "subject": "Original subject",
-                "message_id": "<abc@xyz>",
-            },
-        }
-
-    monkeypatch.setattr(summarize_module, "run", _fake_summarize)
-
-    # reply_email imports send_smtp from send_email at call time — patch at source.
     from skills.email.tools import send_email as send_email_module
+    from skills.email.tools.draft_email import run as draft_run
+    from xibi.skills.drafts.handler import confirm_draft
 
     monkeypatch.setattr(
         send_email_module,
@@ -129,25 +135,29 @@ def test_reply_email_writes_audit_row(workdir: Path, monkeypatch):
         lambda payload: {"status": "success", "message": "fake-send"},
     )
 
-    result = reply_module.run(
+    drafted = draft_run(
         {
             "_workdir": str(workdir),
-            "email_id": "email-42",
+            "to": "carol@example.com",
+            "subject": "Re: Original subject",
             "body": "thanks",
+            "in_reply_to": "<abc@xyz>",
         }
     )
-    assert result["status"] == "success", result
-    draft_id = result["draft_id"]
+    draft_id = drafted["draft_id"]
+    assert (
+        confirm_draft({"_db_path": str(workdir / "data" / "xibi.db"), "draft_id": draft_id})["status"] == "success"
+    )
 
-    # Per TRR condition 5: reply_email writes its audit row with
-    # category='draft_email' (current code behavior). Changing the
-    # category is out of scope for this spec.
+    result = reply_module.run({"_workdir": str(workdir), "draft_id": draft_id})
+    assert result["status"] == "success", result
+
     rows = _rows(
         workdir / "data" / "xibi.db",
         "SELECT id, category, status FROM ledger WHERE id=?",
         (draft_id,),
     )
-    assert rows == [(draft_id, "draft_email", "pending")]
+    assert rows == [(draft_id, "draft_email", "sent")]
 
 
 def test_list_drafts_returns_success_on_empty_db(workdir: Path):

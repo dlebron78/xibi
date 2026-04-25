@@ -21,6 +21,7 @@ DEFAULT_TIER = PermissionTier.GREEN
 WRITE_TOOLS: set[str] = {
     "create_draft",
     "draft_email",
+    "confirm_draft",
     "send_email",
     "reply_email",
     "send_message",
@@ -48,9 +49,11 @@ TOOL_TIERS: dict[str, PermissionTier] = {
     "list_events": PermissionTier.GREEN,
     "search_files": PermissionTier.GREEN,
     "recall": PermissionTier.GREEN,
+    "lookup_contact": PermissionTier.GREEN,
     # Yellow — writes, drafts, external API queries, nudges
     "create_draft": PermissionTier.YELLOW,
     "draft_email": PermissionTier.YELLOW,
+    "confirm_draft": PermissionTier.YELLOW,
     "update_belief": PermissionTier.YELLOW,
     "create_task": PermissionTier.YELLOW,
     "nudge": PermissionTier.YELLOW,

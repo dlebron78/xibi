@@ -13,6 +13,7 @@ class ErrorCategory(str, Enum):
     VALIDATION = "validation"  # Tool params failed schema check
     CIRCUIT_OPEN = "circuit_open"  # Circuit breaker active — not retrying
     PERMISSION = "permission"  # Access denied (channel auth)
+    PRECONDITION_MISSING = "precondition_missing"  # Required prior step not satisfied (e.g. send_email without confirmed draft)
     UNKNOWN = "unknown"  # Catch-all
 
 

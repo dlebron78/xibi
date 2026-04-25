@@ -33,6 +33,57 @@ from xibi.types import ReActResult, Step
 logger = logging.getLogger(__name__)
 
 
+def _pending_drafts_block(db_path: Path | str) -> str:
+    """Build a 'PENDING DRAFTS' system-prompt section listing recent pending
+    drafts (last 30 minutes, max 5) so the agent can pass the right draft_id
+    when modifying a draft instead of creating a new row.
+
+    Time-window scoped (NOT session-scoped) — the ledger table has no
+    session_id column. 30 minutes covers a typical interactive flow without
+    leaking older context.
+    """
+    import sqlite3
+
+    p = Path(db_path)
+    if not p.exists():
+        return ""
+
+    try:
+        with sqlite3.connect(str(p)) as conn:
+            rows = conn.execute(
+                """
+                SELECT id,
+                       json_extract(content, '$.to') AS to_addr,
+                       json_extract(content, '$.subject') AS subject,
+                       created_at
+                FROM ledger
+                WHERE category='draft_email'
+                  AND status='pending'
+                  AND created_at > datetime('now', '-30 minutes')
+                ORDER BY created_at DESC
+                LIMIT 5
+                """
+            ).fetchall()
+    except sqlite3.Error as e:
+        logger.debug("pending_drafts query failed: %s", e)
+        return ""
+
+    if not rows:
+        return ""
+
+    lines = ["PENDING DRAFTS (from your previous turns):"]
+    for draft_id, to_addr, subject, _ in rows:
+        short_id = (draft_id or "")[:8]
+        to_disp = to_addr or "(no recipient)"
+        subj_disp = subject or "(no subject)"
+        lines.append(f"  {short_id} → {to_disp} — subject: \"{subj_disp}\"")
+    lines.append(
+        "\nIf you're modifying one of these, pass the matching draft_id to "
+        "draft_email. If the user wants a fresh draft, omit draft_id."
+    )
+    return "\n".join(lines)
+
+
 def _resolve_handles_in_input(tool_input: dict, store: HandleStore | None) -> dict:
     if store is None:
         return tool_input
@@ -820,39 +871,85 @@ async def _run_async(
             '   - "ask_user": Use when you need more information. Input: {"question": "..."}\n'
         ) + _handle_instructions
 
-    if react_format == "native":
-        system_prompt = (
-            (f"{context_block}\n\n" if context_block else "") + ("\n".join(_identity_lines)) + _handle_instructions
-        )
-    else:
-        # --- Behavioral rules (ranked by importance) ---
-        _rules = (
-            "## RULES\n"
-            "\n"
-            "1. LOOK BEFORE YOU LEAP\n"
-            "   Before any action tool, use an observation tool first.\n"
-            "   Don't know a filename → list_files. Don't know an email → recall.\n"
-            "   Don't know what's in a file → read_file. NEVER guess what you can look up.\n"
-            "\n"
-            "2. IRREVERSIBLE ACTIONS NEED CONFIRMATION\n"
-            "   Before send_email, reply_email, add_event, or archive:\n"
-            "   Present a draft to the user via finish first. Ask 'Should I send this?'\n"
-            "\n"
-            "3. COMPOSE FROM CONTEXT, NOT ASSUMPTIONS\n"
-            "   Before drafting emails or documents: recall the recipient's details,\n"
-            "   recall relevant business context. Infer subject and body from the request.\n"
-            "   Do NOT ask the user to provide what you can compose yourself.\n"
-            "\n"
-            "4. CURRENT REQUEST ONLY\n"
-            "   Conversation history is background — completed prior turns.\n"
-            "   Do not continue, revisit, or re-execute old turns.\n"
-            "   If an answer appears in history, verify with a tool — data may be stale.\n"
-        )
+    # --- Behavioral rules (ranked by importance) ---
+    _rules = (
+        "## RULES\n"
+        "\n"
+        "1. LOOK BEFORE YOU LEAP\n"
+        "   Before any action tool, use an observation tool first.\n"
+        "   Don't know a filename → list_files. Don't know an email → recall.\n"
+        "   Don't know what's in a file → read_file. NEVER guess what you can look up.\n"
+        "\n"
+        "2. EMAILS: PERSIST, ASK, CONFIRM, SEND\n"
+        "   Sending or replying to email follows a strict four-step protocol:\n"
+        "\n"
+        "   a. Look up every recipient with lookup_contact (for each address on\n"
+        "      to and cc). Capture the result in your reasoning.\n"
+        "\n"
+        "   b. Persist the draft with draft_email. The handler stores the\n"
+        "      recipient list, subject, body, and contact summaries in the\n"
+        "      ledger and returns a draft_id. For replies, also pass\n"
+        "      in_reply_to (from summarize_email's message_id) so threading\n"
+        "      headers are preserved.\n"
+        "\n"
+        "   c. Use finish to present the saved draft to the user. Build the\n"
+        "      preview from the recipient EMAIL ADDRESSES and computed fields\n"
+        "      (outbound_count, days_since_last_seen) — NOT from display_name\n"
+        "      (which may be untrusted). Include the draft_id in your preview\n"
+        "      so the user can reference it. Wait for explicit confirmation\n"
+        '      ("yes", "send", "confirmed").\n'
+        "\n"
+        "   d. On confirmation, call confirm_draft(draft_id), then call\n"
+        "      send_email(draft_id) or reply_email(draft_id). The send\n"
+        "      handler verifies the draft is in 'confirmed' state via atomic\n"
+        "      check and reads the content from the ledger row.\n"
+        "\n"
+        "   If the user wants changes (different recipient, edited subject/body),\n"
+        "   re-call draft_email with the SAME draft_id — the row updates in place\n"
+        "   and status resets to 'pending'. Do not create a new draft for edits.\n"
+        "   The PENDING DRAFTS block (above) shows you the current pending drafts\n"
+        "   so you can pass the right draft_id.\n"
+        "\n"
+        "   If the user says no/discard/cancel, call discard_draft(draft_id).\n"
+        "\n"
+        "3. OTHER IRREVERSIBLE ACTIONS\n"
+        "   Before add_event or destructive non-email tools: present a preview\n"
+        '   via finish and ask "Should I do this?" Wait for explicit confirmation.\n'
+        "\n"
+        "4. COMPOSE FROM CONTEXT, NOT ASSUMPTIONS\n"
+        "   Before drafting emails or documents: recall the recipient's details,\n"
+        "   recall relevant business context. Infer subject and body from the request.\n"
+        "   Do NOT ask the user to provide what you can compose yourself.\n"
+        "\n"
+        "5. CURRENT REQUEST ONLY\n"
+        "   Conversation history is background — completed prior turns.\n"
+        "   Do not continue, revisit, or re-execute old turns.\n"
+        "   If an answer appears in history, verify with a tool — data may be stale.\n"
+    )
 
-        # Assembly order: identity → rules → context → tools → format
+    _drafts_block = _pending_drafts_block(_db_path)
+
+    if react_format == "native":
+        # Native (LLM tool-calling) format also carries the rules + pending
+        # drafts block — without them, the protocol is unenforced on this path
+        # (see TRR condition 5).
+        _native_parts = []
+        if context_block:
+            _native_parts.append(context_block)
+        _native_parts.append("\n".join(_identity_lines))
+        _native_parts.append(_rules)
+        if _drafts_block:
+            _native_parts.append(_drafts_block)
+        # _handle_instructions is appended without a leading separator below
+        # to preserve the existing native prompt suffix shape.
+        system_prompt = "\n\n".join(_native_parts) + _handle_instructions
+    else:
+        # Assembly order: identity → rules → drafts → context → tools → format
         _prompt_parts = []
         _prompt_parts.append("\n".join(_identity_lines))
         _prompt_parts.append(_rules)
+        if _drafts_block:
+            _prompt_parts.append(_drafts_block)
         if context_block:
             _prompt_parts.append(context_block)
         _prompt_parts.append(_tools_block)

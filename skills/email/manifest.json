@@ -106,7 +106,7 @@
             "name": "reply_email",
             "output_type": "action",
             "risk": "irreversible",
-            "description": "Reply (or reply-all) to an existing email. Automatically fetches sender address, subject (Re: prefix), and message_id for threading. Use when the user says 'reply', 'respond', 'write back', or 'reply all'. Prefer email_id (from a previous list or search) over subject_query.",
+            "description": "Send a previously-confirmed reply draft. Called only AFTER draft_email (which captures the reply body + recipient + threading info) and confirm_draft. Pass the draft_id returned by draft_email. Reads recipients/subject/body from the ledger row — does not accept them as direct parameters.",
             "examples": [
                 "reply to that email and say yes",
                 "respond to sarah's message",
@@ -116,25 +116,12 @@
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "email_id": {
+                    "draft_id": {
                         "type": "string",
-                        "description": "The email ID (from list_unread or search_emails). Use this when available — more reliable than subject_query."
-                    },
-                    "subject_query": {
-                        "type": "string",
-                        "description": "Keywords to identify the original email (e.g. 'SXSW invite'). Fallback when email_id is not available."
-                    },
-                    "body": {
-                        "type": "string",
-                        "description": "The reply body text."
-                    },
-                    "reply_all": {
-                        "type": "boolean",
-                        "description": "If true, CC all original recipients (To + CC) in addition to the sender. Use when user says 'reply all'. Default: false.",
-                        "default": false
+                        "description": "ID of the confirmed draft row to send. Must be in status='confirmed'."
                     }
                 },
-                "required": ["body"]
+                "required": ["draft_id"]
             }
         },
         {
@@ -150,7 +137,7 @@
             "name": "send_email",
             "output_type": "action",
             "risk": "irreversible",
-            "description": "Send an email to a recipient, optionally with a file attachment. Requires to, subject, and body. If the user uploaded a file (resume, PDF, etc.) and the attachment_path was provided in context, include it.",
+            "description": "Send a previously-confirmed email draft. Called only AFTER draft_email and confirm_draft — pass the draft_id. Reads recipients, subject, body, and attachment from the ledger row; rejects direct to/subject/body parameters. Atomic compare-and-swap on send so concurrent calls cannot double-send.",
             "examples": [
                 "email dan about the meeting",
                 "send a message to sarah",
@@ -159,28 +146,12 @@
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "to": {
+                    "draft_id": {
                         "type": "string",
-                        "description": "Recipient email address."
-                    },
-                    "subject": {
-                        "type": "string",
-                        "description": "Email subject line."
-                    },
-                    "body": {
-                        "type": "string",
-                        "description": "Email body text."
-                    },
-                    "attachment_path": {
-                        "type": "string",
-                        "description": "Absolute path to a file on the server to attach. Provided automatically when user uploads a file via Telegram."
+                        "description": "ID of the confirmed draft row to send. Must be in status='confirmed'."
                     }
                 },
-                "required": [
-                    "to",
-                    "subject",
-                    "body"
-                ]
+                "required": ["draft_id"]
             }
         },
         {

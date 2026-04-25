@@ -49,6 +49,23 @@ def test_known_red_tools_unchanged():
     assert resolve_tier("delete_email") == PermissionTier.RED
 
 
+def test_lookup_contact_explicit_green_tier():
+    assert TOOL_TIERS["lookup_contact"] == PermissionTier.GREEN
+
+
+def test_lookup_contact_not_in_write_tools():
+    """lookup_contact is read-only; locking down the GREEN invariant."""
+    assert "lookup_contact" not in WRITE_TOOLS
+
+
+def test_confirm_draft_explicit_yellow_tier():
+    assert TOOL_TIERS["confirm_draft"] == PermissionTier.YELLOW
+
+
+def test_confirm_draft_in_write_tools():
+    assert "confirm_draft" in WRITE_TOOLS
+
+
 def test_declared_red_tier():
     assert resolve_tier("send_email") == PermissionTier.RED
 

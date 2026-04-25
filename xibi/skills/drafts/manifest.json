@@ -1,0 +1,22 @@
+{
+  "name": "drafts",
+  "description": "Confirm a pending email draft so it becomes eligible for sending.",
+  "tools": [
+    {
+      "name": "confirm_draft",
+      "output_type": "raw",
+      "risk": "irreversible",
+      "description": "Flip a draft's status from 'pending' to 'confirmed'. Call this AFTER the user has explicitly confirmed (e.g. said 'yes', 'send', 'confirmed') the preview you presented via finish. After confirm_draft succeeds, call send_email or reply_email with the same draft_id to actually send.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "draft_id": {
+            "type": "string",
+            "description": "ID of the pending draft to confirm (returned by draft_email)."
+          }
+        },
+        "required": ["draft_id"]
+      }
+    }
+  ]
+}

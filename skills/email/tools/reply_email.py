@@ -1,134 +1,121 @@
+"""reply_email — like send_email, but for confirmed reply drafts.
+
+The threading metadata (``in_reply_to``) is captured by ``draft_email`` at
+draft time and read back from the ledger row here. The handler shape
+mirrors send_email exactly: pre-condition → atomic CAS → SMTP → status
+update. Recipient/subject/body never come from the agent's parameters.
+"""
+
 import json
+import logging
 import os
-import re
-import shutil
 import sqlite3
-import subprocess
-import sys
-import uuid
 from pathlib import Path
 
+from xibi.security.precondition import require_draft_confirmed
 
-def _normalize_addr(addr):
-    """Extract bare email address from 'Name <addr@domain.com>' format."""
-    if not addr:
-        return ""
-    m = re.search(r"[\w.+-]+@[\w-]+\.\w+", addr)
-    return m.group(0).lower() if m else addr.strip().lower()
+logger = logging.getLogger(__name__)
 
 
-def _find_himalaya():
-    himalaya_bin = shutil.which("himalaya")
-    if not himalaya_bin:
-        local_path = os.path.join(os.path.expanduser("~"), ".local", "bin", "himalaya")
-        himalaya_bin = local_path if subprocess.run(["test", "-x", local_path]).returncode == 0 else "himalaya"
-    return himalaya_bin
+def _resolve_db_path(workdir: str | None) -> Path:
+    wd = workdir or os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.bregger"))
+    return Path(wd) / "data" / "xibi.db"
+
+
+def _atomic_claim(db_path: Path, draft_id: str) -> bool:
+    with sqlite3.connect(str(db_path)) as conn:
+        cursor = conn.execute(
+            "UPDATE ledger SET status='sending' WHERE id=? AND status='confirmed'",
+            (draft_id,),
+        )
+        return cursor.rowcount == 1
+
+
+def _read_payload(db_path: Path, draft_id: str) -> dict | None:
+    with sqlite3.connect(str(db_path)) as conn:
+        row = conn.execute(
+            "SELECT content FROM ledger WHERE id=?",
+            (draft_id,),
+        ).fetchone()
+    if not row:
+        return None
+    try:
+        return json.loads(row[0])
+    except (TypeError, json.JSONDecodeError):
+        return None
+
+
+def _set_status(db_path: Path, draft_id: str, status: str, *, only_if: str | None = None) -> None:
+    with sqlite3.connect(str(db_path)) as conn:
+        if only_if:
+            conn.execute(
+                "UPDATE ledger SET status=? WHERE id=? AND status=?",
+                (status, draft_id, only_if),
+            )
+        else:
+            conn.execute(
+                "UPDATE ledger SET status=? WHERE id=?",
+                (status, draft_id),
+            )
 
 
 def run(params):
-    """Compose a reply (or reply-all) to a specific email."""
-    email_id = str(params.get("email_id", "")).strip()
-    subject_query = params.get("subject_query", "").strip()
-    body = params.get("body", "").strip()
-    reply_all = bool(params.get("reply_all", False))
+    """Send a confirmed reply draft."""
+    workdir = params.get("_workdir")
+    db_path = _resolve_db_path(workdir)
+    draft_id = (params.get("draft_id") or "").strip()
 
-    if not email_id and not subject_query:
-        return {
-            "status": "error",
-            "message": "Provide either 'email_id' or 'subject_query' to identify the email to reply to.",
-            "suggestion": "Use the email ID from a previous search_emails or summarize_email call.",
-        }
-    if not body:
-        return {
-            "status": "error",
-            "message": "Provide 'body' — the reply text.",
-            "suggestion": "Ask the user what they want to say in the reply.",
-        }
+    err = require_draft_confirmed(draft_id, db_path, tool_name="reply_email")
+    if err:
+        return err
 
-    sys.path.insert(0, str(Path(__file__).parents[3]))
-    from skills.email.tools.summarize_email import run as summarize_run
-
-    lookup_params = {"email_id": email_id} if email_id else {"subject_query": subject_query}
-    original = summarize_run(lookup_params)
-    if original.get("status") != "success":
-        return original
-
-    data = original.get("data", {})
-    from_addr = data.get("from", "")
-    reply_to = data.get("reply_to", "").strip()
-    to_header = data.get("to", "").strip()
-    cc_header = data.get("cc", "").strip()
-    subject = data.get("subject", "")
-    message_id = data.get("message_id", "")
-
-    primary_to = reply_to or from_addr
-    if not primary_to:
-        return {
-            "status": "error",
-            "message": "Could not determine the sender's email address from the original email.",
-            "suggestion": "Use summarize_email to check the email, then send_email manually with the correct address.",
-        }
-
-    cc = ""
-    if reply_all:
-        user_addr_raw = os.environ.get("BREGGER_EMAIL_FROM", "")
-        user_addr_norm = _normalize_addr(user_addr_raw)
-        primary_to_norm = _normalize_addr(primary_to)
-        all_addrs = [a.strip() for a in f"{to_header},{cc_header}".split(",") if a.strip()]
-        cc_list = []
-        for a in all_addrs:
-            a_norm = _normalize_addr(a)
-            if a_norm and a_norm != primary_to_norm and a_norm != user_addr_norm:
-                cc_list.append(a)
-        cc = ", ".join(cc_list)
-
-    reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
-
-    preview = f"To: {primary_to}\n"
-    if cc:
-        preview += f"CC: {cc}\n"
-    preview += f"Subject: {reply_subject}\n\n{body}"
-
-    draft_id = str(uuid.uuid4())
-    workdir = params.get("_workdir") or os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.bregger"))
-    db_path = Path(workdir) / "data" / "xibi.db"
     try:
-        payload_json = json.dumps(
-            {
-                "to": primary_to,
-                "cc": cc,
-                "subject": reply_subject,
-                "body": body,
-                "in_reply_to": message_id,
-                "draft_id": draft_id,
+        if not _atomic_claim(db_path, draft_id):
+            return {
+                "status": "error",
+                "error_category": "precondition_missing",
+                "message": "draft no longer in 'confirmed' state (already sending/sent or race lost)",
             }
-        )
-        with sqlite3.connect(db_path) as conn:
-            conn.execute(
-                "INSERT INTO ledger (id, category, content, entity, status) VALUES (?, ?, ?, ?, ?)",
-                (draft_id, "draft_email", payload_json, f"{primary_to}:{reply_subject[:40]}", "pending"),
-            )
-    except Exception as e:
-        print(f"⚠️ [reply_email] Ledger insert failed: {e}", flush=True)
+    except sqlite3.Error as e:
+        return {"status": "error", "message": f"failed to claim send slot: {e}"}
 
-    # Workaround: react loop has no RED-tier confirmation gate. Send immediately.
+    payload = _read_payload(db_path, draft_id)
+    if payload is None:
+        _set_status(db_path, draft_id, "confirmed", only_if="sending")
+        return {"status": "error", "message": f"draft {draft_id[:8]} content unreadable after claim"}
+
+    to = payload.get("to") or ""
+    if not to or "@" not in to:
+        _set_status(db_path, draft_id, "confirmed", only_if="sending")
+        return {"status": "error", "message": f"draft {draft_id[:8]} missing recipient"}
+
+    # Imported lazily so this module's import doesn't trigger send_email's
+    # SMTP env-var snapshot before tests have a chance to patch it.
     from skills.email.tools.send_email import send_smtp
 
     smtp_payload = {
-        "to": primary_to,
-        "cc": cc,
-        "subject": reply_subject,
-        "body": body,
-        "in_reply_to": message_id,
+        "to": to,
+        "cc": payload.get("cc", ""),
+        "subject": payload.get("subject", ""),
+        "body": payload.get("body", ""),
+        "attachment_path": payload.get("attachment_path") or "",
+        "in_reply_to": payload.get("in_reply_to", ""),
         "draft_id": draft_id,
         "_workdir": workdir,
     }
-    result = send_smtp(smtp_payload)
-    if result.get("status") == "success":
+    smtp_result = send_smtp(smtp_payload)
+
+    if smtp_result.get("status") == "success":
+        _set_status(db_path, draft_id, "sent")
+        preview = f"To: {to}\n"
+        if payload.get("cc"):
+            preview += f"CC: {payload['cc']}\n"
+        preview += f"Subject: {payload.get('subject','')}\n\n{payload.get('body','')}"
         return {
             "status": "success",
-            "content": "Reply sent.\n\n" + preview,
             "draft_id": draft_id,
+            "content": "Reply sent.\n\n" + preview,
         }
-    else:
-        return result
+
+    _set_status(db_path, draft_id, "confirmed", only_if="sending")
+    return smtp_result
