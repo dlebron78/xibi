@@ -12,7 +12,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +26,7 @@ from xibi.routing.control_plane import ControlPlaneRouter
 from xibi.routing.shadow import ShadowMatcher
 from xibi.session import SessionContext
 from xibi.skills.registry import SkillRegistry
-from xibi.tracing import Tracer
+from xibi.tracing import Span, Tracer
 from xibi.types import ReActResult
 
 logger = logging.getLogger(__name__)
@@ -576,7 +576,13 @@ class TelegramAdapter:
             if response:
                 if review_text:
                     response = f"{review_text}\n\n{response}"
-                self.send_message(chat_id, response)
+                draft_id = self._extract_pending_draft_id(result)
+                if draft_id:
+                    self.send_message(
+                        chat_id, response, reply_markup=self._email_confirmation_keyboard(draft_id)
+                    )
+                else:
+                    self.send_message(chat_id, response)
 
             # Clear attachment if processing was successful
             if pending_path:
@@ -753,6 +759,211 @@ class TelegramAdapter:
             except Exception as e:
                 logger.error(f"Error handling rollover callback: {e}", exc_info=True)
                 self.send_message(chat_id, "Sorry, I couldn't process that rollover action.")
+            return
+
+        if data.startswith("email_action:"):
+            self._handle_email_button(callback_query)
+            return
+
+        logger.warning(f"unrouted_callback data={data[:50]}")
+
+    # ── Email-confirmation inline-button helpers (step-105) ──────────────────
+
+    def _extract_pending_draft_id(self, result: ReActResult) -> str | None:
+        """Find the most recent successful draft_email/reply_email step's draft_id.
+
+        Returns None if no such step exists.
+        """
+        draft_id: str | None = None
+        for step in result.steps:
+            if step.tool in ("draft_email", "reply_email"):
+                output = step.tool_output if isinstance(step.tool_output, dict) else {}
+                if output.get("status") == "success" and output.get("draft_id"):
+                    draft_id = str(output["draft_id"])  # latest wins
+        return draft_id
+
+    def _email_confirmation_keyboard(self, draft_id: str) -> dict:
+        """Build the 2x2 inline keyboard for email confirmation."""
+        return {
+            "inline_keyboard": [
+                [
+                    {"text": "✅ Send", "callback_data": f"email_action:send:{draft_id}"},
+                    {"text": "❌ Discard", "callback_data": f"email_action:discard:{draft_id}"},
+                ],
+                [
+                    {"text": "✏️ Revise", "callback_data": f"email_action:revise:{draft_id}"},
+                    {"text": "💾 Save", "callback_data": f"email_action:defer:{draft_id}"},
+                ],
+            ]
+        }
+
+    def _edit_message_text(self, chat_id: int, message_id: int, text: str) -> None:
+        self._api_call(
+            "editMessageText",
+            {"chat_id": chat_id, "message_id": message_id, "text": text},
+        )
+
+    def _strip_buttons(self, chat_id: int, message_id: int) -> None:
+        self._api_call(
+            "editMessageReplyMarkup",
+            {"chat_id": chat_id, "message_id": message_id, "reply_markup": {"inline_keyboard": []}},
+        )
+
+    def _emit_button_span(self, attrs: dict) -> None:
+        """Emit a `telegram.button_tap` span. Best-effort — never raises."""
+        try:
+            outcome = attrs.get("outcome")
+            status = "error" if outcome in {"error", "bad_action", "smtp_failed"} else "ok"
+            Tracer(self.db_path).emit(
+                Span(
+                    trace_id=f"button-{uuid.uuid4().hex[:8]}",
+                    span_id=uuid.uuid4().hex[:8],
+                    parent_span_id=None,
+                    operation="telegram.button_tap",
+                    component="telegram",
+                    start_ms=int(time.time() * 1000),
+                    duration_ms=0,
+                    status=status,
+                    attributes=attrs,
+                )
+            )
+        except Exception as e:
+            logger.warning(f"button span emit failed: {e}")
+
+    def _invoke_button_action(self, tool_name: str, params: dict) -> dict:
+        """Execute a tool through a one-shot interactive CommandLayer for audit.
+
+        The button tap is the user's confirmation, so interactive=True is
+        correct here even though the bot's main CommandLayer stays
+        interactive=False for autonomous react.run flows.
+        """
+        layer = CommandLayer(
+            db_path=str(self.db_path),
+            profile=self.config.get("profile", {}),
+            interactive=True,
+        )
+        skill_name = self.skill_registry.find_skill_for_tool(tool_name)
+        tool_meta = self.skill_registry.get_tool_meta(skill_name, tool_name) if skill_name else None
+        manifest_schema = (tool_meta or {}).get("inputSchema")
+        result = layer.check(tool_name, params, manifest_schema)
+        if not result.allowed:
+            return {"status": "error", "message": result.block_reason}
+
+        if not self.executor:
+            return {"status": "error", "message": "no executor"}
+        output = self.executor.execute(tool_name, params)
+
+        if result.audit_required:
+            layer.audit(
+                tool_name,
+                params,
+                output,
+                base_tier=result.tier.value,
+                effective_tier=result.tier.value,
+            )
+        return output
+
+    def _handle_email_button(self, callback_query: dict) -> None:
+        """Dispatch an email_action:* callback. Authoritative — Python, not LLM."""
+        data = callback_query.get("data", "")
+        chat_id = callback_query.get("message", {}).get("chat", {}).get("id")
+        message_id = callback_query.get("message", {}).get("message_id")
+        from_id = callback_query.get("from", {}).get("id")
+
+        span_attrs: dict = {"action": "unknown", "chat_id": str(chat_id)}
+
+        try:
+            # Authorization — defense-in-depth (channel-level auth already
+            # filters incoming messages, but callback queries can in theory
+            # arrive from a different `from.id` than the message recipient).
+            if not from_id or str(from_id) not in self.allowed_chats:
+                logger.warning(f"email_button_unauthorized chat_id={from_id} data={data}")
+                span_attrs["outcome"] = "unauthorized"
+                return
+
+            try:
+                _, action, draft_id = data.split(":", 2)
+            except ValueError:
+                logger.warning(f"email_button_bad_data data={data}")
+                span_attrs["outcome"] = "bad_data"
+                return
+
+            span_attrs.update({"action": action, "draft_id": draft_id[:8]})
+
+            if action == "send":
+                confirm = self._invoke_button_action("confirm_draft", {"draft_id": draft_id})
+                if confirm.get("status") != "success":
+                    self._edit_message_text(
+                        chat_id, message_id, f"⚠️ Already actioned ({confirm.get('message', 'unknown')})."
+                    )
+                    self._strip_buttons(chat_id, message_id)
+                    span_attrs["outcome"] = "stale"
+                else:
+                    send = self._invoke_button_action("send_email", {"draft_id": draft_id})
+                    if send.get("status") == "success":
+                        now_str = datetime.now(timezone.utc).astimezone().strftime("%H:%M")
+                        self._edit_message_text(chat_id, message_id, f"✅ Sent at {now_str}.")
+                        self._strip_buttons(chat_id, message_id)
+                        span_attrs["outcome"] = "success"
+                    else:
+                        self._edit_message_text(
+                            chat_id,
+                            message_id,
+                            f"❌ Send failed: {send.get('message', 'unknown')}. Tap Send to retry.",
+                        )
+                        # Re-render keyboard so retry is one tap.
+                        self._api_call(
+                            "editMessageReplyMarkup",
+                            {
+                                "chat_id": chat_id,
+                                "message_id": message_id,
+                                "reply_markup": self._email_confirmation_keyboard(draft_id),
+                            },
+                        )
+                        span_attrs["outcome"] = "smtp_failed"
+
+            elif action == "discard":
+                r = self._invoke_button_action("discard_draft", {"draft_id": draft_id})
+                if r.get("status") == "success":
+                    self._edit_message_text(chat_id, message_id, "❌ Discarded.")
+                    span_attrs["outcome"] = "discarded"
+                else:
+                    self._edit_message_text(chat_id, message_id, f"⚠️ {r.get('message', 'discard failed')}")
+                    span_attrs["outcome"] = "discard_failed"
+                self._strip_buttons(chat_id, message_id)
+
+            elif action == "revise":
+                self._edit_message_text(chat_id, message_id, f"✏️ What changes? (draft {draft_id[:8]})")
+                self._strip_buttons(chat_id, message_id)
+                span_attrs["outcome"] = "revise_prompted"
+
+            elif action == "defer":
+                logger.warning(f"draft_deferred draft_id={draft_id} chat_id={chat_id}")
+                self._edit_message_text(chat_id, message_id, "💾 Saved — I'll keep this in mind.")
+                self._strip_buttons(chat_id, message_id)
+                span_attrs["outcome"] = "deferred"
+
+            else:
+                logger.warning(f"email_button_bad_action action={action} draft_id={draft_id}")
+                span_attrs["outcome"] = "bad_action"
+
+        except Exception as e:
+            logger.error(
+                f"email_button_error action={span_attrs.get('action')} draft_id={span_attrs.get('draft_id')} error={e}",
+                exc_info=True,
+            )
+            span_attrs["outcome"] = "error"
+            try:
+                if message_id:
+                    self._edit_message_text(
+                        chat_id, message_id, f"⚠️ Internal error processing {span_attrs.get('action')}."
+                    )
+                    self._strip_buttons(chat_id, message_id)
+            except Exception:
+                pass
+
+        finally:
+            self._emit_button_span(span_attrs)
 
     def _handle_reaction(self, message_reaction: dict) -> None:
         """Handle Telegram emoji reactions."""
