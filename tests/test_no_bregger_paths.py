@@ -20,11 +20,15 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SKILLS_DIR = REPO_ROOT / "skills"
 
-# TRR condition 7 preserves the ``~/.bregger`` env-fallback default in
-# handler files — so the regression guard narrowly targets the
-# ``bregger.db`` SQLite filename literals step-103 actually migrated,
-# matching the spec's "Step-specific gates" grep (``grep -rn
-# "bregger.db" skills/``).
+# Regression guard for the ``bregger.db`` SQLite filename literals step-103
+# migrated to ``xibi.db``. Originally this guard also preserved the
+# ``~/.bregger`` env-fallback default per step-103 TRR condition 7; that
+# default was retired in the hotfix that followed step-104 (PR #114) once
+# NucBox confirmed ``~/.bregger`` no longer existed and the silent-skip
+# left no-op draft writes in production. The bregger-path-default check
+# now lives in tests/test_email_handler_db_paths.py
+# (``test_no_bregger_paths_in_email_handlers``); this file's regex
+# narrowly targets only the SQLite filename literals.
 FORBIDDEN_PATTERNS = (
     re.compile(r'"bregger\.db"'),
     re.compile(r"'bregger\.db'"),
