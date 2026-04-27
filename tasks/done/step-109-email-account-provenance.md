@@ -555,7 +555,7 @@ def backfill_email_alias(params: dict[str, Any]) -> dict[str, Any]:
      COUNT(*) AS n
    FROM spans
    WHERE operation = 'tool.dispatch'
-     AND json_extract(attributes, '$.tool_name') = 'summarize_email'
+     AND json_extract(attributes, '$.tool') = 'summarize_email'
      AND start_ms > strftime('%s', 'now', '-7 day') * 1000
    GROUP BY account
    ORDER BY n DESC;
@@ -587,7 +587,7 @@ N/A — no schema changes.
   import sqlite3, json
   c = sqlite3.connect('/home/dlebron/.xibi/data/xibi.db')
   c.row_factory = sqlite3.Row
-  for r in c.execute('SELECT json_extract(attributes, \\\"$.received_via_account\\\") account, datetime(start_ms/1000,\\\"unixepoch\\\",\\\"localtime\\\") ts FROM spans WHERE json_extract(attributes,\\\"$.tool_name\\\")=\\\"summarize_email\\\" AND start_ms > strftime(\\\"%s\\\",\\\"now\\\",\\\"-3 minutes\\\")*1000'):
+  for r in c.execute('SELECT json_extract(attributes, \\\"$.received_via_account\\\") account, datetime(start_ms/1000,\\\"unixepoch\\\",\\\"localtime\\\") ts FROM spans WHERE json_extract(attributes,\\\"$.tool\\\")=\\\"summarize_email\\\" AND start_ms > strftime(\\\"%s\\\",\\\"now\\\",\\\"-3 minutes\\\")*1000'):
       print(dict(r))
   \""
   ```
