@@ -149,18 +149,23 @@ def test_log_signal_dedup_filters_by_ref_source_not_source(tmp_path: Path):
 
 
 def test_log_signal_dedup_catches_cross_midnight_dupes(tmp_path: Path):
-    """A duplicate ref_id from yesterday must be caught (was the prod bug)."""
+    """A duplicate ref_id from yesterday must be caught (was the prod bug).
+
+    Seeds at 30h ago — guaranteed to be a different calendar day than
+    `now` regardless of wall-clock time. Pre-fix's `date(timestamp) =
+    date('now')` would NOT match (different day → not deduped → second
+    INSERT succeeds → 2 rows). Post-fix's 72h rolling window matches
+    (within 72h → deduped → 1 row).
+    """
     db = tmp_path / "test_xibi.db"
     migrate(db)
     re = RuleEngine(db)
 
-    # Seed a signal as if logged 6 hours ago (well within 72h window, but
-    # potentially on a different calendar day depending on wall-clock).
-    yesterday = (datetime.utcnow() - timedelta(hours=6)).isoformat()
+    seeded = (datetime.utcnow() - timedelta(hours=30)).isoformat()
     with open_db(db) as conn, conn:
         conn.execute(
             "INSERT INTO signals (source, content_preview, ref_id, ref_source, timestamp) VALUES (?, ?, ?, ?, ?)",
-            ("email", "preview", "152734", "email", yesterday),
+            ("email", "preview", "152734", "email", seeded),
         )
 
     # New write with same ref_source + ref_id should be deduped.
@@ -192,16 +197,21 @@ def test_log_signal_dedup_allows_after_72h(tmp_path: Path):
 
 
 def test_log_signal_with_conn_dedup_catches_cross_midnight_dupes(tmp_path: Path):
-    """log_signal_with_conn (the atomic-batch variant) shares the same fix."""
+    """log_signal_with_conn (the atomic-batch variant) shares the same fix.
+
+    Same 30h-seed strategy as the log_signal variant — deterministically
+    a different calendar day, deterministically inside the 72h rolling
+    window.
+    """
     db = tmp_path / "test_xibi.db"
     migrate(db)
     re = RuleEngine(db)
 
-    six_hours_ago = (datetime.utcnow() - timedelta(hours=6)).isoformat()
+    seeded = (datetime.utcnow() - timedelta(hours=30)).isoformat()
     with open_db(db) as conn, conn:
         conn.execute(
             "INSERT INTO signals (source, content_preview, ref_id, ref_source, timestamp) VALUES (?, ?, ?, ?, ?)",
-            ("email", "preview", "midnight-job", "email", six_hours_ago),
+            ("email", "preview", "midnight-job", "email", seeded),
         )
 
     with open_db(db) as conn, conn:
