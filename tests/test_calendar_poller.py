@@ -26,7 +26,9 @@ def db_path(tmp_path):
                 entity_type TEXT,
                 entity_text TEXT,
                 env TEXT,
-                deep_link_url TEXT
+                deep_link_url TEXT,
+                received_via_account TEXT,
+                received_via_email_alias TEXT
             )
         """)
         conn.execute("""

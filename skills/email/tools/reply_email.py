@@ -4,6 +4,11 @@ The threading metadata (``in_reply_to``) is captured by ``draft_email`` at
 draft time and read back from the ledger row here. The handler shape
 mirrors send_email exactly: pre-condition → atomic CAS → SMTP → status
 update. Recipient/subject/body never come from the agent's parameters.
+
+Step-110: defaults the Reply-To header to the inbound's
+``received_via_account`` (carried in the draft payload by step-104).
+The agent may supply an explicit ``reply_to_account`` to override —
+disagreement with the inbound surfaces as ``ambiguous_reply_to_account``.
 """
 
 import json
@@ -12,6 +17,8 @@ import os
 import sqlite3
 from pathlib import Path
 
+from xibi.email.reply_to import resolve_reply_to
+from xibi.oauth.store import OAuthStore
 from xibi.security.precondition import require_draft_confirmed
 
 logger = logging.getLogger(__name__)
@@ -59,11 +66,20 @@ def _set_status(db_path: Path, draft_id: str, status: str, *, only_if: str | Non
             )
 
 
+def _available_account_labels(db_path: Path) -> list[str]:
+    user_id = os.environ.get("XIBI_INSTANCE_OWNER_USER_ID", "default-owner")
+    try:
+        return [a["nickname"] for a in OAuthStore(db_path).list_accounts(user_id)]
+    except Exception:
+        return []
+
+
 def run(params):
     """Send a confirmed reply draft."""
     workdir = params.get("_workdir")
     db_path = _resolve_db_path(workdir)
     draft_id = (params.get("draft_id") or "").strip()
+    reply_to_account_override = (params.get("reply_to_account") or "").strip() or None
 
     err = require_draft_confirmed(draft_id, db_path, tool_name="reply_email")
     if err:
@@ -89,10 +105,28 @@ def run(params):
         _set_status(db_path, draft_id, "confirmed", only_if="sending")
         return {"status": "error", "message": f"draft {draft_id[:8]} missing recipient"}
 
+    received_via_account = payload.get("received_via_account")
+
+    try:
+        reply_to_addr = resolve_reply_to(received_via_account, reply_to_account_override, db_path)
+    except ValueError as exc:
+        _set_status(db_path, draft_id, "confirmed", only_if="sending")
+        logger.warning(
+            f"outbound_reply_to_ambiguous reply_to={reply_to_account_override} "
+            f"received_via={received_via_account}"
+        )
+        return {
+            "status": "error",
+            "error_category": "ambiguous_reply_to_account",
+            "message": str(exc),
+            "available_labels": _available_account_labels(db_path),
+        }
+
     # Imported lazily so this module's import doesn't trigger send_email's
     # SMTP env-var snapshot before tests have a chance to patch it.
     from skills.email.tools.send_email import send_smtp
 
+    account_for_outbound = reply_to_account_override or received_via_account
     smtp_payload = {
         "to": to,
         "cc": payload.get("cc", ""),
@@ -102,6 +136,8 @@ def run(params):
         "in_reply_to": payload.get("in_reply_to", ""),
         "draft_id": draft_id,
         "_workdir": workdir,
+        "_account": account_for_outbound,
+        "_reply_to_addr": reply_to_addr,
     }
     smtp_result = send_smtp(smtp_payload)
 

@@ -4,12 +4,20 @@ Tools:
   - connect_account: returns the consent URL for the user to tap.
   - list_accounts:   read-only listing.
   - disconnect_account: deletes the row + secret + best-effort provider revoke.
+  - backfill_email_alias: legacy onboard fixup, populates metadata.email_alias.
+  - backfill_signals_provenance: walk signals, fill received_via_account from
+    source email headers (step-110, idempotent).
+  - backfill_contacts_origin: walk contacts, set account_origin from oldest
+    signal interaction (step-110, idempotent).
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import sqlite3
+from pathlib import Path
 from typing import Any
 
 from xibi.oauth.google import (
@@ -177,6 +185,189 @@ def backfill_email_alias(params: dict[str, Any]) -> dict[str, Any]:
         "status": "success" if not failed else "partial",
         "updated": updated,
         "skipped": skipped,
+        "failed": failed,
+        "summary": summary,
+        "message": summary,
+    }
+
+
+def backfill_signals_provenance(params: dict[str, Any]) -> dict[str, Any]:
+    """Populate ``signals.received_via_account`` for rows missing it.
+
+    Walks ``signals WHERE received_via_account IS NULL AND ref_source = 'email'``,
+    fetches each source email's RFC 5322 headers via himalaya, runs the
+    same ``resolve_account_from_email_to`` resolver step-109 uses on
+    inbound, and writes the resolved account + email_alias back.
+
+    YELLOW tier: writes to existing rows; never destructive; idempotent.
+    Re-runs are no-ops once all recoverable rows are filled.
+    """
+    db_path = params.get("_db_path")
+    if not db_path:
+        return {"status": "error", "message": "internal: _db_path not injected"}
+
+    user_id = _instance_user_id()
+    db_path = Path(db_path)
+
+    updated: list[int] = []
+    skipped: list[int] = []
+    failed: list[dict[str, str]] = []
+
+    try:
+        with sqlite3.connect(str(db_path)) as conn:
+            rows = conn.execute(
+                "SELECT id, ref_id, ref_source FROM signals "
+                "WHERE received_via_account IS NULL AND ref_source = 'email' "
+                "AND ref_id IS NOT NULL"
+            ).fetchall()
+    except sqlite3.Error as exc:
+        return {"status": "error", "message": f"db read error: {exc}"}
+
+    if not rows:
+        return {
+            "status": "success",
+            "updated": 0,
+            "skipped": 0,
+            "failed": [],
+            "summary": "0 updated, 0 skipped, 0 failed (no rows to backfill)",
+            "message": "0 updated, 0 skipped, 0 failed (no rows to backfill)",
+        }
+
+    # Lazy imports — heavy modules + himalaya search path. Skipped above
+    # when there's nothing to do, so a missing himalaya binary doesn't
+    # block routine no-op invocations.
+    from xibi.email.provenance import (
+        parse_addresses_from_header,
+        resolve_account_from_email_to,
+    )
+    from xibi.heartbeat.email_body import fetch_raw_email, find_himalaya
+
+    try:
+        himalaya_bin = find_himalaya()
+    except FileNotFoundError as exc:
+        return {"status": "error", "message": f"himalaya unavailable: {exc}"}
+
+    for sid, ref_id, _ref_source in rows:
+        if not ref_id:
+            skipped.append(sid)
+            continue
+        try:
+            raw, err = fetch_raw_email(himalaya_bin, str(ref_id))
+            if not raw:
+                skipped.append(sid)
+                continue
+            from email import message_from_string, policy
+
+            msg = message_from_string(raw, policy=policy.default)
+            to_header = msg.get("To")
+            delivered_to = msg.get("Delivered-To")
+            account = resolve_account_from_email_to(
+                to_addresses=[to_header] if to_header else None,
+                delivered_to=delivered_to,
+                db_path=db_path,
+                user_id=user_id,
+            )
+            if not account:
+                skipped.append(sid)
+                # Touch parse_addresses_from_header so the import is exercised
+                # even when no addresses match (validates To header parsing).
+                _ = parse_addresses_from_header(to_header)
+                continue
+            with sqlite3.connect(str(db_path)) as conn:
+                conn.execute(
+                    "UPDATE signals SET received_via_account = ?, received_via_email_alias = ? WHERE id = ?",
+                    (account.get("nickname"), account.get("email_alias"), sid),
+                )
+            updated.append(sid)
+        except Exception as exc:
+            failed.append({"id": str(sid), "err": f"{type(exc).__name__}:{str(exc)[:120]}"})
+
+    if updated:
+        logger.warning(f"signal_provenance_backfilled count={len(updated)}")
+    summary = f"{len(updated)} updated, {len(skipped)} skipped (unrecoverable), {len(failed)} failed"
+    return {
+        "status": "success" if not failed else "partial",
+        "updated": len(updated),
+        "skipped": len(skipped),
+        "failed": failed,
+        "summary": summary,
+        "message": summary,
+    }
+
+
+def backfill_contacts_origin(params: dict[str, Any]) -> dict[str, Any]:
+    """Populate ``contacts.account_origin`` from oldest signal interaction.
+
+    For each contact row where ``account_origin IS NULL``, queries the
+    signals table for the oldest signal whose ``entity_text`` matches the
+    contact's email (or whose ``sender_contact_id`` matches the contact id)
+    and whose ``received_via_account IS NOT NULL``. The matched account
+    becomes ``account_origin``; the same value seeds
+    ``seen_via_accounts``.
+
+    YELLOW tier. Idempotent — re-runs are no-ops once all recoverable
+    contacts are stamped.
+    """
+    db_path = params.get("_db_path")
+    if not db_path:
+        return {"status": "error", "message": "internal: _db_path not injected"}
+
+    db_path = Path(db_path)
+    updated: list[str] = []
+    skipped: list[str] = []
+    failed: list[dict[str, str]] = []
+
+    try:
+        with sqlite3.connect(str(db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            contact_rows = conn.execute("SELECT id, email FROM contacts WHERE account_origin IS NULL").fetchall()
+
+            for c in contact_rows:
+                cid = c["id"]
+                email_addr = (c["email"] or "").strip().lower()
+                try:
+                    sig_row = None
+                    if email_addr:
+                        sig_row = conn.execute(
+                            "SELECT received_via_account FROM signals "
+                            "WHERE received_via_account IS NOT NULL "
+                            "AND (lower(entity_text) = ? OR sender_contact_id = ?) "
+                            "ORDER BY timestamp ASC LIMIT 1",
+                            (email_addr, cid),
+                        ).fetchone()
+                    else:
+                        sig_row = conn.execute(
+                            "SELECT received_via_account FROM signals "
+                            "WHERE received_via_account IS NOT NULL "
+                            "AND sender_contact_id = ? "
+                            "ORDER BY timestamp ASC LIMIT 1",
+                            (cid,),
+                        ).fetchone()
+
+                    if not sig_row or not sig_row["received_via_account"]:
+                        skipped.append(cid)
+                        continue
+                    account = sig_row["received_via_account"]
+                    seen_json = json.dumps([account])
+                    conn.execute(
+                        "UPDATE contacts SET account_origin = ?, "
+                        "seen_via_accounts = COALESCE(seen_via_accounts, ?) "
+                        "WHERE id = ?",
+                        (account, seen_json, cid),
+                    )
+                    updated.append(cid)
+                except Exception as exc:
+                    failed.append({"id": cid, "err": f"{type(exc).__name__}:{str(exc)[:120]}"})
+    except sqlite3.Error as exc:
+        return {"status": "error", "message": f"db error: {exc}"}
+
+    if updated:
+        logger.warning(f"contacts_origin_backfilled count={len(updated)}")
+    summary = f"{len(updated)} updated, {len(skipped)} skipped (no signal history), {len(failed)} failed"
+    return {
+        "status": "success" if not failed else "partial",
+        "updated": len(updated),
+        "skipped": len(skipped),
         "failed": failed,
         "summary": summary,
         "message": summary,

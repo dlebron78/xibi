@@ -96,6 +96,18 @@ def lookup_contact(params: dict[str, Any]) -> dict[str, Any]:
     except (json.JSONDecodeError, TypeError):
         tags = []
 
+    # Step-110: parse seen_via_accounts JSON. Older rows may not have the
+    # column populated (NULL until inbound activity stamps it).
+    seen_via_accounts: list[str] = []
+    raw_seen = contact.get("seen_via_accounts")
+    if isinstance(raw_seen, str) and raw_seen:
+        try:
+            parsed_seen = json.loads(raw_seen)
+            if isinstance(parsed_seen, list):
+                seen_via_accounts = [str(x) for x in parsed_seen]
+        except (json.JSONDecodeError, TypeError):
+            seen_via_accounts = []
+
     return {
         "status": "success",
         "exists": True,
@@ -111,4 +123,6 @@ def lookup_contact(params: dict[str, Any]) -> dict[str, Any]:
         "discovered_via": contact.get("discovered_via"),
         "tags": tags,
         "notes": sanitize_untrusted_text(contact.get("notes"), max_len=200, field_name="notes"),
+        "account_origin": contact.get("account_origin"),
+        "seen_via_accounts": seen_via_accounts,
     }

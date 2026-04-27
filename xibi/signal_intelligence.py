@@ -275,6 +275,7 @@ def upsert_contact(
     organization: str | None,
     db_path: Path,
     config: Config | None = None,
+    received_via_account: str | None = None,
 ) -> str:
     """Upsert an inbound contact. Returns the contact_id."""
     return _upsert_contact_core(
@@ -284,6 +285,7 @@ def upsert_contact(
         db_path=db_path,
         direction="inbound",
         config=config,
+        received_via_account=received_via_account,
     )
 
 
@@ -292,6 +294,7 @@ def upsert_outbound_contact(
     display_name: str,
     db_path: Path,
     config: Config | None = None,
+    received_via_account: str | None = None,
 ) -> str:
     """Upsert an outbound contact. Returns the contact_id."""
     return _upsert_contact_core(
@@ -301,7 +304,29 @@ def upsert_outbound_contact(
         db_path=db_path,
         direction="outbound",
         config=config,
+        received_via_account=received_via_account,
     )
+
+
+def _extend_seen_via_accounts(existing_json: str | None, account: str) -> tuple[str, bool]:
+    """Add ``account`` to the JSON-encoded list if absent.
+
+    Returns (new_json, changed) where ``changed`` is True iff the list grew.
+    Step-110: ``account_origin`` is write-once (oldest known); only
+    ``seen_via_accounts`` extends.
+    """
+    import json as _json
+
+    try:
+        current = _json.loads(existing_json or "[]")
+        if not isinstance(current, list):
+            current = []
+    except (ValueError, TypeError):
+        current = []
+    if account in current:
+        return _json.dumps(current), False
+    current.append(account)
+    return _json.dumps(current), True
 
 
 def _upsert_contact_core(
@@ -313,8 +338,14 @@ def _upsert_contact_core(
     config: Config | None = None,
     channel_type: str = "email",
     activity_date: str | None = None,
+    received_via_account: str | None = None,
 ) -> str:
-    """Core contact upsert logic. Handles both directions and ensures channel rows."""
+    """Core contact upsert logic. Handles both directions and ensures channel rows.
+
+    Step-110: when ``received_via_account`` is provided, populate
+    ``account_origin`` on first sight and extend ``seen_via_accounts`` on
+    subsequent sights via a new account. ``account_origin`` is write-once.
+    """
     db_str = str(db_path)
     contact = resolve_contact(
         handle=email,
@@ -342,6 +373,29 @@ def _upsert_contact_core(
                         f"UPDATE contacts SET last_seen = MAX(COALESCE(last_seen, '0001-01-01'), ?), {count_col} = {count_col} + 1 WHERE id = ?",
                         (last_seen_val, contact_id),
                     )
+
+                # Step-110: extend seen_via_accounts (account_origin
+                # stays at the oldest known and is never re-stamped here).
+                if received_via_account:
+                    row = conn.execute(
+                        "SELECT account_origin, seen_via_accounts FROM contacts WHERE id = ?",
+                        (contact_id,),
+                    ).fetchone()
+                    if row is not None:
+                        current_origin, seen_json = row[0], row[1]
+                        new_seen, changed = _extend_seen_via_accounts(seen_json, received_via_account)
+                        if current_origin is None and changed:
+                            # Backfill: an existing pre-step-110 row whose origin was
+                            # never set; the first new account we see becomes origin.
+                            conn.execute(
+                                "UPDATE contacts SET account_origin = ?, seen_via_accounts = ? WHERE id = ?",
+                                (received_via_account, new_seen, contact_id),
+                            )
+                        elif changed:
+                            conn.execute(
+                                "UPDATE contacts SET seen_via_accounts = ? WHERE id = ?",
+                                (new_seen, contact_id),
+                            )
         except Exception as e:
             logger.error(f"_upsert_contact_core (update) failed: {e}")
     else:
@@ -398,6 +452,19 @@ def _upsert_contact_core(
                     )
             except Exception as e:
                 logger.error(f"_upsert_contact_core (fix outbound) failed: {e}")
+
+        # Step-110: stamp account_origin + seen_via_accounts on first sight.
+        if received_via_account:
+            try:
+                import json as _json
+
+                with open_db(db_path) as conn, conn:
+                    conn.execute(
+                        "UPDATE contacts SET account_origin = ?, seen_via_accounts = ? WHERE id = ?",
+                        (received_via_account, _json.dumps([received_via_account]), contact_id),
+                    )
+            except Exception as e:
+                logger.error(f"_upsert_contact_core (account_origin) failed: {e}")
 
     # Ensure channel row exists (create_contact handles it, but we re-verify/update)
     upsert_contact_channel(contact_id, email, channel_type, verified=1, db_path=db_str)
@@ -485,7 +552,14 @@ def enrich_signals(
             entity = sig.get("entity_text", "")
             if entity and "@" in entity:
                 # Use display_name = entity (address) if name not available in tier-0/1
-                upsert_contact(entity, entity, sig.get("entity_org"), db_path, config=config)
+                upsert_contact(
+                    entity,
+                    entity,
+                    sig.get("entity_org"),
+                    db_path,
+                    config=config,
+                    received_via_account=sig.get("received_via_account"),
+                )
 
         # Write back to DB
         with open_db(db_path) as conn, conn:

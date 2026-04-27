@@ -522,6 +522,8 @@ class HeartbeatPoller:
                                 ref_id=sig.get("ref_id"),
                                 ref_source=sig.get("ref_source"),
                                 metadata=sig.get("metadata"),
+                                received_via_account=sig.get("received_via_account"),
+                                received_via_email_alias=sig.get("received_via_email_alias"),
                             )
             except Exception as e:
                 logger.warning(f"Error processing signals for {source_name}: {e}", exc_info=True)
@@ -811,6 +813,13 @@ class HeartbeatPoller:
                         # Gmail deep link format
                         deep_link_url = f"https://mail.google.com/mail/u/0/#inbox/{sig['ref_id']}"
 
+                    # Step-110: pull provenance from the SignalContext that
+                    # already carries it (assemble_batch_signal_context populates
+                    # received_via_account/email_alias from the inbound headers).
+                    ctx = item.get("context")
+                    received_via_account = getattr(ctx, "received_via_account", None) if ctx else None
+                    received_via_email_alias = getattr(ctx, "received_via_email_alias", None) if ctx else None
+
                     self.rules.log_signal_with_conn(
                         conn,
                         source=sig["source"],
@@ -828,6 +837,8 @@ class HeartbeatPoller:
                         classification_reasoning=item.get("reasoning"),
                         deep_link_url=deep_link_url,
                         metadata=sig.get("metadata"),
+                        received_via_account=received_via_account,
+                        received_via_email_alias=received_via_email_alias,
                     )
 
                     if not item["is_new"] or item["verdict"] == "DEFER":

@@ -237,6 +237,11 @@
                         "type": "integer",
                         "description": "Max emails to return.",
                         "default": 10
+                    },
+                    "folder": {
+                        "type": "string",
+                        "description": "Mail folder to search. 'Inbox' (default), 'Sent', or 'all' (merges both).",
+                        "default": "Inbox"
                     }
                 }
             },
@@ -245,6 +250,31 @@
                 "Emails from LinkedIn about product manager roles → subject_keywords: ['product manager'], from_keywords: ['LinkedIn'], relative_time: '1mo_ago'",
                 "Recent emails mentioning NDA → body_keywords: ['NDA'], relative_time: '2w_ago'"
             ]
+        },
+        {
+            "name": "list_sent_emails",
+            "output_type": "raw",
+            "description": "List Roberto's recent outbound emails from the Sent folder. Use when the user asks 'did I send X', 'what did I send today', etc. v1 reads only Roberto's Sent — not the user's individual account Sent folders.",
+            "examples": [
+                "did I send Bregger anything",
+                "what did I send today",
+                "did I email Sarah back yet"
+            ],
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "integer",
+                        "description": "How many days back to search. Clamped to [1, 30].",
+                        "default": 7
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Max envelopes to return. Clamped to [1, 25].",
+                        "default": 10
+                    }
+                }
+            }
         },
         {
             "name": "account_info",

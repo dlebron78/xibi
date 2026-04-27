@@ -4,7 +4,7 @@
 
 - **Step-104 dependency (must be merged):** ledger draft persistence with `received_via_account` carried forward in draft `content` JSON. Confirmed merged 2026-04-25, validated end-to-end. Step-110 leans on this for Reply-To routing on replies.
 - **Step-108 dependency (must be merged):** `oauth_accounts.metadata.email_alias` populated for every connected account. Confirmed: `personal` (`dannylebron@gmail.com`) + `afya` (`lebron@afya.fit`) live in production. Step-110 reads `email_alias` for outbound Reply-To values and per-account signature lookups.
-- **Step-109 dependency (must be merged):** `xibi/email/provenance.py:resolve_account_from_email_to` + `find_by_email_alias` helpers; `received_via_account` populated on `summarize_email`/`reply_email` paths and stored in draft ledger rows. Step-110 reuses both helpers; doesn't duplicate.
+- **Step-109 dependency (must be merged):** `xibi/email/provenance.py:resolve_account_from_email_to`; `received_via_account` populated on `summarize_email`/`reply_email` paths and stored in draft ledger rows. Step-110 reuses this helper for the inbound side and the backfill helper. The Reply-To path uses `OAuthStore.list_accounts` to map nickname → `metadata.email_alias` directly (forward lookup), not `find_by_email_alias` (which is reverse).
 - **Existing outbound infrastructure (used, not extended for v1):**
   - `skills/email/tools/send_email.py` builds MIME via `email.mime.*`, sends via `smtplib.SMTP_SSL`. Single SMTP authentication: `BREGGER_SMTP_USER` (Roberto's address). `From` header = `BREGGER_EMAIL_FROM`.
   - `skills/email/tools/reply_email.py` mirrors structure; sets `In-Reply-To` and `References` from the original message's `Message-Id` for threading.
@@ -41,7 +41,7 @@ Make Roberto's outbound emails route correctly across multi-account contexts AND
 
 3. **Per-account body signature templating.** Outbound body appended with `XIBI_SIGNATURE_<account>` env var content (e.g., `XIBI_SIGNATURE_afya="Best,\nDaniel Lebron\nChief of Staff @ Afya"`). Falls back to single `XIBI_SIGNATURE` if account-specific not set. Substring dedup if body already includes the signature.
 
-4. **Sent folder access.** `search_emails` extended with `folder` param (`"Inbox"` default, accepts `"Sent"` or `"all"`); new `list_sent_emails(days=7, limit=10)` wrapper. Roberto's own Sent folder via himalaya. Out of scope: reading individual accounts' Sent folders (would require Gmail.readonly OAuth scope expansion).
+4. **Sent folder access.** `search_emails` extended with `folder` param (`"Inbox"` default, accepts `"Sent"` or `"all"`); new `list_sent_emails(days=7, limit=10)` wrapper. Roberto's own Sent folder via himalaya. Sent envelopes render with no `[label]` prefix in v1 — Roberto outbound is uniform (one SMTP identity, one folder), so there's nothing to disambiguate the way inbound provenance does (inbound `[label]` prefix per step-109 stays unchanged). Out of scope: reading individual accounts' Sent folders (would require Gmail.readonly OAuth scope expansion).
 
 5. **Signal-table provenance migration.** `ALTER TABLE signals ADD COLUMN received_via_account TEXT, ADD COLUMN received_via_email_alias TEXT`. Signal extraction populates new columns at write time. Backfill helper (idempotent) for existing signals where source email's headers are still recoverable.
 
@@ -330,8 +330,10 @@ Roberto:
 - **`xibi/db/migrations.py`:**
   - `_migration_40` — `ALTER TABLE signals ADD COLUMN received_via_account TEXT`, `ADD COLUMN received_via_email_alias TEXT`.
   - `_migration_41` — `ALTER TABLE contacts ADD COLUMN account_origin TEXT`, `ADD COLUMN seen_via_accounts TEXT`.
-- **`xibi/signal_intelligence.py`:**
-  - At signal-write time, capture `received_via_account` and `received_via_email_alias` from `SignalContext` into the new columns.
+- **`xibi/alerting/rules.py`:** add `received_via_account` + `received_via_email_alias` kwargs to both `log_signal` and `log_signal_with_conn`; INSERT statements at the two sites (lines ~314 and ~402, no-metadata and with-metadata variants) include the new columns.
+- **`xibi/heartbeat/calendar_poller.py`:** the `INSERT INTO signals` site (`_log_calendar_signal` at ~line 159) gains the two columns, both passed as `None` (calendar events have no inbound email alias).
+- **`xibi/heartbeat/poller.py`:** the two callers of `log_signal_with_conn` thread the new kwargs through — non-email path forwards `sig.get("received_via_account")` (extractor-populated); email path pulls from the `SignalContext` already in scope (`ctx.received_via_account`).
+- **`xibi/signal_intelligence.py`:** `_upsert_contact_core` (and the public `upsert_contact` / `upsert_outbound_contact` wrappers) accepts a new `received_via_account` kwarg; sets `account_origin` write-once on first sight and extends `seen_via_accounts` JSON list on subsequent sights.
 - **`xibi/heartbeat/contact_poller.py`:**
   - On first contact creation: populate `account_origin = received_via_account`, `seen_via_accounts = json.dumps([account])`.
   - On subsequent inbound: extend `seen_via_accounts` if new account; `account_origin` stays.

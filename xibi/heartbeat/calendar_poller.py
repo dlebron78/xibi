@@ -155,13 +155,17 @@ def _mark_processed(db_path: Path, source: str, ref_id: str) -> None:
 
 
 def _log_calendar_signal(db_path: Path, sig: dict) -> None:
+    # Step-110: signals.received_via_account / received_via_email_alias are
+    # nullable; calendar-derived signals always pass NULL because events
+    # have no inbound email alias to attribute to.
     with open_db(db_path) as conn, conn:
         conn.execute(
             """
             INSERT INTO signals (
                 source, ref_id, ref_source, topic_hint, timestamp,
-                content_preview, summary, urgency, entity_type, entity_text, env, deep_link_url
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                content_preview, summary, urgency, entity_type, entity_text, env, deep_link_url,
+                received_via_account, received_via_email_alias
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
             (
                 sig["source"],
@@ -176,6 +180,8 @@ def _log_calendar_signal(db_path: Path, sig: dict) -> None:
                 sig["entity_text"],
                 sig["env"],
                 sig.get("deep_link_url"),
+                None,
+                None,
             ),
         )
 

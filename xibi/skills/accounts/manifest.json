@@ -46,6 +46,24 @@
       }
     },
     {
+      "name": "backfill_signals_provenance",
+      "output_type": "raw",
+      "description": "Walk signals where received_via_account IS NULL and ref_source = 'email'; re-fetch the source email's headers via himalaya and stamp the resolved account + email_alias. Idempotent. YELLOW tier.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "backfill_contacts_origin",
+      "output_type": "raw",
+      "description": "Walk contacts where account_origin IS NULL; set the origin from the oldest signal interaction whose received_via_account is known. Idempotent. YELLOW tier.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
       "name": "disconnect_account",
       "output_type": "raw",
       "description": "Remove an OAuth account: deletes the metadata row, deletes the encrypted secret, and (best-effort) revokes the token at the provider. YELLOW tier — destructive but reversible (user can re-connect).",

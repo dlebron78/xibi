@@ -390,6 +390,12 @@ def extract_email_signals(source: str, data: Any, context: dict[str, Any]) -> li
     Extract signals from email data.
     data is expected to be a list of email dicts, or a dict wrapper with a result key
     (returned by executor.execute() envelope).
+
+    Step-110: each envelope may carry ``received_via_account`` and
+    ``received_via_email_alias`` (populated upstream by ``search_emails`` /
+    ``summarize_email`` after the RFC 5322 To/Delivered-To headers are
+    parsed). When present, the keys flow through to the sig dict so
+    downstream signal-write and contact-upsert paths inherit provenance.
     """
     # Unwrap executor dict envelope: list_unread returns {"emails": [...], "status": "success"}
     if isinstance(data, dict):
@@ -419,6 +425,8 @@ def extract_email_signals(source: str, data: Any, context: dict[str, Any]) -> li
                 "ref_id": email_id,
                 "ref_source": "email",
                 "metadata": {"email": email},
+                "received_via_account": email.get("received_via_account"),
+                "received_via_email_alias": email.get("received_via_email_alias"),
             }
         )
     return signals

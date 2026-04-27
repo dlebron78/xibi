@@ -58,6 +58,22 @@ def test_lookup_contact_not_in_write_tools():
     assert "lookup_contact" not in WRITE_TOOLS
 
 
+def test_list_sent_emails_green_tier():
+    """list_sent_emails (step-110) is read-only over the Sent folder."""
+    assert TOOL_TIERS["list_sent_emails"] == PermissionTier.GREEN
+    assert "list_sent_emails" not in WRITE_TOOLS
+
+
+def test_backfill_signals_yellow_tier():
+    assert TOOL_TIERS["backfill_signals_provenance"] == PermissionTier.YELLOW
+    assert "backfill_signals_provenance" in WRITE_TOOLS
+
+
+def test_backfill_contacts_yellow_tier():
+    assert TOOL_TIERS["backfill_contacts_origin"] == PermissionTier.YELLOW
+    assert "backfill_contacts_origin" in WRITE_TOOLS
+
+
 def test_confirm_draft_explicit_yellow_tier():
     assert TOOL_TIERS["confirm_draft"] == PermissionTier.YELLOW
 

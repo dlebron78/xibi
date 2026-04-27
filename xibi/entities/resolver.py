@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -28,10 +29,38 @@ class Contact:
     discovered_via: str | None = None
     tags: str = "[]"
     notes: str | None = None
+    # Step-110: account_origin is write-once; seen_via_accounts grows as
+    # the same address arrives via additional connected accounts.
+    account_origin: str | None = None
+    seen_via_accounts: list[str] = field(default_factory=list)
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> Contact:
-        return cls(**dict(row))
+        """Construct from a sqlite Row, JSON-decoding ``seen_via_accounts``.
+
+        The new column comes back as TEXT (a JSON-encoded list); the
+        dataclass field is typed ``list[str]``. Python doesn't enforce
+        types at runtime, so a bare ``cls(**dict(row))`` would silently
+        store a string and any caller using list semantics
+        (``.append()``, iteration over members) would TypeError later.
+        """
+        d = dict(row)
+        seen_raw = d.pop("seen_via_accounts", None)
+        if isinstance(seen_raw, str) and seen_raw:
+            try:
+                parsed = json.loads(seen_raw)
+                seen = [str(x) for x in parsed] if isinstance(parsed, list) else []
+            except (ValueError, TypeError):
+                seen = []
+        elif isinstance(seen_raw, list):
+            seen = [str(x) for x in seen_raw]
+        else:
+            seen = []
+        # Drop columns the dataclass doesn't model so older / wider rows
+        # (extra columns added by future migrations) still construct.
+        valid_fields = {f.name for f in cls.__dataclass_fields__.values()}  # type: ignore[attr-defined]
+        filtered = {k: v for k, v in d.items() if k in valid_fields}
+        return cls(**filtered, seen_via_accounts=seen)
 
 
 def resolve_contact(

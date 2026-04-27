@@ -42,6 +42,8 @@ WRITE_TOOLS: set[str] = {
     "connect_account",
     "disconnect_account",
     "backfill_email_alias",
+    "backfill_signals_provenance",
+    "backfill_contacts_origin",
 }
 
 # Tier declarations for known tools.
@@ -80,6 +82,10 @@ TOOL_TIERS: dict[str, PermissionTier] = {
     "connect_account": PermissionTier.YELLOW,
     "disconnect_account": PermissionTier.YELLOW,
     "backfill_email_alias": PermissionTier.YELLOW,
+    "backfill_signals_provenance": PermissionTier.YELLOW,
+    "backfill_contacts_origin": PermissionTier.YELLOW,
+    # Step-110: Sent folder read access
+    "list_sent_emails": PermissionTier.GREEN,
     # Red — sends, deletes, financial, first-time destructive
     "send_email": PermissionTier.RED,
     "reply_email": PermissionTier.RED,

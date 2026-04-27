@@ -9,6 +9,12 @@ status to 'sent' (or reverts to 'confirmed' for retry on SMTP failure).
 The agent-facing handler does NOT accept to/subject/body — the row is the
 source of truth. This is what closes the confabulation gap (no draft → no
 permission to send).
+
+Step-110: outbound identity flows through three deterministic helpers
+(``xibi.email.from_header``, ``xibi.email.reply_to``,
+``xibi.email.signatures``) so Roberto sends from one SMTP identity but
+threads recipients back through the user's preferred reply alias per
+account context.
 """
 
 import json
@@ -17,13 +23,19 @@ import mimetypes
 import os
 import smtplib
 import sqlite3
+import time
 from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
+from xibi.email.from_header import build_from_header
+from xibi.email.reply_to import resolve_reply_to
+from xibi.email.signatures import apply_signature, resolve_signature
+from xibi.oauth.store import OAuthStore
 from xibi.security.precondition import require_draft_confirmed
+from xibi.tracing import Span, Tracer
 
 logger = logging.getLogger(__name__)
 
@@ -77,11 +89,55 @@ def _set_status(db_path: Path, draft_id: str, status: str, *, only_if: str | Non
             )
 
 
+def _available_account_labels(db_path: Path) -> list[str]:
+    user_id = os.environ.get("XIBI_INSTANCE_OWNER_USER_ID", "default-owner")
+    try:
+        return [a["nickname"] for a in OAuthStore(db_path).list_accounts(user_id)]
+    except Exception:
+        return []
+
+
+def _emit_send_span(
+    db_path: Path,
+    *,
+    account: str | None,
+    reply_to_account: str | None,
+    from_name: str,
+    signature_used: bool,
+    outcome: str,
+    duration_ms: int,
+) -> None:
+    """Best-effort ``email.send_outbound`` span (step-110 observability)."""
+    try:
+        tracer = Tracer(db_path)
+        span = Span(
+            trace_id=tracer.new_trace_id(),
+            span_id=tracer.new_span_id(),
+            parent_span_id=None,
+            operation="email.send_outbound",
+            component="email",
+            start_ms=int(time.time() * 1000) - duration_ms,
+            duration_ms=duration_ms,
+            status="ok" if outcome == "sent" else "error",
+            attributes={
+                "account": account,
+                "reply_to_account": reply_to_account,
+                "from_name": from_name,
+                "signature_used": signature_used,
+                "outcome": outcome,
+            },
+        )
+        tracer.emit(span)
+    except Exception:
+        pass  # observability is best-effort
+
+
 def run(params):
     """Send a confirmed draft via SMTP."""
     workdir = params.get("_workdir")
     db_path = _resolve_db_path(workdir)
     draft_id = (params.get("draft_id") or "").strip()
+    reply_to_account_override = (params.get("reply_to_account") or "").strip() or None
 
     err = require_draft_confirmed(draft_id, db_path, tool_name="send_email")
     if err:
@@ -114,6 +170,26 @@ def run(params):
         _set_status(db_path, draft_id, "confirmed", only_if="sending")
         return {"status": "error", "message": f"draft {draft_id[:8]} missing recipient"}
 
+    received_via_account = payload.get("received_via_account")
+
+    # Reply-To resolution. Disagreement between explicit override and
+    # inbound provenance is a user-facing question, not a guess.
+    try:
+        reply_to_addr = resolve_reply_to(received_via_account, reply_to_account_override, db_path)
+    except ValueError as exc:
+        _set_status(db_path, draft_id, "confirmed", only_if="sending")
+        logger.warning(
+            f"outbound_reply_to_ambiguous reply_to={reply_to_account_override} "
+            f"received_via={received_via_account}"
+        )
+        return {
+            "status": "error",
+            "error_category": "ambiguous_reply_to_account",
+            "message": str(exc),
+            "available_labels": _available_account_labels(db_path),
+        }
+
+    account_for_outbound = reply_to_account_override or received_via_account
     smtp_payload = {
         "to": to,
         "cc": payload.get("cc", ""),
@@ -123,6 +199,8 @@ def run(params):
         "in_reply_to": payload.get("in_reply_to", ""),
         "draft_id": draft_id,
         "_workdir": workdir,
+        "_account": account_for_outbound,
+        "_reply_to_addr": reply_to_addr,
     }
 
     smtp_result = send_smtp(smtp_payload)
@@ -182,18 +260,34 @@ def _track_outbound(to: str, db_path: str):
 
 
 def send_smtp(payload: dict) -> dict:
-    """Phase 2: Actually send the email via SMTP."""
+    """Phase 2: Actually send the email via SMTP.
+
+    Step-110: ``payload['_account']`` and ``payload['_reply_to_addr']`` are
+    pre-resolved by ``run()``. Both may be None; helpers handle that
+    gracefully (default From-name, no Reply-To header, no signature).
+    """
     to = payload["to"]
     cc = payload.get("cc", "").strip()
     subject = payload["subject"]
     body = payload["body"]
     attachment_path = payload.get("attachment_path")
+    account = payload.get("_account")
+    reply_to_addr = payload.get("_reply_to_addr")
+
+    from_header = build_from_header(account)
+    signature = resolve_signature(account)
+    body_with_sig = apply_signature(body, signature)
+    signature_used = bool(signature) and body_with_sig != body
+    if signature_used:
+        logger.debug(f"signature_appended account={account}")
 
     msg = MIMEMultipart()
-    msg["From"] = SMTP_USER
+    msg["From"] = from_header
     msg["To"] = to
     if cc:
         msg["Cc"] = cc
+    if reply_to_addr:
+        msg["Reply-To"] = reply_to_addr
     msg["Subject"] = subject
 
     in_reply_to = payload.get("in_reply_to", "").strip()
@@ -201,7 +295,7 @@ def send_smtp(payload: dict) -> dict:
         msg["In-Reply-To"] = in_reply_to
         msg["References"] = in_reply_to
 
-    msg.attach(MIMEText(body, "plain"))
+    msg.attach(MIMEText(body_with_sig, "plain"))
 
     attached_filename = None
     if attachment_path and os.path.isfile(attachment_path):
@@ -217,6 +311,10 @@ def send_smtp(payload: dict) -> dict:
         part.add_header("Content-Disposition", "attachment", filename=attached_filename)
         msg.attach(part)
 
+    _workdir = payload.get("_workdir") or os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.xibi"))
+    db_path = Path(_workdir) / "data" / "xibi.db"
+    started = time.time()
+
     try:
         all_recipients = [to] + [a.strip() for a in cc.split(",") if a.strip()] if cc else [to]
         with smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT) as server:
@@ -224,9 +322,18 @@ def send_smtp(payload: dict) -> dict:
             server.sendmail(SMTP_USER, all_recipients, msg.as_string())
 
         cc_note = f" (CC: {cc})" if cc else ""
-        _workdir = payload.get("_workdir") or os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.xibi"))
-        db_path = os.path.join(_workdir, "data", "xibi.db")
-        _track_outbound(to, db_path)
+        _track_outbound(to, str(db_path))
+
+        # Best-effort observability
+        _emit_send_span(
+            db_path,
+            account=account,
+            reply_to_account=account,
+            from_name=from_header,
+            signature_used=signature_used,
+            outcome="sent",
+            duration_ms=int((time.time() - started) * 1000),
+        )
 
         if attached_filename:
             return {
@@ -236,6 +343,34 @@ def send_smtp(payload: dict) -> dict:
         return {"status": "success", "message": f"Email sent to {to}{cc_note}."}
 
     except smtplib.SMTPAuthenticationError:
+        _emit_send_span(
+            db_path,
+            account=account,
+            reply_to_account=account,
+            from_name=from_header,
+            signature_used=signature_used,
+            outcome="auth_error",
+            duration_ms=int((time.time() - started) * 1000),
+        )
         return {"status": "error", "message": "SMTP authentication failed. Check your App Password."}
     except Exception as e:
+        _emit_send_span(
+            db_path,
+            account=account,
+            reply_to_account=account,
+            from_name=from_header,
+            signature_used=signature_used,
+            outcome="error",
+            duration_ms=int((time.time() - started) * 1000),
+        )
         return {"status": "error", "message": f"Failed to send email: {str(e)}"}
+
+
+__all__ = [
+    "run",
+    "send_smtp",
+    "build_from_header",
+    "resolve_signature",
+    "apply_signature",
+    "resolve_reply_to",
+]

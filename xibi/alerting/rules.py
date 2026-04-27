@@ -296,6 +296,8 @@ class RuleEngine:
         sender_contact_id: str | None = None,
         classification_reasoning: str | None = None,
         deep_link_url: str | None = None,
+        received_via_account: str | None = None,
+        received_via_email_alias: str | None = None,
     ) -> None:
         try:
             preview = (content_preview[:277] + "...") if len(content_preview) > 280 else content_preview
@@ -311,8 +313,8 @@ class RuleEngine:
                 with conn:
                     conn.execute(
                         """
-                        INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id, classification_reasoning, deep_link_url)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id, classification_reasoning, deep_link_url, received_via_account, received_via_email_alias)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                         (
                             source,
@@ -329,6 +331,8 @@ class RuleEngine:
                             sender_contact_id,
                             classification_reasoning,
                             deep_link_url,
+                            received_via_account,
+                            received_via_email_alias,
                         ),
                     )
         except Exception as e:
@@ -386,6 +390,8 @@ class RuleEngine:
         classification_reasoning: str | None = None,
         deep_link_url: str | None = None,
         metadata: dict | None = None,
+        received_via_account: str | None = None,
+        received_via_email_alias: str | None = None,
     ) -> None:
         try:
             preview = (content_preview[:277] + "...") if len(content_preview) > 280 else content_preview
@@ -399,8 +405,8 @@ class RuleEngine:
             metadata_json = json.dumps(metadata) if metadata is not None else None
             conn.execute(
                 """
-                INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id, classification_reasoning, deep_link_url, metadata)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id, classification_reasoning, deep_link_url, metadata, received_via_account, received_via_email_alias)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     source,
@@ -418,6 +424,8 @@ class RuleEngine:
                     classification_reasoning,
                     deep_link_url,
                     metadata_json,
+                    received_via_account,
+                    received_via_email_alias,
                 ),
             )
         except Exception as e:

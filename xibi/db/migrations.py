@@ -6,7 +6,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 39  # increment when adding new migrations
+SCHEMA_VERSION = 41  # increment when adding new migrations
 
 
 def _safe_add_column(
@@ -111,6 +111,8 @@ class SchemaManager:
             (37, "checklist_instance_items: make template_item_id nullable, add status + metadata", self._migration_37),
             (38, "caretaker: caretaker_pulses + caretaker_drift_state tables", self._migration_38),
             (39, "oauth: oauth_accounts + oauth_pending_states tables", self._migration_39),
+            (40, "signals: add received_via_account + received_via_email_alias columns", self._migration_40),
+            (41, "contacts: add account_origin + seen_via_accounts columns", self._migration_41),
         ]
 
         for version, description, func in migrations:
@@ -984,6 +986,26 @@ class SchemaManager:
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user_provider ON oauth_accounts(user_id, provider)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_oauth_pending_states_expires ON oauth_pending_states(expires_at)")
+
+
+    def _migration_40(self, conn: sqlite3.Connection) -> None:
+        """Signals: add received_via_account + received_via_email_alias for step-110 provenance."""
+        for col_name, col_type in [
+            ("received_via_account", "TEXT"),
+            ("received_via_email_alias", "TEXT"),
+        ]:
+            _safe_add_column(conn, "signals", col_name, col_type)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_signals_received_via_account ON signals(received_via_account)"
+        )
+
+    def _migration_41(self, conn: sqlite3.Connection) -> None:
+        """Contacts: account_origin (write-once oldest) + seen_via_accounts (JSON array)."""
+        for col_name, col_type in [
+            ("account_origin", "TEXT"),
+            ("seen_via_accounts", "TEXT"),
+        ]:
+            _safe_add_column(conn, "contacts", col_name, col_type)
 
 
 def migrate(db_path: Path) -> list[int]:

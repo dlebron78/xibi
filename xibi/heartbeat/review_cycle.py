@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 import xml.sax.saxutils
 from dataclasses import dataclass, field
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from xibi.db import open_db
+from xibi.oauth.store import OAuthStore
 from xibi.router import get_model
 from xibi.web.redirect import record_engagement_sync
 
@@ -134,9 +136,44 @@ async def run_review_cycle(db_path: Path, config: dict) -> ReviewOutput:
         return ReviewOutput(reasoning=f"Error: {e}")
 
 
+def _accounts_block(db_path: Path) -> str:
+    """Render an ``<accounts>`` block listing connected OAuth accounts.
+
+    Step-110: gives the review LLM ground truth on the topology before it
+    reads per-signal ``received_via_account`` attributes. Read failures
+    return an empty block — best-effort, never breaks the review.
+    """
+    user_id = os.environ.get("XIBI_INSTANCE_OWNER_USER_ID", "default-owner")
+    try:
+        store = OAuthStore(db_path)
+        rows = store.list_accounts(user_id)
+    except Exception as exc:
+        logger.warning(f"review_cycle_accounts_block_error err={type(exc).__name__}:{exc}")
+        return "<accounts/>"
+
+    if not rows:
+        return "<accounts/>"
+
+    lines = ["<accounts>"]
+    for acct in rows:
+        meta = acct.get("metadata") or {}
+        if not isinstance(meta, dict):
+            meta = {}
+        nickname = xml.sax.saxutils.escape(str(acct.get("nickname") or ""))
+        email_alias = xml.sax.saxutils.escape(str(meta.get("email_alias") or ""))
+        provider = xml.sax.saxutils.escape(str(acct.get("provider") or ""))
+        lines.append(f'  <account nickname="{nickname}" email_alias="{email_alias}" provider="{provider}"/>')
+    lines.append("</accounts>")
+    return "\n".join(lines)
+
+
 def _gather_review_context(db_path: Path) -> str:
     """Query DB for all context needed for the review."""
     sections = []
+
+    # Account topology block first — orients the LLM before it reads
+    # signal-level provenance attributes.
+    sections.append(_accounts_block(db_path))
 
     with open_db(db_path) as conn:
         conn.row_factory = sqlite3.Row
@@ -153,12 +190,22 @@ def _gather_review_context(db_path: Path) -> str:
         ).fetchall()
         signals_xml = ["<signals>"]
         for r in rows:
+            row_keys = r.keys()
             topic_hint = xml.sax.saxutils.escape(r["topic_hint"] or "")
             entity = xml.sax.saxutils.escape(r["entity_text"] or "")
             content = xml.sax.saxutils.escape(r["content_preview"] or "")
-            signals_xml.append(
-                f'  <signal id="{r["id"]}" tier="{r["urgency"]}" topic="{topic_hint}" entity="{entity}" action="{r["action_type"]}" direction="{r["direction"]}">'
-            )
+            received_via_account = r["received_via_account"] if "received_via_account" in row_keys else None
+            attrs = [
+                f'id="{r["id"]}"',
+                f'tier="{r["urgency"]}"',
+                f'topic="{topic_hint}"',
+                f'entity="{entity}"',
+                f'action="{r["action_type"]}"',
+                f'direction="{r["direction"]}"',
+            ]
+            if received_via_account:
+                attrs.append(f'received_via_account="{xml.sax.saxutils.escape(str(received_via_account))}"')
+            signals_xml.append(f"  <signal {' '.join(attrs)}>")
             signals_xml.append(f"    <content>{content}</content>")
             signals_xml.append("  </signal>")
         signals_xml.append("</signals>")

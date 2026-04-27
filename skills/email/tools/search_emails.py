@@ -137,10 +137,18 @@ def _build_probes(params: dict) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def _run_himalaya_query(himalaya_bin: str, query_str: str) -> list[dict]:
-    """Execute a single himalaya envelope query, return parsed results."""
+def _run_himalaya_query(himalaya_bin: str, query_str: str, folder: str = "Inbox") -> list[dict]:
+    """Execute a single himalaya envelope query, return parsed results.
+
+    ``folder`` defaults to ``"Inbox"`` (back-compat). Pass ``"Sent"`` (or any
+    other folder name himalaya knows) to query a non-inbox folder. Step-110
+    adds this so ``list_sent_emails`` can reuse the same probe machinery.
+    """
     try:
-        cmd = [himalaya_bin, "--quiet", "--output", "json", "envelope", "list", query_str]
+        cmd = [himalaya_bin, "--quiet", "--output", "json", "envelope", "list"]
+        if folder and folder != "Inbox":
+            cmd.extend(["--folder", folder])
+        cmd.append(query_str)
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
 
         if result.returncode != 0 or (not result.stdout.strip() and result.stderr.strip()):
@@ -189,8 +197,8 @@ def _run_himalaya_query(himalaya_bin: str, query_str: str) -> list[dict]:
         return []
 
 
-def _execute_probes(himalaya_bin: str, probes: list[str], limit: int) -> tuple:
-    """Run probes sequentially, merge results, dedup by envelope ID.
+def _execute_probes(himalaya_bin: str, probes: list[str], limit: int, folder: str = "Inbox") -> tuple:
+    """Run probes sequentially against ``folder``, merge results, dedup by envelope ID.
 
     Returns (results_list, probes_executed_list).
     """
@@ -199,8 +207,8 @@ def _execute_probes(himalaya_bin: str, probes: list[str], limit: int) -> tuple:
     probes_run = []
 
     for query in probes:
-        hits = _run_himalaya_query(himalaya_bin, query)
-        probes_run.append({"query": query, "hits": len(hits)})
+        hits = _run_himalaya_query(himalaya_bin, query, folder=folder)
+        probes_run.append({"query": query, "folder": folder, "hits": len(hits)})
         for email in hits:
             eid = email.get("id")
             if eid and eid not in seen_ids:
@@ -262,6 +270,9 @@ def run(params: dict) -> dict[str, Any]:
     body_kws = params.get("body_keywords", [])
     after_date = params.get("after_date")
     limit = params.get("limit", 10)
+    folder = (params.get("folder") or "Inbox").strip() or "Inbox"
+    if folder not in ("Inbox", "Sent", "all"):
+        return {"status": "error", "message": f"Invalid folder '{folder}'. Use 'Inbox', 'Sent', or 'all'."}
 
     if not any([subject_kws, from_kws, body_kws, after_date]):
         return {"status": "error", "message": "At least one search parameter must be provided."}
@@ -273,7 +284,23 @@ def run(params: dict) -> dict[str, Any]:
         return {"status": "error", "message": "Could not construct any search probes from the given parameters."}
 
     himalaya_bin = _find_himalaya()
-    results, probes_run = _execute_probes(himalaya_bin, probes, limit)
+    if folder == "all":
+        # Query each folder; merge results dedup by id.
+        results_inbox, probes_inbox = _execute_probes(himalaya_bin, probes, limit, folder="Inbox")
+        results_sent, probes_sent = _execute_probes(himalaya_bin, probes, limit, folder="Sent")
+        merged: list[dict] = []
+        seen_ids: set = set()
+        for hit in (*results_inbox, *results_sent):
+            eid = hit.get("id")
+            if eid and eid not in seen_ids:
+                seen_ids.add(eid)
+                merged.append(hit)
+            if len(merged) >= limit:
+                break
+        results = merged
+        probes_run = [*probes_inbox, *probes_sent]
+    else:
+        results, probes_run = _execute_probes(himalaya_bin, probes, limit, folder=folder)
 
     if not results:
         return {
@@ -281,7 +308,14 @@ def run(params: dict) -> dict[str, Any]:
             "count": 0,
             "probes": probes_run,
             "emails": [],
+            "folder": folder,
             "message": "No emails matched your search.",
         }
 
-    return {"status": "success", "count": len(results), "probes": probes_run, "emails": results[:limit]}
+    return {
+        "status": "success",
+        "count": len(results),
+        "probes": probes_run,
+        "emails": results[:limit],
+        "folder": folder,
+    }
