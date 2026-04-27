@@ -987,7 +987,6 @@ class SchemaManager:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user_provider ON oauth_accounts(user_id, provider)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_oauth_pending_states_expires ON oauth_pending_states(expires_at)")
 
-
     def _migration_40(self, conn: sqlite3.Connection) -> None:
         """Signals: add received_via_account + received_via_email_alias for step-110 provenance."""
         for col_name, col_type in [
@@ -995,9 +994,7 @@ class SchemaManager:
             ("received_via_email_alias", "TEXT"),
         ]:
             _safe_add_column(conn, "signals", col_name, col_type)
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_signals_received_via_account ON signals(received_via_account)"
-        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_signals_received_via_account ON signals(received_via_account)")
 
     def _migration_41(self, conn: sqlite3.Connection) -> None:
         """Contacts: account_origin (write-once oldest) + seen_via_accounts (JSON array)."""
