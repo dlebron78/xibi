@@ -5,7 +5,7 @@ import json
 import logging
 import sqlite3
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -303,9 +303,14 @@ class RuleEngine:
             preview = (content_preview[:277] + "...") if len(content_preview) > 280 else content_preview
             with open_db(self.db_path) as conn:
                 if ref_id:
+                    # Match xibi.signal_intelligence.is_duplicate_signal: filter
+                    # by ref_source (the per-source ID space) and use a 72h
+                    # rolling window so dupes don't slip through across
+                    # midnight boundaries when the daily poller runs.
+                    cutoff = (datetime.utcnow() - timedelta(hours=72)).isoformat()
                     cursor = conn.execute(
-                        "SELECT 1 FROM signals WHERE source = ? AND ref_id = ? AND date(timestamp) = date('now')",
-                        (source, str(ref_id)),
+                        "SELECT 1 FROM signals WHERE ref_source = ? AND ref_id = ? AND timestamp > ?",
+                        (ref_source, str(ref_id), cutoff),
                     )
                     if cursor.fetchone():
                         return
@@ -396,9 +401,14 @@ class RuleEngine:
         try:
             preview = (content_preview[:277] + "...") if len(content_preview) > 280 else content_preview
             if ref_id:
+                # Match xibi.signal_intelligence.is_duplicate_signal: filter
+                # by ref_source (the per-source ID space) and use a 72h
+                # rolling window so dupes don't slip through across
+                # midnight boundaries when the daily poller runs.
+                cutoff = (datetime.utcnow() - timedelta(hours=72)).isoformat()
                 cursor = conn.execute(
-                    "SELECT 1 FROM signals WHERE source = ? AND ref_id = ? AND date(timestamp) = date('now')",
-                    (source, str(ref_id)),
+                    "SELECT 1 FROM signals WHERE ref_source = ? AND ref_id = ? AND timestamp > ?",
+                    (ref_source, str(ref_id), cutoff),
                 )
                 if cursor.fetchone():
                     return
