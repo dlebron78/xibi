@@ -145,9 +145,7 @@ def backfill_email_alias(params: dict[str, Any]) -> dict[str, Any]:
         creds = store.get_account(user_id, provider, nickname)
         if not creds or not creds.get("refresh_token"):
             failed.append({"nickname": nickname, "reason": "missing_refresh_token"})
-            logger.warning(
-                f"email_alias_backfill_failed nickname={nickname} err=missing_refresh_token"
-            )
+            logger.warning(f"email_alias_backfill_failed nickname={nickname} err=missing_refresh_token")
             continue
 
         try:
@@ -160,29 +158,21 @@ def backfill_email_alias(params: dict[str, Any]) -> dict[str, Any]:
             email = (userinfo.get("email") or "").strip().lower()
             if not email:
                 failed.append({"nickname": nickname, "reason": "userinfo_no_email"})
-                logger.warning(
-                    f"email_alias_backfill_failed nickname={nickname} err=userinfo_no_email"
-                )
+                logger.warning(f"email_alias_backfill_failed nickname={nickname} err=userinfo_no_email")
                 continue
             new_meta = {**meta, "email_alias": email}
             store.update_metadata(user_id, provider, nickname, new_meta)
             updated.append({"nickname": nickname, "email_alias": email})
-            logger.warning(
-                f"email_alias_backfilled nickname={nickname} email_alias={email}"
-            )
+            logger.warning(f"email_alias_backfilled nickname={nickname} email_alias={email}")
         except Exception as e:
             reason = f"{type(e).__name__}:{str(e)[:120]}"
             failed.append({"nickname": nickname, "reason": reason})
-            logger.warning(
-                f"email_alias_backfill_failed nickname={nickname} err={reason}"
-            )
+            logger.warning(f"email_alias_backfill_failed nickname={nickname} err={reason}")
 
     if not updated and not failed:
         logger.info(f"email_alias_backfill_noop count=0 skipped={len(skipped)}")
 
-    summary = (
-        f"{len(updated)} updated, {len(skipped)} already set, {len(failed)} failed"
-    )
+    summary = f"{len(updated)} updated, {len(skipped)} already set, {len(failed)} failed"
     return {
         "status": "success" if not failed else "partial",
         "updated": updated,

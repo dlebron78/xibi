@@ -428,9 +428,7 @@ def assemble_batch_signal_context(
                     ctx.received_via_account = provenance.get("nickname")
                     ctx.received_via_email_alias = provenance.get("email_alias")
             except Exception as e:
-                logger.warning(
-                    f"context_assembly_provenance_error err={type(e).__name__}:{e}"
-                )
+                logger.warning(f"context_assembly_provenance_error err={type(e).__name__}:{e}")
 
             # Contact profile
             row = conn.execute(

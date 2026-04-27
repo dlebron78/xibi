@@ -157,9 +157,7 @@ class OAuthStore:
         with open_db(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
-                "SELECT * FROM oauth_accounts "
-                "WHERE user_id = ? "
-                "AND lower(json_extract(metadata, '$.email_alias')) = ?",
+                "SELECT * FROM oauth_accounts WHERE user_id = ? AND lower(json_extract(metadata, '$.email_alias')) = ?",
                 (user_id, normalized),
             ).fetchone()
         if row is None:
@@ -196,8 +194,7 @@ class OAuthStore:
         """
         with open_db(self.db_path) as conn:
             cur = conn.execute(
-                "UPDATE oauth_accounts SET metadata = ? "
-                "WHERE user_id = ? AND provider = ? AND nickname = ?",
+                "UPDATE oauth_accounts SET metadata = ? WHERE user_id = ? AND provider = ? AND nickname = ?",
                 (json.dumps(metadata or {}), user_id, provider, nickname),
             )
             return cur.rowcount > 0

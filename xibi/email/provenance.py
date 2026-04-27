@@ -153,11 +153,7 @@ def resolve_account_from_email_to(
     chosen_addr, chosen_row = matches[0]
     if len(matches) > 1:
         addrs = ",".join(a for a, _ in matches)
-        logger.info(
-            f"email_provenance_multiple_match to_addrs={addrs} chose={chosen_row['nickname']}"
-        )
+        logger.info(f"email_provenance_multiple_match to_addrs={addrs} chose={chosen_row['nickname']}")
     else:
-        logger.info(
-            f"email_provenance_resolved to={chosen_addr} account={chosen_row['nickname']}"
-        )
+        logger.info(f"email_provenance_resolved to={chosen_addr} account={chosen_row['nickname']}")
     return chosen_row
