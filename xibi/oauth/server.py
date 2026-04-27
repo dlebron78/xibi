@@ -43,9 +43,9 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
 
         query = urllib.parse.urlparse(self.path).query
         params = urllib.parse.parse_qs(query)
-        code = (params.get("code") or [None])[0]
-        state = (params.get("state") or [None])[0]
-        error = (params.get("error") or [None])[0]
+        code = next(iter(params.get("code") or []), None)
+        state = next(iter(params.get("state") or []), None)
+        error = next(iter(params.get("error") or []), None)
 
         if error:
             logger.warning(f"oauth_callback_provider_error error={error}")

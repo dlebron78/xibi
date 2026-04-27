@@ -825,12 +825,16 @@ class TelegramAdapter:
         """
         parts = text.split()
         cmd = parts[0]
+        if self.executor is None:
+            self.send_message(chat_id, "⚠️ Internal error: executor not configured.")
+            return
+        executor = self.executor
         try:
             if cmd == "/connect_calendar":
                 if len(parts) < 2:
                     self.send_message(chat_id, "Usage: /connect_calendar <nickname>")
                     return
-                result = self.executor.execute("connect_account", {"nickname": parts[1]})
+                result = executor.execute("connect_account", {"nickname": parts[1]})
                 if result.get("status") == "success":
                     self.send_message(chat_id, str(result.get("message", "")))
                 else:
@@ -840,7 +844,7 @@ class TelegramAdapter:
                 params: dict = {}
                 if provider:
                     params["provider"] = provider
-                result = self.executor.execute("list_accounts", params)
+                result = executor.execute("list_accounts", params)
                 accounts = result.get("accounts", [])
                 if not accounts:
                     self.send_message(chat_id, "No connected accounts.")
@@ -855,7 +859,7 @@ class TelegramAdapter:
                 if len(parts) < 2:
                     self.send_message(chat_id, "Usage: /disconnect_account <nickname>")
                     return
-                result = self.executor.execute("disconnect_account", {"nickname": parts[1]})
+                result = executor.execute("disconnect_account", {"nickname": parts[1]})
                 self.send_message(chat_id, str(result.get("message", "disconnect_account: no message")))
             else:
                 self.send_message(chat_id, f"Unknown command: {cmd}")
