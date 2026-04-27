@@ -57,7 +57,7 @@ def test_full_outbound_headers_correct(tmp_path, monkeypatch):
 
     def fake_send_smtp(payload):
         captured["payload"] = payload
-        captured["from"] = se.build_from_header(payload.get("_account"))
+        captured["from"] = se.build_from_header(payload.get("_account"), se.SMTP_USER)
         captured["sig"] = se.resolve_signature(payload.get("_account"))
         captured["body"] = se.apply_signature(payload["body"], captured["sig"])
         return {"status": "success", "message": "ok"}

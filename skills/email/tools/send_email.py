@@ -274,7 +274,7 @@ def send_smtp(payload: dict) -> dict:
     account = payload.get("_account")
     reply_to_addr = payload.get("_reply_to_addr")
 
-    from_header = build_from_header(account)
+    from_header = build_from_header(account, SMTP_USER)
     signature = resolve_signature(account)
     body_with_sig = apply_signature(body, signature)
     signature_used = bool(signature) and body_with_sig != body
