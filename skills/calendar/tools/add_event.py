@@ -20,9 +20,9 @@ import os
 from datetime import timedelta
 
 try:
-    from _google_auth import gcal_request, load_calendar_config
+    from _google_auth import gcal_request, load_calendar_config, resolve_email_alias_target
 except ImportError:
-    from ._google_auth import gcal_request, load_calendar_config
+    from ._google_auth import gcal_request, load_calendar_config, resolve_email_alias_target
 
 from xibi.utils.time import parse_semantic_datetime
 
@@ -81,6 +81,9 @@ def run(params: dict) -> dict:
             if cal["label"].lower() == requested.lower() or cal["calendar_id"] == requested:
                 match = cal
                 break
+        # email_alias fallback: "lebron@afya.fit" → resolves to that account's primary
+        if match is None:
+            match = resolve_email_alias_target(requested)
         if match is None:
             return {
                 "status": "error",

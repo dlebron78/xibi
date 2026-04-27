@@ -1,3 +1,13 @@
+"""list_unread — fetch unread emails via himalaya.
+
+Per-envelope provenance (``received_via_account`` / ``received_via_email_alias``)
+is intentionally None in v1: himalaya envelope JSON does not include To/Delivered-To
+headers, and we do not fetch them per-envelope here to keep this tool fast.
+Provenance resolution happens at ``summarize_email`` time when the full RFC 5322
+content is parsed. The Telegram render shows ``[unknown alias]`` for None envelopes.
+A future spec may add a per-envelope header pass; that is out of scope here.
+"""
+
 import json
 import os
 import shutil
@@ -56,13 +66,19 @@ def format_page(emails: list, offset: int, total_unread: int) -> str:
     else:
         header = f"📬 {page_start}–{page_end} of {total_unread} unread"
 
+    render_provenance = os.environ.get("XIBI_EMAIL_PROVENANCE_RENDER", "true").lower() != "false"
+
     lines = []
     for i, email in enumerate(emails):
         emoji = NUMBER_EMOJI[i] if i < len(NUMBER_EMOJI) else f"{offset + i + 1}."
         subject = email.get("subject", "No Subject")
         sender = email.get("from", {}).get("name") or email.get("from", {}).get("addr", "Unknown")
         date = _friendly_date(email.get("date", ""))
-        lines.append(f"{emoji} {sender} — {date}\n   {subject}")
+        if render_provenance:
+            label = email.get("received_via_account") or "unknown alias"
+            lines.append(f"{emoji} [{label}] {sender} — {date}\n   {subject}")
+        else:
+            lines.append(f"{emoji} {sender} — {date}\n   {subject}")
 
     body = "\n\n".join(lines)
 
@@ -102,6 +118,13 @@ def run(params):
 
         # Filter to unread only (no "Seen" flag), newest first
         unread = [e for e in all_emails if "Seen" not in e.get("flags", [])]
+
+        # v1 provenance: None per envelope (see module docstring). Stamping
+        # the keys here ensures every consumer sees the same shape.
+        for env in unread:
+            env.setdefault("received_via_account", None)
+            env.setdefault("received_via_email_alias", None)
+
         total_unread = len(unread)
 
         # First page only — BreggerCore caches the full list for pagination

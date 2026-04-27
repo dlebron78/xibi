@@ -116,6 +116,11 @@ def build_classification_prompt(signal: dict, context: SignalContext) -> str:
         sender_line += f" <{context.sender_id}>"
     sections.append(sender_line)
     sections.append(f"Re: {context.headline}")
+    if context.received_via_email_alias:
+        provenance_label = context.received_via_account or "unknown alias"
+        sections.append(
+            f"📥 [{provenance_label}] received via {context.received_via_email_alias}"
+        )
 
     # Trust & relationship
     trust_parts = []

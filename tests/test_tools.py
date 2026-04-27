@@ -130,3 +130,11 @@ def test_list_accounts_green_tier():
 def test_disconnect_account_yellow_in_write_tools():
     assert resolve_tier("disconnect_account") == PermissionTier.YELLOW
     assert "disconnect_account" in WRITE_TOOLS
+
+
+def test_backfill_email_alias_yellow_tier():
+    assert resolve_tier("backfill_email_alias") == PermissionTier.YELLOW
+
+
+def test_backfill_email_alias_in_write_tools():
+    assert "backfill_email_alias" in WRITE_TOOLS

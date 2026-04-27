@@ -79,6 +79,7 @@ def _ledger_upsert(
     in_reply_to: str = "",
     attachment_path: str = "",
     contact_summaries: dict | None = None,
+    received_via_account: str | None = None,
 ) -> None:
     """Insert or update a draft in the Ledger.
 
@@ -103,6 +104,7 @@ def _ledger_upsert(
             "attachment_path": attachment_path,
             "draft_id": draft_id,
             "contact_summaries": contact_summaries or {},
+            "received_via_account": received_via_account,
         }
     )
     entity = f"{to}:{_slugify(subject)}" if to and subject else _slugify(body[:40])
@@ -161,6 +163,9 @@ def run(params):
     subject = (params.get("subject") or "").strip()
     in_reply_to = (params.get("in_reply_to") or "").strip()
     attachment_path = params.get("attachment_path") or ""
+    received_via_account = params.get("received_via_account")
+    if isinstance(received_via_account, str):
+        received_via_account = received_via_account.strip() or None
 
     if not body:
         return {
@@ -196,6 +201,7 @@ def run(params):
         in_reply_to=in_reply_to,
         attachment_path=attachment_path,
         contact_summaries=contact_summaries,
+        received_via_account=received_via_account,
     )
 
     return {

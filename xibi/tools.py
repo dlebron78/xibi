@@ -41,6 +41,7 @@ WRITE_TOOLS: set[str] = {
     "spawn_subagent",
     "connect_account",
     "disconnect_account",
+    "backfill_email_alias",
 }
 
 # Tier declarations for known tools.
@@ -78,6 +79,7 @@ TOOL_TIERS: dict[str, PermissionTier] = {
     "list_accounts": PermissionTier.GREEN,
     "connect_account": PermissionTier.YELLOW,
     "disconnect_account": PermissionTier.YELLOW,
+    "backfill_email_alias": PermissionTier.YELLOW,
     # Red — sends, deletes, financial, first-time destructive
     "send_email": PermissionTier.RED,
     "reply_email": PermissionTier.RED,

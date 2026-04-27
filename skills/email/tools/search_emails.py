@@ -170,8 +170,18 @@ def _run_himalaya_query(himalaya_bin: str, query_str: str) -> list[dict]:
             else:
                 from_display = "Unknown"
 
+            # v1 provenance: None per envelope. Resolution happens at
+            # summarize_email time once the full RFC 5322 headers are parsed.
+            # Stamping the keys here keeps the schema uniform across tools.
             results.append(
-                {"id": env.get("id"), "from": from_display, "subject": env.get("subject"), "date": env.get("date")}
+                {
+                    "id": env.get("id"),
+                    "from": from_display,
+                    "subject": env.get("subject"),
+                    "date": env.get("date"),
+                    "received_via_account": None,
+                    "received_via_email_alias": None,
+                }
             )
         return results
 

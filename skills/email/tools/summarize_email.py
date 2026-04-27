@@ -1,7 +1,17 @@
 import json
+import logging
 import os
 import shutil
 import subprocess
+from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+
+def _resolve_db_path(workdir: str | None) -> Path:
+    """Mirror skills/email/tools/{draft,reply,send}_email.py path resolution."""
+    wd = workdir or os.environ.get("BREGGER_WORKDIR", os.path.expanduser("~/.xibi"))
+    return Path(wd) / "data" / "xibi.db"
 
 
 def _find_himalaya():
@@ -215,6 +225,38 @@ def run(params: dict):
     to_header = msg.get("To", "") if "msg" in locals() else ""
     cc_header = msg.get("Cc", "") if "msg" in locals() else ""
     reply_to = msg.get("Reply-To", "") if "msg" in locals() else ""
+    delivered_to_header = msg.get("Delivered-To", "") if "msg" in locals() else ""
+
+    # Provenance: match To/Delivered-To against connected oauth_accounts
+    received_via_email_alias: str | None = None
+    received_via_account: str | None = None
+    calendar_label: str | None = None
+    try:
+        from xibi.email.provenance import (
+            parse_addresses_from_header,
+            resolve_account_from_email_to,
+        )
+
+        db_path = _resolve_db_path(params.get("_workdir"))
+        provenance_match = resolve_account_from_email_to(
+            to_addresses=[to_header] if to_header else [],
+            delivered_to=delivered_to_header,
+            db_path=str(db_path),
+        )
+        if provenance_match:
+            received_via_account = provenance_match.get("nickname")
+            received_via_email_alias = provenance_match.get("email_alias")
+            calendar_label = received_via_account
+        else:
+            # Surface the unmatched To/Delivered-To address so list rendering
+            # can still distinguish [unknown alias] from "no header at all".
+            for addr_source in (delivered_to_header, to_header):
+                addrs = parse_addresses_from_header(addr_source)
+                if addrs:
+                    received_via_email_alias = addrs[0]
+                    break
+    except Exception as e:
+        logger.warning(f"summarize_email_provenance_resolution_error err={type(e).__name__}:{e}")
 
     # Thread awareness — References header contains all prior message IDs in the chain
     references = msg.get("References", "") if "msg" in locals() else ""
@@ -247,5 +289,8 @@ def run(params: dict):
             "sent_at": msg.get("Date", match.get("date", "")),
             "message_id": msg.get("Message-ID", "").strip() if "msg" in locals() else "",
             "body": body or "(email body empty)",
+            "received_via_email_alias": received_via_email_alias,
+            "received_via_account": received_via_account,
+            "calendar_label": calendar_label,
         },
     }

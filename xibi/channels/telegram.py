@@ -481,6 +481,7 @@ class TelegramAdapter:
                 stripped.startswith("/connect_calendar")
                 or stripped.startswith("/list_accounts")
                 or stripped.startswith("/disconnect_account")
+                or stripped.startswith("/backfill_email_aliases")
             ):
                 self._handle_account_command(chat_id, stripped)
                 return
@@ -861,6 +862,14 @@ class TelegramAdapter:
                     return
                 result = executor.execute("disconnect_account", {"nickname": parts[1]})
                 self.send_message(chat_id, str(result.get("message", "disconnect_account: no message")))
+            elif cmd == "/backfill_email_aliases":
+                result = executor.execute("backfill_email_alias", {})
+                lines = [str(result.get("summary") or result.get("message") or "backfill complete")]
+                for u in result.get("updated", []) or []:
+                    lines.append(f"  ✓ {u.get('nickname')} → {u.get('email_alias')}")
+                for f in result.get("failed", []) or []:
+                    lines.append(f"  ✗ {f.get('nickname')}: {f.get('reason')}")
+                self.send_message(chat_id, "\n".join(lines))
             else:
                 self.send_message(chat_id, f"Unknown command: {cmd}")
         except Exception as e:

@@ -115,6 +115,42 @@ def resolve_calendar_id(label_or_id: str) -> str:
     return label_or_id
 
 
+def resolve_email_alias_target(label_or_id: str) -> dict | None:
+    """Try resolving an email-style ``label_or_id`` against connected accounts.
+
+    Returns ``{"label", "account", "calendar_id"}`` shaped like a regular
+    ``load_calendar_config`` entry when the input matches an account's
+    ``metadata.email_alias`` (step-108 captures it from Google's userinfo).
+    For email_alias matches, ``calendar_id`` defaults to ``"primary"`` of
+    that account.
+
+    Returns ``None`` when input has no ``@`` (cheap fast-path), when no
+    account matches, or when the OAuth store can't be opened — keeps callers
+    falling back to their existing behaviour.
+    """
+    if not label_or_id or "@" not in label_or_id:
+        return None
+    try:
+        from xibi.oauth.store import OAuthStore
+
+        user_id = _instance_user_id()
+        store = OAuthStore(_default_db_path())
+        row = store.find_by_email_alias(user_id, label_or_id)
+        if not row:
+            return None
+        nickname = row.get("nickname") or "default"
+        return {
+            "label": nickname,
+            "account": nickname,
+            "calendar_id": "primary",
+        }
+    except Exception as e:
+        logger.warning(
+            f"calendar_email_alias_resolve_error label={label_or_id} err={type(e).__name__}"
+        )
+        return None
+
+
 def resolve_account_for_label(label_or_id: str) -> str:
     """Return the account nickname owning the named label. Defaults to 'default'."""
     for cal in load_calendar_config():

@@ -37,6 +37,15 @@
       }
     },
     {
+      "name": "backfill_email_alias",
+      "output_type": "raw",
+      "description": "Populate metadata.email_alias for connected OAuth accounts that are missing it (legacy onboards from before step-108 auto-capture). Iterates accounts, refreshes each token, fetches Google userinfo, writes the verified email back. Idempotent. YELLOW tier: writes only the missing field, never touches secrets.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
       "name": "disconnect_account",
       "output_type": "raw",
       "description": "Remove an OAuth account: deletes the metadata row, deletes the encrypted secret, and (best-effort) revokes the token at the provider. YELLOW tier — destructive but reversible (user can re-connect).",

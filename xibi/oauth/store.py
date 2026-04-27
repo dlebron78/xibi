@@ -141,6 +141,67 @@ class OAuthStore:
             )
         return out
 
+    def find_by_email_alias(self, user_id: str, email_alias: str) -> dict[str, Any] | None:
+        """Look up an account by its OAuth-bound primary email.
+
+        ``email_alias`` is captured at OAuth callback time from Google's
+        userinfo endpoint and stored in ``metadata.email_alias`` lowercased.
+        Match is case-insensitive on both sides for safety. Returns the
+        account dict WITHOUT secret material (mirrors ``list_accounts``).
+        """
+        if not email_alias:
+            return None
+        normalized = email_alias.strip().lower()
+        if not normalized:
+            return None
+        with open_db(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM oauth_accounts "
+                "WHERE user_id = ? "
+                "AND lower(json_extract(metadata, '$.email_alias')) = ?",
+                (user_id, normalized),
+            ).fetchone()
+        if row is None:
+            return None
+        metadata_raw = row["metadata"] or "{}"
+        try:
+            metadata = json.loads(metadata_raw)
+        except (json.JSONDecodeError, TypeError):
+            metadata = {}
+        return {
+            "id": row["id"],
+            "user_id": row["user_id"],
+            "provider": row["provider"],
+            "nickname": row["nickname"],
+            "scopes": row["scopes"],
+            "status": row["status"],
+            "metadata": metadata,
+            "created_at": row["created_at"],
+            "last_used_at": row["last_used_at"],
+        }
+
+    def update_metadata(
+        self,
+        user_id: str,
+        provider: str,
+        nickname: str,
+        metadata: dict[str, Any],
+    ) -> bool:
+        """Replace the metadata JSON column for an account.
+
+        Returns True when a row was updated, False when no matching row exists.
+        Does not raise on no-match — callers (e.g. backfill) iterate accounts
+        and want a quiet "nothing to do" rather than an exception.
+        """
+        with open_db(self.db_path) as conn:
+            cur = conn.execute(
+                "UPDATE oauth_accounts SET metadata = ? "
+                "WHERE user_id = ? AND provider = ? AND nickname = ?",
+                (json.dumps(metadata or {}), user_id, provider, nickname),
+            )
+            return cur.rowcount > 0
+
     def delete_account(self, user_id: str, provider: str, nickname: str) -> bool:
         with open_db(self.db_path) as conn:
             cur = conn.execute(

@@ -13,6 +13,7 @@ try:
         format_event_time,
         gcal_request,
         load_calendar_config,
+        resolve_email_alias_target,
     )
 except ImportError:
     from ._google_auth import (
@@ -20,6 +21,7 @@ except ImportError:
         format_event_time,
         gcal_request,
         load_calendar_config,
+        resolve_email_alias_target,
     )
 
 
@@ -38,6 +40,8 @@ def _resolve_targets(params: dict, config: list[dict]) -> list[dict]:
     targets: list[dict] = []
     for item in wanted:
         match = by_label.get(str(item).lower()) or by_id.get(str(item))
+        if match is None:
+            match = resolve_email_alias_target(str(item))
         if match:
             targets.append(match)
         else:

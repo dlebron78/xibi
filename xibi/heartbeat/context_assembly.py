@@ -112,6 +112,10 @@ class SignalContext:
     next_event_summary: str | None = None
     # Human-readable summary of the very next event: "Flight to NYC in 3h" or "1:1 with Sarah in 45min (Zoom)"
 
+    # Step-109: Email-account provenance (which configured alias this signal arrived via)
+    received_via_account: str | None = None  # nickname, e.g. "afya"
+    received_via_email_alias: str | None = None  # e.g. "lebron@afya.fit"
+
 
 def assemble_signal_context(
     email: dict,
@@ -153,6 +157,29 @@ def assemble_signal_context(
         entity_type=entity_type,
         db_path=db_path,
     )
+
+    # Step-109: provenance — same wiring as assemble_batch_signal_context.
+    try:
+        from xibi.email.provenance import resolve_account_from_email_to
+
+        to_value = email.get("to") or email.get("To")
+        if isinstance(to_value, list):
+            to_list = [str(t) for t in to_value if t]
+        elif isinstance(to_value, str) and to_value:
+            to_list = [to_value]
+        else:
+            to_list = []
+        delivered_to = email.get("delivered_to") or email.get("Delivered-To")
+        provenance = resolve_account_from_email_to(
+            to_addresses=to_list,
+            delivered_to=delivered_to if isinstance(delivered_to, str) else None,
+            db_path=db_path,
+        )
+        if provenance:
+            ctx.received_via_account = provenance.get("nickname")
+            ctx.received_via_email_alias = provenance.get("email_alias")
+    except Exception as e:
+        logger.warning(f"context_assembly_provenance_error err={type(e).__name__}:{e}")
 
     try:
         conn = sqlite3.connect(db_path)
@@ -376,6 +403,34 @@ def assemble_batch_signal_context(
                 entity_type=bt.get("entity_type"),
                 db_path=db_path,
             )
+
+            # Step-109: resolve provenance from whatever To/Delivered-To
+            # headers the signal carries. v1 list_unread envelopes do not
+            # include these, so the call no-ops; the path is wired so a
+            # future header-fetch pass populates without touching this code.
+            try:
+                from xibi.email.provenance import resolve_account_from_email_to
+
+                to_value = email.get("to") or email.get("To")
+                if isinstance(to_value, list):
+                    to_list = [str(t) for t in to_value if t]
+                elif isinstance(to_value, str) and to_value:
+                    to_list = [to_value]
+                else:
+                    to_list = []
+                delivered_to = email.get("delivered_to") or email.get("Delivered-To")
+                provenance = resolve_account_from_email_to(
+                    to_addresses=to_list,
+                    delivered_to=delivered_to if isinstance(delivered_to, str) else None,
+                    db_path=db_path,
+                )
+                if provenance:
+                    ctx.received_via_account = provenance.get("nickname")
+                    ctx.received_via_email_alias = provenance.get("email_alias")
+            except Exception as e:
+                logger.warning(
+                    f"context_assembly_provenance_error err={type(e).__name__}:{e}"
+                )
 
             # Contact profile
             row = conn.execute(

@@ -15,6 +15,8 @@ from typing import Any
 from xibi.oauth.google import (
     DEFAULT_CALENDAR_SCOPES,
     build_authorization_url,
+    fetch_userinfo,
+    refresh_access_token,
     revoke_token,
 )
 from xibi.oauth.store import OAuthStore
@@ -103,6 +105,91 @@ def list_accounts(params: dict[str, Any]) -> dict[str, Any]:
             for a in rows
         ],
         "count": len(rows),
+    }
+
+
+def backfill_email_alias(params: dict[str, Any]) -> dict[str, Any]:
+    """Populate ``metadata.email_alias`` for accounts missing it.
+
+    Iterates ``oauth_accounts`` rows where ``metadata.email_alias`` is unset,
+    fetches Google's userinfo using each account's stored refresh_token, and
+    writes the verified email back into metadata. Idempotent — re-runs are
+    no-ops if all accounts already have ``email_alias``.
+
+    YELLOW tier: modifies persisted state but only fills missing fields and
+    only after Google itself confirms the bound email.
+    """
+    db_path = params.get("_db_path")
+    if not db_path:
+        return {"status": "error", "message": "internal: _db_path not injected"}
+
+    user_id = _instance_user_id()
+    store = OAuthStore(db_path)
+
+    rows = store.list_accounts(user_id)
+    updated: list[dict[str, str]] = []
+    skipped: list[str] = []
+    failed: list[dict[str, str]] = []
+
+    for row in rows:
+        provider = row.get("provider") or ""
+        nickname = row.get("nickname") or ""
+        meta = row.get("metadata") or {}
+        if not isinstance(meta, dict):
+            meta = {}
+        if meta.get("email_alias"):
+            skipped.append(nickname)
+            continue
+
+        # list_accounts excludes secrets; fetch them via get_account.
+        creds = store.get_account(user_id, provider, nickname)
+        if not creds or not creds.get("refresh_token"):
+            failed.append({"nickname": nickname, "reason": "missing_refresh_token"})
+            logger.warning(
+                f"email_alias_backfill_failed nickname={nickname} err=missing_refresh_token"
+            )
+            continue
+
+        try:
+            access_token, _ = refresh_access_token(
+                creds["refresh_token"],
+                creds["client_id"],
+                creds["client_secret"],
+            )
+            userinfo = fetch_userinfo(access_token)
+            email = (userinfo.get("email") or "").strip().lower()
+            if not email:
+                failed.append({"nickname": nickname, "reason": "userinfo_no_email"})
+                logger.warning(
+                    f"email_alias_backfill_failed nickname={nickname} err=userinfo_no_email"
+                )
+                continue
+            new_meta = {**meta, "email_alias": email}
+            store.update_metadata(user_id, provider, nickname, new_meta)
+            updated.append({"nickname": nickname, "email_alias": email})
+            logger.warning(
+                f"email_alias_backfilled nickname={nickname} email_alias={email}"
+            )
+        except Exception as e:
+            reason = f"{type(e).__name__}:{str(e)[:120]}"
+            failed.append({"nickname": nickname, "reason": reason})
+            logger.warning(
+                f"email_alias_backfill_failed nickname={nickname} err={reason}"
+            )
+
+    if not updated and not failed:
+        logger.info(f"email_alias_backfill_noop count=0 skipped={len(skipped)}")
+
+    summary = (
+        f"{len(updated)} updated, {len(skipped)} already set, {len(failed)} failed"
+    )
+    return {
+        "status": "success" if not failed else "partial",
+        "updated": updated,
+        "skipped": skipped,
+        "failed": failed,
+        "summary": summary,
+        "message": summary,
     }
 
 
