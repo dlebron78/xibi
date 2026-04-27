@@ -193,3 +193,98 @@ def test_sent_mail_account_nickname_default(monkeypatch):
 
     importlib.reload(cp)
     assert cp.SENT_MAIL_ACCOUNT_NICKNAME == "personal"
+
+
+# ── Hotfix regression tests: himalaya v1.x --account flag position ──
+#
+# Pre-fix: `--account` was placed BEFORE the `envelope list` /
+# `message export` subcommand, which himalaya v1.x rejects with
+# `unexpected argument '--account' found`. Effect: poll_sent_folder
+# and backfill_contacts silently returned zero results.
+#
+# These tests assert argv ordering — they don't actually exec himalaya;
+# they capture the cmd list passed to subprocess.run and verify
+# `--account` appears AFTER the subcommand verb.
+
+
+def _index_after(cmd, marker):
+    return cmd.index(marker) if marker in cmd else -1
+
+
+def test_list_envelopes_places_account_after_subcommand(mocker):
+    """_list_envelopes must put --account after `envelope list` (himalaya v1.x)."""
+    from xibi.heartbeat import contact_poller
+
+    captured = {}
+
+    class _FakeRun:
+        def __init__(self, *args, **kwargs):
+            captured["cmd"] = args[0] if args else kwargs.get("args")
+            self.returncode = 0
+            self.stdout = "[]"
+            self.stderr = ""
+
+    mocker.patch("subprocess.run", side_effect=_FakeRun)
+    contact_poller._list_envelopes("/path/to/himalaya", folder="Sent", page_size=1)
+
+    cmd = captured["cmd"]
+    list_idx = _index_after(cmd, "list")
+    account_idx = _index_after(cmd, "--account")
+    assert list_idx >= 0, "envelope `list` subcommand missing"
+    assert account_idx > list_idx, (
+        f"--account at {account_idx} must come AFTER `list` at {list_idx} "
+        f"for himalaya v1.x compatibility. Full cmd: {cmd}"
+    )
+
+
+def test_discover_sent_folder_places_account_after_subcommand(mocker, tmp_path):
+    """_discover_sent_folder probe must put --account after `envelope list`."""
+    from xibi.heartbeat import contact_poller
+
+    db = tmp_path / "test.db"
+    migrate(db)
+    captured = {"cmds": []}
+
+    class _FakeRun:
+        def __init__(self, *args, **kwargs):
+            captured["cmds"].append(args[0] if args else kwargs.get("args"))
+            self.returncode = 0
+            self.stdout = "[]"
+            self.stderr = ""
+
+    mocker.patch("subprocess.run", side_effect=_FakeRun)
+    contact_poller._discover_sent_folder("/path/to/himalaya", db)
+
+    assert captured["cmds"], "no candidate-folder probe was issued"
+    for cmd in captured["cmds"]:
+        list_idx = _index_after(cmd, "list")
+        account_idx = _index_after(cmd, "--account")
+        assert list_idx >= 0
+        assert account_idx > list_idx, (
+            f"--account at {account_idx} must come AFTER `list` at {list_idx} for himalaya v1.x. Full cmd: {cmd}"
+        )
+
+
+def test_fetch_recipients_full_places_account_after_subcommand(mocker):
+    """_fetch_recipients_full must put --account after `message export`."""
+    from xibi.heartbeat import contact_poller
+
+    captured = {}
+
+    class _FakeRun:
+        def __init__(self, *args, **kwargs):
+            captured["cmd"] = args[0] if args else kwargs.get("args")
+            self.returncode = 0
+            self.stdout = ""  # parser handles empty gracefully
+            self.stderr = ""
+
+    mocker.patch("subprocess.run", side_effect=_FakeRun)
+    contact_poller._fetch_recipients_full("/path/to/himalaya", "12345")
+
+    cmd = captured["cmd"]
+    export_idx = _index_after(cmd, "export")
+    account_idx = _index_after(cmd, "--account")
+    assert export_idx >= 0, "`message export` subcommand missing"
+    assert account_idx > export_idx, (
+        f"--account at {account_idx} must come AFTER `export` at {export_idx} for himalaya v1.x. Full cmd: {cmd}"
+    )

@@ -58,14 +58,16 @@ def _discover_sent_folder(himalaya_bin: str, db_path: Path) -> str | None:
 
     for folder in SENT_FOLDER_CANDIDATES:
         try:
+            # himalaya v1.x moved --account from a top-level flag to a
+            # per-subcommand option. Place it AFTER `envelope list`.
             cmd = [
                 himalaya_bin,
-                "--account",
-                SENT_MAIL_ACCOUNT,
                 "--output",
                 "json",
                 "envelope",
                 "list",
+                "--account",
+                SENT_MAIL_ACCOUNT,
                 "--folder",
                 folder,
                 "--page-size",
@@ -106,14 +108,16 @@ def _list_envelopes(
     page: int = 1,
 ) -> list[dict]:
     """List envelopes from a specific folder (or inbox if None)."""
+    # himalaya v1.x moved --account from a top-level flag to a
+    # per-subcommand option. Place it AFTER `envelope list`.
     cmd = [
         himalaya_bin,
-        "--account",
-        SENT_MAIL_ACCOUNT,
         "--output",
         "json",
         "envelope",
         "list",
+        "--account",
+        SENT_MAIL_ACCOUNT,
         "--page-size",
         str(page_size),
         "--page",
@@ -183,7 +187,9 @@ def _extract_recipients(himalaya_bin: str, envelope: dict) -> list[dict]:
 def _fetch_recipients_full(himalaya_bin: str, email_id: str) -> list[dict]:
     """Fetch full RFC 5322 headers and parse To/CC/BCC."""
     try:
-        cmd = [himalaya_bin, "--account", SENT_MAIL_ACCOUNT, "message", "export", "--full", str(email_id)]
+        # himalaya v1.x moved --account from a top-level flag to a
+        # per-subcommand option. Place it AFTER `message export`.
+        cmd = [himalaya_bin, "message", "export", "--account", SENT_MAIL_ACCOUNT, "--full", str(email_id)]
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
         if res.returncode != 0:
             return []
