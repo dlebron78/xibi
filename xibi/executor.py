@@ -247,6 +247,17 @@ class Executor:
                 "error": error_attr,
             }
 
+            # Step-109: lift email-account provenance from summarize_email's
+            # output into span attributes so the PDV decomposition query
+            # (group spans by received_via_account) returns useful rows.
+            # Whitelist-of-tools to avoid leaking arbitrary tool output.
+            if tool_name == "summarize_email":
+                data = result.get("data") or {}
+                if isinstance(data, dict):
+                    rva = data.get("received_via_account")
+                    if rva is not None:
+                        attributes["received_via_account"] = rva
+
             if is_mcp:
                 attributes.update(
                     {
