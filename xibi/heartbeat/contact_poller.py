@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import shutil
 import subprocess
 from datetime import datetime, timedelta, timezone
@@ -16,6 +17,12 @@ logger = logging.getLogger(__name__)
 # Himalaya account that holds Daniel's sent mail (used for contact population).
 # Roberto's account (default) is the inbox; Daniel's personal Gmail has the sent history.
 SENT_MAIL_ACCOUNT = "daniel"
+
+# Step-110 finishing: nickname under oauth_accounts.metadata that the
+# `daniel` himalaya account corresponds to. Used to stamp account_origin
+# on contacts created from sent-folder polling. Override via env if the
+# polling account is reconfigured to a different OAuth nickname.
+SENT_MAIL_ACCOUNT_NICKNAME = os.environ.get("XIBI_SENT_MAIL_NICKNAME", "personal")
 
 SENT_FOLDER_CANDIDATES = [
     "Sent",
@@ -259,6 +266,7 @@ def poll_sent_folder(
                             db_path=db_path,
                             direction="outbound",
                             activity_date=env_date_str if "T" in env_date_str else None,
+                            received_via_account=SENT_MAIL_ACCOUNT_NICKNAME,
                         )
             except Exception as e:
                 logger.error(f"Failed to process sent email {env.get('id')}: {e}")
@@ -321,6 +329,7 @@ def backfill_contacts(
                                 db_path=db_path,
                                 direction="outbound",
                                 activity_date=env_date_str if "T" in env_date_str else None,
+                                received_via_account=SENT_MAIL_ACCOUNT_NICKNAME,
                             )
                 except Exception:
                     continue
@@ -357,6 +366,9 @@ def backfill_contacts(
                     name = addr
 
                 if addr:
+                    # v1 hotfix: tag inbound backfill with the polling account's
+                    # nickname. Future: parse To:/Delivered-To: headers and call
+                    # resolve_account_from_email_to for true per-email provenance.
                     _upsert_contact_core(
                         email=addr,
                         display_name=name or addr,
@@ -364,6 +376,7 @@ def backfill_contacts(
                         db_path=db_path,
                         direction="inbound",
                         activity_date=env_date_str if "T" in env_date_str else None,
+                        received_via_account=SENT_MAIL_ACCOUNT_NICKNAME,
                     )
             except Exception:
                 continue

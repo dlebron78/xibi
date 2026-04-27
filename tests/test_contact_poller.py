@@ -140,3 +140,56 @@ def test_pagination_logic(db_path, mocker):
         assert row1 is not None
         assert row2 is not None
         assert row3 is None  # charlie is older than watermark
+
+
+def test_poll_sent_folder_stamps_account_origin(db_path, mocker, monkeypatch):
+    """Hotfix: contact_poller must thread received_via_account through to
+    _upsert_contact_core so contacts created from sent-folder polling get
+    account_origin + seen_via_accounts populated (step-110 condition #7).
+    """
+    monkeypatch.setenv("XIBI_SENT_MAIL_NICKNAME", "personal")
+    # Module-level constant is read at import time, so reload to re-evaluate.
+    import importlib
+
+    import xibi.heartbeat.contact_poller as cp
+
+    importlib.reload(cp)
+
+    now = datetime.now(timezone.utc)
+    env1 = {
+        "id": "1",
+        "date": now.isoformat().replace("+00:00", "Z"),
+        "to": "newcontact@example.com",
+    }
+    mocker.patch("xibi.heartbeat.contact_poller._list_envelopes", side_effect=[[env1], []])
+    mocker.patch("xibi.heartbeat.contact_poller._discover_sent_folder", return_value="Sent")
+
+    watermark = now - timedelta(hours=1)
+    with open_db(db_path) as conn:
+        conn.execute(
+            "INSERT INTO heartbeat_state (key, value) VALUES ('sent_mail_watermark', ?)",
+            (watermark.isoformat(),),
+        )
+
+    cp.poll_sent_folder("mock_himalaya", db_path, page_size=10)
+
+    with open_db(db_path) as conn:
+        row = conn.execute(
+            "SELECT account_origin, seen_via_accounts FROM contacts WHERE email = 'newcontact@example.com'"
+        ).fetchone()
+    assert row is not None
+    assert row[0] == "personal"
+    import json as _json
+
+    assert _json.loads(row[1]) == ["personal"]
+
+
+def test_sent_mail_account_nickname_default(monkeypatch):
+    """The default nickname is 'personal' when XIBI_SENT_MAIL_NICKNAME is unset."""
+    monkeypatch.delenv("XIBI_SENT_MAIL_NICKNAME", raising=False)
+    import importlib
+
+    import xibi.heartbeat.contact_poller as cp
+
+    importlib.reload(cp)
+    assert cp.SENT_MAIL_ACCOUNT_NICKNAME == "personal"
