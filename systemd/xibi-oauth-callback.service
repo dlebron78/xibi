@@ -1,0 +1,19 @@
+[Unit]
+Description=Xibi OAuth Callback Server
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/xibi
+EnvironmentFile=%h/.xibi/secrets.env
+ExecStart=/usr/bin/python3 -m xibi.oauth.server
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=xibi-oauth-callback
+
+[Install]
+WantedBy=default.target

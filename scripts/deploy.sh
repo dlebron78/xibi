@@ -13,7 +13,7 @@ LOG_TAG="xibi-deploy"
 # leaves the set. Word-splitting is deliberate; keep this unquoted in loops.
 # xibi-caretaker.service is NOT here — it is a timer-triggered oneshot
 # (disabled by design; owned by xibi-caretaker.timer).
-LONG_RUNNING_SERVICES="xibi-heartbeat.service xibi-telegram.service xibi-dashboard.service"
+LONG_RUNNING_SERVICES="xibi-heartbeat.service xibi-telegram.service xibi-dashboard.service xibi-oauth-callback.service"
 
 # Source secrets for Telegram token + chat ID
 if [ -f "$HOME/.xibi/secrets.env" ]; then

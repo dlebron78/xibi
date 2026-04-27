@@ -1,53 +1,102 @@
 """
-Shared Google OAuth2 token refresh utility for Bregger.
-Exchanges the long-lived refresh token for a short-lived access token.
-Caches the access token in-memory until it expires.
+Shared Google OAuth2 token-refresh utility, multi-account aware.
+
+Token resolution path (per call):
+  1. caller passes ``account="<nickname>"`` (defaults to "default")
+  2. ``get_access_token`` looks up (user_id, "google_calendar", nickname) in
+     the oauth_accounts table via xibi.oauth.store
+  3. on cache hit, returns the cached access_token
+  4. on miss, exchanges the per-account refresh_token for a fresh access_token
+     under a per-account threading.Lock so concurrent callers do not stampede
+     Google's token endpoint
+  5. ``invalid_grant`` from Google → mark the row revoked + raise
+     OAuthRevokedError so callers (calendar tools, poller) can surface the
+     right structured error and the heartbeat can nudge the user
+
+Backward compat:
+  - ``XIBI_CALENDARS=label:cal_id`` (old single-account format) still parses.
+  - The legacy env vars ``GOOGLE_CALENDAR_*`` are NOT consulted by this
+    module any more; the one-shot migration script
+    ``scripts/migrate_calendar_envvars.py`` lifts them into the DB at
+    deploy time.
 """
 
-import json
+from __future__ import annotations
+
+import logging
 import os
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
-_TOKEN_CACHE: dict[str, Any] = {"access_token": None, "expires_at": 0}
+logger = logging.getLogger(__name__)
 
-TOKEN_URL = "https://oauth2.googleapis.com/token"
+# Per-account in-memory cache + per-account locks. The locks dict is itself
+# guarded by a top-level lock so that the first caller for a brand-new
+# account doesn't race in creating it.
+_TOKEN_CACHE: dict[str, dict[str, Any]] = {}
+_CACHE_LOCKS: dict[str, threading.Lock] = {}
+_CACHE_LOCKS_GUARD = threading.Lock()
+
+
+def _get_lock(account: str) -> threading.Lock:
+    with _CACHE_LOCKS_GUARD:
+        if account not in _CACHE_LOCKS:
+            _CACHE_LOCKS[account] = threading.Lock()
+        return _CACHE_LOCKS[account]
+
+
+def _instance_user_id() -> str:
+    return os.environ.get("XIBI_INSTANCE_OWNER_USER_ID", "default-owner")
+
+
+def _default_db_path() -> Path:
+    return Path(os.environ.get("XIBI_DB_PATH", str(Path.home() / ".xibi" / "data" / "xibi.db")))
 
 
 def load_calendar_config() -> list[dict]:
-    """
-    Parse XIBI_CALENDARS env var into list of {label, calendar_id} dicts.
+    """Parse XIBI_CALENDARS env var into list of {label, account, calendar_id}.
 
-    Falls back to [{label: "default", calendar_id: "primary"}] if not set.
-    NOTE: The "primary" fallback is only safe when the OAuth account is also
-    the calendar owner. In Roberto deployments, always set XIBI_CALENDARS
-    explicitly — the fallback will resolve to Roberto's empty calendar.
+    Two formats are accepted (per-entry, mix-and-match permitted):
+      - Old:  ``label:cal_id``                    → account defaults to 'default'
+      - New:  ``label=account:cal_id``            → explicit account dimension
 
-    Example:
-        XIBI_CALENDARS=personal:dannylebron@gmail.com,afya:lebron@afya.fit
-        → [
-            {"label": "personal", "calendar_id": "dannylebron@gmail.com"},
-            {"label": "afya",     "calendar_id": "lebron@afya.fit"},
-          ]
+    Falls back to a single entry ``[{label: 'default', account: 'default',
+    calendar_id: 'primary'}]`` if XIBI_CALENDARS is unset.
     """
     raw = os.environ.get("XIBI_CALENDARS")
     if not raw:
-        import logging
-
-        logging.getLogger(__name__).warning("XIBI_CALENDARS not set, falling back to default:primary")
+        logger.warning("XIBI_CALENDARS not set, falling back to default:primary")
         raw = "default:primary"
 
-    calendars = []
+    calendars: list[dict] = []
     for entry in raw.split(","):
         entry = entry.strip()
-        if ":" in entry:
-            label, cal_id = entry.split(":", 1)
-            calendars.append({"label": label.strip(), "calendar_id": cal_id.strip()})
-    return calendars if calendars else [{"label": "default", "calendar_id": "primary"}]
+        if not entry or ":" not in entry:
+            continue
+
+        # Detect new format: presence of '=' before the ':' separator.
+        head, cal_id = entry.split(":", 1)
+        cal_id = cal_id.strip()
+        if "=" in head:
+            label, account = head.split("=", 1)
+            label = label.strip()
+            account = account.strip() or "default"
+        else:
+            label = head.strip()
+            account = "default"
+        if not label or not cal_id:
+            continue
+        calendars.append({"label": label, "account": account, "calendar_id": cal_id})
+
+    if not calendars:
+        return [{"label": "default", "account": "default", "calendar_id": "primary"}]
+    return calendars
 
 
 def get_calendar_label(calendar_id: str) -> str:
@@ -59,17 +108,25 @@ def get_calendar_label(calendar_id: str) -> str:
 
 
 def resolve_calendar_id(label_or_id: str) -> str:
-    """Resolve a friendly label ('personal', 'afya') to a Google Calendar ID.
-    Falls back to the input value if no match — allows passing raw IDs directly.
-    """
+    """Resolve a friendly label to a Google Calendar ID. Pass-through for raw IDs."""
     for cal in load_calendar_config():
         if cal["label"].lower() == label_or_id.lower():
             return str(cal["calendar_id"])
-    return label_or_id  # pass-through for raw IDs
+    return label_or_id
+
+
+def resolve_account_for_label(label_or_id: str) -> str:
+    """Return the account nickname owning the named label. Defaults to 'default'."""
+    for cal in load_calendar_config():
+        if cal["label"].lower() == label_or_id.lower():
+            return str(cal.get("account", "default"))
+        if cal["calendar_id"] == label_or_id:
+            return str(cal.get("account", "default"))
+    return "default"
 
 
 def format_date_label(iso_str: str, today: datetime) -> str:
-    """Convert an ISO date/datetime string to a human-readable label (Today, Tomorrow, Monday Mar 23)."""
+    """Convert an ISO date/datetime string to a human-readable label (Today, Tomorrow, …)."""
     try:
         date_part = iso_str[:10]
         event_date = datetime.strptime(date_part, "%Y-%m-%d").date()
@@ -86,75 +143,96 @@ def format_date_label(iso_str: str, today: datetime) -> str:
 
 
 def format_event_time(iso_str: str) -> str:
-    """Convert an ISO datetime string to 3:00 PM, or return 'All day' if it's just a date."""
+    """Convert an ISO datetime string to '3:00 PM', or 'All day' for date-only."""
     if len(iso_str) <= 10:
         return "All day"
-
-    # Python 3.10+ handles 'Z' natively, but 3.8/3.9 strptime doesn't.
-    # The ISO from Calendar usually has +00:00 or -04:00, not Z.
     try:
-        fromiso = datetime.fromisoformat(iso_str)
-        return fromiso.strftime("%-I:%M %p")
+        return datetime.fromisoformat(iso_str).strftime("%-I:%M %p")
     except Exception:
         return iso_str
 
 
-def get_access_token() -> str:
-    """Return a valid Google OAuth2 access token, refreshing if necessary."""
+def get_access_token(account: str = "default") -> str:
+    """Return a valid access token for the named account.
+
+    Raises:
+        OAuthRevokedError if Google returns invalid_grant. The corresponding
+            oauth_accounts row is marked status='revoked' before re-raise so
+            future calls short-circuit without the network round-trip.
+        RuntimeError if the account is unknown / not configured.
+    """
+    # Imported lazily so importing this module does not pull the OAuth stack
+    # (and through it, sqlite path resolution) for tests that just need the
+    # formatting helpers.
+    from xibi.oauth.google import OAuthRevokedError, refresh_access_token
+    from xibi.oauth.store import OAuthStore
+
     now = time.time()
-    # Refresh 60s before actual expiry to avoid edge cases
-    expires_at = _TOKEN_CACHE["expires_at"]
-    if _TOKEN_CACHE["access_token"] and expires_at is not None and expires_at - now > 60:
-        return str(_TOKEN_CACHE["access_token"])
+    cached = _TOKEN_CACHE.get(account)
+    if cached and cached.get("expires_at", 0) - now > 60:
+        return str(cached["access_token"])
 
-    client_id = os.environ.get("GOOGLE_CALENDAR_CLIENT_ID")
-    client_secret = os.environ.get("GOOGLE_CALENDAR_CLIENT_SECRET")
-    refresh_token = os.environ.get("GOOGLE_CALENDAR_REFRESH_TOKEN")
+    with _get_lock(account):
+        # Re-check after acquiring the lock — another thread may have refreshed.
+        cached = _TOKEN_CACHE.get(account)
+        if cached and cached.get("expires_at", 0) - now > 60:
+            return str(cached["access_token"])
 
-    if not all([client_id, client_secret, refresh_token]):
-        raise RuntimeError(
-            "Missing GOOGLE_CALENDAR_CLIENT_ID, GOOGLE_CALENDAR_CLIENT_SECRET, "
-            "or GOOGLE_CALENDAR_REFRESH_TOKEN in environment."
-        )
+        user_id = _instance_user_id()
+        store = OAuthStore(_default_db_path())
+        creds = store.get_account(user_id, "google_calendar", account)
+        if not creds:
+            raise RuntimeError(f"No OAuth account '{account}' configured. Use /connect_calendar {account} to add it.")
+        if creds.get("status") == "revoked":
+            raise OAuthRevokedError(account=account)
+        if not creds.get("refresh_token"):
+            raise RuntimeError(f"OAuth account '{account}' is missing its refresh_token (corrupt store?)")
 
-    data = urllib.parse.urlencode(
-        {
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "refresh_token": refresh_token,
-            "grant_type": "refresh_token",
+        try:
+            access_token, expires_in = refresh_access_token(
+                creds["refresh_token"],
+                creds["client_id"],
+                creds["client_secret"],
+            )
+        except OAuthRevokedError:
+            store.mark_revoked(user_id, "google_calendar", account)
+            logger.warning(f"oauth_token_revoked account={account} provider=google_calendar")
+            raise
+        except Exception as e:
+            logger.warning(
+                f"oauth_token_refresh_error account={account} provider=google_calendar err={type(e).__name__}"
+            )
+            raise
+
+        _TOKEN_CACHE[account] = {
+            "access_token": access_token,
+            "expires_at": now + expires_in,
         }
-    ).encode()
-
-    req = urllib.request.Request(TOKEN_URL, data=data, method="POST")
-    try:
-        resp = json.loads(urllib.request.urlopen(req, timeout=10).read())
-    except urllib.error.HTTPError as e:
-        raise RuntimeError(f"Token refresh failed: {e.code} {e.read().decode()}") from e
-
-    if "access_token" not in resp:
-        raise RuntimeError(f"Token refresh returned no access_token: {resp}")
-
-    token = str(resp["access_token"])
-    _TOKEN_CACHE["access_token"] = token
-    _TOKEN_CACHE["expires_at"] = now + resp.get("expires_in", 3600)
-    return token
+        store.touch_last_used(user_id, "google_calendar", account)
+        return access_token
 
 
-def gcal_request(path: str, method: str = "GET", body: dict | None = None) -> dict:
+def gcal_request(
+    path: str,
+    method: str = "GET",
+    body: dict | None = None,
+    account: str = "default",
+) -> dict:
     """Make an authenticated request to the Google Calendar API v3."""
-    token = get_access_token()
+    token = get_access_token(account=account)
     url = f"https://www.googleapis.com/calendar/v3{path}"
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
-    data = json.dumps(body).encode() if body else None
+    import json as _json
+
+    data = _json.dumps(body).encode() if body else None
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         resp = urllib.request.urlopen(req, timeout=15)
-        result = json.loads(resp.read())
+        result = _json.loads(resp.read())
         if not isinstance(result, dict):
             return {}
         return result
     except urllib.error.HTTPError as e:
-        err_body = e.read().decode()
+        err_body = e.read().decode("utf-8", errors="replace")
         raise RuntimeError(f"Calendar API error {e.code}: {err_body}") from e

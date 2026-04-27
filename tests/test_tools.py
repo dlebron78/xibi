@@ -117,3 +117,16 @@ def test_schema_unknown_field_allowed():
 def test_schema_never_raises_on_bad_input():
     # validate_schema(tool_name, tool_input, manifest_schema)
     assert isinstance(validate_schema("tool", None, None), list)
+
+
+def test_connect_account_yellow_tier():
+    assert resolve_tier("connect_account") == PermissionTier.YELLOW
+
+
+def test_list_accounts_green_tier():
+    assert resolve_tier("list_accounts") == PermissionTier.GREEN
+
+
+def test_disconnect_account_yellow_in_write_tools():
+    assert resolve_tier("disconnect_account") == PermissionTier.YELLOW
+    assert "disconnect_account" in WRITE_TOOLS

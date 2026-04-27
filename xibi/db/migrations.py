@@ -6,7 +6,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 38  # increment when adding new migrations
+SCHEMA_VERSION = 39  # increment when adding new migrations
 
 
 def _safe_add_column(
@@ -110,6 +110,7 @@ class SchemaManager:
             (36, "signals: add metadata column + subagent_signal_dispatch table", self._migration_36),
             (37, "checklist_instance_items: make template_item_id nullable, add status + metadata", self._migration_37),
             (38, "caretaker: caretaker_pulses + caretaker_drift_state tables", self._migration_38),
+            (39, "oauth: oauth_accounts + oauth_pending_states tables", self._migration_39),
         ]
 
         for version, description, func in migrations:
@@ -954,6 +955,35 @@ class SchemaManager:
                 metadata_json     TEXT
             )
         """)
+
+    def _migration_39(self, conn: sqlite3.Connection) -> None:
+        """OAuth credential layer: account metadata + transient CSRF states."""
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS oauth_accounts (
+                id            TEXT PRIMARY KEY,
+                user_id       TEXT NOT NULL,
+                provider      TEXT NOT NULL,
+                nickname      TEXT NOT NULL,
+                scopes        TEXT,
+                metadata      TEXT,
+                status        TEXT DEFAULT 'active',
+                created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_used_at  DATETIME,
+                UNIQUE(user_id, provider, nickname)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS oauth_pending_states (
+                state_token   TEXT PRIMARY KEY,
+                user_id       TEXT NOT NULL,
+                provider      TEXT NOT NULL,
+                nickname      TEXT NOT NULL,
+                created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+                expires_at    DATETIME NOT NULL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user_provider ON oauth_accounts(user_id, provider)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_oauth_pending_states_expires ON oauth_pending_states(expires_at)")
 
 
 def migrate(db_path: Path) -> list[int]:

@@ -46,7 +46,7 @@ def test_calendar_signal_deep_link(db_path, monkeypatch):
     def mock_load():
         return [{"calendar_id": "cal456", "label": "work"}]
 
-    def mock_request(path):
+    def mock_request(path, account="default"):
         return {
             "items": [
                 {"id": "evt789", "summary": "Meeting", "start": {"dateTime": "2029-04-13T10:00:00Z"}, "attendees": []}

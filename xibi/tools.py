@@ -39,6 +39,8 @@ WRITE_TOOLS: set[str] = {
     "cancel_reminder",
     "delete_reminder",
     "spawn_subagent",
+    "connect_account",
+    "disconnect_account",
 }
 
 # Tier declarations for known tools.
@@ -72,6 +74,10 @@ TOOL_TIERS: dict[str, PermissionTier] = {
     "delete_reminder": PermissionTier.RED,
     # Yellow — subagent dispatch (operator-gated, can cost $1+, takes up to 10min)
     "spawn_subagent": PermissionTier.YELLOW,
+    # Accounts skill (multi-account OAuth credential layer)
+    "list_accounts": PermissionTier.GREEN,
+    "connect_account": PermissionTier.YELLOW,
+    "disconnect_account": PermissionTier.YELLOW,
     # Red — sends, deletes, financial, first-time destructive
     "send_email": PermissionTier.RED,
     "reply_email": PermissionTier.RED,

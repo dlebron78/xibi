@@ -1,16 +1,45 @@
-"""
-add_event — Create a new event on Google Calendar.
-Tagged irreversible in manifest — confirmation gate fires automatically.
+"""add_event — Create a new event on Google Calendar.
+
+Tagged irreversible in the manifest — the framework's confirmation gate
+fires automatically.
+
+Calendar routing is *deterministic*, never inferred:
+  1. If the caller passes ``calendar_id`` and it resolves to a configured
+     label, write there.
+  2. If omitted, fall back to ``XIBI_DEFAULT_CALENDAR_LABEL`` (typically
+     ``personal``); if that label isn't configured, fall back to the first
+     configured calendar AND log a WARNING so the misconfiguration is visible.
+  3. If the caller passed a label that doesn't exist among configured
+     calendars, return a structured ``ambiguous_calendar`` error rather
+     than guessing — the LLM must surface to the user and re-issue with
+     an explicit, valid label.
 """
 
+import logging
+import os
 from datetime import timedelta
 
 try:
-    from _google_auth import gcal_request, load_calendar_config, resolve_calendar_id
+    from _google_auth import gcal_request, load_calendar_config
 except ImportError:
-    from ._google_auth import gcal_request, load_calendar_config, resolve_calendar_id
+    from ._google_auth import gcal_request, load_calendar_config
 
 from xibi.utils.time import parse_semantic_datetime
+
+logger = logging.getLogger(__name__)
+
+
+def _pick_default(config: list[dict]) -> dict:
+    """Resolve the configured default calendar entry. Logs WARNING on misconfig."""
+    requested = os.environ.get("XIBI_DEFAULT_CALENDAR_LABEL", "").strip()
+    if requested:
+        for cal in config:
+            if cal["label"].lower() == requested.lower():
+                return cal
+        fallback = config[0]
+        logger.warning(f"xibi_default_calendar_label_unknown label={requested} falling_back_to={fallback['label']}")
+        return fallback
+    return config[0]
 
 
 def run(params: dict) -> dict:
@@ -22,14 +51,12 @@ def run(params: dict) -> dict:
     timezone = params.get("timezone", "America/New_York")
     description = params.get("description", "")
 
-    # Parse start time
     try:
         start_parsed = parse_semantic_datetime(start_dt_raw, timezone)
         start_dt = start_parsed.isoformat()
     except ValueError as e:
         return {"status": "error", "message": f"Could not parse start_datetime '{start_dt_raw}': {str(e)}"}
 
-    # Calculate end time using duration_mins (default 60)
     try:
         duration_mins = int(params.get("duration_mins", 60))
     except (ValueError, TypeError):
@@ -44,16 +71,36 @@ def run(params: dict) -> dict:
         "end": {"dateTime": end_dt, "timeZone": timezone},
     }
 
-    # Resolve calendar ID from label or use default
-    calendar_label = params.get("calendar_id")
-    if not calendar_label:
-        config = load_calendar_config()
-        calendar_label = config[0]["label"]
+    config = load_calendar_config()
+    requested = (params.get("calendar_id") or "").strip()
 
-    calendar_id = resolve_calendar_id(calendar_label)
+    if requested:
+        # Match against configured labels first, then raw IDs.
+        match = None
+        for cal in config:
+            if cal["label"].lower() == requested.lower() or cal["calendar_id"] == requested:
+                match = cal
+                break
+        if match is None:
+            return {
+                "status": "error",
+                "error_category": "ambiguous_calendar",
+                "message": (
+                    f"No calendar matches '{requested}'. Please specify which one (e.g. 'add to my afya calendar')."
+                ),
+                "available_labels": [c["label"] for c in config],
+            }
+        target = match
+    else:
+        target = _pick_default(config)
 
     try:
-        resp = gcal_request(f"/calendars/{calendar_id}/events", method="POST", body=event_body)
+        resp = gcal_request(
+            f"/calendars/{target['calendar_id']}/events",
+            method="POST",
+            body=event_body,
+            account=target.get("account", "default"),
+        )
     except RuntimeError as e:
         return {"status": "error", "message": str(e)}
 
@@ -62,4 +109,6 @@ def run(params: dict) -> dict:
         "message": f"Event created: '{title}' on {start_dt}.",
         "event_id": resp.get("id", ""),
         "html_link": resp.get("htmlLink", ""),
+        "account": target.get("account", "default"),
+        "label": target["label"],
     }

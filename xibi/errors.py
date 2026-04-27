@@ -16,6 +16,7 @@ class ErrorCategory(str, Enum):
     PRECONDITION_MISSING = (
         "precondition_missing"  # Required prior step not satisfied (e.g. send_email without confirmed draft)
     )
+    AMBIGUOUS_CALENDAR = "ambiguous_calendar"  # add_event called without a label that resolves uniquely
     UNKNOWN = "unknown"  # Catch-all
 
 

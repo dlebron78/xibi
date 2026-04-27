@@ -264,8 +264,12 @@ def _gather_review_context(db_path: Path) -> str:
         for e in upcoming:
             title = xml.sax.saxutils.escape(e["title"] or "")
             tags = xml.sax.saxutils.escape(", ".join(e.get("event_tags", [])))
+            # Provenance prefix: title carries [calendar_label] so the
+            # reviewer LLM sees which account the event belongs to.
+            cal_label = xml.sax.saxutils.escape(e.get("calendar_label") or "default")
             cal_xml.append(
-                f'  <event title="{title}" start="{e["start"]}" recurring="{e["recurring"]}" minutes_until="{e.get("minutes_until")}">'
+                f'  <event title="[{cal_label}] {title}" start="{e["start"]}" '
+                f'recurring="{e["recurring"]}" minutes_until="{e.get("minutes_until")}">'
             )
             cal_xml.append(f"    <tags>{tags}</tags>")
             cal_xml.append("  </event>")

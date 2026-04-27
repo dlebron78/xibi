@@ -1,5 +1,7 @@
-"""
-find_event — Search Google Calendar events by keyword across multiple calendars.
+"""find_event — Search Google Calendar events by keyword across multiple accounts.
+
+Defaults to searching ALL configured calendars when no calendar is specified;
+each result carries per-event ``account`` and ``label`` provenance.
 """
 
 import urllib.parse
@@ -10,7 +12,6 @@ try:
         format_date_label,
         format_event_time,
         gcal_request,
-        get_calendar_label,
         load_calendar_config,
     )
 except ImportError:
@@ -18,9 +19,30 @@ except ImportError:
         format_date_label,
         format_event_time,
         gcal_request,
-        get_calendar_label,
         load_calendar_config,
     )
+
+
+def _resolve_targets(params: dict, config: list[dict]) -> list[dict]:
+    plural = params.get("calendar_ids")
+    singular = params.get("calendar_id")
+    if plural:
+        wanted = list(plural)
+    elif singular:
+        wanted = [singular]
+    else:
+        return list(config)
+
+    by_label = {c["label"].lower(): c for c in config}
+    by_id = {c["calendar_id"]: c for c in config}
+    targets: list[dict] = []
+    for item in wanted:
+        match = by_label.get(str(item).lower()) or by_id.get(str(item))
+        if match:
+            targets.append(match)
+        else:
+            targets.append({"label": str(item), "account": "default", "calendar_id": str(item)})
+    return targets
 
 
 def run(params: dict) -> dict:
@@ -37,26 +59,26 @@ def run(params: dict) -> dict:
     time_max = urllib.parse.quote((now + timedelta(days=days)).isoformat())
 
     config = load_calendar_config()
-    default_ids = [c["calendar_id"] for c in config]
-    calendar_ids = params.get("calendar_ids", default_ids)
+    targets = _resolve_targets(params, config)
 
-    all_events = []
-    errors = []
+    all_events: list[dict] = []
+    partial_errors: list[dict] = []
 
-    for cal_id in calendar_ids:
+    for tgt in targets:
+        cal_id = tgt["calendar_id"]
+        account = tgt.get("account", "default")
+        label = tgt.get("label", cal_id)
         cal_id_encoded = urllib.parse.quote(cal_id, safe="")
         try:
             data = gcal_request(
                 f"/calendars/{cal_id_encoded}/events"
                 f"?q={q_encoded}&timeMin={time_min}&timeMax={time_max}"
-                f"&maxResults=10&singleEvents=true&orderBy=startTime"
+                f"&maxResults=10&singleEvents=true&orderBy=startTime",
+                account=account,
             )
         except RuntimeError as e:
-            errors.append(f"{cal_id}: {e}")
+            partial_errors.append({"label": label, "account": account, "error": str(e)})
             continue
-
-        # Map calendar IDs to readable names via config
-        cal_name = get_calendar_label(cal_id)
 
         for item in data.get("items", []):
             start = item.get("start", {})
@@ -70,7 +92,9 @@ def run(params: dict) -> dict:
                     "when": format_date_label(start_str, now),
                     "start_time": format_event_time(start_str),
                     "end_time": format_event_time(end_str),
-                    "calendar": cal_name,
+                    "account": account,
+                    "label": label,
+                    "calendar_id": cal_id,
                     "location": item.get("location", ""),
                     "description": (item.get("description", "") or "")[:200],
                     "id": item.get("id", ""),
@@ -78,23 +102,25 @@ def run(params: dict) -> dict:
                 }
             )
 
-    # Dedup by event ID
     seen = set()
-    unique_events = []
+    unique_events: list[dict] = []
     for ev in all_events:
         if ev["id"] not in seen:
             seen.add(ev["id"])
             unique_events.append(ev)
 
-    # Sort merged results by start time
     unique_events.sort(key=lambda x: x.get("_start_iso", ""))
-
     for ev in unique_events:
         ev.pop("_start_iso", None)
 
-    result = {"status": "success", "as_of": today_str, "count": len(unique_events), "events": unique_events}
-    if errors:
-        result["calendar_errors"] = errors
+    result: dict = {
+        "status": "success",
+        "as_of": today_str,
+        "count": len(unique_events),
+        "events": unique_events,
+    }
+    if partial_errors:
+        result["partial_errors"] = partial_errors
     if not unique_events:
         result["message"] = f"No events found matching '{query}' in the next {days} day(s)."
 

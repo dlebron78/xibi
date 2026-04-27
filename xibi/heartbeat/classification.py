@@ -185,7 +185,10 @@ def build_classification_prompt(signal: dict, context: SignalContext) -> str:
         loc_str = f" — {loc}" if loc else ""
         time_str = f"in {mins} min" if mins is not None else "all day"
         tag_str = f" [{', '.join(tags)}]" if tags else ""
-        cal_lines.append(f"📅 {title}{recurring} — {time_str}{loc_str}{tag_str}")
+        # Provenance prefix: every event line carries [calendar_label] so the
+        # agent always knows which account the event came from.
+        cal_label = event.get("calendar_label") or "default"
+        cal_lines.append(f"📅 [{cal_label}] {title}{recurring} — {time_str}{loc_str}{tag_str}")
 
     if cal_lines:
         sections.append("CALENDAR CONTEXT:\n" + "\n".join(cal_lines))

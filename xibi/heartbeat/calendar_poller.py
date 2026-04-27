@@ -51,6 +51,7 @@ def poll_calendar_signals(
     for cal in config:
         cal_id = cal["calendar_id"]
         label = cal["label"]
+        account = cal.get("account", "default")
 
         try:
             # Fetch events
@@ -61,10 +62,11 @@ def poll_calendar_signals(
                 f"/calendars/{cal_id_encoded}/events"
                 f"?timeMin={urllib.parse.quote(time_min)}"
                 f"&timeMax={urllib.parse.quote(time_max)}"
-                f"&singleEvents=true&orderBy=startTime"
+                f"&singleEvents=true&orderBy=startTime",
+                account=account,
             )
         except Exception as e:
-            logger.warning(f"Failed to fetch events for {label} ({cal_id}): {e}")
+            logger.warning(f"Failed to fetch events for {label} ({cal_id}, account={account}): {e}")
             continue
 
         for event in data.get("items", []):

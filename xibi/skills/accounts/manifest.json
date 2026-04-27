@@ -1,0 +1,65 @@
+{
+  "name": "accounts",
+  "description": "Manage OAuth-authenticated third-party accounts (e.g. Google Calendar). Add a new account by emitting a one-tap consent URL via Telegram; list and disconnect existing accounts. The agent does NOT see refresh tokens or client secrets — only nicknames and provider names.",
+  "tools": [
+    {
+      "name": "connect_account",
+      "output_type": "raw",
+      "description": "Start an OAuth flow for a new account. Returns a one-time consent URL the user taps to authorize Xibi. The credential is persisted only after the user completes the consent screen — this tool does NOT itself save any token. YELLOW tier: creates a transient pending_state row.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "nickname": {
+            "type": "string",
+            "description": "Short name the user picks (e.g. 'afya', 'work', 'personal'). Must be unique per provider."
+          },
+          "provider": {
+            "type": "string",
+            "description": "Provider id. v1: 'google_calendar' (default).",
+            "default": "google_calendar"
+          }
+        },
+        "required": ["nickname"]
+      }
+    },
+    {
+      "name": "list_accounts",
+      "output_type": "raw",
+      "description": "List configured OAuth accounts for this instance. GREEN tier — read-only.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "description": "Optional filter on provider id."
+          }
+        }
+      }
+    },
+    {
+      "name": "disconnect_account",
+      "output_type": "raw",
+      "description": "Remove an OAuth account: deletes the metadata row, deletes the encrypted secret, and (best-effort) revokes the token at the provider. YELLOW tier — destructive but reversible (user can re-connect).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "nickname": {
+            "type": "string",
+            "description": "Nickname of the account to remove."
+          },
+          "provider": {
+            "type": "string",
+            "description": "Provider id. Defaults to 'google_calendar'.",
+            "default": "google_calendar"
+          },
+          "revoke_at_provider": {
+            "type": "boolean",
+            "description": "If true (default), also POST to provider's revoke endpoint.",
+            "default": true
+          }
+        },
+        "required": ["nickname"]
+      }
+    }
+  ]
+}

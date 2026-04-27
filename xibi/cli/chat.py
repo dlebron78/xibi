@@ -199,6 +199,41 @@ def main() -> None:
             print("Goodbye!")
             break
 
+        # /connect_calendar | /list_accounts | /disconnect_account
+        if (
+            query.startswith("/connect_calendar")
+            or query.startswith("/list_accounts")
+            or query.startswith("/disconnect_account")
+        ):
+            parts = query.split()
+            cmd = parts[0]
+            try:
+                if cmd == "/connect_calendar":
+                    if len(parts) < 2:
+                        print("Usage: /connect_calendar <nickname>")
+                    else:
+                        out = executor.execute("connect_account", {"nickname": parts[1]})
+                        print(out.get("message") or json.dumps(out))
+                elif cmd == "/list_accounts":
+                    params: dict = {"provider": parts[1]} if len(parts) >= 2 else {}
+                    out = executor.execute("list_accounts", params)
+                    accounts = out.get("accounts") or []
+                    if not accounts:
+                        print("No connected accounts.")
+                    else:
+                        for a in accounts:
+                            print(f"  • {a['provider']}: {a['nickname']} [{a['status']}]")
+                elif cmd == "/disconnect_account":
+                    if len(parts) < 2:
+                        print("Usage: /disconnect_account <nickname>")
+                    else:
+                        out = executor.execute("disconnect_account", {"nickname": parts[1]})
+                        print(out.get("message") or json.dumps(out))
+            except Exception as e:
+                print(f"Command failed: {e}")
+            print()
+            continue
+
         if query.startswith("/trace "):
             trace_id = query.split(maxsplit=1)[1].strip()
 

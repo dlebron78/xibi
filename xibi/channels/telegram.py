@@ -470,6 +470,21 @@ class TelegramAdapter:
             if response == "CHECKLIST_HANDLED":
                 return
 
+            # /connect_calendar | /list_accounts | /disconnect_account
+            #
+            # Routed through self.executor so the tier system, audit log, and
+            # span emission run exactly as they would for an LLM-issued call.
+            # User-typed slash commands ARE the explicit user request the
+            # YELLOW tier expects (no second confirmation gate needed).
+            stripped = user_text.strip()
+            if (
+                stripped.startswith("/connect_calendar")
+                or stripped.startswith("/list_accounts")
+                or stripped.startswith("/disconnect_account")
+            ):
+                self._handle_account_command(chat_id, stripped)
+                return
+
             # /resolve command: manual thread resolution
             if user_text.strip().startswith("/resolve"):
                 parts = user_text.strip().split(maxsplit=1)
@@ -800,6 +815,53 @@ class TelegramAdapter:
             "editMessageText",
             {"chat_id": chat_id, "message_id": message_id, "text": text},
         )
+
+    def _handle_account_command(self, chat_id: int, text: str) -> None:
+        """Dispatch /connect_calendar, /list_accounts, /disconnect_account.
+
+        Routes through self.executor so the tier system + audit log fire
+        identically to LLM-issued tool calls. The user typing the slash
+        command IS the explicit consent the YELLOW tier wants.
+        """
+        parts = text.split()
+        cmd = parts[0]
+        try:
+            if cmd == "/connect_calendar":
+                if len(parts) < 2:
+                    self.send_message(chat_id, "Usage: /connect_calendar <nickname>")
+                    return
+                result = self.executor.execute("connect_account", {"nickname": parts[1]})
+                if result.get("status") == "success":
+                    self.send_message(chat_id, str(result.get("message", "")))
+                else:
+                    self.send_message(chat_id, f"⚠️ {result.get('message', 'connect_account failed')}")
+            elif cmd == "/list_accounts":
+                provider = parts[1] if len(parts) >= 2 else None
+                params: dict = {}
+                if provider:
+                    params["provider"] = provider
+                result = self.executor.execute("list_accounts", params)
+                accounts = result.get("accounts", [])
+                if not accounts:
+                    self.send_message(chat_id, "No connected accounts.")
+                    return
+                lines = ["Connected accounts:"]
+                for a in accounts:
+                    suffix = f" — last used {a['last_used_at']}" if a.get("last_used_at") else ""
+                    email = f" ({a['email_alias']})" if a.get("email_alias") else ""
+                    lines.append(f"  • {a['provider']}: {a['nickname']}{email} [{a['status']}]{suffix}")
+                self.send_message(chat_id, "\n".join(lines))
+            elif cmd == "/disconnect_account":
+                if len(parts) < 2:
+                    self.send_message(chat_id, "Usage: /disconnect_account <nickname>")
+                    return
+                result = self.executor.execute("disconnect_account", {"nickname": parts[1]})
+                self.send_message(chat_id, str(result.get("message", "disconnect_account: no message")))
+            else:
+                self.send_message(chat_id, f"Unknown command: {cmd}")
+        except Exception as e:
+            logger.warning(f"account_command_failed cmd={cmd} err={type(e).__name__}")
+            self.send_message(chat_id, f"⚠️ Command failed: {e}")
 
     def _strip_buttons(self, chat_id: int, message_id: int) -> None:
         self._api_call(
