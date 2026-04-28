@@ -6,7 +6,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 41  # increment when adding new migrations
+SCHEMA_VERSION = 42  # increment when adding new migrations
 
 
 def _safe_add_column(
@@ -113,6 +113,7 @@ class SchemaManager:
             (39, "oauth: oauth_accounts + oauth_pending_states tables", self._migration_39),
             (40, "signals: add received_via_account + received_via_email_alias columns", self._migration_40),
             (41, "contacts: add account_origin + seen_via_accounts columns", self._migration_41),
+            (42, "signals: add extracted_facts (open-shape JSON) + parent_ref_id (digest fan-out)", self._migration_42),
         ]
 
         for version, description, func in migrations:
@@ -1003,6 +1004,25 @@ class SchemaManager:
             ("seen_via_accounts", "TEXT"),
         ]:
             _safe_add_column(conn, "contacts", col_name, col_type)
+
+    def _migration_42(self, conn: sqlite3.Connection) -> None:
+        """Signals: open-shape Tier 2 fact extraction (step-112).
+
+        ``extracted_facts`` stores model-named structured facts as JSON. No
+        CHECK constraint by design — type taxonomy is emergent, harmonized
+        periodically by the review cycle (no coded intelligence).
+
+        ``parent_ref_id`` carries the digest parent's ref_id on child rows
+        produced by Tier 2 fan-out, so multi-item emails (job alerts,
+        multi-segment itineraries) become queryable as parent + N children
+        without parsing JSON.
+        """
+        for col_name, col_type in [
+            ("extracted_facts", "TEXT"),
+            ("parent_ref_id", "TEXT"),
+        ]:
+            _safe_add_column(conn, "signals", col_name, col_type)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_signals_parent_ref_id ON signals(parent_ref_id)")
 
 
 def migrate(db_path: Path) -> list[int]:

@@ -298,9 +298,12 @@ class RuleEngine:
         deep_link_url: str | None = None,
         received_via_account: str | None = None,
         received_via_email_alias: str | None = None,
+        extracted_facts: dict | None = None,
+        parent_ref_id: str | None = None,
     ) -> None:
         try:
             preview = (content_preview[:277] + "...") if len(content_preview) > 280 else content_preview
+            extracted_facts_json = json.dumps(extracted_facts) if extracted_facts is not None else None
             with open_db(self.db_path) as conn:
                 if ref_id:
                     # Match xibi.signal_intelligence.is_duplicate_signal: filter
@@ -318,8 +321,8 @@ class RuleEngine:
                 with conn:
                     conn.execute(
                         """
-                        INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id, classification_reasoning, deep_link_url, received_via_account, received_via_email_alias)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id, classification_reasoning, deep_link_url, received_via_account, received_via_email_alias, extracted_facts, parent_ref_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                         (
                             source,
@@ -338,6 +341,8 @@ class RuleEngine:
                             deep_link_url,
                             received_via_account,
                             received_via_email_alias,
+                            extracted_facts_json,
+                            parent_ref_id,
                         ),
                     )
         except Exception as e:
@@ -397,6 +402,8 @@ class RuleEngine:
         metadata: dict | None = None,
         received_via_account: str | None = None,
         received_via_email_alias: str | None = None,
+        extracted_facts: dict | None = None,
+        parent_ref_id: str | None = None,
     ) -> None:
         try:
             preview = (content_preview[:277] + "...") if len(content_preview) > 280 else content_preview
@@ -413,10 +420,11 @@ class RuleEngine:
                 if cursor.fetchone():
                     return
             metadata_json = json.dumps(metadata) if metadata is not None else None
+            extracted_facts_json = json.dumps(extracted_facts) if extracted_facts is not None else None
             conn.execute(
                 """
-                INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id, classification_reasoning, deep_link_url, metadata, received_via_account, received_via_email_alias)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id, classification_reasoning, deep_link_url, metadata, received_via_account, received_via_email_alias, extracted_facts, parent_ref_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     source,
@@ -436,6 +444,8 @@ class RuleEngine:
                     metadata_json,
                     received_via_account,
                     received_via_email_alias,
+                    extracted_facts_json,
+                    parent_ref_id,
                 ),
             )
         except Exception as e:

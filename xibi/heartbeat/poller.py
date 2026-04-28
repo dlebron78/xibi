@@ -820,6 +820,12 @@ class HeartbeatPoller:
                     received_via_account = getattr(ctx, "received_via_account", None) if ctx else None
                     received_via_email_alias = getattr(ctx, "received_via_email_alias", None) if ctx else None
 
+                    extracted_facts = summary_data.get("extracted_facts")
+
+                    # Step-112: write the parent signal envelope with its
+                    # facts (if any). Fan-out for digests happens after the
+                    # parent write so the parent is durable even if a
+                    # child write hits an unexpected error.
                     self.rules.log_signal_with_conn(
                         conn,
                         source=sig["source"],
@@ -839,7 +845,21 @@ class HeartbeatPoller:
                         metadata=sig.get("metadata"),
                         received_via_account=received_via_account,
                         received_via_email_alias=received_via_email_alias,
+                        extracted_facts=extracted_facts,
                     )
+
+                    # Step-112: Tier 2 observability + digest fan-out.
+                    if extracted_facts:
+                        self._tier2_observe_and_fanout(
+                            conn=conn,
+                            sig=sig,
+                            extracted_facts=extracted_facts,
+                            summary_data=summary_data,
+                            trust=trust,
+                            deep_link_url=deep_link_url,
+                            received_via_account=received_via_account,
+                            received_via_email_alias=received_via_email_alias,
+                        )
 
                     if not item["is_new"] or item["verdict"] == "DEFER":
                         continue
@@ -899,6 +919,105 @@ class HeartbeatPoller:
                                 self._broadcast(alert_msg)
         except Exception as e:
             logger.warning(f"Error in process_email_signals write phase: {e}", exc_info=True)
+
+    def _tier2_observe_and_fanout(
+        self,
+        conn: sqlite3.Connection,
+        sig: dict,
+        extracted_facts: dict,
+        summary_data: dict,
+        trust: Any,
+        deep_link_url: str | None,
+        received_via_account: str | None,
+        received_via_email_alias: str | None,
+    ) -> None:
+        """Emit Tier 2 span + log + per-item child rows for digest fan-out.
+
+        Source-agnostic — same code handles email digests today and
+        future Slack-DM digests, multi-segment travel itineraries, USPS
+        multi-package previews, etc., once those Tier 2 extractors register.
+        """
+        items = extracted_facts.get("digest_items") or []
+        is_digest_parent = bool(extracted_facts.get("is_digest_parent")) and len(items) > 0
+
+        # span: extraction.tier2 — fires for every email that produced facts
+        if self.tracer is not None:
+            try:
+                self.tracer.span(
+                    operation="extraction.tier2",
+                    attributes={
+                        "email_id": str(sig.get("ref_id") or ""),
+                        "model": str(summary_data.get("model") or ""),
+                        "duration_ms": int(summary_data.get("duration_ms") or 0),
+                        "extracted_type": str(extracted_facts.get("type") or ""),
+                        "is_digest_parent": is_digest_parent,
+                        "digest_item_count": len(items) if is_digest_parent else 0,
+                    },
+                    duration_ms=int(summary_data.get("duration_ms") or 0),
+                    component="tier2",
+                )
+            except Exception as exc:
+                logger.warning(f"tier2 span emit failed: {exc}")
+
+        logger.info(
+            "tier2 ok: email_id=%s type=%s facts_keys=%d digest_items=%d",
+            sig.get("ref_id"),
+            extracted_facts.get("type"),
+            len(extracted_facts),
+            len(items) if is_digest_parent else 0,
+        )
+
+        if not is_digest_parent:
+            return
+
+        # Fan-out: write one child signal per item with synthetic per-item
+        # ref_id (`<parent_ref_id>:<index>`) so the existing 72h
+        # (ref_source, ref_id) dedup keeps re-runs idempotent.
+        parent_ref_id = str(sig.get("ref_id") or "")
+        parent_ref_source = sig.get("ref_source")  # condition #10: child inherits parent's ref_source
+        for idx, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            child_ref_id = f"{parent_ref_id}:{idx}"
+            item_fields = item.get("fields") if isinstance(item.get("fields"), dict) else {}
+            # Construct child preview from per-item fields when available.
+            preview_bits: list[str] = []
+            for key in ("title", "company", "location", "url", "comp_range", "match_reason"):
+                val = item_fields.get(key) if isinstance(item_fields, dict) else None
+                if val:
+                    preview_bits.append(f"{key}={val}")
+            child_preview = " | ".join(preview_bits) or str(item)[:280]
+
+            try:
+                self.rules.log_signal_with_conn(
+                    conn,
+                    source=sig["source"],
+                    topic_hint=str(item.get("type") or extracted_facts.get("type") or ""),
+                    entity_text=sig.get("entity_text"),
+                    entity_type=sig.get("entity_type"),
+                    content_preview=child_preview,
+                    ref_id=child_ref_id,
+                    ref_source=parent_ref_source,
+                    summary=None,
+                    summary_model=summary_data.get("model"),
+                    summary_ms=None,
+                    sender_trust=trust.tier,
+                    sender_contact_id=trust.contact_id,
+                    classification_reasoning=None,
+                    deep_link_url=deep_link_url,
+                    metadata=None,
+                    received_via_account=received_via_account,
+                    received_via_email_alias=received_via_email_alias,
+                    extracted_facts=item,
+                    parent_ref_id=parent_ref_id,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "tier2 fan-out write failed: parent=%s child_idx=%d err=%s",
+                    parent_ref_id,
+                    idx,
+                    exc,
+                )
 
     def digest_tick(self, force: bool = False) -> None:
         if not self._enable_legacy_digest and not force:

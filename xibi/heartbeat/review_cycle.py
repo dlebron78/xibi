@@ -127,13 +127,24 @@ async def run_review_cycle(db_path: Path, config: dict) -> ReviewOutput:
     llm = get_model(specialty="text", effort="review", config=cast(Config, config))
     full_prompt = f"{REVIEW_CYCLE_PROMPT}\n\nCONTEXT:\n{context_str}"
 
+    output: ReviewOutput
     try:
         response = llm.generate(full_prompt)
         output = _parse_review_response(response)
-        return output
     except Exception as e:
         logger.error(f"Review cycle LLM call failed: {e}")
-        return ReviewOutput(reasoning=f"Error: {e}")
+        output = ReviewOutput(reasoning=f"Error: {e}")
+
+    # Step-112: post-review type-drift consolidation across all sources.
+    # Gated by env var so a misbehaving harmonizer can be disabled without
+    # a code revert. Failures here never block review output.
+    if os.environ.get("XIBI_TIER2_HARMONIZE_ENABLED", "1") != "0":
+        try:
+            await _harmonize_extracted_fact_types(db_path, config, llm)
+        except Exception as exc:
+            logger.error(f"tier2 harmonize failed: {exc}", exc_info=True)
+
+    return output
 
 
 def _accounts_block(db_path: Path) -> str:
@@ -207,6 +218,14 @@ def _gather_review_context(db_path: Path) -> str:
                 attrs.append(f'received_via_account="{xml.sax.saxutils.escape(str(received_via_account))}"')
             signals_xml.append(f"  <signal {' '.join(attrs)}>")
             signals_xml.append(f"    <content>{content}</content>")
+            # Step-112: surface Tier 2 facts uniformly across sources.
+            # The reviewer LLM reads these alongside the preview snippet
+            # so consolidation, reclassification, and message decisions
+            # see the structured truth, not just the summary.
+            facts_raw = r["extracted_facts"] if "extracted_facts" in row_keys else None
+            if facts_raw:
+                facts_escaped = xml.sax.saxutils.escape(str(facts_raw))
+                signals_xml.append(f"    <extracted_facts>{facts_escaped}</extracted_facts>")
             signals_xml.append("  </signal>")
         signals_xml.append("</signals>")
         sections.append("\n".join(signals_xml))
@@ -386,6 +405,198 @@ def _parse_review_response(response: str) -> ReviewOutput:
         output.message = None
 
     return output
+
+
+_HARMONIZE_PROMPT = """These are emergent type labels from an open-shape fact extractor over the past 30 days, with row counts:
+
+{type_list}
+
+Identify clusters where labels refer to the SAME kind of fact (e.g. "flight_booking" / "flight" / "trip"). Pick a canonical name per cluster — prefer the most descriptive label or the highest-count label, your call. Do NOT merge labels that mean different kinds (e.g. "interview" and "appointment" are different).
+
+Return strict JSON only, no prose, no fences:
+{{
+  "clusters": [
+    {{"canonical": "<canonical name>", "variants": ["<variant1>", "<variant2>", ...]}}
+  ]
+}}
+
+If no clusters exist (every label is its own kind), return {{"clusters": []}}.
+"""
+
+
+async def _harmonize_extracted_fact_types(
+    db_path: Path,
+    config: dict,
+    llm: object,
+) -> dict:
+    """Step-112: post-review type-drift consolidation across ALL sources.
+
+    Source-agnostic: queries the type field across every signal source —
+    no ``WHERE source='email'`` filter — so once non-email Tier 2
+    extractors register, their facts harmonize alongside email's
+    automatically.
+
+    Below-threshold (<5 distinct types or <50 rows) is a no-op so Opus
+    isn't asked to consolidate a tiny sample.
+
+    Returns ``{types_examined, clusters_merged, rows_rewritten}``.
+    """
+    import time
+
+    start_ms = int(time.time() * 1000)
+
+    with open_db(db_path) as conn:
+        cursor = conn.execute(
+            """
+            SELECT json_extract(extracted_facts, '$.type') AS t, COUNT(*) AS n
+            FROM signals
+            WHERE extracted_facts IS NOT NULL
+              AND timestamp > datetime('now', '-30 days')
+              AND json_extract(extracted_facts, '$.type') IS NOT NULL
+            GROUP BY t
+            ORDER BY n DESC
+            """
+        )
+        type_counts = [(row[0], row[1]) for row in cursor.fetchall() if row[0]]
+        total_rows = sum(n for _, n in type_counts)
+
+    types_examined = len(type_counts)
+    if types_examined < 5 or total_rows < 50:
+        logger.info(
+            "tier2 harmonize: examined=%d merged=0 rewrote=0 (below threshold: types=%d rows=%d)",
+            types_examined,
+            types_examined,
+            total_rows,
+        )
+        return {"types_examined": types_examined, "clusters_merged": 0, "rows_rewritten": 0}
+
+    type_list = "\n".join(f'  "{t}" — {n} rows' for t, n in type_counts)
+    prompt = _HARMONIZE_PROMPT.format(type_list=type_list)
+
+    try:
+        response = llm.generate(prompt)  # type: ignore[attr-defined]
+    except Exception as exc:
+        logger.error(f"tier2 harmonize: LLM call failed: {exc}")
+        return {"types_examined": types_examined, "clusters_merged": 0, "rows_rewritten": 0}
+
+    clusters = _parse_harmonize_response(response)
+    if not clusters:
+        logger.info(
+            "tier2 harmonize: examined=%d merged=0 rewrote=0",
+            types_examined,
+        )
+        return {"types_examined": types_examined, "clusters_merged": 0, "rows_rewritten": 0}
+
+    rows_rewritten = 0
+    with open_db(db_path) as conn, conn:
+        for cluster in clusters:
+            canonical = cluster.get("canonical")
+            variants = cluster.get("variants") or []
+            if not isinstance(canonical, str) or not isinstance(variants, list):
+                continue
+            for variant in variants:
+                if not isinstance(variant, str) or variant == canonical:
+                    continue
+                cursor = conn.execute(
+                    """
+                    UPDATE signals
+                    SET extracted_facts = json_set(extracted_facts, '$.type', ?)
+                    WHERE json_extract(extracted_facts, '$.type') = ?
+                    """,
+                    (canonical, variant),
+                )
+                rows_rewritten += cursor.rowcount or 0
+
+    if rows_rewritten > 100:
+        logger.warning(
+            "tier2 harmonize: large rewrite count=%d; verify cluster correctness",
+            rows_rewritten,
+        )
+
+    logger.info(
+        "tier2 harmonize: examined=%d merged=%d rewrote=%d",
+        types_examined,
+        len(clusters),
+        rows_rewritten,
+    )
+
+    duration_ms = int(time.time() * 1000) - start_ms
+
+    # Span: extraction.tier2_harmonize
+    try:
+        from xibi.tracing import Tracer
+
+        tracer = Tracer(db_path)
+        tracer.span(
+            operation="extraction.tier2_harmonize",
+            attributes={
+                "types_examined": types_examined,
+                "clusters_merged": len(clusters),
+                "rows_rewritten": rows_rewritten,
+                "duration_ms": duration_ms,
+            },
+            duration_ms=duration_ms,
+            component="tier2",
+        )
+    except Exception as exc:
+        logger.warning(f"tier2 harmonize span emit failed: {exc}")
+
+    # inference_events: op=tier2_harmonize, attributes captured in operation.
+    try:
+        with open_db(db_path) as conn, conn:
+            conn.execute(
+                """
+                INSERT INTO inference_events
+                    (role, provider, model, operation, prompt_tokens, response_tokens, duration_ms)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "review",
+                    "internal",
+                    "harmonize",
+                    "tier2_harmonize",
+                    0,
+                    0,
+                    duration_ms,
+                ),
+            )
+    except Exception as exc:
+        logger.warning(f"tier2 harmonize inference_event write failed: {exc}")
+
+    return {
+        "types_examined": types_examined,
+        "clusters_merged": len(clusters),
+        "rows_rewritten": rows_rewritten,
+    }
+
+
+def _parse_harmonize_response(raw: str) -> list[dict]:
+    """Parse the harmonization LLM response into a clusters list.
+
+    Tolerates ```json fences and prose prefixes; returns [] on any parse
+    failure so the caller becomes a clean no-op rather than crashing.
+    """
+    import re
+
+    text = raw.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+        text = re.sub(r"\n?```\s*$", "", text).strip()
+
+    first = text.find("{")
+    last = text.rfind("}")
+    if first == -1 or last == -1:
+        return []
+    try:
+        envelope = json.loads(text[first : last + 1])
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(envelope, dict):
+        return []
+    clusters = envelope.get("clusters")
+    if not isinstance(clusters, list):
+        return []
+    return [c for c in clusters if isinstance(c, dict)]
 
 
 async def execute_review(
