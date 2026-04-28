@@ -28,8 +28,9 @@ from pathlib import Path
 
 from xibi.db import migrate as run_migrations
 from xibi.db import open_db
-from xibi.heartbeat.tier2_extractors import Tier2ExtractorRegistry
+from xibi.heartbeat.tier2_extractors import Tier2ExtractorRegistry, _emit_tier2_span
 from xibi.router import load_config
+from xibi.tracing import Tracer
 
 logger = logging.getLogger(__name__)
 
@@ -91,14 +92,37 @@ def _backfill_one(db_path: Path, signal_id: str, model: str, force: bool) -> int
         )
         return 4
 
+    import time
+
+    tracer = Tracer(db_path)
+    start_ms = int(time.time() * 1000)
     try:
         facts = extractor(signal, None, model)
     except Exception as exc:
         logger.error("tier2 skipped: extractor raised for signal_id=%s err=%s", signal_id, exc)
         return 5
 
+    duration_ms = int(time.time() * 1000) - start_ms
+
+    # Hotfix (post-step-112): emit `extraction.tier2` span on every CLI
+    # invocation — null-facts case included — so backfill activity is
+    # observable identically to the live tick path. ``source=backfill``
+    # attribute distinguishes ad-hoc replay from live ingest.
+    summary_data = {"model": model, "duration_ms": duration_ms}
+    _emit_tier2_span(
+        tracer=tracer,
+        sig=signal,
+        extracted_facts=facts,
+        summary_data=summary_data,
+        source_attr="backfill",
+    )
+
     if facts is None:
-        logger.warning("tier2 skipped: summary failed for signal_id=%s", signal_id)
+        logger.info(
+            "tier2 ok: signal_id=%s facts=null model=%s",
+            signal_id,
+            model,
+        )
         return 0
 
     facts_json = json.dumps(facts)

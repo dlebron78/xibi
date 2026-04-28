@@ -25,6 +25,7 @@ from xibi.heartbeat.sender_trust import (
     assess_sender_trust,
 )
 from xibi.heartbeat.source_poller import SourcePoller
+from xibi.heartbeat.tier2_extractors import _emit_tier2_span
 from xibi.observation import ObservationCycle
 from xibi.radiant import Radiant
 from xibi.router import get_model
@@ -848,8 +849,13 @@ class HeartbeatPoller:
                         extracted_facts=extracted_facts,
                     )
 
-                    # Step-112: Tier 2 observability + digest fan-out.
-                    if extracted_facts:
+                    # Step-112 + observability hotfix: emit the
+                    # `extraction.tier2` span unconditionally — null facts
+                    # from a marketing email is still a Tier 2 attempt and
+                    # the path needs to be observable. The helper handles
+                    # span emit, log line, and (only when there are digest
+                    # items) fan-out.
+                    if summary_data:
                         self._tier2_observe_and_fanout(
                             conn=conn,
                             sig=sig,
@@ -924,50 +930,59 @@ class HeartbeatPoller:
         self,
         conn: sqlite3.Connection,
         sig: dict,
-        extracted_facts: dict,
-        summary_data: dict,
-        trust: Any,
-        deep_link_url: str | None,
-        received_via_account: str | None,
-        received_via_email_alias: str | None,
+        extracted_facts: dict | None = None,
+        summary_data: dict | None = None,
+        trust: Any = None,
+        deep_link_url: str | None = None,
+        received_via_account: str | None = None,
+        received_via_email_alias: str | None = None,
     ) -> None:
         """Emit Tier 2 span + log + per-item child rows for digest fan-out.
 
         Source-agnostic — same code handles email digests today and
         future Slack-DM digests, multi-segment travel itineraries, USPS
         multi-package previews, etc., once those Tier 2 extractors register.
+
+        Hotfix (post-step-112): the span emits **unconditionally** for every
+        Tier 2 attempt, not just facts-produced runs. The spec promised
+        "extraction.tier2 span on every email that runs the extractor" —
+        when the model correctly returns null facts (marketing/FYI emails),
+        that's still a Tier 2 attempt and the path needs to be observable.
+        Span attributes carry ``facts_emitted`` so the consumer can
+        distinguish null-by-design from parse-failure.
         """
-        items = extracted_facts.get("digest_items") or []
-        is_digest_parent = bool(extracted_facts.get("is_digest_parent")) and len(items) > 0
+        summary_data = summary_data or {}
+        items = (extracted_facts or {}).get("digest_items") or []
+        is_digest_parent = bool((extracted_facts or {}).get("is_digest_parent")) and len(items) > 0
 
-        # span: extraction.tier2 — fires for every email that produced facts
-        if self.tracer is not None:
-            try:
-                self.tracer.span(
-                    operation="extraction.tier2",
-                    attributes={
-                        "email_id": str(sig.get("ref_id") or ""),
-                        "model": str(summary_data.get("model") or ""),
-                        "duration_ms": int(summary_data.get("duration_ms") or 0),
-                        "extracted_type": str(extracted_facts.get("type") or ""),
-                        "is_digest_parent": is_digest_parent,
-                        "digest_item_count": len(items) if is_digest_parent else 0,
-                    },
-                    duration_ms=int(summary_data.get("duration_ms") or 0),
-                    component="tier2",
-                )
-            except Exception as exc:
-                logger.warning(f"tier2 span emit failed: {exc}")
-
-        logger.info(
-            "tier2 ok: email_id=%s type=%s facts_keys=%d digest_items=%d",
-            sig.get("ref_id"),
-            extracted_facts.get("type"),
-            len(extracted_facts),
-            len(items) if is_digest_parent else 0,
+        # span: extraction.tier2 — fires for every Tier 2 attempt (incl.
+        # null-facts case). Reviewer-LLM consumers and operator dashboards
+        # need the path to be observable even when the model declines to
+        # emit facts.
+        _emit_tier2_span(
+            tracer=self.tracer,
+            sig=sig,
+            extracted_facts=extracted_facts,
+            summary_data=summary_data,
+            source_attr=None,
         )
 
-        if not is_digest_parent:
+        if extracted_facts is None:
+            logger.info(
+                "tier2 ok: email_id=%s facts=null model=%s",
+                sig.get("ref_id"),
+                summary_data.get("model"),
+            )
+        else:
+            logger.info(
+                "tier2 ok: email_id=%s type=%s facts_keys=%d digest_items=%d",
+                sig.get("ref_id"),
+                extracted_facts.get("type"),
+                len(extracted_facts),
+                len(items) if is_digest_parent else 0,
+            )
+
+        if not is_digest_parent or extracted_facts is None:
             return
 
         # Fan-out: write one child signal per item with synthetic per-item

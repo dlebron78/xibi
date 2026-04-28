@@ -63,9 +63,7 @@ def test_backfill_runs_registered_extractor_and_updates_facts(db_path: Path) -> 
         assert rc == 0
 
         with open_db(db_path) as conn:
-            row = conn.execute(
-                "SELECT extracted_facts FROM signals WHERE id = ?", (sid,)
-            ).fetchone()
+            row = conn.execute("SELECT extracted_facts FROM signals WHERE id = ?", (sid,)).fetchone()
         facts = json.loads(row[0])
         assert facts["type"] == "synthetic_event"
         assert facts["fields"]["id"] == "alpha-001"
@@ -93,9 +91,7 @@ def test_backfill_skips_existing_facts_without_force(db_path: Path) -> None:
         assert rc == 0
 
         with open_db(db_path) as conn:
-            row = conn.execute(
-                "SELECT extracted_facts FROM signals WHERE id = ?", (sid,)
-            ).fetchone()
+            row = conn.execute("SELECT extracted_facts FROM signals WHERE id = ?", (sid,)).fetchone()
         facts = json.loads(row[0])
         assert facts["type"] == "old_value"  # unchanged
     finally:
@@ -119,9 +115,7 @@ def test_backfill_force_overwrites_existing_facts(db_path: Path) -> None:
         assert rc == 0
 
         with open_db(db_path) as conn:
-            row = conn.execute(
-                "SELECT extracted_facts FROM signals WHERE id = ?", (sid,)
-            ).fetchone()
+            row = conn.execute("SELECT extracted_facts FROM signals WHERE id = ?", (sid,)).fetchone()
         facts = json.loads(row[0])
         assert facts["type"] == "new_value"
     finally:
@@ -174,9 +168,66 @@ def test_backfill_returns_zero_when_extractor_returns_none(db_path: Path) -> Non
         assert rc == 0
 
         with open_db(db_path) as conn:
-            row = conn.execute(
-                "SELECT extracted_facts FROM signals WHERE id = ?", (sid,)
-            ).fetchone()
+            row = conn.execute("SELECT extracted_facts FROM signals WHERE id = ?", (sid,)).fetchone()
         assert row[0] is None
     finally:
         Tier2ExtractorRegistry._registry.pop("test_backfill_none", None)
+
+
+# ---------------------------------------------------------------------------
+# Span emission — observability hotfix for step-112
+# ---------------------------------------------------------------------------
+
+
+def test_backfill_emits_extraction_tier2_span(db_path: Path) -> None:
+    """The CLI replay path emits an `extraction.tier2` span identical in
+    operation name to the live tick path, with `source=backfill`
+    attribute so dashboards can distinguish ad-hoc replay from live ingest.
+    """
+
+    @Tier2ExtractorRegistry.register("test_backfill_span_facts")
+    def fake_extractor(signal: dict, body: str | None, model: str) -> dict | None:
+        return {"type": "synthetic_event", "fields": {}}
+
+    try:
+        sid = _seed_signal(db_path, "span-001", source="test_backfill_span_facts")
+        rc = _backfill_one(db_path, str(sid), model="any", force=False)
+        assert rc == 0
+
+        with open_db(db_path) as conn:
+            spans = conn.execute("SELECT attributes FROM spans WHERE operation = 'extraction.tier2'").fetchall()
+
+        assert len(spans) == 1
+        attrs = json.loads(spans[0][0])
+        assert attrs["source"] == "backfill"
+        assert attrs["facts_emitted"] is True
+        assert attrs["extracted_type"] == "synthetic_event"
+    finally:
+        Tier2ExtractorRegistry._registry.pop("test_backfill_span_facts", None)
+
+
+def test_backfill_emits_span_when_extractor_returns_none(db_path: Path) -> None:
+    """Hotfix core behavior on the CLI path: even when the extractor
+    returns None (marketing email, body fetch failed, etc.), the span
+    fires so the path is observable.
+    """
+
+    @Tier2ExtractorRegistry.register("test_backfill_span_null")
+    def fake_extractor(signal: dict, body: str | None, model: str) -> dict | None:
+        return None
+
+    try:
+        sid = _seed_signal(db_path, "span-002", source="test_backfill_span_null")
+        rc = _backfill_one(db_path, str(sid), model="any", force=False)
+        assert rc == 0
+
+        with open_db(db_path) as conn:
+            spans = conn.execute("SELECT attributes FROM spans WHERE operation = 'extraction.tier2'").fetchall()
+
+        assert len(spans) == 1
+        attrs = json.loads(spans[0][0])
+        assert attrs["source"] == "backfill"
+        assert attrs["facts_emitted"] is False
+        assert attrs["extracted_type"] is None
+    finally:
+        Tier2ExtractorRegistry._registry.pop("test_backfill_span_null", None)

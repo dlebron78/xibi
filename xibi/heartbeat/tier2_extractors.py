@@ -38,9 +38,74 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from xibi.tracing import Tracer
 
 logger = logging.getLogger(__name__)
+
+
+def _emit_tier2_span(
+    tracer: Tracer | None,
+    sig: dict[str, Any],
+    extracted_facts: dict | None,
+    summary_data: dict | None,
+    source_attr: str | None = None,
+) -> None:
+    """Emit the ``extraction.tier2`` span for a single Tier 2 attempt.
+
+    The span fires for **every** invocation (live tick or backfill, facts
+    or no-facts), per spec line 388 of step-112: *"extraction.tier2 span
+    on every email that runs the extractor."* Attributes carry the
+    outcome so the consumer can distinguish:
+
+    - ``facts_emitted`` — True if the model returned a non-null
+      extracted_facts; False for marketing/FYI emails (correct null) AND
+      for parse failures (caller should also surface ``parse_error``).
+    - ``parse_error`` — non-null only when the combined-call response
+      could not be decoded; lets dashboards alert on parse-fail without
+      grepping logs.
+    - ``source_attr`` — distinguishes live ingest from CLI replay so
+      ad-hoc backfill activity doesn't pollute live-rate metrics.
+
+    Best-effort: tracer failures never crash the caller (matches the
+    rest of xibi's tracing contract — see ``xibi/tracing.py:84``).
+    """
+    if tracer is None:
+        return
+    summary_data = summary_data or {}
+    items: list = []
+    is_digest_parent = False
+    extracted_type: str | None = None
+    if extracted_facts is not None:
+        items = list(extracted_facts.get("digest_items") or [])
+        is_digest_parent = bool(extracted_facts.get("is_digest_parent")) and len(items) > 0
+        extracted_type = str(extracted_facts.get("type")) if extracted_facts.get("type") else None
+
+    attributes: dict[str, Any] = {
+        "email_id": str(sig.get("ref_id") or ""),
+        "model": str(summary_data.get("model") or ""),
+        "duration_ms": int(summary_data.get("duration_ms") or 0),
+        "facts_emitted": extracted_facts is not None,
+        "extracted_type": extracted_type,
+        "is_digest_parent": is_digest_parent,
+        "digest_item_count": len(items) if is_digest_parent else 0,
+    }
+    if summary_data.get("parse_error"):
+        attributes["parse_error"] = summary_data["parse_error"]
+    if source_attr is not None:
+        attributes["source"] = source_attr
+
+    try:
+        tracer.span(
+            operation="extraction.tier2",
+            attributes=attributes,
+            duration_ms=int(summary_data.get("duration_ms") or 0),
+            component="tier2",
+        )
+    except Exception as exc:
+        logger.warning(f"tier2 span emit failed: {exc}")
 
 
 Tier2ExtractorFn = Callable[[dict[str, Any], "str | None", str], "dict | None"]
