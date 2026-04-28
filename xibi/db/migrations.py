@@ -6,7 +6,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 42  # increment when adding new migrations
+SCHEMA_VERSION = 43  # increment when adding new migrations
 
 
 def _safe_add_column(
@@ -114,6 +114,11 @@ class SchemaManager:
             (40, "signals: add received_via_account + received_via_email_alias columns", self._migration_40),
             (41, "contacts: add account_origin + seen_via_accounts columns", self._migration_41),
             (42, "signals: add extracted_facts (open-shape JSON) + parent_ref_id (digest fan-out)", self._migration_42),
+            (
+                43,
+                "signals: add parsed_body + parsed_body_at + parsed_body_format (smart parser retention)",
+                self._migration_43,
+            ),
         ]
 
         for version, description, func in migrations:
@@ -1023,6 +1028,27 @@ class SchemaManager:
         ]:
             _safe_add_column(conn, "signals", col_name, col_type)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_signals_parent_ref_id ON signals(parent_ref_id)")
+
+    def _migration_43(self, conn: sqlite3.Connection) -> None:
+        """Signals: smart parser body retention (step-114).
+
+        ``parsed_body`` stores the trafilatura/html2text-cleaned body produced
+        by ``xibi.heartbeat.smart_parser``. Tier 2 backfill prefers this column
+        over an IMAP round-trip when present and within the 30-day TTL.
+
+        ``parsed_body_at`` is the parse timestamp; the hourly sweep at
+        ``xibi.heartbeat.parsed_body_sweep`` nulls rows older than 30 days.
+
+        ``parsed_body_format`` carries which path produced the body
+        (``'text'`` / ``'markdown'`` / ``'html_fallback'``) so dashboards
+        can track parser-quality drift without re-parsing.
+        """
+        for col_name, col_type in [
+            ("parsed_body", "TEXT"),
+            ("parsed_body_at", "DATETIME"),
+            ("parsed_body_format", "TEXT"),
+        ]:
+            _safe_add_column(conn, "signals", col_name, col_type)
 
 
 def migrate(db_path: Path) -> list[int]:

@@ -6,13 +6,21 @@ from xibi.heartbeat.email_body import compact_body, parse_email_body, summarize_
 
 
 def test_parse_email_body_plain():
-    raw = "From: alice@example.com\nSubject: Hi\nContent-Type: text/plain\n\nHello World"
-    assert parse_email_body(raw) == "Hello World"
+    # Step-114: smart parser requires ≥20 chars of substantive plain text
+    # before preferring text/plain over HTML extraction.
+    raw = (
+        "From: alice@example.com\nSubject: Hi\nContent-Type: text/plain\n\n"
+        "Hello world this body is long enough to count as substantive."
+    )
+    assert "Hello world" in parse_email_body(raw)
 
 
 def test_parse_email_body_html_fallback():
-    raw = "From: alice@example.com\nSubject: Hi\nContent-Type: text/html\n\n<html><body><p>Hello HTML</p></body></html>"
-    assert parse_email_body(raw) == "Hello HTML"
+    raw = (
+        "From: alice@example.com\nSubject: Hi\nContent-Type: text/html\n\n"
+        "<html><body><p>Hello HTML body content with substantive length here.</p></body></html>"
+    )
+    assert "Hello HTML body" in parse_email_body(raw)
 
 
 def test_parse_email_body_multipart():
@@ -22,14 +30,16 @@ Content-Type: multipart/alternative; boundary="boundary"
 --boundary
 Content-Type: text/html
 
-<html><body>Hello HTML</body></html>
+<html><body>Hello HTML version body content</body></html>
 --boundary
 Content-Type: text/plain
 
-Hello Plain
+Hello Plain version body with substantive content for the smart parser test path.
 --boundary--"""
-    # parse_email_body prefers text/plain
-    assert parse_email_body(raw) == "Hello Plain"
+    # parse_email_body prefers text/plain when it carries substantive content.
+    out = parse_email_body(raw)
+    assert "Hello Plain version" in out
+    assert "Hello HTML version" not in out
 
 
 def test_parse_email_body_malformed():

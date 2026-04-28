@@ -303,6 +303,22 @@ class HeartbeatPoller:
 
         asyncio.run(self.async_tick())
 
+    def _sweep_parsed_body(self) -> None:
+        """Run the smart-parser body-retention sweep (step-114).
+
+        Best-effort hourly prune of ``signals.parsed_body`` rows older than
+        the 30-day TTL. Gating + error handling live in
+        :func:`xibi.heartbeat.parsed_body_sweep.maybe_run_parsed_body_sweep`;
+        this wrapper only translates an unexpected exception into a warning
+        so the heartbeat tick is never broken by the sweep.
+        """
+        try:
+            from xibi.heartbeat.parsed_body_sweep import maybe_run_parsed_body_sweep
+
+            maybe_run_parsed_body_sweep(self.db_path)
+        except Exception as exc:
+            logger.warning(f"parsed_body sweep wrapper error: {exc}", exc_info=True)
+
     def _sweep_thread_lifecycle(self) -> None:
         """Mark stale/resolved threads. Runs once per day."""
         today = datetime.now().strftime("%Y-%m-%d")
@@ -394,6 +410,7 @@ class HeartbeatPoller:
             return
 
         self._sweep_thread_lifecycle()
+        self._sweep_parsed_body()
         await self._check_contact_backfill()
         await self._check_sent_mail_poll()
 
@@ -695,9 +712,9 @@ class HeartbeatPoller:
             compact_body,
             fetch_raw_email,
             find_himalaya,
-            parse_email_body,
             summarize_email_body,
         )
+        from xibi.heartbeat.smart_parser import parse_email_smart
 
         base_url = self.config.get("redirect_base_url") or os.environ.get("XIBI_REDIRECT_BASE")
 
@@ -716,16 +733,53 @@ class HeartbeatPoller:
             sender_str = str(sender).lower()
 
             # Body fetching and summarization for new emails
-            summary_data = {}
+            summary_data: dict = {}
+            parsed_body: str | None = None
+            parsed_body_format: str | None = None
             if himalaya_bin and email_id not in seen_ids:
                 import asyncio
+                import time as _time
 
                 # Use run_in_executor to avoid blocking the event loop for sync LLM calls
                 loop = asyncio.get_running_loop()
 
                 raw, err = await loop.run_in_executor(None, fetch_raw_email, himalaya_bin, email_id)
                 if raw and not err:
-                    body = parse_email_body(raw)
+                    parse_start_ms = int(_time.time() * 1000)
+                    parsed = await loop.run_in_executor(None, parse_email_smart, raw)
+                    parse_duration_ms = int(_time.time() * 1000) - parse_start_ms
+                    body = parsed.get("body") or ""
+                    parsed_body_format = str(parsed.get("format") or "")
+                    parser_chain = list(parsed.get("parser_chain") or [])
+                    fallback_used = bool(parsed.get("fallback_used"))
+                    if body:
+                        # Persist the clean body for Tier 2 backfill (30-day TTL).
+                        parsed_body = body
+                    if self.tracer is not None:
+                        try:
+                            self.tracer.span(
+                                operation="extraction.smart_parse",
+                                attributes={
+                                    "email_id": str(email_id or ""),
+                                    "format": parsed_body_format,
+                                    "body_size": len(body),
+                                    "raw_size": len(raw),
+                                    "fallback_used": fallback_used,
+                                    "parser_chain": ",".join(parser_chain),
+                                    "duration_ms": parse_duration_ms,
+                                },
+                                duration_ms=parse_duration_ms,
+                                component="smart_parser",
+                            )
+                        except Exception as exc:
+                            logger.warning(f"smart_parse span emit failed: {exc}")
+                    logger.info(
+                        "smart_parse ok: format=%s raw_size=%d body_size=%d email_id=%s",
+                        parsed_body_format,
+                        len(raw),
+                        len(body),
+                        email_id,
+                    )
                     if body and len(body.strip()) >= 20:
                         compacted = compact_body(body)
                         # Use effort="fast" model if available
@@ -758,6 +812,8 @@ class HeartbeatPoller:
                     "sig": sig,
                     "summary_data": summary_data,
                     "trust_assessment": trust,
+                    "parsed_body": parsed_body,
+                    "parsed_body_format": parsed_body_format,
                 }
             )
 
@@ -827,6 +883,14 @@ class HeartbeatPoller:
                     # facts (if any). Fan-out for digests happens after the
                     # parent write so the parent is durable even if a
                     # child write hits an unexpected error.
+                    parsed_body_value = item.get("parsed_body")
+                    parsed_body_format_value = item.get("parsed_body_format")
+                    parsed_body_at_value = (
+                        datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+                        if parsed_body_value
+                        else None
+                    )
+
                     self.rules.log_signal_with_conn(
                         conn,
                         source=sig["source"],
@@ -847,6 +911,9 @@ class HeartbeatPoller:
                         received_via_account=received_via_account,
                         received_via_email_alias=received_via_email_alias,
                         extracted_facts=extracted_facts,
+                        parsed_body=parsed_body_value,
+                        parsed_body_at=parsed_body_at_value,
+                        parsed_body_format=parsed_body_format_value,
                     )
 
                     # Step-112 + observability hotfix: emit the

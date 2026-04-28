@@ -18,6 +18,9 @@ dependencies = [
     "jsonschema>=4.20",
     "cryptography>=42.0",
     "aiohttp>=3.9",
+    "trafilatura>=2.0.0",
+    "mail-parser>=4.0.0",
+    "html2text>=2024.2.26",
 ]
 
 [project.scripts]
@@ -79,6 +82,10 @@ exclude = ["xibi/skills/sample\\.bak/"]
 
 [[tool.mypy.overrides]]
 module = ["google.generativeai.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["trafilatura.*", "mailparser.*", "html2text.*"]
 ignore_missing_imports = true
 
 [tool.coverage.run]

@@ -300,6 +300,9 @@ class RuleEngine:
         received_via_email_alias: str | None = None,
         extracted_facts: dict | None = None,
         parent_ref_id: str | None = None,
+        parsed_body: str | None = None,
+        parsed_body_at: str | None = None,
+        parsed_body_format: str | None = None,
     ) -> None:
         try:
             preview = (content_preview[:277] + "...") if len(content_preview) > 280 else content_preview
@@ -321,8 +324,8 @@ class RuleEngine:
                 with conn:
                     conn.execute(
                         """
-                        INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id, classification_reasoning, deep_link_url, received_via_account, received_via_email_alias, extracted_facts, parent_ref_id)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id, classification_reasoning, deep_link_url, received_via_account, received_via_email_alias, extracted_facts, parent_ref_id, parsed_body, parsed_body_at, parsed_body_format)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                         (
                             source,
@@ -343,6 +346,9 @@ class RuleEngine:
                             received_via_email_alias,
                             extracted_facts_json,
                             parent_ref_id,
+                            parsed_body,
+                            parsed_body_at,
+                            parsed_body_format,
                         ),
                     )
         except Exception as e:
@@ -404,6 +410,9 @@ class RuleEngine:
         received_via_email_alias: str | None = None,
         extracted_facts: dict | None = None,
         parent_ref_id: str | None = None,
+        parsed_body: str | None = None,
+        parsed_body_at: str | None = None,
+        parsed_body_format: str | None = None,
     ) -> None:
         try:
             preview = (content_preview[:277] + "...") if len(content_preview) > 280 else content_preview
@@ -423,8 +432,8 @@ class RuleEngine:
             extracted_facts_json = json.dumps(extracted_facts) if extracted_facts is not None else None
             conn.execute(
                 """
-                INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id, classification_reasoning, deep_link_url, metadata, received_via_account, received_via_email_alias, extracted_facts, parent_ref_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO signals (source, topic_hint, entity_text, entity_type, content_preview, ref_id, ref_source, summary, summary_model, summary_ms, sender_trust, sender_contact_id, classification_reasoning, deep_link_url, metadata, received_via_account, received_via_email_alias, extracted_facts, parent_ref_id, parsed_body, parsed_body_at, parsed_body_format)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     source,
@@ -446,6 +455,9 @@ class RuleEngine:
                     received_via_email_alias,
                     extracted_facts_json,
                     parent_ref_id,
+                    parsed_body,
+                    parsed_body_at,
+                    parsed_body_format,
                 ),
             )
         except Exception as e:

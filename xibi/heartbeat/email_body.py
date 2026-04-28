@@ -47,8 +47,14 @@ def fetch_raw_email(himalaya_bin: str, email_id: str, timeout: int = 20) -> tupl
         return None, str(e)
 
 
-def parse_email_body(raw_rfc5322: str) -> str:
-    """Extract text body from RFC 5322. Prefers text/plain, falls back to text/html with tag stripping."""
+def _parse_email_body_legacy(raw_rfc5322: str) -> str:
+    """Pre-step-114 body extraction. Preserved verbatim as the kill-switch path.
+
+    Per step-114 condition #6: when ``XIBI_SMART_PARSER_ENABLED=0`` the wrapper
+    invokes this function directly so the exact pre-deploy behavior is
+    available for incident response without a code revert. Do not modify —
+    if the smart parser regresses, this is what production rolls back to.
+    """
     try:
         msg = message_from_string(raw_rfc5322, policy=policy.default)
         body = ""
@@ -89,6 +95,31 @@ def parse_email_body(raw_rfc5322: str) -> str:
     except Exception as e:
         logger.warning(f"Error parsing email body: {e}")
         return ""
+
+
+def parse_email_body(raw_rfc5322: str) -> str:
+    """Extract text body from RFC 5322. Step-114 back-compat wrapper.
+
+    When ``XIBI_SMART_PARSER_ENABLED`` is ``"0"``, dispatches to the legacy
+    naive-regex path verbatim (see :func:`_parse_email_body_legacy`).
+    Otherwise calls :func:`xibi.heartbeat.smart_parser.parse_email_smart`
+    and returns just the body string — existing callers (poller, tier2
+    extractors, tests) keep their current contract.
+    """
+    if os.environ.get("XIBI_SMART_PARSER_ENABLED", "1") == "0":
+        return _parse_email_body_legacy(raw_rfc5322)
+
+    from xibi.heartbeat.smart_parser import parse_email_smart
+
+    try:
+        result = parse_email_smart(raw_rfc5322)
+    except Exception as e:
+        # Defense in depth: smart parser raising is unexpected (each helper
+        # already swallows its own failures); fall through to legacy so
+        # callers are never broken by a parser bug.
+        logger.warning(f"smart_parser raised, falling back to legacy: {e}")
+        return _parse_email_body_legacy(raw_rfc5322)
+    return str(result.get("body") or "")
 
 
 def compact_body(body: str, max_chars: int = 2000) -> str:

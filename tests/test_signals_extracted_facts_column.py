@@ -19,8 +19,11 @@ def db_path(tmp_path: Path) -> Path:
     return _migrated_db(tmp_path)
 
 
-def test_schema_version_is_42() -> None:
-    assert SCHEMA_VERSION == 42
+def test_schema_version_includes_42() -> None:
+    """Step-112 migration 42 must remain part of the schema. The exact pin
+    moves with each step that adds a migration; ``>=`` lets later steps add
+    migrations without breaking this contract test for migration 42."""
+    assert SCHEMA_VERSION >= 42
 
 
 def test_migration_42_adds_extracted_facts_column(tmp_path: Path) -> None:

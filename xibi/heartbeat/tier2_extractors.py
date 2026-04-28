@@ -108,6 +108,56 @@ def _emit_tier2_span(
         logger.warning(f"tier2 span emit failed: {exc}")
 
 
+PARSED_BODY_TTL_DAYS = 30
+
+
+def _read_fresh_parsed_body(signal: dict[str, Any]) -> str | None:
+    """Return ``signal['parsed_body']`` if present and within the 30-day TTL.
+
+    Step-114 condition #1: backfill should prefer the cached body over an
+    IMAP round-trip. Freshness window matches the
+    :mod:`xibi.heartbeat.parsed_body_sweep` 30-day TTL — older rows have
+    their ``parsed_body`` nulled by the sweep, so this check is also a
+    belt-and-suspenders guard.
+
+    Returns ``None`` if the column is null, the timestamp is unparseable,
+    or the body is older than the TTL.
+    """
+    body = signal.get("parsed_body")
+    if not body or not isinstance(body, str):
+        return None
+
+    parsed_at_raw = signal.get("parsed_body_at")
+    if not parsed_at_raw:
+        # Be conservative: if the row has a body but no timestamp, treat as
+        # stale — the live tick path always sets both columns together.
+        return None
+
+    from datetime import datetime, timedelta, timezone
+
+    parsed_at_str = str(parsed_at_raw).strip()
+    # SQLite DATETIME is "YYYY-MM-DD HH:MM:SS" or ISO-8601 (varies by writer).
+    # Normalize trailing "Z" to "+00:00" so fromisoformat accepts UTC.
+    if parsed_at_str.endswith("Z"):
+        parsed_at_str = parsed_at_str[:-1] + "+00:00"
+    if " " in parsed_at_str and "T" not in parsed_at_str:
+        parsed_at_str = parsed_at_str.replace(" ", "T", 1)
+
+    try:
+        parsed_at = datetime.fromisoformat(parsed_at_str)
+    except ValueError:
+        logger.warning("parsed_body_at unparseable for signal_id=%s: %r", signal.get("id"), parsed_at_raw)
+        return None
+
+    if parsed_at.tzinfo is None:
+        parsed_at = parsed_at.replace(tzinfo=timezone.utc)
+
+    age = datetime.now(timezone.utc) - parsed_at
+    if age > timedelta(days=PARSED_BODY_TTL_DAYS):
+        return None
+    return str(body)
+
+
 Tier2ExtractorFn = Callable[[dict[str, Any], "str | None", str], "dict | None"]
 
 
@@ -174,6 +224,17 @@ def extract_email_facts(
 
     if os.environ.get("XIBI_TIER2_EXTRACT_ENABLED", "1") == "0":
         return None
+
+    if body is None:
+        # Step-114 condition #1: prefer the persisted parsed_body when fresh
+        # (≤30 days). Saves a himalaya round-trip on backfill of aged
+        # signals — and works even if the original email has been moved or
+        # archived in IMAP since ingest.
+        cached_body = _read_fresh_parsed_body(signal)
+        if cached_body is not None:
+            compacted = compact_body(cached_body)
+            if compacted and len(compacted.strip()) >= 20:
+                body = compacted
 
     if body is None:
         try:
