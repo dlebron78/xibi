@@ -49,11 +49,13 @@ def _resolve_model(config_path: str) -> str:
         cfg = load_config(config_path)
     except Exception:
         cfg = {}
-    return (
-        cfg.get("models", {}).get("text", {}).get("fast", {}).get("model", "gemma4:e4b")
-        if isinstance(cfg, dict)
-        else "gemma4:e4b"
-    )
+    if not isinstance(cfg, dict):
+        return "gemma4:e4b"
+    models: dict = cfg.get("models", {}) if isinstance(cfg.get("models"), dict) else {}
+    text: dict = models.get("text", {}) if isinstance(models.get("text"), dict) else {}
+    fast: dict = text.get("fast", {}) if isinstance(text.get("fast"), dict) else {}
+    model = fast.get("model", "gemma4:e4b")
+    return str(model)
 
 
 def _fetch_signal(conn: sqlite3.Connection, signal_id: str) -> dict | None:
@@ -204,9 +206,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--signal-id", required=True, help="signals.id of the row to backfill")
     parser.add_argument("--force", action="store_true", help="overwrite existing extracted_facts")
     parser.add_argument("--config", default="config.json", help="path to config.json (default: ./config.json)")
-    parser.add_argument(
-        "-v", "--verbose", action="store_true", help="enable INFO-level logging"
-    )
+    parser.add_argument("-v", "--verbose", action="store_true", help="enable INFO-level logging")
     args = parser.parse_args(argv)
 
     logging.basicConfig(
