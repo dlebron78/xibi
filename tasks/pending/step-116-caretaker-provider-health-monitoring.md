@@ -205,6 +205,10 @@ def check(db_path: Path, cfg: ProviderHealthConfig) -> list[Finding]:
 
     Honors XIBI_CARETAKER_PROVIDER_HEALTH_ENABLED. When "0", returns
     empty list with INFO log.
+
+    Validates cfg.reset_threshold < cfg.degraded_threshold at the top
+    of the function; on violation logs ERROR and returns []. (Promotes
+    the TRR-checklist line to a contract requirement.)
     """
 ```
 
@@ -252,7 +256,9 @@ Returns NULL if no successful call in window. Caller substitutes `'never (in win
 
 ### Hysteresis state source
 
-The check function calls `xibi.caretaker.dedup.seen_before(db_path, dedup_key)` (or equivalent — verify exact API in dedup.py at implementation time) to determine prior state. This is required for the gray-zone logic; pulse.py's dedup-on-notify only handles whether to send the telegram, not whether to emit the Finding in the first place. Without this query, the gray zone (between reset and trigger) would either always emit (causing flapping when rate oscillates) or never emit (causing missed alerts when rate climbs back up after a brief dip).
+The check function calls `xibi.caretaker.dedup.seen_before(db_path, dedup_key)` to determine prior state. This is required for the gray-zone logic; pulse.py's dedup-on-notify only handles whether to send the telegram, not whether to emit the Finding in the first place. Without this query, the gray zone (between reset and trigger) would either always emit (causing flapping when rate oscillates) or never emit (causing missed alerts when rate climbs back up after a brief dip).
+
+This depends on pulse.py running the dedup state machine (at `pulse.py:237-248` — `seen_before` / `record_finding` / `touch` per Finding) BEFORE the resolve loop (at `pulse.py:251-255` — `active_keys - observed_keys` deletion). The gray-zone Finding adds its dedup_key to `observed_keys`, which protects the row from `active_keys - observed_keys` deletion. Treat this ordering as a load-bearing invariant — reordering or factoring out either loop would silently break the gray-zone keep-alert behavior described in Scenario 6a.
 
 ### Pulse integration
 
@@ -330,6 +336,11 @@ Expected: same as pre-deploy (currently 43 post-step-114). No migration in this 
   ```
   ssh ... "sqlite3 ~/.xibi/data/xibi.db \"SELECT dedup_key, severity, metadata_json FROM caretaker_drift_state WHERE dedup_key='provider_health:test_pdv:test_model'\""
   ```
+- Verify per-pair INFO log line was emitted on the test pulse:
+  ```
+  ssh ... "journalctl --user -u xibi-caretaker --since '20 minutes ago' | grep 'provider_health: role=test_pdv model=test_model degraded_rate='"
+  ```
+  Expected: at least one INFO log line of the form `provider_health: role=test_pdv model=test_model degraded_rate=100.0% calls=8`.
 - Cleanup:
   ```
   ssh ... "sqlite3 ~/.xibi/data/xibi.db \"DELETE FROM inference_events WHERE role='test_pdv'; DELETE FROM caretaker_drift_state WHERE dedup_key='provider_health:test_pdv:test_model'\""
@@ -390,6 +401,8 @@ Expected: same as pre-deploy (currently 43 post-step-114). No migration in this 
 - `test_hysteresis_no_emit_in_gray_zone_unalerted` — rate=30%, drift_state has no row → emit NO Finding (sub-case 6b).
 - `test_hysteresis_resolve_below_reset` — rate=15%, drift_state row exists → emit NO Finding (sub-case 6c); pulse-side resolve will delete the row.
 - `test_last_success_at_null_when_no_success_in_window` — fixture with all degraded events in window → message contains 'never (in window)' substring; metadata `last_success_at` is None.
+- `test_boundary_rate_at_exact_trigger` — rate == cfg.degraded_threshold exactly (e.g., 5/10 = 0.5 with threshold 0.5), `was_alerted=False` → emit Finding (decision rule uses `>=`).
+- `test_handles_null_trace_id_rows` — fixture with `inference_events` rows where `trace_id IS NULL` (column was added via `_safe_add_column` so older rows may be NULL) → check still aggregates correctly and emits expected Finding.
 
 ## TRR Checklist
 
@@ -418,7 +431,7 @@ Expected: same as pre-deploy (currently 43 post-step-114). No migration in this 
 - [ ] Env-var override pattern documented in code comments (new for caretaker; borrowed from heartbeat).
 - [ ] `last_success_at` query handles NULL case (no successful call in window) explicitly.
 - [ ] Pulse.py integration: ~6 lines (import + tuple in `check_runs` + config field + reference handling). Implementer may find slightly more; "~6" is the order of magnitude.
-- [ ] Test coverage: 12 named tests including all 6 RWTS scenarios + 3 hysteresis sub-cases + edge cases.
+- [ ] Test coverage: 14 named tests including all 6 RWTS scenarios + 3 hysteresis sub-cases + boundary + null-trace_id + edge cases.
 
 ## Definition of Done
 
@@ -426,7 +439,7 @@ Expected: same as pre-deploy (currently 43 post-step-114). No migration in this 
 - [ ] `xibi/caretaker/config.py` extended with `ProviderHealthConfig` (frozen=True).
 - [ ] `xibi/caretaker/pulse.py` invokes the new check via the `check_runs` list.
 - [ ] Env-var kill switch wired and tested.
-- [ ] All 12 named tests pass locally.
+- [ ] All 14 named tests pass locally.
 - [ ] No new dependencies; pure stdlib.
 - [ ] All RWTS scenarios validated manually or via integration tests against a dev checkout.
 - [ ] PR opened with summary + test results + any deviations from this spec called out.

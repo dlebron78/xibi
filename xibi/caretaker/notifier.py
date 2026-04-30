@@ -41,6 +41,7 @@ def notify(
             "service_silence": "service silence",
             "config_drift": "config drift",
             "schema_drift": "schema drift",
+            "provider_health": "provider health",
         }
         title = title_map.get(f.check_name, f.check_name)
         body = f"CARETAKER ALERT \u2014 {title}\n{f.message}"
