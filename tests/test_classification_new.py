@@ -1,7 +1,11 @@
 import pytest
 
 from xibi.db import open_db
-from xibi.heartbeat.classification import build_classification_prompt, build_priority_context
+from xibi.heartbeat.classification import (
+    PRIORITY_CONTEXT_MAX_CHARS,
+    build_classification_prompt,
+    build_priority_context,
+)
 from xibi.heartbeat.context_assembly import SignalContext
 
 
@@ -68,3 +72,40 @@ def test_build_priority_context(db_path):
     pc = build_priority_context(db_path)
     assert "CURRENT PRIORITIES" in pc
     assert "Focus on AI." in pc
+
+
+def test_priority_context_cap_constant_is_6000():
+    """Hotfix 2026-04-28: cap raised from 2000 to 6000 to stop truncating
+    operational guidance mid-content. Pin the value so a careless edit
+    doesn't silently regress it."""
+    assert PRIORITY_CONTEXT_MAX_CHARS == 6000
+
+
+def test_build_priority_context_under_cap_not_truncated(db_path):
+    """Content within the cap returns verbatim (no '[truncated]' suffix)."""
+    content = ("Daniel is focused on AI. " * 220).strip()  # ~5500 chars
+    assert len(content) < PRIORITY_CONTEXT_MAX_CHARS
+    with open_db(db_path) as conn, conn:
+        conn.execute("INSERT INTO priority_context (content) VALUES (?)", (content,))
+    pc = build_priority_context(db_path)
+    assert pc is not None
+    assert "[truncated]" not in pc
+    # Last sentence preserved.
+    assert pc.rstrip().endswith("Daniel is focused on AI.")
+
+
+def test_build_priority_context_over_cap_truncated_to_cap(db_path):
+    """Content larger than the cap gets truncated at sentence boundary
+    near PRIORITY_CONTEXT_MAX_CHARS, with the [truncated] suffix added."""
+    content = ("Daniel is focused on AI. " * 270).strip()  # ~6500 chars
+    assert len(content) > PRIORITY_CONTEXT_MAX_CHARS
+    with open_db(db_path) as conn, conn:
+        conn.execute("INSERT INTO priority_context (content) VALUES (?)", (content,))
+    pc = build_priority_context(db_path)
+    assert pc is not None
+    assert "[truncated]" in pc
+    # Body (after the "CURRENT PRIORITIES (from last review):\n" header) is
+    # at most cap chars + the suffix.
+    body = pc.split("\n", 1)[1]
+    body_no_suffix = body.replace(" [truncated]", "")
+    assert len(body_no_suffix) <= PRIORITY_CONTEXT_MAX_CHARS

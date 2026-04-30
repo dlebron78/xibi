@@ -10,6 +10,13 @@ from pathlib import Path
 
 from xibi.heartbeat.sender_trust import _extract_sender_addr, _extract_sender_name
 
+# Hotfix 2026-04-28: raised from 2000. The original cap was set when
+# priority_context content was small (~1 KB); current production output
+# runs ~3.5 KB and was getting truncated mid-content, dropping the entire
+# triage-calibration tail (NOISE rules + key relationship list). 6000 is
+# defense-in-depth — well under the classifier prompt budget.
+PRIORITY_CONTEXT_MAX_CHARS = 6000
+
 
 def query_correction_context(
     db_path: str | Path,
@@ -92,10 +99,11 @@ def build_priority_context(db_path: Path) -> str | None:
             row = conn.execute("SELECT content FROM priority_context ORDER BY updated_at DESC LIMIT 1").fetchone()
             if row:
                 content = row[0]
-                # Cap to ~500 tokens (approx 2000 chars) to prevent context bloat.
-                # Use sentence-boundary truncation for coherence.
-                if len(content) > 2000:
-                    content = content[:2000]
+                # Cap with sentence-boundary truncation for coherence. See
+                # PRIORITY_CONTEXT_MAX_CHARS docstring for the rationale on
+                # the chosen value.
+                if len(content) > PRIORITY_CONTEXT_MAX_CHARS:
+                    content = content[:PRIORITY_CONTEXT_MAX_CHARS]
                     if "." in content:
                         content = content.rsplit(".", 1)[0] + "."
                     content += " [truncated]"
