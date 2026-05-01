@@ -20,8 +20,12 @@ from xibi.db import open_db
 def _service_of(operation: str) -> str:
     """Map a span operation to the service name watchers care about.
 
-    ``extraction.smart_parse`` → ``xibi-extraction``.
-    ``telegram.send``          → ``xibi-telegram``.
+    The check is currently disabled in production
+    (``CaretakerConfig.service_silence.watched_operations`` is empty)
+    pending the heartbeat-tick span addition described in
+    ``tasks/backlog/notes/heartbeat-tick-span-addition.md``. Once that
+    lands, the canonical mapping will be ``heartbeat.tick`` →
+    ``xibi-heartbeat`` via the dict below.
     """
     top = operation.split(".", 1)[0]
     return {

@@ -65,21 +65,27 @@ class CaretakerConfig:
     pulse_interval_min: int = 15
     service_silence: ServiceSilenceConfig = field(
         default_factory=lambda: ServiceSilenceConfig(
-            watched_operations=(
-                # Names match real emit sites (verified 2026-05-01):
-                #   - extraction.smart_parse           heartbeat/poller.py:768 (per-email tick)
-                #   - review_cycle.priority_context_apply  heartbeat/review_cycle.py:708 (3x daily)
-                #   - scheduled_action.run             scheduling/kernel.py:266
-                # Previous entries (heartbeat.tick.{observation,reflection},
-                # telegram.{poll,send}) were aspirational from when caretaker
-                # was authored — never wired to emit sites — and false-fired
-                # service_silence on every pulse. Telegram observability is a
-                # parked follow-on; re-add telegram operations here once their
-                # span emits land.
-                "extraction.smart_parse",
-                "review_cycle.priority_context_apply",
-                "scheduled_action.run",
-            ),
+            # DISABLED 2026-05-01 pending heartbeat-tick liveness substrate.
+            #
+            # PR #129 (commit 3498268) replaced phantom-name watched_operations
+            # with three operations that ARE emitted in production:
+            #   - extraction.smart_parse              (bursty per-email; 2h+ gaps normal on quiet evenings)
+            #   - review_cycle.priority_context_apply (scheduled 3x daily UTC; 6-12h gaps EXPECTED)
+            #   - scheduled_action.run                (on-demand; gaps of any length normal)
+            # All three are intermittent. The 30-min silence_threshold_min
+            # assumes constant high-cadence emission, which none of them
+            # have, so service_silence false-fired on each within hours of
+            # the PR #129 deploy (3 telegrams to operator on 2026-05-01).
+            #
+            # The check itself is correct; it needs a HIGH-CADENCE liveness
+            # signal to watch. Empty tuple disables the check (it iterates
+            # over watched_operations; zero entries → zero findings).
+            #
+            # Proper fix is parked at:
+            #   tasks/backlog/notes/heartbeat-tick-span-addition.md
+            # Add a heartbeat.tick span emit inside async_tick (~5-min
+            # cadence), then restore watched_operations to ("heartbeat.tick",).
+            watched_operations=(),
             silence_threshold_min=30,
         )
     )
