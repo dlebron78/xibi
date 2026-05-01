@@ -568,7 +568,14 @@ class HeartbeatPoller:
             logger.warning("Chief of staff review trigger error: %s", e)
 
     def _get_last_review_time(self, mode: str) -> datetime:
-        """Query observation_cycles for the last completion of a specific mode."""
+        """Query observation_cycles for the last completion of a specific mode.
+
+        Returns a tz-aware UTC datetime. SQLite stores CURRENT_TIMESTAMP as
+        UTC but datetime.fromisoformat() returns it naive; without tzinfo
+        attachment, downstream .astimezone() in _should_run_review treats
+        the value as system-local and silently shifts it, suppressing
+        scheduled fires.
+        """
         try:
             from xibi.db import open_db
 
@@ -579,11 +586,11 @@ class HeartbeatPoller:
                     (mode,),
                 ).fetchone()
                 if row:
-                    return datetime.fromisoformat(row["completed_at"])
+                    return datetime.fromisoformat(row["completed_at"]).replace(tzinfo=timezone.utc)
         except Exception:
             pass
         # Default to long ago if never run
-        return datetime.now() - timedelta(days=1)
+        return datetime.now(timezone.utc) - timedelta(days=1)
 
     def _should_run_review(self, last_review_time: datetime, now_utc: datetime) -> bool:
         """Check if we've crossed a scheduled review time since last run."""

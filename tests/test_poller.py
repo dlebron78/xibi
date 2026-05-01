@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from xibi.db import open_db
 from xibi.db.migrations import migrate
 from xibi.heartbeat.poller import HeartbeatPoller, _infer_model, _infer_provider
 
@@ -625,3 +626,62 @@ def test_tick_radiant_audit_fires_at_interval(tmp_path):
     ):
         hp.tick()
         radiant.run_audit.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# hotfix: _get_last_review_time tzinfo attachment
+#
+# Regression: SQLite stores CURRENT_TIMESTAMP as UTC, but
+# datetime.fromisoformat() returns a naive datetime. Without tzinfo
+# attachment, downstream _should_run_review.astimezone(tz) interprets
+# the naive value as system-local time, silently shifting it forward
+# (NucBox = AST = UTC-4 → 4-hour drift) and suppressing schedule fires
+# during the drift window.
+# ---------------------------------------------------------------------------
+
+
+def test_get_last_review_time_returns_tz_aware(tmp_path):
+    """_get_last_review_time must return a UTC-aware datetime so downstream
+    .astimezone() doesn't interpret SQLite's UTC value as system-local."""
+    hp = _make_hp(tmp_path)
+    inserted = "2026-04-30 19:07:07"
+    with open_db(hp.db_path) as conn, conn:
+        conn.execute(
+            "INSERT INTO observation_cycles (started_at, last_signal_id, review_mode, completed_at) "
+            "VALUES (?, 0, 'chief_of_staff', ?)",
+            (inserted, inserted),
+        )
+
+    result = hp._get_last_review_time("chief_of_staff")
+
+    assert result.tzinfo is not None
+    assert result.utcoffset() == timezone.utc.utcoffset(result)
+    assert result == datetime(2026, 4, 30, 19, 7, 7, tzinfo=timezone.utc)
+
+
+def test_get_last_review_time_default_is_tz_aware(tmp_path):
+    """When observation_cycles has no rows for the mode, the default fallback
+    (now - 1 day) must also be UTC-aware to avoid the same downstream bug."""
+    hp = _make_hp(tmp_path)
+    # Empty observation_cycles — no chief_of_staff rows inserted.
+    result = hp._get_last_review_time("chief_of_staff")
+
+    assert result.tzinfo is not None
+    assert result.utcoffset() == timezone.utc.utcoffset(result)
+
+
+def test_should_run_review_with_naive_db_timestamp_does_not_double_convert(tmp_path):
+    """Regression for the live prod bug observed 2026-05-01 12:30 UTC: the
+    20:00 UTC Apr 30 schedule window (and 08:00 UTC May 1) were silently
+    suppressed because _get_last_review_time returned naive 19:07, which
+    .astimezone() shifted to 23:07 UTC on AST hosts.
+
+    With the fix, _get_last_review_time returns a UTC-aware 19:07 and the
+    20:00 UTC scheduled window crosses correctly."""
+    hp = _make_hp(tmp_path)
+    hp._timezone_name = "UTC"
+
+    last = datetime(2026, 4, 30, 19, 7, 7, tzinfo=timezone.utc)
+    now = datetime(2026, 4, 30, 20, 30, 0, tzinfo=timezone.utc)
+
+    assert hp._should_run_review(last, now) is True
