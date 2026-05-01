@@ -20,8 +20,8 @@ from xibi.db import open_db
 def _service_of(operation: str) -> str:
     """Map a span operation to the service name watchers care about.
 
-    ``heartbeat.tick.observation`` → ``xibi-heartbeat``.
-    ``telegram.send``              → ``xibi-telegram``.
+    ``extraction.smart_parse`` → ``xibi-extraction``.
+    ``telegram.send``          → ``xibi-telegram``.
     """
     top = operation.split(".", 1)[0]
     return {

@@ -66,10 +66,19 @@ class CaretakerConfig:
     service_silence: ServiceSilenceConfig = field(
         default_factory=lambda: ServiceSilenceConfig(
             watched_operations=(
-                "heartbeat.tick.observation",
-                "heartbeat.tick.reflection",
-                "telegram.poll",
-                "telegram.send",
+                # Names match real emit sites (verified 2026-05-01):
+                #   - extraction.smart_parse           heartbeat/poller.py:768 (per-email tick)
+                #   - review_cycle.priority_context_apply  heartbeat/review_cycle.py:708 (3x daily)
+                #   - scheduled_action.run             scheduling/kernel.py:266
+                # Previous entries (heartbeat.tick.{observation,reflection},
+                # telegram.{poll,send}) were aspirational from when caretaker
+                # was authored — never wired to emit sites — and false-fired
+                # service_silence on every pulse. Telegram observability is a
+                # parked follow-on; re-add telegram operations here once their
+                # span emits land.
+                "extraction.smart_parse",
+                "review_cycle.priority_context_apply",
+                "scheduled_action.run",
             ),
             silence_threshold_min=30,
         )
