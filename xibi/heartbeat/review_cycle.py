@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sqlite3
+import time
 import xml.sax.saxutils
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -20,11 +22,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Prompt-side ceiling for priority_context content (chars). Distinct from
+# PRIORITY_CONTEXT_MAX_CHARS in classification.py (6000), which is the
+# read-cap safety net. The 5000 ceiling is the coordination signal we
+# give the LLM in REVIEW_CYCLE_PROMPT; oversize stores succeed but emit
+# a warning so we can detect prompt non-compliance.
+PRIORITY_CONTEXT_CEILING_CHARS = 5000
+
+_NO_CHANGE_RE = re.compile(r"<no_change\s*/?>")
+
 
 @dataclass
 class ReviewOutput:
     reclassifications: list[dict] = field(default_factory=list)  # [{signal_id: int, new_tier: str, reason: str}]
     priority_context: str = ""  # Full replacement text
+    priority_context_no_change: bool = False  # True iff LLM emitted <no_change/> affirmation
     memory_notes: list[dict] = field(default_factory=list)  # [{key: str, value: str}]
     contact_updates: list[dict] = field(default_factory=list)  # [{contact_id: str, relationship: str, notes: str}]
     message: str | None = None  # Telegram message to Daniel
@@ -49,10 +61,26 @@ You produce these outputs:
    Only reclassify when there's a genuine miss, not just a borderline call.
    Format: signal_id | new_tier | reason
 
-2. PRIORITY CONTEXT — a fresh briefing note for the triage model. What should it
-   know about Daniel's current focus, hot topics, key relationships, and things to
-   watch for? This replaces the previous priority context entirely.
-   Keep it concise — the triage model has a short context window.
+2. PRIORITY CONTEXT — a fresh briefing note for the triage model. What should
+   it know about Daniel's current focus, hot topics, key relationships, and
+   things to watch for? This replaces the previous priority context entirely.
+
+   You MUST output a refreshed priority_context every cycle. Empty output
+   is not acceptable unless ALL of the following are true:
+   (a) the previous priority_context (shown in <current_priority_context>)
+       is still operationally accurate, AND
+   (b) zero new patterns have emerged from signals/engagements/chat in the
+       review window.
+   When both hold, emit `<no_change/>` inside the priority_context block as
+   an explicit affirmation. If in doubt, refresh. Stale priority_context
+   degrades classification quality across every email.
+
+   COMPRESSION: keep the briefing operationally focused. Push detail to
+   threads, contacts, and chat history — those are queryable. The
+   priority_context is for what the triage model needs at every email
+   classification. Aim for under 3,000 chars total. Stay under 5,000 chars.
+   When adding new priorities, trim historical detail to make room. The
+   6,000-char read-cap is a safety net, not the target.
 
 3. MEMORY NOTES — observations worth remembering long-term. Not every review
    produces these. Only write a memory note when you notice something durable:
@@ -93,7 +121,8 @@ signal_id | new_tier | reason
 </reclassifications>
 
 <priority_context>
-Full replacement text for priority context.
+Full replacement text for priority context. OR — if no change is needed
+this cycle — emit `<no_change/>` inside this block.
 </priority_context>
 
 <memory_notes>
@@ -352,8 +381,6 @@ def _parse_review_response(response: str) -> ReviewOutput:
     output = ReviewOutput(reasoning=response)
 
     def extract_tag(tag_name: str) -> str | None:
-        import re
-
         match = re.search(f"<{tag_name}>(.*?)</{tag_name}>", response, re.DOTALL)
         return match.group(1).strip() if match else None
 
@@ -376,7 +403,14 @@ def _parse_review_response(response: str) -> ReviewOutput:
                     except ValueError:
                         continue
 
-    output.priority_context = extract_tag("priority_context") or ""
+    pc_extracted = extract_tag("priority_context") or ""
+    # extract_tag returns the inner text already stripped; whitespace-tolerant
+    # fullmatch picks up <no_change/>, <no_change />, and bare <no_change>.
+    if pc_extracted and _NO_CHANGE_RE.fullmatch(pc_extracted):
+        output.priority_context_no_change = True
+        output.priority_context = ""
+    else:
+        output.priority_context = pc_extracted
 
     notes_str = extract_tag("memory_notes")
     if notes_str:
@@ -629,8 +663,21 @@ async def execute_review(
             },
         )
 
-    # 2. Write priority context to DB
+    # 2. Apply priority context — three cases distinguished via log line +
+    #    span attribute so future staleness is never silent again (per spec
+    #    step-117). The wrapper records what the LLM did; it does not judge
+    #    the content (no coded intelligence).
+    pc_apply_start_ms = int(time.time() * 1000)
+    pc_len = 0
     if output.priority_context:
+        pc_action = "refreshed"
+        pc_len = len(output.priority_context)
+        if pc_len > PRIORITY_CONTEXT_CEILING_CHARS:
+            logger.warning(
+                "priority_context_oversize len=%s ceiling=%s",
+                pc_len,
+                PRIORITY_CONTEXT_CEILING_CHARS,
+            )
         with open_db(db_path) as conn, conn:
             existing = conn.execute("SELECT id FROM priority_context LIMIT 1").fetchone()
             if existing:
@@ -640,6 +687,34 @@ async def execute_review(
                 )
             else:
                 conn.execute("INSERT INTO priority_context (content) VALUES (?)", (output.priority_context,))
+        logger.info("priority_context_action=refreshed len=%s", pc_len)
+    elif output.priority_context_no_change:
+        pc_action = "no_change_affirmed"
+        logger.info("priority_context_action=no_change_affirmed")
+    else:
+        pc_action = "empty_unaffirmed"
+        logger.warning(
+            "priority_context_action=empty_unaffirmed — review LLM produced empty "
+            "<priority_context> block without <no_change/> affirmation; DB row unchanged"
+        )
+
+    # Span: review_cycle.priority_context_apply — names the apply action +
+    # the length, so dashboards/queries can track refresh cadence and the
+    # ratio of refreshed:no_change_affirmed:empty_unaffirmed over time.
+    try:
+        from xibi.tracing import Tracer
+
+        Tracer(db_path).span(
+            operation="review_cycle.priority_context_apply",
+            attributes={
+                "priority_context_action": pc_action,
+                "priority_context_len": pc_len,
+            },
+            duration_ms=int(time.time() * 1000) - pc_apply_start_ms,
+            component="review",
+        )
+    except Exception as exc:
+        logger.warning(f"priority_context_apply span emit failed: {exc}")
 
     # 3. Write memory notes to beliefs table
     for note in output.memory_notes:
@@ -708,6 +783,7 @@ def store_review_trace(db_path: Path, output: ReviewOutput) -> None:
         output_data = {
             "reclassifications": output.reclassifications,
             "priority_context": output.priority_context,
+            "priority_context_no_change": output.priority_context_no_change,
             "memory_notes": output.memory_notes,
             "contact_updates": output.contact_updates,
             "message": output.message,
