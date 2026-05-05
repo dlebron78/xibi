@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from xibi.mcp.client import MCPClient
 
 from xibi.security import trust_gate
+from xibi.subagent.approval_config import get_approval_required_tools
 from xibi.subagent.db import (
     create_cost_event,
     create_l2_action,
@@ -20,9 +21,10 @@ from xibi.subagent.db import (
     update_run,
     update_step,
 )
-from xibi.subagent.models import CostEvent, SubagentRun
+from xibi.subagent.models import CostEvent, PendingL2Action, SubagentRun
 from xibi.subagent.routing import ModelRouter
 from xibi.subagent.trust import enforce_trust
+from xibi.telegram.api import send_message_with_buttons
 
 # ---------------------------------------------------------------------------
 # MCP prefetch helpers (step-84)
@@ -107,6 +109,67 @@ def _close_mcp_clients(active_clients: dict) -> None:
 logger = logging.getLogger(__name__)
 
 
+def _format_arg_value(value: Any, max_len: int = 200) -> str:
+    """Render a single arg value for the Telegram approval message.
+
+    Long strings are truncated with a char-count indicator. Full args
+    always live in the DB row for audit; this is human readability only.
+    """
+    if isinstance(value, str):
+        if len(value) > max_len:
+            return f"{value[:max_len]}... ({len(value)} chars)"
+        return value
+    rendered = json.dumps(value, ensure_ascii=False)
+    if len(rendered) > max_len:
+        return f"{rendered[:max_len]}... ({len(rendered)} chars)"
+    return rendered
+
+
+def _format_approval_message(action: PendingL2Action, run: SubagentRun, step: Any) -> str:
+    """Format the Telegram approval prompt for a parked action.
+
+    Operator sees WHAT, not just THAT (TRR gate): tool name, run/step
+    context, and per-arg key/value pairs (truncated for readability).
+    """
+    run_short = run.id[:8] if run.id else "?"
+    step_order = getattr(step, "step_order", "?")
+    lines = [
+        "Action requires approval:",
+        "",
+        f"Tool: {action.tool}",
+        f"Run: {run_short} / Step: {step_order}",
+        "Args:",
+    ]
+    args = action.args or {}
+    if not args:
+        lines.append("  (none)")
+    else:
+        for k, v in args.items():
+            lines.append(f"  {k}: {_format_arg_value(v)}")
+    return "\n".join(lines)
+
+
+def _notify_parked_action(action: PendingL2Action, run: SubagentRun, step: Any) -> None:
+    """Send the Telegram approve/reject prompt for a parked action.
+
+    Best-effort: a send failure logs WARNING but does NOT un-park the
+    action. The row stays PENDING and Daniel can still see it via
+    dashboard or manager review.
+    """
+    try:
+        buttons = [
+            {"text": "Approve", "callback_data": f"l2_action:approve:{action.id}"},
+            {"text": "Reject", "callback_data": f"l2_action:reject:{action.id}"},
+        ]
+        msg = _format_approval_message(action, run, step)
+        send_message_with_buttons(msg, buttons)
+        logger.info(f"action_parked tool={action.tool} run={run.id} action_id={action.id}")
+    except Exception as e:
+        logger.warning(
+            f"action_park_notify_failed tool={action.tool} action_id={action.id} err={e}"
+        )
+
+
 def execute_checklist(
     run: SubagentRun,
     db_path: Path,
@@ -117,6 +180,7 @@ def execute_checklist(
     router = ModelRouter()
     steps = get_steps(db_path, run.id)
     mcp_clients: dict = {}  # server_name -> MCPClient, reused across steps, closed at end
+    approval_required_tools = get_approval_required_tools()
 
     run.status = "RUNNING"
     run.started_at = datetime.now(timezone.utc).isoformat()
@@ -260,10 +324,13 @@ def execute_checklist(
             except json.JSONDecodeError:
                 output_data = {"raw_content": response.content, "error": "Failed to parse JSON output"}
 
-            # Trust enforcement
-            output_data, parked_actions = enforce_trust(output_data, step_cfg, run.id, step.id)
+            # Approval-gate enforcement (step-123)
+            output_data, parked_actions = enforce_trust(
+                output_data, run.id, step.id, approval_required_tools
+            )
             for action in parked_actions:
                 create_l2_action(db_path, action)
+                _notify_parked_action(action, run, step)
 
             # Update step
             step.status = "DONE"

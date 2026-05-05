@@ -41,8 +41,10 @@ class TestSubagent(unittest.TestCase):
         if self.db_path.exists():
             self.db_path.unlink()
 
+    @patch("xibi.subagent.checklist.get_approval_required_tools", return_value=["red_tool"])
+    @patch("xibi.subagent.checklist.send_message_with_buttons")
     @patch("xibi.subagent.checklist.ModelRouter.call")
-    def test_full_lifecycle(self, mock_call):
+    def test_full_lifecycle(self, mock_call, mock_send, mock_get_tools):
         mock_call.side_effect = [
             _mock_response('{"status": "ok", "actions": []}'),
             _mock_response('{"status": "ok", "actions": [{"tool": "red_tool", "args": {}}]}'),
@@ -66,8 +68,10 @@ class TestSubagent(unittest.TestCase):
         self.assertEqual(steps[0].status, "DONE")
         self.assertEqual(steps[1].status, "DONE")
 
-        # Step 2 was L2 — trust enforcement parks its actions
+        # red_tool is on the global approval list, so step 2's action
+        # gets parked and a Telegram approve/reject prompt is sent.
         self.assertIn("parked_actions", steps[1].output_data)
+        mock_send.assert_called_once()
 
         cost = get_run_cost(self.db_path, run.id)
         self.assertGreater(cost, 0)

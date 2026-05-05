@@ -781,6 +781,10 @@ class TelegramAdapter:
             self._handle_email_button(callback_query)
             return
 
+        if data.startswith("l2_action:"):
+            self._handle_l2_action_button(callback_query)
+            return
+
         logger.warning(f"unrouted_callback data={data[:50]}")
 
     # ── Email-confirmation inline-button helpers (step-105) ──────────────────
@@ -1037,6 +1041,158 @@ class TelegramAdapter:
         except Exception as e:
             logger.error(
                 f"email_button_error action={span_attrs.get('action')} draft_id={span_attrs.get('draft_id')} error={e}",
+                exc_info=True,
+            )
+            span_attrs["outcome"] = "error"
+            try:
+                if message_id:
+                    self._edit_message_text(
+                        chat_id, message_id, f"⚠️ Internal error processing {span_attrs.get('action')}."
+                    )
+                    self._strip_buttons(chat_id, message_id)
+            except Exception:
+                pass
+
+        finally:
+            self._emit_button_span(span_attrs)
+
+    def _l2_action_keyboard(self, action_id: str) -> dict:
+        """Build the inline approve/reject keyboard for a parked L2 action."""
+        return {
+            "inline_keyboard": [
+                [
+                    {"text": "✅ Approve", "callback_data": f"l2_action:approve:{action_id}"},
+                    {"text": "❌ Reject", "callback_data": f"l2_action:reject:{action_id}"},
+                ]
+            ]
+        }
+
+    def _handle_l2_action_button(self, callback_query: dict) -> None:
+        """Dispatch an l2_action:* callback (step-123 approval gate).
+
+        The callback_data carries only the action_id; the tool name and
+        args live on the ``pending_l2_actions`` row. The handler:
+
+        1. Verifies the tap came from an authorized chat (defense-in-depth).
+        2. Looks up the row and atomically flips PENDING -> APPROVED/REJECTED
+           in a single transaction. A status mismatch on read means the row
+           was already actioned (double-tap or concurrent dashboard
+           approval); the handler short-circuits to "already handled" and
+           does NOT re-execute. The execution side-effect is irreversible,
+           so this race window must be closed in SQL, not Python.
+        3. On APPROVED, executes ``(tool, args)`` via the same
+           ``_invoke_button_action`` path used by email confirmations, so
+           the tier system + audit log fire identically.
+        """
+        data = callback_query.get("data", "")
+        chat_id = callback_query.get("message", {}).get("chat", {}).get("id")
+        message_id = callback_query.get("message", {}).get("message_id")
+        from_id = callback_query.get("from", {}).get("id")
+
+        span_attrs: dict = {"action": "unknown", "chat_id": str(chat_id)}
+
+        try:
+            if not from_id or str(from_id) not in self.allowed_chats:
+                logger.warning(f"l2_action_unauthorized chat_id={from_id} data={data}")
+                span_attrs["outcome"] = "unauthorized"
+                return
+
+            try:
+                _, decision, action_id = data.split(":", 2)
+            except ValueError:
+                logger.warning(f"l2_action_bad_data data={data}")
+                span_attrs["outcome"] = "bad_data"
+                return
+
+            span_attrs.update({"action": decision, "action_id": action_id[:8]})
+
+            if decision not in ("approve", "reject"):
+                logger.warning(f"l2_action_bad_decision decision={decision}")
+                span_attrs["outcome"] = "bad_action"
+                return
+
+            new_status = "APPROVED" if decision == "approve" else "REJECTED"
+            now_str = datetime.now(timezone.utc).isoformat()
+
+            # Atomic read + status flip. Race window between the SELECT
+            # and the UPDATE is closed by checking rowcount on the
+            # status='PENDING' guard in the WHERE clause: only one tap
+            # ever sees rowcount==1.
+            tool: str | None = None
+            args_json: str | None = None
+            already_handled = False
+            with open_db(self.db_path) as conn, conn:
+                cur = conn.execute(
+                    "SELECT tool, args, status FROM pending_l2_actions WHERE id = ?",
+                    (action_id,),
+                )
+                row = cur.fetchone()
+                if row is None:
+                    span_attrs["outcome"] = "not_found"
+                    self._edit_message_text(chat_id, message_id, "⚠️ Action not found.")
+                    self._strip_buttons(chat_id, message_id)
+                    return
+                tool, args_json, current_status = row[0], row[1], row[2]
+                if current_status != "PENDING":
+                    already_handled = True
+                else:
+                    cur = conn.execute(
+                        "UPDATE pending_l2_actions SET status = ?, "
+                        "reviewed_at = ?, reviewed_by = 'telegram' "
+                        "WHERE id = ? AND status = 'PENDING'",
+                        (new_status, now_str, action_id),
+                    )
+                    if cur.rowcount != 1:
+                        already_handled = True
+
+            span_attrs["tool"] = tool or "?"
+
+            if already_handled:
+                self._edit_message_text(
+                    chat_id, message_id, f"⚠️ Already handled: {tool or 'action'}."
+                )
+                self._strip_buttons(chat_id, message_id)
+                span_attrs["outcome"] = "already_handled"
+                return
+
+            if decision == "reject":
+                logger.info(f"action_rejected action_id={action_id} tool={tool} reviewed_by=telegram")
+                self._edit_message_text(chat_id, message_id, f"❌ Rejected: {tool}.")
+                self._strip_buttons(chat_id, message_id)
+                span_attrs["outcome"] = "rejected"
+                return
+
+            # Approve path: execute via the existing button-action pipeline.
+            try:
+                args = json.loads(args_json) if args_json else {}
+            except (TypeError, json.JSONDecodeError) as e:
+                logger.error(f"l2_action_args_decode_failed action_id={action_id} err={e}")
+                self._edit_message_text(
+                    chat_id, message_id, f"⚠️ Cannot decode args for {tool}."
+                )
+                self._strip_buttons(chat_id, message_id)
+                span_attrs["outcome"] = "args_decode_failed"
+                return
+
+            logger.info(f"action_approved action_id={action_id} tool={tool} reviewed_by=telegram")
+            result = self._invoke_button_action(tool, args) if tool else {"status": "error", "message": "no tool"}
+            if result.get("status") == "success":
+                self._edit_message_text(
+                    chat_id, message_id, f"✅ Approved and executed: {tool}."
+                )
+                span_attrs["outcome"] = "executed"
+            else:
+                self._edit_message_text(
+                    chat_id,
+                    message_id,
+                    f"⚠️ Approved but execution failed: {tool} — {result.get('message', 'unknown')}.",
+                )
+                span_attrs["outcome"] = "execution_failed"
+            self._strip_buttons(chat_id, message_id)
+
+        except Exception as e:
+            logger.error(
+                f"l2_action_error action={span_attrs.get('action')} action_id={span_attrs.get('action_id')} error={e}",
                 exc_info=True,
             )
             span_attrs["outcome"] = "error"

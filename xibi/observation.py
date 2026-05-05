@@ -912,7 +912,9 @@ class ObservationCycle:
                     )
                     pending_actions = cursor.fetchall()
                     if pending_actions:
-                        lines.append("PENDING ACTIONS REQUIRING APPROVAL:")
+                        lines.append(
+                            "PENDING ACTIONS (awaiting human Telegram approval — read-only, not actionable from this review):"
+                        )
                         for action in pending_actions:
                             lines.append(
                                 f"- [action_id={action['id']}] Tool: {action['tool']} (Run: {action['run_id']})"
@@ -1070,13 +1072,6 @@ Respond with ONLY valid JSON matching this schema (no markdown, no explanation):
       "contact_id": "...",
       "relationship": "vendor|client|recruiter|colleague|unknown or null",
       "organization": "str or null"
-    }}
-  ],
-  "action_approvals": [
-    {{
-      "action_id": "...",
-      "decision": "approve|reject",
-      "reason": "..."
     }}
   ],
   "subagent_spawns": [
@@ -1255,14 +1250,12 @@ Example for subagent_spawns:
                 all_topic_pins = review_data.get("topic_pins", [])
                 all_contact_updates = review_data.get("contact_updates", [])
                 all_subagent_spawns = review_data.get("subagent_spawns", [])
-                all_action_approvals = review_data.get("action_approvals", [])
                 digest = review_data.get("digest", "")
 
             except Exception as e:
                 review_errors.append(f"LLM generate failed: {e}")
                 logger.warning(f"Manager review LLM call failed: {e}")
                 all_subagent_spawns = []
-                all_action_approvals = []
 
             # Apply all updates
             merged = {
@@ -1270,7 +1263,6 @@ Example for subagent_spawns:
                 "signal_flags": all_signal_flags,
                 "topic_pins": all_topic_pins,
                 "contact_updates": all_contact_updates,
-                "action_approvals": all_action_approvals,
             }
             updates_applied = self._apply_manager_updates(merged)
             result.actions_taken = updates_applied
@@ -1665,36 +1657,11 @@ Example for subagent_spawns:
             except Exception as e:
                 logger.error(f"Manager review: failed to apply topic pins: {e}", exc_info=True)
 
-        # Action approvals
-        action_approvals = review_data.get("action_approvals", [])
-        if action_approvals:
-            try:
-                with open_db(self.db_path) as conn, conn:
-                    for approval in action_approvals:
-                        action_id = approval.get("action_id")
-                        decision = approval.get("decision")
-                        if not action_id or decision not in ("approve", "reject"):
-                            continue
-
-                        status = "APPROVED" if decision == "approve" else "REJECTED"
-                        conn.execute(
-                            "UPDATE pending_l2_actions SET status = ?, reviewed_at = ?, reviewed_by = 'manager' WHERE id = ?",
-                            (status, now_str, action_id),
-                        )
-
-                        # If approved, route to existing command execution layer?
-                        # For now, just mark status — the runtime execution of approved actions is Block 2/3.
-
-                        actions.append(
-                            {
-                                "tool": "manager_action_approval",
-                                "input": approval,
-                                "output": {"status": "ok"},
-                                "allowed": True,
-                            }
-                        )
-            except Exception as e:
-                logger.error(f"Manager review: failed to apply action approvals: {e}", exc_info=True)
+        # Action approvals — removed in step-123. Approval authority lives
+        # exclusively on the Telegram l2_action button path so that no
+        # outbound action executes without a human tap. The review LLM no
+        # longer sees the action_approvals key in its output schema; any
+        # stray entries from older prompts are ignored here.
 
         # Contact updates
         contact_updates = review_data.get("contact_updates", [])

@@ -1,3 +1,17 @@
+"""Approval-gate enforcement for subagent step output (step-123).
+
+The runtime — not the subagent LLM — decides which actions need human
+approval. ``enforce_trust`` inspects each declared action in a step's
+output and parks any whose tool name appears in the global
+``approval_required_tools`` config list. Parked actions are returned to
+the caller (``checklist.py``), which persists them in
+``pending_l2_actions`` and notifies a human via Telegram. Unlisted tools
+pass through unchanged.
+
+Replaces the per-skill L1/L2 trust model: a single global list is the
+authority for what needs a human tap.
+"""
+
 from __future__ import annotations
 
 import uuid
@@ -7,30 +21,33 @@ from xibi.subagent.models import PendingL2Action
 
 
 def enforce_trust(
-    step_output: dict[str, Any], skill_config: dict[str, Any], run_id: str, step_id: str
+    step_output: dict[str, Any],
+    run_id: str,
+    step_id: str,
+    approval_required_tools: list[str],
 ) -> tuple[dict[str, Any], list[PendingL2Action]]:
-    """
-    Inspect step output for declared actions.
-    L1 actions: pass through, record in output.
-    L2 actions: extract, park in review queue, return TrustResult with parked_actions.
+    """Park any declared action whose tool is on ``approval_required_tools``.
 
-    The subagent NEVER decides its own permissions.
-    The runtime ALWAYS enforces the manifest's L1/L2 declarations.
-    """
-    trust_level = skill_config.get("trust", "L2")
-    actions = step_output.get("actions", [])
+    Returns ``(clean_output, parked_actions)``. The subagent NEVER decides
+    its own permissions — the runtime enforces the global approval list.
 
-    parked_actions = []
+    An empty or absent list means "no gate": every action passes through.
+    A step output with no ``actions`` key short-circuits to ``(output, [])``.
+    """
+    actions = step_output.get("actions")
+    if not actions:
+        return step_output, []
+
+    required = set(approval_required_tools or [])
+    parked_actions: list[PendingL2Action] = []
 
     for action in actions:
         if not isinstance(action, dict) or "tool" not in action:
             continue
-
-        if trust_level == "L1":
-            pass
-        else:
-            # Park L2 action
-            pending = PendingL2Action(
+        if action["tool"] not in required:
+            continue
+        parked_actions.append(
+            PendingL2Action(
                 id=str(uuid.uuid4()),
                 run_id=run_id,
                 step_id=step_id,
@@ -38,12 +55,9 @@ def enforce_trust(
                 args=action.get("args", {}),
                 status="PENDING",
             )
-            parked_actions.append(pending)
+        )
 
-    # Clean output: only keep L1 actions in the output data
-    # (actually we might want to keep all intended actions but mark them as parked)
     clean_output = {**step_output}
     if parked_actions:
         clean_output["parked_actions"] = [a.id for a in parked_actions]
-
     return clean_output, parked_actions

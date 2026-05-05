@@ -82,7 +82,12 @@ class SkillDeclaration:
     name: str
     description: str
     prompt_file: str
-    trust: str  # L1 | L2
+    # DEPRECATED in step-123: per-skill L1/L2 trust replaced by the global
+    # approval_required_tools config list. Field kept on the dataclass and
+    # in skill manifest YAML so legacy manifests still parse, but the value
+    # is no longer consulted by the runtime. Removal scheduled in a
+    # follow-up that also sweeps every manifest in one pass.
+    trust: str  # L1 | L2 — deprecated, ignored by enforce_trust()
     model: str
     standalone: bool = False
     standalone_input: dict[str, Any] | None = None
