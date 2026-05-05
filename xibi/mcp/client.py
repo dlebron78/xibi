@@ -10,6 +10,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, cast
 
+from xibi.security import trust_gate
+
 logger = logging.getLogger(__name__)
 
 
@@ -288,6 +290,7 @@ class MCPClient:
             if is_error:
                 return {"status": "error", "error": full_text}
 
+            full_text = trust_gate(full_text, source=f"mcp:{self.config.name}/{name}", mode="content")
             result = {"status": "ok", "result": full_text}
             if structured is not None:
                 result["structured"] = structured

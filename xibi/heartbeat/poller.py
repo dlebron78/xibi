@@ -29,6 +29,7 @@ from xibi.heartbeat.tier2_extractors import _emit_tier2_span
 from xibi.observation import ObservationCycle
 from xibi.radiant import Radiant
 from xibi.router import get_model
+from xibi.security import trust_gate
 from xibi.threads import sweep_resolved_threads, sweep_stale_threads
 
 if TYPE_CHECKING:
@@ -735,8 +736,8 @@ class HeartbeatPoller:
         for sig in raw_signals:
             email = sig["metadata"]["email"]
             email_id = sig["ref_id"]
-            sender = sig["entity_text"]
-            subject = sig["topic_hint"]
+            sender = trust_gate(sig["entity_text"], source="email_sender", mode="metadata")
+            subject = trust_gate(sig["topic_hint"], source="email_subject", mode="metadata")
             sender_str = str(sender).lower()
 
             # Body fetching and summarization for new emails
@@ -755,7 +756,7 @@ class HeartbeatPoller:
                     parse_start_ms = int(_time.time() * 1000)
                     parsed = await loop.run_in_executor(None, parse_email_smart, raw)
                     parse_duration_ms = int(_time.time() * 1000) - parse_start_ms
-                    body = parsed.get("body") or ""
+                    body = trust_gate(parsed.get("body"), source="email_body", mode="content")
                     parsed_body_format = str(parsed.get("format") or "")
                     parser_chain = list(parsed.get("parser_chain") or [])
                     fallback_used = bool(parsed.get("fallback_used"))

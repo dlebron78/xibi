@@ -12,6 +12,7 @@ from skills.calendar.tools._google_auth import (
     load_calendar_config,
 )
 from xibi.db import open_db
+from xibi.security import trust_gate
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +80,7 @@ def poll_calendar_signals(
                 continue
 
             # 2. Derive fields
-            title = event.get("summary", "(No title)")
+            title = trust_gate(event.get("summary", "(No title)"), source="calendar_title", mode="metadata")
             start = event.get("start", {})
             start_iso = start.get("dateTime", start.get("date"))
 
@@ -96,6 +97,7 @@ def poll_calendar_signals(
 
             urgency = _derive_urgency(start_iso)
             attendee_name, attendee_email = _extract_attendees(event)
+            attendee_name = trust_gate(attendee_name, source="calendar_attendee", mode="metadata")
 
             # Google Calendar deep link format uses a base64 encoded string of "event_id calendar_id"
             # Standard padding is removed to match observed GCal URL patterns.

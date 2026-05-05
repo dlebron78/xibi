@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from xibi.mcp.client import MCPClient
 
+from xibi.security import trust_gate
 from xibi.subagent.db import (
     create_cost_event,
     create_l2_action,
@@ -174,7 +175,11 @@ def execute_checklist(
                         result = client.call_tool(tool_name, args)
 
                         if result["status"] == "ok":
-                            run.scoped_input[inject_key] = result["result"]
+                            run.scoped_input[inject_key] = trust_gate(
+                                result["result"],
+                                source=f"subagent_tool:{server_name}/{tool_name}",
+                                mode="content",
+                            )
                             logger.info(f"Prefetch {server_name}/{tool_name} -> scoped_input.{inject_key}")
                         elif tool_decl.get("required", False):
                             raise RuntimeError(f"Required tool {server_name}/{tool_name} failed: {result.get('error')}")
@@ -199,7 +204,12 @@ def execute_checklist(
             if previous_outputs:
                 context_str += "Previous step outputs:\n"
                 for j, prev_out in enumerate(previous_outputs):
-                    context_str += f"Step {j + 1}: {json.dumps(prev_out)}\n"
+                    prev_out_str = trust_gate(
+                        json.dumps(prev_out),
+                        source=f"subagent_step:{j + 1}",
+                        mode="content",
+                    )
+                    context_str += f"Step {j + 1}: {prev_out_str}\n"
 
             prompt = f"{context_str}\nTask: Execute skill {step.skill_name}.\n"
             # Input validation preamble — prevent hallucination of missing data
