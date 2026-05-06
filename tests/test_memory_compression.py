@@ -16,6 +16,10 @@ class TestMemoryCompression(unittest.TestCase):
             self.db_file.unlink()
         migrate(self.db_file)
         self.session_id = "test-session"
+        # belief_summaries has a FK to sessions(id); seed the parent row
+        # so step-120's PRAGMA foreign_keys=ON doesn't reject the inserts.
+        with open_db(self.db_file) as conn:
+            conn.execute("INSERT INTO sessions (id) VALUES (?)", (self.session_id,))
         self.mock_model = MagicMock()
 
     def tearDown(self):

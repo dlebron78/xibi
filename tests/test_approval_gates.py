@@ -216,6 +216,19 @@ def adapter(tmp_path):
 def _insert_pending(db_path, *, action_id="aid-1", tool="send_email", args=None, status="PENDING"):
     args = args or {"to": "bob@example.com"}
     with sqlite3.connect(db_path) as conn, conn:
+        # Seed the FK parent first; step-120 enables PRAGMA foreign_keys=ON
+        # in xibi.db.open_db, so subsequent retry/approve flows that go
+        # through open_db would otherwise fail when this orphan-style
+        # pending_l2_actions row's run_id doesn't resolve.
+        conn.execute(
+            "INSERT OR IGNORE INTO subagent_runs (id, agent_id, status, trigger, created_at) "
+            "VALUES ('run-1', 'test-agent', 'DONE', 'manual', datetime('now'))"
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO subagent_checklist_steps "
+            "(id, run_id, step_order, skill_name, status) "
+            "VALUES ('step-1', 'run-1', 0, 'test-skill', 'DONE')"
+        )
         conn.execute(
             "INSERT INTO pending_l2_actions (id, run_id, step_id, tool, args, status, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",

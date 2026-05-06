@@ -22,6 +22,12 @@ def open_db(db_path: Path, *, timeout: int = 30) -> Generator[sqlite3.Connection
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA wal_autocheckpoint=1000")
     conn.execute("PRAGMA busy_timeout=30000")
+    # PRAGMA foreign_keys is connection-level and SQLite silently ignores
+    # it if a transaction is already active on the connection. Setting it
+    # AFTER the housekeeping PRAGMAs above and BEFORE the yield guarantees
+    # the caller receives a connection with FK enforcement on, regardless
+    # of what the caller does next.
+    conn.execute("PRAGMA foreign_keys = ON")
     try:
         yield conn
         conn.commit()

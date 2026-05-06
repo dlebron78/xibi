@@ -199,6 +199,12 @@ def test_dispatch_loop_records_signal_dispatch_rows(db_path):
     mock_run.id = "run-dispatch-001"
     mock_run.status = "SPAWNED"
 
+    # spawn_subagent is mocked below, so the real subagent_runs row is
+    # never inserted. step-120 enables PRAGMA foreign_keys=ON inside
+    # open_db, so the subsequent subagent_signal_dispatch INSERT below
+    # would fail on the run_id FK without seeding the parent here.
+    _insert_subagent_run(db_path, mock_run.id)
+
     cycle = ObservationCycle(db_path=db_path, profile={})
 
     spawn_input = {

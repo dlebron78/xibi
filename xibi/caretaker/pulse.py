@@ -30,7 +30,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from xibi.caretaker import dedup as _dedup
-from xibi.caretaker.checks import config_drift, provider_health, schema_drift, service_silence
+from xibi.caretaker.checks import config_drift, fk_health, provider_health, schema_drift, service_silence
 from xibi.caretaker.checks._time import now_ms
 from xibi.caretaker.config import DEFAULTS, CaretakerConfig
 from xibi.caretaker.finding import Finding
@@ -208,6 +208,9 @@ class Caretaker:
                 lambda: provider_health.check(self.db_path, self.config.provider_health),
                 {"window_hours": self.config.provider_health.window_hours},
             ),
+        )
+        check_runs.append(
+            ("fk_health", "caretaker.check.fk_health", lambda: fk_health.check(self.db_path), {}),
         )
 
         for _name, op, runner, extra_attrs in check_runs:
