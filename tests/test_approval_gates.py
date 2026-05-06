@@ -122,9 +122,7 @@ def test_notify_parked_action_swallows_telegram_failure(caplog):
     """A Telegram send failure must NOT un-park; row stays PENDING."""
     from xibi.subagent.checklist import _notify_parked_action
 
-    action = PendingL2Action(
-        id="aid-2", run_id="r", step_id="s", tool="send_email", args={}
-    )
+    action = PendingL2Action(id="aid-2", run_id="r", step_id="s", tool="send_email", args={})
     run = SubagentRun(id="r", agent_id="a", status="RUNNING", trigger="manual")
     step = MagicMock(step_order=1)
 
@@ -168,9 +166,7 @@ def test_approval_config_missing_file_returns_empty(isolate_approval_config):
 
 
 def test_approval_config_loads_required_tools(isolate_approval_config):
-    isolate_approval_config.write_text(
-        "approval_gates:\n  required_tools:\n    - send_email\n    - send_message\n"
-    )
+    isolate_approval_config.write_text("approval_gates:\n  required_tools:\n    - send_email\n    - send_message\n")
     tools = approval_config.get_approval_required_tools()
     assert tools == ["send_email", "send_message"]
 
@@ -181,13 +177,9 @@ def test_approval_config_missing_section_returns_empty(isolate_approval_config):
 
 
 def test_approval_config_caches_result(isolate_approval_config):
-    isolate_approval_config.write_text(
-        "approval_gates:\n  required_tools: [send_email]\n"
-    )
+    isolate_approval_config.write_text("approval_gates:\n  required_tools: [send_email]\n")
     first = approval_config.get_approval_required_tools()
-    isolate_approval_config.write_text(
-        "approval_gates:\n  required_tools: [other]\n"
-    )
+    isolate_approval_config.write_text("approval_gates:\n  required_tools: [other]\n")
     second = approval_config.get_approval_required_tools()
     # No cache reset between calls — cached value wins.
     assert first == second == ["send_email"]
@@ -342,15 +334,16 @@ def test_l2_action_not_found(adapter):
     assert not adapter.executor.execute.called
 
 
-def test_l2_action_execution_failure_marks_status_but_reports_error(adapter):
+def test_l2_action_execution_failure_marks_exec_failed_and_reports_error(adapter):
+    """step-124: failed execution flips status APPROVED → EXEC_FAILED so the
+    retry handler can validate the Retry button is legitimate."""
     aid = _insert_pending(adapter.db_path, action_id=str(uuid.uuid4()))
     adapter.executor.execute.return_value = {"status": "error", "message": "smtp boom"}
 
     adapter._handle_l2_action_button(_callback(f"l2_action:approve:{aid}"))
 
-    # Row already marked APPROVED before execution attempt — irreversible flip.
     status, _, _ = _row(adapter.db_path, aid)
-    assert status == "APPROVED"
+    assert status == "EXEC_FAILED"
     edits = [c for c in adapter._api_call.call_args_list if c.args[0] == "editMessageText"]
     assert any("execution failed" in c.args[1]["text"].lower() for c in edits)
 
@@ -362,6 +355,137 @@ def test_l2_action_callback_dispatches_to_handler(adapter):
     adapter._handle_callback(_callback(f"l2_action:approve:{aid}"))
     status, _, _ = _row(adapter.db_path, aid)
     assert status == "APPROVED"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# step-124: Retry button on execution failure
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _pending_rows(db_path):
+    with sqlite3.connect(db_path) as conn:
+        return conn.execute(
+            "SELECT id, tool, args, status, run_id FROM pending_l2_actions ORDER BY created_at, id"
+        ).fetchall()
+
+
+def test_retry_button_shown_on_execution_failure(adapter):
+    """Failed execution must show a Retry button via editMessageReplyMarkup,
+    not strip all buttons (the pre-step-124 behavior)."""
+    aid = _insert_pending(adapter.db_path, action_id=str(uuid.uuid4()))
+    adapter.executor.execute.return_value = {"status": "error", "message": "boom"}
+
+    adapter._handle_l2_action_button(_callback(f"l2_action:approve:{aid}"))
+
+    markup_calls = [c for c in adapter._api_call.call_args_list if c.args[0] == "editMessageReplyMarkup"]
+    # Last markup call carries the Retry button (not an empty keyboard).
+    assert markup_calls, "expected at least one editMessageReplyMarkup call"
+    final_markup = markup_calls[-1].args[1]["reply_markup"]["inline_keyboard"]
+    flat = [b for row in final_markup for b in row]
+    assert any(b["callback_data"] == f"l2_action:retry:{aid}" for b in flat)
+    assert any("Retry" in b["text"] for b in flat)
+
+
+def test_retry_creates_new_pending_action(adapter):
+    """Tapping Retry creates a new row with same tool+args, fresh ID, PENDING.
+    Original row stays as EXEC_FAILED (never mutated)."""
+    aid = _insert_pending(
+        adapter.db_path,
+        action_id=str(uuid.uuid4()),
+        args={"to": "bob@example.com"},
+        status="EXEC_FAILED",
+    )
+
+    adapter._handle_l2_action_button(_callback(f"l2_action:retry:{aid}"))
+
+    rows = _pending_rows(adapter.db_path)
+    assert len(rows) == 2, rows
+    original = next(r for r in rows if r[0] == aid)
+    new_row = next(r for r in rows if r[0] != aid)
+    assert original[3] == "EXEC_FAILED"
+    assert new_row[1] == original[1]  # same tool
+    assert new_row[2] == original[2]  # same args raw text
+    assert new_row[3] == "PENDING"
+    assert new_row[4] == original[4]  # same run_id
+
+
+def test_retry_sends_new_approval_message(adapter):
+    """Retry tap sends a fresh approve/reject message via
+    send_message_with_buttons. The original message's Retry button is
+    removed via editMessageReplyMarkup, not via a new send."""
+    aid = _insert_pending(adapter.db_path, action_id=str(uuid.uuid4()), status="EXEC_FAILED")
+
+    with patch("xibi.channels.telegram.send_message_with_buttons") as send:
+        adapter._handle_l2_action_button(_callback(f"l2_action:retry:{aid}"))
+
+    send.assert_called_once()
+    text, buttons = send.call_args.args[0], send.call_args.args[1]
+    assert "send_email" in text
+    new_aid = next(r[0] for r in _pending_rows(adapter.db_path) if r[0] != aid)
+    assert any(b["callback_data"] == f"l2_action:approve:{new_aid}" for b in buttons)
+    assert any(b["callback_data"] == f"l2_action:reject:{new_aid}" for b in buttons)
+    # Original message's Retry button gets stripped via editMessageReplyMarkup.
+    markup_calls = [c for c in adapter._api_call.call_args_list if c.args[0] == "editMessageReplyMarkup"]
+    assert markup_calls
+    assert markup_calls[-1].args[1]["reply_markup"]["inline_keyboard"] == []
+
+
+def test_retry_double_tap_idempotent(adapter):
+    """Second Retry tap finds the PENDING duplicate (same run_id+tool+args)
+    and short-circuits with 'Already retried'. Only one new row exists."""
+    aid = _insert_pending(adapter.db_path, action_id=str(uuid.uuid4()), status="EXEC_FAILED")
+
+    with patch("xibi.channels.telegram.send_message_with_buttons"):
+        adapter._handle_l2_action_button(_callback(f"l2_action:retry:{aid}"))
+        # Second tap arrives — must NOT create a third row
+        adapter._handle_l2_action_button(_callback(f"l2_action:retry:{aid}"))
+
+    rows = _pending_rows(adapter.db_path)
+    assert len(rows) == 2  # original EXEC_FAILED + one new PENDING
+    pending = [r for r in rows if r[3] == "PENDING"]
+    assert len(pending) == 1
+    edits = [c for c in adapter._api_call.call_args_list if c.args[0] == "editMessageText"]
+    assert any("already retried" in c.args[1]["text"].lower() for c in edits)
+
+
+def test_retry_not_available_on_success(adapter):
+    """Successful execution strips all buttons (no Retry shown)."""
+    aid = _insert_pending(adapter.db_path, action_id=str(uuid.uuid4()))
+    adapter.executor.execute.return_value = {"status": "success"}
+
+    adapter._handle_l2_action_button(_callback(f"l2_action:approve:{aid}"))
+
+    markup_calls = [c for c in adapter._api_call.call_args_list if c.args[0] == "editMessageReplyMarkup"]
+    # On success, the only markup call is the strip (empty keyboard).
+    assert markup_calls
+    for c in markup_calls:
+        assert c.args[1]["reply_markup"]["inline_keyboard"] == []
+
+
+def test_retry_not_available_when_status_not_exec_failed(adapter):
+    """Stale Retry tap on a row whose status is already PENDING/APPROVED/
+    REJECTED must not create a new row. The handler strips the (stale)
+    Retry button and exits without sending a new approval message."""
+    aid = _insert_pending(adapter.db_path, action_id=str(uuid.uuid4()), status="APPROVED")
+
+    with patch("xibi.channels.telegram.send_message_with_buttons") as send:
+        adapter._handle_l2_action_button(_callback(f"l2_action:retry:{aid}"))
+
+    rows = _pending_rows(adapter.db_path)
+    assert len(rows) == 1  # no new row
+    send.assert_not_called()
+
+
+def test_retry_unauthorized_chat_rejected(adapter, caplog):
+    """The auth check at the top of _handle_l2_action_button gates retry too."""
+    aid = _insert_pending(adapter.db_path, action_id=str(uuid.uuid4()), status="EXEC_FAILED")
+    cb = _callback(f"l2_action:retry:{aid}", from_id=999)
+    with caplog.at_level("WARNING"):
+        adapter._handle_l2_action_button(cb)
+
+    assert any("l2_action_unauthorized" in r.message for r in caplog.records)
+    rows = _pending_rows(adapter.db_path)
+    assert len(rows) == 1  # no new row created
 
 
 def test_l2_action_args_decode_failed(adapter):

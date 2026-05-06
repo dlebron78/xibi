@@ -848,7 +848,7 @@ class SchemaManager:
                 step_id     TEXT REFERENCES subagent_checklist_steps(id),
                 tool        TEXT NOT NULL,       -- tool name (consistent with tools.py dispatch)
                 args        TEXT NOT NULL,       -- JSON: full action args
-                status      TEXT NOT NULL DEFAULT 'PENDING',  -- PENDING | APPROVED | REJECTED
+                status      TEXT NOT NULL DEFAULT 'PENDING',  -- PENDING | APPROVED | REJECTED | EXEC_FAILED
                 reviewed_by TEXT,               -- who approved/rejected (telegram | dashboard)
                 reviewed_at TEXT,
                 created_at  TEXT NOT NULL

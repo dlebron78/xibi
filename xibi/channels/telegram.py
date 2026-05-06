@@ -26,6 +26,7 @@ from xibi.routing.control_plane import ControlPlaneRouter
 from xibi.routing.shadow import ShadowMatcher
 from xibi.session import SessionContext
 from xibi.skills.registry import SkillRegistry
+from xibi.telegram.api import send_message_with_buttons
 from xibi.tracing import Span, Tracer
 from xibi.types import ReActResult
 
@@ -1106,9 +1107,13 @@ class TelegramAdapter:
 
             span_attrs.update({"action": decision, "action_id": action_id[:8]})
 
-            if decision not in ("approve", "reject"):
+            if decision not in ("approve", "reject", "retry"):
                 logger.warning(f"l2_action_bad_decision decision={decision}")
                 span_attrs["outcome"] = "bad_action"
+                return
+
+            if decision == "retry":
+                self._handle_l2_retry(action_id, chat_id, message_id, span_attrs)
                 return
 
             new_status = "APPROVED" if decision == "approve" else "REJECTED"
@@ -1175,14 +1180,23 @@ class TelegramAdapter:
             if result.get("status") == "success":
                 self._edit_message_text(chat_id, message_id, f"✅ Approved and executed: {tool}.")
                 span_attrs["outcome"] = "executed"
+                self._strip_buttons(chat_id, message_id)
             else:
+                # Execution failed: distinguish APPROVED-and-failed from APPROVED-and-executed
+                # via a separate EXEC_FAILED status (step-124 condition 1). Show Retry button
+                # instead of stripping — operator can re-enter the approval flow.
+                with open_db(self.db_path) as conn, conn:
+                    conn.execute(
+                        "UPDATE pending_l2_actions SET status = 'EXEC_FAILED' WHERE id = ?",
+                        (action_id,),
+                    )
                 self._edit_message_text(
                     chat_id,
                     message_id,
                     f"⚠️ Approved but execution failed: {tool} — {result.get('message', 'unknown')}.",
                 )
+                self._show_retry_button(chat_id, message_id, action_id)
                 span_attrs["outcome"] = "execution_failed"
-            self._strip_buttons(chat_id, message_id)
 
         except Exception as e:
             logger.error(
@@ -1201,6 +1215,108 @@ class TelegramAdapter:
 
         finally:
             self._emit_button_span(span_attrs)
+
+    def _show_retry_button(self, chat_id: int, message_id: int, action_id: str) -> None:
+        """Replace inline keyboard with a single Retry button (step-124).
+
+        Uses ``editMessageReplyMarkup`` so the failure message text stays
+        visible and only the buttons change.
+        """
+        self._api_call(
+            "editMessageReplyMarkup",
+            {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "reply_markup": {
+                    "inline_keyboard": [[{"text": "🔁 Retry", "callback_data": f"l2_action:retry:{action_id}"}]]
+                },
+            },
+        )
+
+    def _handle_l2_retry(self, action_id: str, chat_id: int, message_id: int, span_attrs: dict) -> None:
+        """Handle an l2_action:retry tap (step-124).
+
+        Re-enters the approval flow: creates a new PENDING row with the
+        original tool+args (fresh ID) and sends a new approve/reject
+        message. Original row stays as EXEC_FAILED — never mutated.
+
+        Idempotency: a double-tap finds the PENDING duplicate and short-
+        circuits with "Already retried" without creating a second row.
+        The SELECT + INSERT runs in a single transaction so two near-
+        simultaneous taps cannot both win.
+        """
+        new_action_id: str | None = None
+        tool: str | None = None
+        already_retried = False
+
+        with open_db(self.db_path) as conn, conn:
+            cur = conn.execute(
+                "SELECT run_id, step_id, tool, args, status FROM pending_l2_actions WHERE id = ?",
+                (action_id,),
+            )
+            row = cur.fetchone()
+            if row is None:
+                span_attrs["outcome"] = "not_found"
+                self._edit_message_text(chat_id, message_id, "⚠️ Action not found.")
+                self._strip_buttons(chat_id, message_id)
+                return
+            run_id, step_id, tool, args_json, status = row[0], row[1], row[2], row[3], row[4]
+            span_attrs["tool"] = tool or "?"
+
+            if status != "EXEC_FAILED":
+                # Retry button arrived for a row that wasn't in the failed state
+                # (e.g. stale display, race with dashboard). Strip and bail.
+                span_attrs["outcome"] = "retry_not_available"
+                self._strip_buttons(chat_id, message_id)
+                return
+
+            # Idempotency: same run_id + tool + args raw text + PENDING means
+            # an earlier Retry tap already created the row.
+            cur = conn.execute(
+                "SELECT id FROM pending_l2_actions WHERE run_id = ? AND tool = ? AND args = ? AND status = 'PENDING'",
+                (run_id, tool, args_json),
+            )
+            existing = cur.fetchone()
+            if existing is not None:
+                already_retried = True
+            else:
+                new_action_id = uuid.uuid4().hex
+                now_str = datetime.now(timezone.utc).isoformat()
+                conn.execute(
+                    "INSERT INTO pending_l2_actions "
+                    "(id, run_id, step_id, tool, args, status, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, 'PENDING', ?)",
+                    (new_action_id, run_id, step_id, tool, args_json, now_str),
+                )
+
+        if already_retried:
+            self._edit_message_text(chat_id, message_id, f"⚠️ Already retried: {tool}.")
+            self._strip_buttons(chat_id, message_id)
+            span_attrs["outcome"] = "already_retried"
+            return
+
+        logger.info(f"action_retried original_id={action_id} new_id={new_action_id} tool={tool}")
+
+        # Send the fresh approval message. send_message_with_buttons sends a NEW
+        # message; do NOT use it to edit the original (step-124 condition 3).
+        try:
+            send_message_with_buttons(
+                f"🔁 Retry: {tool}",
+                [
+                    {"text": "✅ Approve", "callback_data": f"l2_action:approve:{new_action_id}"},
+                    {"text": "❌ Reject", "callback_data": f"l2_action:reject:{new_action_id}"},
+                ],
+            )
+        except Exception as e:
+            # If the new message fails to send, the original error message
+            # stays visible (Retry button still removed below). The new
+            # PENDING row exists; operator can re-trigger via dashboard.
+            logger.warning(f"action_retry_send_failed new_id={new_action_id} err={e}")
+
+        # Remove the Retry button from the original message via
+        # editMessageReplyMarkup (step-124 condition 3).
+        self._strip_buttons(chat_id, message_id)
+        span_attrs["outcome"] = "retried"
 
     def _handle_reaction(self, message_reaction: dict) -> None:
         """Handle Telegram emoji reactions."""

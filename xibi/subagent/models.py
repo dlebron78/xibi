@@ -58,7 +58,7 @@ class PendingL2Action:
     step_id: str | None
     tool: str
     args: dict[str, Any]
-    status: str = "PENDING"  # PENDING | APPROVED | REJECTED
+    status: str = "PENDING"  # PENDING | APPROVED | REJECTED | EXEC_FAILED
     reviewed_by: str | None = None
     reviewed_at: str | None = None
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
