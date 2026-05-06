@@ -364,6 +364,36 @@ def test_l2_action_callback_dispatches_to_handler(adapter):
     assert status == "APPROVED"
 
 
+def test_l2_action_args_decode_failed(adapter):
+    """If the args column is corrupt JSON, the row is APPROVED (status flip
+    happened atomically) but execution short-circuits with a decode error.
+    No call to executor.execute should occur."""
+    aid = str(uuid.uuid4())
+    # Insert a row whose args column is intentionally not valid JSON.
+    with sqlite3.connect(adapter.db_path) as conn, conn:
+        conn.execute(
+            "INSERT INTO pending_l2_actions (id, run_id, step_id, tool, args, status, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",
+            (aid, "run-1", "step-1", "send_email", "{not-json", "PENDING"),
+        )
+    adapter._handle_l2_action_button(_callback(f"l2_action:approve:{aid}"))
+    status, _, _ = _row(adapter.db_path, aid)
+    assert status == "APPROVED"  # row was flipped before decode attempt
+    assert not adapter.executor.execute.called
+    edits = [c for c in adapter._api_call.call_args_list if c.args[0] == "editMessageText"]
+    assert any("cannot decode args" in c.args[1]["text"].lower() for c in edits)
+
+
+def test_format_arg_value_truncates_long_nested():
+    """Non-string values render via json.dumps and also get truncated."""
+    from xibi.subagent.checklist import _format_arg_value
+
+    nested = {"items": ["x" * 50 for _ in range(20)]}
+    result = _format_arg_value(nested, max_len=100)
+    assert "chars" in result
+    assert len(result) < 1100  # original json.dumps would be ~1k
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Manager review can no longer write action approvals
 # ─────────────────────────────────────────────────────────────────────────────
