@@ -80,13 +80,12 @@ def test_fk_violation_raises(tmp_path: Path) -> None:
     """INSERT into subagent_signal_dispatch with non-existent run_id must
     raise IntegrityError under enforcement."""
     db_path = _migrated_db(tmp_path)
-    with open_db(db_path) as conn:
-        with pytest.raises(sqlite3.IntegrityError, match=r"FOREIGN KEY"):
-            conn.execute(
-                "INSERT INTO subagent_signal_dispatch "
-                "(signal_id, run_id, agent_id, skill, dispatched_at) "
-                "VALUES ('s1', 'no-such-run', 'a', 'sk', '2026-04-01')"
-            )
+    with open_db(db_path) as conn, pytest.raises(sqlite3.IntegrityError, match=r"FOREIGN KEY"):
+        conn.execute(
+            "INSERT INTO subagent_signal_dispatch "
+            "(signal_id, run_id, agent_id, skill, dispatched_at) "
+            "VALUES ('s1', 'no-such-run', 'a', 'sk', '2026-04-01')"
+        )
 
 
 def test_cascade_delete_works(tmp_path: Path) -> None:

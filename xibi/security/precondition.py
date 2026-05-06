@@ -8,7 +8,6 @@ so the WARNING log and ErrorCategory shape stay consistent across callers.
 from __future__ import annotations
 
 import logging
-import sqlite3
 from pathlib import Path
 from typing import Any
 
