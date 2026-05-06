@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from xibi.db import open_db
 from xibi.scheduling.api import disable_action, register_action
 from xibi.scheduling.handlers import ExecutionContext, HandlerResult
 from xibi.telegram.api import send_message_with_buttons, send_nudge
@@ -19,7 +20,7 @@ def _handle_fire_recurrence(action_config: dict, ctx: ExecutionContext) -> Handl
     template_id = action_config["args"]["template_id"]
     db_path = str(ctx.db_path)
 
-    with sqlite3.connect(db_path) as conn:
+    with open_db(Path(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         template = conn.execute("SELECT * FROM checklist_templates WHERE id = ?", (template_id,)).fetchone()
         if not template:
@@ -138,7 +139,7 @@ def _handle_fire_recurrence(action_config: dict, ctx: ExecutionContext) -> Handl
 
 def _handle_rollover(template_id: str, new_instance_id: str, db_path: str) -> None:
     """Check if previous instance has stale open items; apply rollover policy."""
-    with sqlite3.connect(db_path) as conn:
+    with open_db(Path(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         template = conn.execute("SELECT * FROM checklist_templates WHERE id = ?", (template_id,)).fetchone()
 
@@ -219,7 +220,7 @@ def _handle_rollover_timeout(action_config: dict, ctx: ExecutionContext) -> Hand
     cutoff_str = cutoff.strftime("%Y-%m-%d %H:%M:%S")
     db_path = str(ctx.db_path)
 
-    with sqlite3.connect(db_path) as conn:
+    with open_db(Path(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         items = conn.execute(
             "SELECT * FROM checklist_instance_items WHERE rollover_prompted_at IS NOT NULL AND rollover_prompted_at < ?",
@@ -241,7 +242,7 @@ def _handle_rollover_timeout(action_config: dict, ctx: ExecutionContext) -> Hand
 def handle_rollover_callback(action: str, item_id: str, db_path: Path) -> str:
     """Handle callback from rollover confirmation buttons."""
     db_path_str = str(db_path)
-    with sqlite3.connect(db_path_str) as conn:
+    with open_db(Path(db_path_str)) as conn:
         conn.row_factory = sqlite3.Row
         item = conn.execute("SELECT * FROM checklist_instance_items WHERE id = ?", (item_id,)).fetchone()
         if not item:

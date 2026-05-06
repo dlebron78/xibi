@@ -11,6 +11,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from xibi.db import open_db
+
 logger = logging.getLogger(__name__)
 
 
@@ -28,7 +30,7 @@ def confirm_draft(params: dict[str, Any]) -> dict[str, Any]:
     db_path = Path(db_path_str) if db_path_str else _default_db_path()
 
     try:
-        with sqlite3.connect(str(db_path)) as conn:
+        with open_db(Path(db_path)) as conn:
             cursor = conn.execute(
                 "UPDATE ledger SET status='confirmed' WHERE id=? AND category='draft_email' AND status='pending'",
                 (draft_id,),

@@ -8,6 +8,7 @@ if TYPE_CHECKING:
 import sqlite3
 from pathlib import Path
 
+from xibi.db import open_db
 from xibi.heartbeat.sender_trust import _extract_sender_addr, _extract_sender_name
 
 # Hotfix 2026-04-28: raised from 2000. The original cap was set when
@@ -31,34 +32,35 @@ def query_correction_context(
     if not sender_contact_id and not topic_hint:
         return []
 
+    # Read-only SELECT — open_db's commit-on-exit is a no-op.
     try:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.execute(
-            """
-            SELECT
-                t.verdict AS original_tier,
-                s.urgency AS corrected_tier,
-                s.topic_hint,
-                s.sender_contact_id,
-                COUNT(*) AS correction_count,
-                MAX(s.correction_reason) AS latest_reason,
-                MAX(s.timestamp) AS last_seen
-            FROM triage_log t
-            JOIN signals s ON t.email_id = s.ref_id
-            WHERE t.verdict != s.urgency
-              AND s.timestamp > datetime('now', '-' || ? || ' days')
-              AND (
-                (s.sender_contact_id = ? AND ? IS NOT NULL)
-                OR (s.topic_hint = ? AND ? IS NOT NULL)
-              )
-            GROUP BY s.sender_contact_id, s.topic_hint, t.verdict, s.urgency
-            ORDER BY correction_count DESC
-            LIMIT 5
-            """,
-            (lookback_days, sender_contact_id, sender_contact_id, topic_hint, topic_hint),
-        )
-        return [dict(row) for row in cursor.fetchall()]
+        with open_db(Path(db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                """
+                SELECT
+                    t.verdict AS original_tier,
+                    s.urgency AS corrected_tier,
+                    s.topic_hint,
+                    s.sender_contact_id,
+                    COUNT(*) AS correction_count,
+                    MAX(s.correction_reason) AS latest_reason,
+                    MAX(s.timestamp) AS last_seen
+                FROM triage_log t
+                JOIN signals s ON t.email_id = s.ref_id
+                WHERE t.verdict != s.urgency
+                  AND s.timestamp > datetime('now', '-' || ? || ' days')
+                  AND (
+                    (s.sender_contact_id = ? AND ? IS NOT NULL)
+                    OR (s.topic_hint = ? AND ? IS NOT NULL)
+                  )
+                GROUP BY s.sender_contact_id, s.topic_hint, t.verdict, s.urgency
+                ORDER BY correction_count DESC
+                LIMIT 5
+                """,
+                (lookback_days, sender_contact_id, sender_contact_id, topic_hint, topic_hint),
+            )
+            return [dict(row) for row in cursor.fetchall()]
     except Exception:
         return []
 

@@ -57,6 +57,11 @@ class SchemaManager:
 
     def get_version(self) -> int:
         """Return the highest applied version from schema_version, or 0 if the table doesn't exist."""
+        # Bypasses open_db() because migrations bootstrap the DB itself.
+        # open_db() applies PRAGMA settings (journal_mode=WAL,
+        # foreign_keys=ON, ...) on every connection — we need a raw
+        # connection here so version probing works against a fresh
+        # (possibly empty) DB before those PRAGMAs are meaningful.
         try:
             with sqlite3.connect(self.db_path, timeout=30) as conn:
                 conn.execute("PRAGMA busy_timeout=30000")
@@ -124,6 +129,11 @@ class SchemaManager:
         for version, description, func in migrations:
             if version > current_version:
                 logger.info(f"Applying migration {version}: {description}")
+                # Bypasses open_db() because migrations bootstrap the DB
+                # itself. open_db() applies PRAGMAs (WAL,
+                # foreign_keys=ON, ...) on every connection; we control
+                # transaction shape here via an explicit BEGIN and do not
+                # want connection-level enforcement during DDL.
                 try:
                     with sqlite3.connect(self.db_path, timeout=30) as conn:
                         conn.execute("PRAGMA busy_timeout=30000")

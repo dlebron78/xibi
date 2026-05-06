@@ -69,6 +69,10 @@ def build_reference_schema() -> dict[str, dict[str, str]]:
     are the source of truth — there is no separate SCHEMA_SPEC file that
     could diverge.
 
+    Bypasses ``open_db()`` because the target is a ``:memory:`` database,
+    not the live xibi DB. open_db() applies WAL + foreign_keys PRAGMAs
+    that are irrelevant (and in WAL's case, unsupported) for ``:memory:``.
+
     Every call returns a freshly materialised reference. No caching — the
     operation is fast (low tens of ms) and stale caches hurt more than they
     help if migrations change mid-session.
@@ -142,7 +146,10 @@ def check_schema_drift(db_path: Path) -> list[DriftItem]:
 
     # Read-only URI: mode=ro fails cleanly if the file doesn't exist, and
     # prevents any ALTER/INSERT/UPDATE against the live DB even if a caller
-    # tried to coerce one through this connection.
+    # tried to coerce one through this connection. Bypasses open_db()
+    # because open_db() does not accept the read-only `file:...?mode=ro`
+    # URI form, and the journal_mode=WAL PRAGMA it sets requires a writable
+    # connection. Drift detection must remain strictly read-only.
     uri = f"file:{db_path}?mode=ro"
     drift: list[DriftItem] = []
     conn = sqlite3.connect(uri, uri=True)

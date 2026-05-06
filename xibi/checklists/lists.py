@@ -5,8 +5,10 @@ import logging
 import sqlite3
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 from xibi.checklists.fuzzy import fuzzy_match_item
+from xibi.db import open_db
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +44,7 @@ def _require_list(conn: sqlite3.Connection, list_name: str) -> tuple[dict, dict]
 
 def create_list(db_path: str, name: str, description: str | None = None) -> dict:
     """Create a named list (template + active instance). Raises if name already exists."""
-    with sqlite3.connect(db_path) as conn:
+    with open_db(Path(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         existing = _find_template(conn, name)
         if existing:
@@ -73,7 +75,7 @@ def add_item(
     metadata: dict | None = None,
 ) -> dict:
     """Add an item to a named list. Auto-creates the list if it doesn't exist."""
-    with sqlite3.connect(db_path) as conn:
+    with open_db(Path(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         template = _find_template(conn, list_name)
         if not template:
@@ -116,7 +118,7 @@ def add_item(
 
 def remove_item(db_path: str, list_name: str, label_hint: str) -> dict:
     """Remove an item by fuzzy label match. Hard DELETE."""
-    with sqlite3.connect(db_path) as conn:
+    with open_db(Path(db_path)) as conn:
         _, instance = _require_list(conn, list_name)
         instance_id = instance["id"]
 
@@ -140,7 +142,7 @@ def update_item(
     metadata: dict | None = None,
 ) -> dict:
     """Update an item's status, label, or metadata by fuzzy match."""
-    with sqlite3.connect(db_path) as conn:
+    with open_db(Path(db_path)) as conn:
         _, instance = _require_list(conn, list_name)
         instance_id = instance["id"]
 
@@ -163,7 +165,7 @@ def update_item(
 
 def show_list(db_path: str, list_name: str, status_filter: str | None = None) -> dict:
     """Show all items in a named list, optionally filtered by status."""
-    with sqlite3.connect(db_path) as conn:
+    with open_db(Path(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         _, instance = _require_list(conn, list_name)
         instance_id = instance["id"]

@@ -28,6 +28,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from xibi.db import open_db
+
 logger = logging.getLogger(__name__)
 
 # RFC 5322 angle-addr / addr-spec extractor. Greedy-enough for the realistic
@@ -104,7 +106,7 @@ def resolve_account_from_email_to(
 
     matches: list[tuple[str, dict[str, Any]]] = []
     try:
-        with sqlite3.connect(str(db_path)) as conn:
+        with open_db(Path(db_path)) as conn:
             conn.row_factory = sqlite3.Row
             for addr in candidates:
                 row = conn.execute(

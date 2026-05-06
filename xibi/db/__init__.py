@@ -10,9 +10,15 @@ from xibi.db.migrations import SchemaManager, migrate
 
 
 @contextmanager
-def open_db(db_path: Path) -> Generator[sqlite3.Connection, None, None]:
-    """Context manager for SQLite connections with WAL mode for crash resilience."""
-    conn = sqlite3.connect(db_path, timeout=30, check_same_thread=False)
+def open_db(db_path: Path, *, timeout: int = 30) -> Generator[sqlite3.Connection, None, None]:
+    """Context manager for SQLite connections with WAL mode for crash resilience.
+
+    The ``timeout`` kwarg is the sqlite3 driver's connection-level lock
+    timeout (seconds). Default 30 matches the prior baseline. The dashboard
+    overrides this to 2 so the request handler fails fast under contention
+    instead of blocking the Flask worker.
+    """
+    conn = sqlite3.connect(db_path, timeout=timeout, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA wal_autocheckpoint=1000")
     conn.execute("PRAGMA busy_timeout=30000")

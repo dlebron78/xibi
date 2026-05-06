@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from xibi.checklists.fuzzy import fuzzy_match_item
+from xibi.db import open_db
 from xibi.scheduling.api import disable_action, register_action
 
 logger = logging.getLogger(__name__)
@@ -24,7 +25,7 @@ def create_checklist_template(
 ) -> dict:
     """Create template and optionally schedule first instance."""
     template_id = str(uuid.uuid4())
-    with sqlite3.connect(db_path) as conn:
+    with open_db(Path(db_path)) as conn:
         conn.execute(
             """
             INSERT INTO checklist_templates
@@ -99,7 +100,7 @@ def update_checklist_item(
     if (position is None and label_hint is None) or (position is not None and label_hint is not None):
         raise ValueError("Provide exactly one of: position OR label_hint")
 
-    with sqlite3.connect(db_path) as conn:
+    with open_db(Path(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         if position is not None:
             item = conn.execute(
@@ -153,7 +154,7 @@ def update_checklist_item(
 
 def list_checklists(db_path: str) -> dict:
     """List all open checklist instances."""
-    with sqlite3.connect(db_path) as conn:
+    with open_db(Path(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         instances = conn.execute(
             """
@@ -192,7 +193,7 @@ def list_checklists(db_path: str) -> dict:
 
 def get_checklist(db_path: str, instance_id: str) -> dict:
     """Get full state of one checklist instance."""
-    with sqlite3.connect(db_path) as conn:
+    with open_db(Path(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         inst = conn.execute(
             """
@@ -253,7 +254,7 @@ def instantiate_checklist(
     if not template_id and not template_name:
         raise ValueError("Provide either template_id or template_name")
 
-    with sqlite3.connect(db_path) as conn:
+    with open_db(Path(db_path)) as conn:
         conn.row_factory = sqlite3.Row
 
         # Resolve template

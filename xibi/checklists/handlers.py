@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from pathlib import Path
 
+from xibi.db import open_db
 from xibi.scheduling.handlers import ExecutionContext, HandlerResult
 from xibi.telegram.api import send_nudge
 
@@ -10,14 +12,14 @@ logger = logging.getLogger(__name__)
 
 
 def _is_item_open(db_path: str, item_id: str) -> bool:
-    with sqlite3.connect(db_path) as conn:
+    with open_db(Path(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         item = conn.execute("SELECT completed_at FROM checklist_instance_items WHERE id = ?", (item_id,)).fetchone()
         return item is not None and item["completed_at"] is None
 
 
 def _get_item_label(db_path: str, item_id: str) -> str:
-    with sqlite3.connect(db_path) as conn:
+    with open_db(Path(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         item = conn.execute("SELECT label FROM checklist_instance_items WHERE id = ?", (item_id,)).fetchone()
         return item["label"] if item else "Unknown item"

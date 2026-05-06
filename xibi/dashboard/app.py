@@ -23,9 +23,8 @@ def get_system_health(db_path: Path, config: Config) -> dict:
         checks["database"] = "error: database file missing"
     else:
         try:
-            conn = sqlite3.connect(db_path, timeout=2)
-            conn.execute("SELECT 1")
-            conn.close()
+            with xibi.db.open_db(db_path, timeout=2) as conn:
+                conn.execute("SELECT 1")
             checks["database"] = "ok"
         except Exception as e:
             checks["database"] = f"error: {e}"

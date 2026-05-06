@@ -44,12 +44,14 @@ def _pending_drafts_block(db_path: Path | str) -> str:
     """
     import sqlite3
 
+    from xibi.db import open_db
+
     p = Path(db_path)
     if not p.exists():
         return ""
 
     try:
-        with sqlite3.connect(str(p)) as conn:
+        with open_db(p) as conn:
             rows = conn.execute(
                 """
                 SELECT id,

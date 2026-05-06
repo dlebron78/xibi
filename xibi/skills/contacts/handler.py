@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from xibi.db import open_db
 from xibi.security import sanitize_untrusted_text
 
 logger = logging.getLogger(__name__)
@@ -55,7 +56,7 @@ def lookup_contact(params: dict[str, Any]) -> dict[str, Any]:
         }
 
     try:
-        with sqlite3.connect(str(db_path)) as conn:
+        with open_db(db_path) as conn:
             conn.row_factory = sqlite3.Row
             # Direct read, NO last_seen mutation — see module docstring.
             row = conn.execute(

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
+
+from xibi.db import open_db
 
 
 def normalize_text(text: str) -> set[str]:
@@ -71,7 +74,7 @@ def fuzzy_match_item(db_path: str, instance_id: str, label_hint: str) -> dict | 
     Returns the highest-scoring item if it's meaningfully ahead of second place.
     Returns None if no good match or ambiguous.
     """
-    with sqlite3.connect(db_path) as conn:
+    with open_db(Path(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         items = [
             dict(r)

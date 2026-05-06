@@ -12,6 +12,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from xibi.db import open_db
 from xibi.errors import ErrorCategory
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ def require_draft_confirmed(
         }
 
     try:
-        with sqlite3.connect(str(db_path)) as conn:
+        with open_db(Path(db_path)) as conn:
             row = conn.execute(
                 "SELECT status FROM ledger WHERE id=? AND category='draft_email'",
                 (draft_id,),

@@ -20,6 +20,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from xibi.db import open_db
 from xibi.oauth.google import (
     DEFAULT_CALENDAR_SCOPES,
     build_authorization_url,
@@ -214,7 +215,7 @@ def backfill_signals_provenance(params: dict[str, Any]) -> dict[str, Any]:
     failed: list[dict[str, str]] = []
 
     try:
-        with sqlite3.connect(str(db_path)) as conn:
+        with open_db(db_path) as conn:
             rows = conn.execute(
                 "SELECT id, ref_id, ref_source FROM signals "
                 "WHERE received_via_account IS NULL AND ref_source = 'email' "
@@ -273,7 +274,7 @@ def backfill_signals_provenance(params: dict[str, Any]) -> dict[str, Any]:
                 # even when no addresses match (validates To header parsing).
                 _ = parse_addresses_from_header(to_header)
                 continue
-            with sqlite3.connect(str(db_path)) as conn:
+            with open_db(db_path) as conn:
                 conn.execute(
                     "UPDATE signals SET received_via_account = ?, received_via_email_alias = ? WHERE id = ?",
                     (account.get("nickname"), account.get("email_alias"), sid),
@@ -318,7 +319,7 @@ def backfill_contacts_origin(params: dict[str, Any]) -> dict[str, Any]:
     failed: list[dict[str, str]] = []
 
     try:
-        with sqlite3.connect(str(db_path)) as conn:
+        with open_db(db_path) as conn:
             conn.row_factory = sqlite3.Row
             contact_rows = conn.execute("SELECT id, email FROM contacts WHERE account_origin IS NULL").fetchall()
 

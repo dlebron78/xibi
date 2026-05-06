@@ -6,6 +6,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from xibi.db import open_db
 from xibi.heartbeat.sender_trust import _extract_sender_addr
 
 logger = logging.getLogger(__name__)
@@ -181,130 +182,135 @@ def assemble_signal_context(
     except Exception as e:
         logger.warning(f"context_assembly_provenance_error err={type(e).__name__}:{e}")
 
+    # Read-only block: only SELECT queries below. open_db's commit-on-exit
+    # is a no-op when no DML has run, so the converted shape preserves
+    # behavior and additionally closes the connection on the exception
+    # path (the prior bare `sqlite3.connect` + tail `conn.close()` leaked
+    # connections when a query raised mid-block).
     try:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
+        with open_db(Path(db_path)) as conn:
+            conn.row_factory = sqlite3.Row
 
-        # a) Contact profile
-        row = conn.execute(
-            """
-            SELECT organization, relationship, first_seen, last_seen,
-                   signal_count, outbound_count, user_endorsed
-            FROM contacts WHERE id = ?
-        """,
-            (sender_contact_id,),
-        ).fetchone()
-
-        if row:
-            ctx.contact_org = row["organization"]
-            ctx.contact_relationship = row["relationship"]
-            ctx.contact_first_seen = row["first_seen"]
-            ctx.contact_last_seen = row["last_seen"]
-            ctx.contact_signal_count = row["signal_count"] or 0
-            ctx.contact_outbound_count = row["outbound_count"] or 0
-            ctx.contact_user_endorsed = bool(row["user_endorsed"])
-
-        # b) Recent signals
-        count_row = conn.execute(
-            """
-            SELECT COUNT(*) FROM signals
-            WHERE sender_contact_id = ?
-              AND timestamp > datetime('now', '-7 days')
-        """,
-            (sender_contact_id,),
-        ).fetchone()
-        ctx.sender_signals_7d = count_row[0] if count_row else 0
-
-        recent_signals = conn.execute(
-            """
-            SELECT topic_hint, urgency, timestamp
-            FROM signals
-            WHERE sender_contact_id = ?
-              AND timestamp > datetime('now', '-7 days')
-            ORDER BY timestamp DESC
-            LIMIT 20
-        """,
-            (sender_contact_id,),
-        ).fetchall()
-
-        if recent_signals:
-            # sender_last_signal_age_hours
-            most_recent_ts = recent_signals[0]["timestamp"]
-            try:
-                age_row = conn.execute("SELECT (julianday('now') - julianday(?)) * 24", (most_recent_ts,)).fetchone()
-                if age_row:
-                    ctx.sender_last_signal_age_hours = float(age_row[0])
-            except Exception:
-                pass
-
-            # sender_recent_topics
-            topics = []
-            for r in recent_signals:
-                t = r["topic_hint"]
-                if t and t not in topics:
-                    topics.append(t)
-                if len(topics) >= 3:
-                    break
-            ctx.sender_recent_topics = topics
-
-            # sender_avg_urgency
-            urgencies = [r["urgency"] for r in recent_signals if r["urgency"]]
-            if urgencies:
-                from collections import Counter
-
-                ctx.sender_avg_urgency = Counter(urgencies).most_common(1)[0][0]
-
-        # c) Thread matching
-        thread = None
-        if entity_text:
-            thread = conn.execute(
+            # a) Contact profile
+            row = conn.execute(
                 """
-                SELECT id, name, status, priority, current_deadline, owner, summary, signal_count
-                FROM threads
-                WHERE status = 'active'
-                  AND name LIKE ?
-                ORDER BY updated_at DESC
-                LIMIT 1
+                SELECT organization, relationship, first_seen, last_seen,
+                       signal_count, outbound_count, user_endorsed
+                FROM contacts WHERE id = ?
             """,
-                (f"%{entity_text}%",),
+                (sender_contact_id,),
             ).fetchone()
 
-        if not thread and topic:
-            thread = conn.execute(
+            if row:
+                ctx.contact_org = row["organization"]
+                ctx.contact_relationship = row["relationship"]
+                ctx.contact_first_seen = row["first_seen"]
+                ctx.contact_last_seen = row["last_seen"]
+                ctx.contact_signal_count = row["signal_count"] or 0
+                ctx.contact_outbound_count = row["outbound_count"] or 0
+                ctx.contact_user_endorsed = bool(row["user_endorsed"])
+
+            # b) Recent signals
+            count_row = conn.execute(
                 """
-                SELECT id, name, status, priority, current_deadline, owner, summary, signal_count
-                FROM threads
+                SELECT COUNT(*) FROM signals
+                WHERE sender_contact_id = ?
+                  AND timestamp > datetime('now', '-7 days')
+            """,
+                (sender_contact_id,),
+            ).fetchone()
+            ctx.sender_signals_7d = count_row[0] if count_row else 0
+
+            recent_signals = conn.execute(
+                """
+                SELECT topic_hint, urgency, timestamp
+                FROM signals
+                WHERE sender_contact_id = ?
+                  AND timestamp > datetime('now', '-7 days')
+                ORDER BY timestamp DESC
+                LIMIT 20
+            """,
+                (sender_contact_id,),
+            ).fetchall()
+
+            if recent_signals:
+                # sender_last_signal_age_hours
+                most_recent_ts = recent_signals[0]["timestamp"]
+                try:
+                    age_row = conn.execute(
+                        "SELECT (julianday('now') - julianday(?)) * 24", (most_recent_ts,)
+                    ).fetchone()
+                    if age_row:
+                        ctx.sender_last_signal_age_hours = float(age_row[0])
+                except Exception:
+                    pass
+
+                # sender_recent_topics
+                topics = []
+                for r in recent_signals:
+                    t = r["topic_hint"]
+                    if t and t not in topics:
+                        topics.append(t)
+                    if len(topics) >= 3:
+                        break
+                ctx.sender_recent_topics = topics
+
+                # sender_avg_urgency
+                urgencies = [r["urgency"] for r in recent_signals if r["urgency"]]
+                if urgencies:
+                    from collections import Counter
+
+                    ctx.sender_avg_urgency = Counter(urgencies).most_common(1)[0][0]
+
+            # c) Thread matching
+            thread = None
+            if entity_text:
+                thread = conn.execute(
+                    """
+                    SELECT id, name, status, priority, current_deadline, owner, summary, signal_count
+                    FROM threads
+                    WHERE status = 'active'
+                      AND name LIKE ?
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                """,
+                    (f"%{entity_text}%",),
+                ).fetchone()
+
+            if not thread and topic:
+                thread = conn.execute(
+                    """
+                    SELECT id, name, status, priority, current_deadline, owner, summary, signal_count
+                    FROM threads
+                    WHERE status = 'active'
+                      AND name LIKE ?
+                    ORDER BY updated_at DESC
+                    LIMIT 1
+                """,
+                    (f"%{topic}%",),
+                ).fetchone()
+
+            if thread:
+                ctx.matching_thread_id = thread["id"]
+                ctx.matching_thread_name = thread["name"]
+                ctx.matching_thread_status = thread["status"]
+                ctx.matching_thread_priority = thread["priority"]
+                ctx.matching_thread_deadline = thread["current_deadline"]
+                ctx.matching_thread_owner = thread["owner"]
+                ctx.matching_thread_summary = thread["summary"]
+                ctx.matching_thread_signal_count = thread["signal_count"] or 0
+
+            # d) Open thread check
+            has_open = conn.execute(
+                """
+                SELECT 1 FROM threads
                 WHERE status = 'active'
-                  AND name LIKE ?
-                ORDER BY updated_at DESC
+                  AND key_entities LIKE ?
                 LIMIT 1
             """,
-                (f"%{topic}%",),
+                (f"%{sender_contact_id}%",),
             ).fetchone()
-
-        if thread:
-            ctx.matching_thread_id = thread["id"]
-            ctx.matching_thread_name = thread["name"]
-            ctx.matching_thread_status = thread["status"]
-            ctx.matching_thread_priority = thread["priority"]
-            ctx.matching_thread_deadline = thread["current_deadline"]
-            ctx.matching_thread_owner = thread["owner"]
-            ctx.matching_thread_summary = thread["summary"]
-            ctx.matching_thread_signal_count = thread["signal_count"] or 0
-
-        # d) Open thread check
-        has_open = conn.execute(
-            """
-            SELECT 1 FROM threads
-            WHERE status = 'active'
-              AND key_entities LIKE ?
-            LIMIT 1
-        """,
-            (f"%{sender_contact_id}%",),
-        ).fetchone()
-        ctx.sender_has_open_thread = bool(has_open)
-
-        conn.close()
+            ctx.sender_has_open_thread = bool(has_open)
     except Exception as e:
         logger.warning(f"Error assembling email context: {e}")
 
@@ -363,217 +369,219 @@ def assemble_batch_signal_context(
             upcoming_events = []
 
     contexts = {}
+    # Read-only block: only SELECT queries below. open_db's commit-on-exit
+    # is a no-op here. Conversion also closes the connection on the
+    # exception path that the prior bare connect + tail close() leaked.
     try:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
+        with open_db(Path(db_path)) as conn:
+            conn.row_factory = sqlite3.Row
 
-        for email in emails:
-            email_id = str(email.get("id", ""))
-            bt = batch_topics.get(email_id, {})
-            bs = body_summaries.get(email_id, {})
-            trust = trust_results.get(email_id)
+            for email in emails:
+                email_id = str(email.get("id", ""))
+                bt = batch_topics.get(email_id, {})
+                bs = body_summaries.get(email_id, {})
+                trust = trust_results.get(email_id)
 
-            # Re-use the logic from assemble_email_context but within the shared connection
-            # For brevity and consistency, we'll implement a slightly optimized version here
-            # that could be further refactored if needed.
+                # Re-use the logic from assemble_email_context but within the shared connection
+                # For brevity and consistency, we'll implement a slightly optimized version here
+                # that could be further refactored if needed.
 
-            # Since assemble_email_context currently opens its own connection,
-            # we'll implement the logic here using the existing connection 'conn'.
+                # Since assemble_email_context currently opens its own connection,
+                # we'll implement the logic here using the existing connection 'conn'.
 
-            from xibi.heartbeat.sender_trust import _extract_sender_name
+                from xibi.heartbeat.sender_trust import _extract_sender_name
 
-            sender_addr = _extract_sender_addr(email)
-            sender_name = _extract_sender_name(email)
-            subject = email.get("subject", "")
+                sender_addr = _extract_sender_addr(email)
+                sender_name = _extract_sender_name(email)
+                subject = email.get("subject", "")
 
-            sender_contact_id = trust.contact_id if trust else None
-            if not sender_contact_id:
-                sender_contact_id = "contact-" + hashlib.md5(sender_addr.encode()).hexdigest()[:8]
+                sender_contact_id = trust.contact_id if trust else None
+                if not sender_contact_id:
+                    sender_contact_id = "contact-" + hashlib.md5(sender_addr.encode()).hexdigest()[:8]
 
-            ctx = SignalContext(
-                signal_ref_id=email_id,
-                sender_id=sender_addr,
-                sender_name=sender_name,
-                headline=subject,
-                summary=bs.get("summary") if isinstance(bs, dict) else None,
-                sender_trust=trust.tier if trust else None,
-                contact_id=sender_contact_id,
-                topic=bt.get("topic"),
-                entity_text=bt.get("entity_text"),
-                entity_type=bt.get("entity_type"),
-                db_path=db_path,
-            )
-
-            # Step-109: resolve provenance from whatever To/Delivered-To
-            # headers the signal carries. v1 list_unread envelopes do not
-            # include these, so the call no-ops; the path is wired so a
-            # future header-fetch pass populates without touching this code.
-            try:
-                from xibi.email.provenance import resolve_account_from_email_to
-
-                to_value = email.get("to") or email.get("To")
-                if isinstance(to_value, list):
-                    to_list = [str(t) for t in to_value if t]
-                elif isinstance(to_value, str) and to_value:
-                    to_list = [to_value]
-                else:
-                    to_list = []
-                delivered_to = email.get("delivered_to") or email.get("Delivered-To")
-                provenance = resolve_account_from_email_to(
-                    to_addresses=to_list,
-                    delivered_to=delivered_to if isinstance(delivered_to, str) else None,
+                ctx = SignalContext(
+                    signal_ref_id=email_id,
+                    sender_id=sender_addr,
+                    sender_name=sender_name,
+                    headline=subject,
+                    summary=bs.get("summary") if isinstance(bs, dict) else None,
+                    sender_trust=trust.tier if trust else None,
+                    contact_id=sender_contact_id,
+                    topic=bt.get("topic"),
+                    entity_text=bt.get("entity_text"),
+                    entity_type=bt.get("entity_type"),
                     db_path=db_path,
                 )
-                if provenance:
-                    ctx.received_via_account = provenance.get("nickname")
-                    ctx.received_via_email_alias = provenance.get("email_alias")
-            except Exception as e:
-                logger.warning(f"context_assembly_provenance_error err={type(e).__name__}:{e}")
 
-            # Contact profile
-            row = conn.execute(
-                """
-                SELECT organization, relationship, first_seen, last_seen,
-                       signal_count, outbound_count, user_endorsed
-                FROM contacts WHERE id = ?
-            """,
-                (sender_contact_id,),
-            ).fetchone()
-
-            if row:
-                ctx.contact_org = row["organization"]
-                ctx.contact_relationship = row["relationship"]
-                ctx.contact_first_seen = row["first_seen"]
-                ctx.contact_last_seen = row["last_seen"]
-                ctx.contact_signal_count = row["signal_count"] or 0
-                ctx.contact_outbound_count = row["outbound_count"] or 0
-                ctx.contact_user_endorsed = bool(row["user_endorsed"])
-
-            # Recent signals
-            count_row = conn.execute(
-                """
-                SELECT COUNT(*) FROM signals
-                WHERE sender_contact_id = ?
-                  AND timestamp > datetime('now', '-7 days')
-            """,
-                (sender_contact_id,),
-            ).fetchone()
-            ctx.sender_signals_7d = count_row[0] if count_row else 0
-
-            recent_signals = conn.execute(
-                """
-                SELECT topic_hint, urgency, timestamp
-                FROM signals
-                WHERE sender_contact_id = ?
-                  AND timestamp > datetime('now', '-7 days')
-                ORDER BY timestamp DESC
-                LIMIT 20
-            """,
-                (sender_contact_id,),
-            ).fetchall()
-
-            if recent_signals:
-                most_recent_ts = recent_signals[0]["timestamp"]
+                # Step-109: resolve provenance from whatever To/Delivered-To
+                # headers the signal carries. v1 list_unread envelopes do not
+                # include these, so the call no-ops; the path is wired so a
+                # future header-fetch pass populates without touching this code.
                 try:
-                    age_row = conn.execute(
-                        "SELECT (julianday('now') - julianday(?)) * 24", (most_recent_ts,)
+                    from xibi.email.provenance import resolve_account_from_email_to
+
+                    to_value = email.get("to") or email.get("To")
+                    if isinstance(to_value, list):
+                        to_list = [str(t) for t in to_value if t]
+                    elif isinstance(to_value, str) and to_value:
+                        to_list = [to_value]
+                    else:
+                        to_list = []
+                    delivered_to = email.get("delivered_to") or email.get("Delivered-To")
+                    provenance = resolve_account_from_email_to(
+                        to_addresses=to_list,
+                        delivered_to=delivered_to if isinstance(delivered_to, str) else None,
+                        db_path=db_path,
+                    )
+                    if provenance:
+                        ctx.received_via_account = provenance.get("nickname")
+                        ctx.received_via_email_alias = provenance.get("email_alias")
+                except Exception as e:
+                    logger.warning(f"context_assembly_provenance_error err={type(e).__name__}:{e}")
+
+                # Contact profile
+                row = conn.execute(
+                    """
+                    SELECT organization, relationship, first_seen, last_seen,
+                           signal_count, outbound_count, user_endorsed
+                    FROM contacts WHERE id = ?
+                """,
+                    (sender_contact_id,),
+                ).fetchone()
+
+                if row:
+                    ctx.contact_org = row["organization"]
+                    ctx.contact_relationship = row["relationship"]
+                    ctx.contact_first_seen = row["first_seen"]
+                    ctx.contact_last_seen = row["last_seen"]
+                    ctx.contact_signal_count = row["signal_count"] or 0
+                    ctx.contact_outbound_count = row["outbound_count"] or 0
+                    ctx.contact_user_endorsed = bool(row["user_endorsed"])
+
+                # Recent signals
+                count_row = conn.execute(
+                    """
+                    SELECT COUNT(*) FROM signals
+                    WHERE sender_contact_id = ?
+                      AND timestamp > datetime('now', '-7 days')
+                """,
+                    (sender_contact_id,),
+                ).fetchone()
+                ctx.sender_signals_7d = count_row[0] if count_row else 0
+
+                recent_signals = conn.execute(
+                    """
+                    SELECT topic_hint, urgency, timestamp
+                    FROM signals
+                    WHERE sender_contact_id = ?
+                      AND timestamp > datetime('now', '-7 days')
+                    ORDER BY timestamp DESC
+                    LIMIT 20
+                """,
+                    (sender_contact_id,),
+                ).fetchall()
+
+                if recent_signals:
+                    most_recent_ts = recent_signals[0]["timestamp"]
+                    try:
+                        age_row = conn.execute(
+                            "SELECT (julianday('now') - julianday(?)) * 24", (most_recent_ts,)
+                        ).fetchone()
+                        if age_row:
+                            ctx.sender_last_signal_age_hours = float(age_row[0])
+                    except Exception:
+                        pass
+
+                    topics = []
+                    for r in recent_signals:
+                        t = r["topic_hint"]
+                        if t and t not in topics:
+                            topics.append(t)
+                        if len(topics) >= 3:
+                            break
+                    ctx.sender_recent_topics = topics
+
+                    urgencies = [r["urgency"] for r in recent_signals if r["urgency"]]
+                    if urgencies:
+                        from collections import Counter
+
+                        ctx.sender_avg_urgency = Counter(urgencies).most_common(1)[0][0]
+
+                # Thread matching
+                thread = None
+                if ctx.entity_text:
+                    thread = conn.execute(
+                        """
+                        SELECT id, name, status, priority, current_deadline, owner, summary, signal_count
+                        FROM threads
+                        WHERE status = 'active'
+                          AND name LIKE ?
+                        ORDER BY updated_at DESC
+                        LIMIT 1
+                    """,
+                        (f"%{ctx.entity_text}%",),
                     ).fetchone()
-                    if age_row:
-                        ctx.sender_last_signal_age_hours = float(age_row[0])
-                except Exception:
-                    pass
 
-                topics = []
-                for r in recent_signals:
-                    t = r["topic_hint"]
-                    if t and t not in topics:
-                        topics.append(t)
-                    if len(topics) >= 3:
-                        break
-                ctx.sender_recent_topics = topics
+                if not thread and ctx.topic:
+                    thread = conn.execute(
+                        """
+                        SELECT id, name, status, priority, current_deadline, owner, summary, signal_count
+                        FROM threads
+                        WHERE status = 'active'
+                          AND name LIKE ?
+                        ORDER BY updated_at DESC
+                        LIMIT 1
+                    """,
+                        (f"%{ctx.topic}%",),
+                    ).fetchone()
 
-                urgencies = [r["urgency"] for r in recent_signals if r["urgency"]]
-                if urgencies:
-                    from collections import Counter
+                if thread:
+                    ctx.matching_thread_id = thread["id"]
+                    ctx.matching_thread_name = thread["name"]
+                    ctx.matching_thread_status = thread["status"]
+                    ctx.matching_thread_priority = thread["priority"]
+                    ctx.matching_thread_deadline = thread["current_deadline"]
+                    ctx.matching_thread_owner = thread["owner"]
+                    ctx.matching_thread_summary = thread["summary"]
+                    ctx.matching_thread_signal_count = thread["signal_count"] or 0
 
-                    ctx.sender_avg_urgency = Counter(urgencies).most_common(1)[0][0]
-
-            # Thread matching
-            thread = None
-            if ctx.entity_text:
-                thread = conn.execute(
+                # Open thread check
+                has_open = conn.execute(
                     """
-                    SELECT id, name, status, priority, current_deadline, owner, summary, signal_count
-                    FROM threads
+                    SELECT 1 FROM threads
                     WHERE status = 'active'
-                      AND name LIKE ?
-                    ORDER BY updated_at DESC
+                      AND key_entities LIKE ?
                     LIMIT 1
                 """,
-                    (f"%{ctx.entity_text}%",),
+                    (f"%{sender_contact_id}%",),
                 ).fetchone()
+                ctx.sender_has_open_thread = bool(has_open)
 
-            if not thread and ctx.topic:
-                thread = conn.execute(
-                    """
-                    SELECT id, name, status, priority, current_deadline, owner, summary, signal_count
-                    FROM threads
-                    WHERE status = 'active'
-                      AND name LIKE ?
-                    ORDER BY updated_at DESC
-                    LIMIT 1
-                """,
-                    (f"%{ctx.topic}%",),
-                ).fetchone()
+                # e) Calendar context
+                try:
+                    from xibi.heartbeat.calendar_context import (
+                        build_next_event_summary,
+                        detect_sender_overlap,
+                    )
 
-            if thread:
-                ctx.matching_thread_id = thread["id"]
-                ctx.matching_thread_name = thread["name"]
-                ctx.matching_thread_status = thread["status"]
-                ctx.matching_thread_priority = thread["priority"]
-                ctx.matching_thread_deadline = thread["current_deadline"]
-                ctx.matching_thread_owner = thread["owner"]
-                ctx.matching_thread_summary = thread["summary"]
-                ctx.matching_thread_signal_count = thread["signal_count"] or 0
+                    ctx.upcoming_events = upcoming_events
 
-            # Open thread check
-            has_open = conn.execute(
-                """
-                SELECT 1 FROM threads
-                WHERE status = 'active'
-                  AND key_entities LIKE ?
-                LIMIT 1
-            """,
-                (f"%{sender_contact_id}%",),
-            ).fetchone()
-            ctx.sender_has_open_thread = bool(has_open)
+                    # Busy check
+                    ctx.calendar_busy_next_2h = any(e.get("minutes_until", 999) <= 120 for e in upcoming_events)
 
-            # e) Calendar context
-            try:
-                from xibi.heartbeat.calendar_context import (
-                    build_next_event_summary,
-                    detect_sender_overlap,
-                )
+                    # Sender overlap
+                    overlap = detect_sender_overlap(upcoming_events, ctx.sender_id)
+                    if overlap:
+                        ctx.sender_on_calendar = True
+                        ctx.sender_calendar_event = overlap.get("title")
+                        ctx.sender_event_minutes_until = overlap.get("minutes_until")
 
-                ctx.upcoming_events = upcoming_events
+                    ctx.next_event_summary = build_next_event_summary(upcoming_events)
+                except Exception as e:
+                    logger.warning(f"Calendar context failed for {email_id} (non-fatal): {e}")
 
-                # Busy check
-                ctx.calendar_busy_next_2h = any(e.get("minutes_until", 999) <= 120 for e in upcoming_events)
+                contexts[email_id] = ctx
 
-                # Sender overlap
-                overlap = detect_sender_overlap(upcoming_events, ctx.sender_id)
-                if overlap:
-                    ctx.sender_on_calendar = True
-                    ctx.sender_calendar_event = overlap.get("title")
-                    ctx.sender_event_minutes_until = overlap.get("minutes_until")
-
-                ctx.next_event_summary = build_next_event_summary(upcoming_events)
-            except Exception as e:
-                logger.warning(f"Calendar context failed for {email_id} (non-fatal): {e}")
-
-            contexts[email_id] = ctx
-
-        conn.close()
     except Exception as e:
         logger.warning(f"Error assembling batch email context: {e}")
         # Return what we have or empty contexts for those that failed
