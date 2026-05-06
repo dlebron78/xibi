@@ -380,7 +380,12 @@ def test_retry_button_shown_on_execution_failure(adapter):
     markup_calls = [c for c in adapter._api_call.call_args_list if c.args[0] == "editMessageReplyMarkup"]
     # Last markup call carries the Retry button (not an empty keyboard).
     assert markup_calls, "expected at least one editMessageReplyMarkup call"
-    final_markup = markup_calls[-1].args[1]["reply_markup"]["inline_keyboard"]
+    final_payload = markup_calls[-1].args[1]
+    # The Retry button targets the same message that the failure text was
+    # edited into — same chat_id + message_id from the callback.
+    assert final_payload["chat_id"] == 123
+    assert final_payload["message_id"] == 99
+    final_markup = final_payload["reply_markup"]["inline_keyboard"]
     flat = [b for row in final_markup for b in row]
     assert any(b["callback_data"] == f"l2_action:retry:{aid}" for b in flat)
     assert any("Retry" in b["text"] for b in flat)
@@ -396,7 +401,10 @@ def test_retry_creates_new_pending_action(adapter):
         status="EXEC_FAILED",
     )
 
-    adapter._handle_l2_action_button(_callback(f"l2_action:retry:{aid}"))
+    # Patch the new-message send so the test never reaches urllib regardless
+    # of the host's telegram env vars.
+    with patch("xibi.channels.telegram.send_message_with_buttons"):
+        adapter._handle_l2_action_button(_callback(f"l2_action:retry:{aid}"))
 
     rows = _pending_rows(adapter.db_path)
     assert len(rows) == 2, rows
