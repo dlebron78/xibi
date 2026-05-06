@@ -165,9 +165,7 @@ def _notify_parked_action(action: PendingL2Action, run: SubagentRun, step: Any) 
         send_message_with_buttons(msg, buttons)
         logger.info(f"action_parked tool={action.tool} run={run.id} action_id={action.id}")
     except Exception as e:
-        logger.warning(
-            f"action_park_notify_failed tool={action.tool} action_id={action.id} err={e}"
-        )
+        logger.warning(f"action_park_notify_failed tool={action.tool} action_id={action.id} err={e}")
 
 
 def execute_checklist(
@@ -325,9 +323,7 @@ def execute_checklist(
                 output_data = {"raw_content": response.content, "error": "Failed to parse JSON output"}
 
             # Approval-gate enforcement (step-123)
-            output_data, parked_actions = enforce_trust(
-                output_data, run.id, step.id, approval_required_tools
-            )
+            output_data, parked_actions = enforce_trust(output_data, run.id, step.id, approval_required_tools)
             for action in parked_actions:
                 create_l2_action(db_path, action)
                 _notify_parked_action(action, run, step)

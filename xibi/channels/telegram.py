@@ -1148,9 +1148,7 @@ class TelegramAdapter:
             span_attrs["tool"] = tool or "?"
 
             if already_handled:
-                self._edit_message_text(
-                    chat_id, message_id, f"⚠️ Already handled: {tool or 'action'}."
-                )
+                self._edit_message_text(chat_id, message_id, f"⚠️ Already handled: {tool or 'action'}.")
                 self._strip_buttons(chat_id, message_id)
                 span_attrs["outcome"] = "already_handled"
                 return
@@ -1167,9 +1165,7 @@ class TelegramAdapter:
                 args = json.loads(args_json) if args_json else {}
             except (TypeError, json.JSONDecodeError) as e:
                 logger.error(f"l2_action_args_decode_failed action_id={action_id} err={e}")
-                self._edit_message_text(
-                    chat_id, message_id, f"⚠️ Cannot decode args for {tool}."
-                )
+                self._edit_message_text(chat_id, message_id, f"⚠️ Cannot decode args for {tool}.")
                 self._strip_buttons(chat_id, message_id)
                 span_attrs["outcome"] = "args_decode_failed"
                 return
@@ -1177,9 +1173,7 @@ class TelegramAdapter:
             logger.info(f"action_approved action_id={action_id} tool={tool} reviewed_by=telegram")
             result = self._invoke_button_action(tool, args) if tool else {"status": "error", "message": "no tool"}
             if result.get("status") == "success":
-                self._edit_message_text(
-                    chat_id, message_id, f"✅ Approved and executed: {tool}."
-                )
+                self._edit_message_text(chat_id, message_id, f"✅ Approved and executed: {tool}.")
                 span_attrs["outcome"] = "executed"
             else:
                 self._edit_message_text(
