@@ -269,22 +269,15 @@ async def test_run_phase3_skips_optional_components(mock_poller):
     # Should not crash
 
 
-def test_sweep_thread_lifecycle_gate_error(mock_poller):
-    # Force HeartbeatPoller._sweep_thread_lifecycle to run (it was mocked in fixture)
-    orig_sweep = HeartbeatPoller._sweep_thread_lifecycle
-    with patch("xibi.db.open_db", side_effect=RuntimeError("DB Boom")):
-        orig_sweep(mock_poller)
-        # Should catch and return
-
-
-def test_sweep_thread_lifecycle_sweep_error(mock_poller):
-    # Force HeartbeatPoller._sweep_thread_lifecycle to run
-    orig_sweep = HeartbeatPoller._sweep_thread_lifecycle
-    # Mock the gate to pass
-    mock_conn = MagicMock()
-    mock_conn.execute.return_value.fetchone.return_value = None  # Not run today
-    with patch("xibi.db.open_db") as mock_open:
-        mock_open.return_value.__enter__.return_value = mock_conn
-        with patch("xibi.heartbeat.poller.sweep_stale_threads", side_effect=RuntimeError("Sweep Boom")):
-            orig_sweep(mock_poller)
-            # Should catch
+def test_run_lifecycle_sweeps_swallows_top_level_error(mock_poller):
+    """The registry-driver wrapper on the poller catches a top-level
+    failure inside ``run_registered_sweeps`` so the heartbeat tick is
+    never broken by a bug in the registry itself (step-121).
+    """
+    orig_wrapper = HeartbeatPoller._run_lifecycle_sweeps
+    with patch(
+        "xibi.heartbeat.sweep_registry.run_registered_sweeps",
+        side_effect=RuntimeError("Registry Boom"),
+    ):
+        orig_wrapper(mock_poller)
+        # Should catch the exception and return without raising.

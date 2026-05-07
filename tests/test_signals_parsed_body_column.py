@@ -11,7 +11,6 @@ from xibi.db import migrate
 from xibi.db.migrations import SCHEMA_VERSION
 from xibi.heartbeat.parsed_body_sweep import (
     PARSED_BODY_TTL_DAYS,
-    maybe_run_parsed_body_sweep,
     run_parsed_body_sweep,
 )
 
@@ -30,8 +29,11 @@ def test_migration_43_adds_three_columns(tmp_path: Path):
     assert "parsed_body_format" in cols
 
 
-def test_schema_version_is_43():
-    assert SCHEMA_VERSION == 43
+def test_schema_version_is_at_least_43():
+    # Bumped to 44 by step-121 (data lifecycle rollups). The migration-43
+    # contract is still that signals.parsed_body* columns exist after
+    # migrate(); this test guards the lower bound, not the exact value.
+    assert SCHEMA_VERSION >= 43
 
 
 def test_migration_43_idempotent(tmp_path: Path):
@@ -174,34 +176,6 @@ def test_sweep_leaves_null_rows_alone(tmp_path: Path):
         )
     pruned = run_parsed_body_sweep(db_path)
     assert pruned == 0
-
-
-def test_maybe_run_gates_to_one_per_hour(tmp_path: Path):
-    db_path = tmp_path / "xibi.db"
-    migrate(db_path)
-    fresh_ts = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat(timespec="seconds")
-    _insert_signal(db_path, ref_id="g-1", parsed_at=fresh_ts)
-
-    first = maybe_run_parsed_body_sweep(db_path)
-    second = maybe_run_parsed_body_sweep(db_path)
-
-    # First call records last_run; second is gated and returns None.
-    assert first is not None
-    assert second is None
-
-
-def test_maybe_run_runs_after_window(tmp_path: Path):
-    db_path = tmp_path / "xibi.db"
-    migrate(db_path)
-    # Seed last_run to >1h ago via direct insert.
-    stale_last_run = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat(timespec="seconds")
-    with sqlite3.connect(db_path) as conn, conn:
-        conn.execute(
-            "INSERT INTO heartbeat_state (key, value) VALUES ('parsed_body_sweep_last_run', ?)",
-            (stale_last_run,),
-        )
-    result = maybe_run_parsed_body_sweep(db_path)
-    assert result is not None  # ran
 
 
 def test_sweep_records_last_run_even_when_zero_pruned(tmp_path: Path):

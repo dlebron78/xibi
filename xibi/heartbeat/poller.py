@@ -30,7 +30,6 @@ from xibi.observation import ObservationCycle
 from xibi.radiant import Radiant
 from xibi.router import get_model
 from xibi.security import trust_gate
-from xibi.threads import sweep_resolved_threads, sweep_stale_threads
 
 if TYPE_CHECKING:
     from xibi.heartbeat.context_assembly import SignalContext
@@ -126,6 +125,14 @@ class HeartbeatPoller:
         self._enable_legacy_digest = self.config.get("enable_legacy_digest", False)
         self._timezone_name = self.config.get("timezone", "UTC")
         self._validate_timezone()
+
+        # Importing the sweeps module registers all 12 default sweeps as a
+        # side effect (step-121). Load retention overrides from the same
+        # config.json the heartbeat already reads, so operator-set values
+        # take effect on the first tick after process restart.
+        from xibi.heartbeat.sweeps import load_retention_config
+
+        load_retention_config(Path(self.config_path))
 
         self.scheduler_kernel: ScheduledActionKernel | None
         if self.executor is not None:
@@ -304,46 +311,21 @@ class HeartbeatPoller:
 
         asyncio.run(self.async_tick())
 
-    def _sweep_parsed_body(self) -> None:
-        """Run the smart-parser body-retention sweep (step-114).
+    def _run_lifecycle_sweeps(self) -> None:
+        """Drive the unified sweep registry once per heartbeat tick (step-121).
 
-        Best-effort hourly prune of ``signals.parsed_body`` rows older than
-        the 30-day TTL. Gating + error handling live in
-        :func:`xibi.heartbeat.parsed_body_sweep.maybe_run_parsed_body_sweep`;
-        this wrapper only translates an unexpected exception into a warning
-        so the heartbeat tick is never broken by the sweep.
+        All gating, time-budget, rotation, and span-emission logic live in
+        :mod:`xibi.heartbeat.sweep_registry`. This wrapper only catches an
+        unexpected top-level exception so the registry can never break the
+        tick — the registry already isolates per-sweep failures, but a bug
+        in the registry itself should still degrade gracefully.
         """
         try:
-            from xibi.heartbeat.parsed_body_sweep import maybe_run_parsed_body_sweep
+            from xibi.heartbeat.sweep_registry import run_registered_sweeps
 
-            maybe_run_parsed_body_sweep(self.db_path)
+            run_registered_sweeps(self.db_path)
         except Exception as exc:
-            logger.warning(f"parsed_body sweep wrapper error: {exc}", exc_info=True)
-
-    def _sweep_thread_lifecycle(self) -> None:
-        """Mark stale/resolved threads. Runs once per day."""
-        today = datetime.now().strftime("%Y-%m-%d")
-        try:
-            with xibi.db.open_db(self.db_path) as conn:
-                cursor = conn.execute("SELECT value FROM heartbeat_state WHERE key = 'thread_sweep_last_run'")
-                row = cursor.fetchone()
-                if row and row[0] == today:
-                    return
-                conn.execute(
-                    "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('thread_sweep_last_run', ?)",
-                    (today,),
-                )
-        except Exception as e:
-            logger.warning(f"Thread sweep gate error: {e}", exc_info=True)
-            return
-
-        try:
-            stale = sweep_stale_threads(self.db_path)
-            resolved = sweep_resolved_threads(self.db_path)
-            if stale + resolved > 0:
-                logger.info(f"Thread sweep: {stale} stale, {resolved} resolved")
-        except Exception as e:
-            logger.warning(f"Thread lifecycle sweep failed: {e}", exc_info=True)
+            logger.warning(f"sweep registry top-level error: {exc}", exc_info=True)
 
     async def _check_contact_backfill(self) -> None:
         """Perform one-time contact backfill if needed."""
@@ -410,8 +392,7 @@ class HeartbeatPoller:
             logger.info("Quiet hours, skipping tick.")
             return
 
-        self._sweep_thread_lifecycle()
-        self._sweep_parsed_body()
+        self._run_lifecycle_sweeps()
         await self._check_contact_backfill()
         await self._check_sent_mail_poll()
 
@@ -1168,26 +1149,6 @@ class HeartbeatPoller:
         logger.info("Running recap tick")
         self.digest_tick(force=True)
 
-    def _cleanup_telegram_cache(self) -> None:
-        """Purge processed_messages rows older than 7 days. Runs once per day."""
-        today = datetime.now().strftime("%Y-%m-%d")
-        try:
-            with xibi.db.open_db(self.db_path) as conn:
-                # Check if already run today
-                cursor = conn.execute("SELECT value FROM heartbeat_state WHERE key = 'ttl_cleanup_last_run'")
-                row = cursor.fetchone()
-                if row and row[0] == today:
-                    return
-
-                logger.info("Cleaning up Telegram message cache...")
-                conn.execute("DELETE FROM processed_messages WHERE processed_at < datetime('now', '-7 days')")
-                conn.execute(
-                    "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('ttl_cleanup_last_run', ?)",
-                    (today,),
-                )
-        except Exception as e:
-            logger.warning(f"Telegram cache cleanup error: {e}", exc_info=True)
-
     def reflection_tick(self) -> None:
         if self._is_quiet_hours():
             return
@@ -1244,8 +1205,6 @@ class HeartbeatPoller:
                 # Hourly digest removed — digests only at 9 AM and 6 PM windows
                 if now.hour == 7 and now.minute < 15:
                     self.reflection_tick()
-                    self._cleanup_telegram_cache()
-                    self._cleanup_subagent_runs()
 
             except Exception as e:
                 logger.error(f"Error in heartbeat loop: {e}", exc_info=True)
@@ -1258,30 +1217,6 @@ class HeartbeatPoller:
                 break
 
         logger.info("HeartbeatPoller run loop exiting (shutdown requested)")
-
-    def _cleanup_subagent_runs(self) -> None:
-        """Purge expired subagent runs. Runs once per day."""
-        today = datetime.now().strftime("%Y-%m-%d")
-        try:
-            with xibi.db.open_db(self.db_path) as conn:
-                cursor = conn.execute("SELECT value FROM heartbeat_state WHERE key = 'subagent_ttl_cleanup_last_run'")
-                row = cursor.fetchone()
-                if row and row[0] == today:
-                    return
-
-                from xibi.subagent.db import cleanup_expired_runs
-
-                count = cleanup_expired_runs(self.db_path)
-                if count > 0:
-                    logger.info(f"Cleaned up {count} expired subagent runs")
-
-                conn.execute(
-                    "INSERT OR REPLACE INTO heartbeat_state (key, value) VALUES ('subagent_ttl_cleanup_last_run', ?)",
-                    (today,),
-                )
-        except Exception as e:
-            logger.warning(f"Subagent run cleanup error: {e}", exc_info=True)
-
 
 def _infer_provider(role: str, config: dict[str, Any]) -> str:
     try:

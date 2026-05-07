@@ -6,7 +6,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 43  # increment when adding new migrations
+SCHEMA_VERSION = 44  # increment when adding new migrations
 
 
 def _safe_add_column(
@@ -123,6 +123,11 @@ class SchemaManager:
                 43,
                 "signals: add parsed_body + parsed_body_at + parsed_body_format (smart parser retention)",
                 self._migration_43,
+            ),
+            (
+                44,
+                "data lifecycle: inference_daily_rollup + spans_daily_rollup (rollup-then-prune sweeps)",
+                self._migration_44,
             ),
         ]
 
@@ -1059,6 +1064,53 @@ class SchemaManager:
             ("parsed_body_format", "TEXT"),
         ]:
             _safe_add_column(conn, "signals", col_name, col_type)
+
+    def _migration_44(self, conn: sqlite3.Connection) -> None:
+        """Data lifecycle: daily rollups for ``inference_events`` and ``spans``.
+
+        Step-121 consolidates ad-hoc cleanup into a sweep registry that runs
+        on the heartbeat tick. Two of the registered sweeps roll up rows older
+        than 7 days into per-day aggregate tables before pruning, so historical
+        cost / latency / volume trends survive after the raw event rows are
+        gone.
+
+        UNIQUE(date, ...) on each rollup table is the idempotency anchor: the
+        rollup sweep uses ``INSERT OR REPLACE`` keyed on the unique tuple, so
+        a crash between INSERT and DELETE resumes safely on the next tick (the
+        re-aggregation overwrites the partial row with the same correct
+        values, then DELETE cleans up the source rows).
+
+        Additive only — no changes to existing tables. Pruning happens at sweep
+        time (runtime), not at migration time.
+        """
+        conn.executescript("""
+            CREATE TABLE IF NOT EXISTS inference_daily_rollup (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                role TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                total_calls INTEGER NOT NULL DEFAULT 0,
+                total_prompt_tokens INTEGER NOT NULL DEFAULT 0,
+                total_response_tokens INTEGER NOT NULL DEFAULT 0,
+                total_cost_usd REAL NOT NULL DEFAULT 0.0,
+                avg_duration_ms REAL NOT NULL DEFAULT 0.0,
+                UNIQUE(date, role, provider, model, operation)
+            );
+
+            CREATE TABLE IF NOT EXISTS spans_daily_rollup (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                component TEXT NOT NULL,
+                operation TEXT NOT NULL,
+                total_count INTEGER NOT NULL DEFAULT 0,
+                ok_count INTEGER NOT NULL DEFAULT 0,
+                error_count INTEGER NOT NULL DEFAULT 0,
+                avg_duration_ms REAL NOT NULL DEFAULT 0.0,
+                UNIQUE(date, component, operation)
+            );
+        """)
 
 
 def migrate(db_path: Path) -> list[int]:

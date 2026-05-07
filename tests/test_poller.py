@@ -578,15 +578,19 @@ def test_reflection_tick_runs_and_broadcasts(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# _cleanup_telegram_cache
+# Lifecycle sweeps wrapper
+#
+# ``_cleanup_telegram_cache`` was retired by step-121 in favor of the
+# unified sweep registry, which the poller drives via
+# ``_run_lifecycle_sweeps`` once per tick. Behavioral coverage for the
+# processed_messages purge now lives in
+# ``tests/test_sweep_registry.py::test_simple_delete_sweep_processed_messages``.
 # ---------------------------------------------------------------------------
 
 
-def test_cleanup_telegram_cache_runs(tmp_path):
-    """_cleanup_telegram_cache should run without error on a valid db."""
+def test_run_lifecycle_sweeps_runs_without_error(tmp_path):
     hp = _make_hp(tmp_path)
-    # The real db doesn't have processed_messages yet — the function should handle gracefully
-    hp._cleanup_telegram_cache()  # Should not raise
+    hp._run_lifecycle_sweeps()  # Should not raise on a valid migrated DB.
 
 
 # ---------------------------------------------------------------------------

@@ -1,12 +1,9 @@
 import sqlite3
-from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
 import xibi.db
 from xibi.command_layer import CommandLayer
-from xibi.heartbeat.poller import HeartbeatPoller
 from xibi.threads import sweep_resolved_threads, sweep_stale_threads
 
 
@@ -187,46 +184,10 @@ def test_resolve_thread_already_resolved(db_path):
     assert "already resolved" in res
 
 
-@patch("xibi.heartbeat.poller.sweep_stale_threads")
-@patch("xibi.heartbeat.poller.sweep_resolved_threads")
-def test_heartbeat_sweep_runs_once_per_day(mock_resolved, mock_stale, db_path):
-    mock_stale.return_value = 0
-    mock_resolved.return_value = 0
-
-    poller = HeartbeatPoller(
-        skills_dir=Path("/tmp"), db_path=db_path, adapter=MagicMock(), rules=MagicMock(), allowed_chat_ids=[123]
-    )
-
-    # Run 1
-    poller._sweep_thread_lifecycle()
-    assert mock_stale.call_count == 1
-    assert mock_resolved.call_count == 1
-
-    # Run 2 same day
-    poller._sweep_thread_lifecycle()
-    assert mock_stale.call_count == 1
-    assert mock_resolved.call_count == 1
-
-
-@patch("xibi.heartbeat.poller.sweep_stale_threads")
-@patch("xibi.heartbeat.poller.sweep_resolved_threads")
-def test_heartbeat_sweep_runs_next_day(mock_resolved, mock_stale, db_path):
-    mock_stale.return_value = 0
-    mock_resolved.return_value = 0
-
-    poller = HeartbeatPoller(
-        skills_dir=Path("/tmp"), db_path=db_path, adapter=MagicMock(), rules=MagicMock(), allowed_chat_ids=[123]
-    )
-
-    # Run 1
-    poller._sweep_thread_lifecycle()
-    assert mock_stale.call_count == 1
-
-    # Simulate day change by updating heartbeat_state
-    with xibi.db.open_db(db_path) as conn, conn:
-        conn.execute("UPDATE heartbeat_state SET value = '2000-01-01' WHERE key = 'thread_sweep_last_run'")
-
-    # Run 2 (different "day")
-    poller._sweep_thread_lifecycle()
-    assert mock_stale.call_count == 2
-    assert mock_resolved.call_count == 2
+# Heartbeat thread-sweep gating (once per day, runs again next day) used to
+# live in ``HeartbeatPoller._sweep_thread_lifecycle`` and was tested here.
+# That gating is now the registry's responsibility (step-121); the equivalent
+# coverage lives in ``tests/test_sweep_registry.py`` under
+# ``test_registry_skips_when_within_interval`` and
+# ``test_registry_runs_after_interval_elapsed``. Tests removed rather than
+# rewritten because they would duplicate registry-level coverage.

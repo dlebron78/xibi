@@ -619,15 +619,11 @@ class TelegramAdapter:
         from xibi.shutdown import is_shutdown_requested
 
         logger.info("Xibi is listening on Telegram...")
-        _last_purge_date: date | None = None
+
+        # processed_messages purge moved to xibi.heartbeat.sweep_registry
+        # (step-121). The poll loop no longer needs its own daily gate.
 
         while not is_shutdown_requested():
-            # Purge stale processed-message IDs once per calendar day
-            today = date.today()
-            if _last_purge_date != today:
-                self._purge_old_processed_messages()
-                _last_purge_date = today
-
             params = {"offset": self.offset, "timeout": 20}
             updates = self._api_call("getUpdates", params)
 
