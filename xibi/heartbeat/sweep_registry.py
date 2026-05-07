@@ -225,10 +225,7 @@ def run_registered_sweeps(
         elapsed = time.monotonic() - start_wall
         if elapsed >= time_budget_s:
             remaining = [s.name for s in ordered if s.name not in results]
-            logger.warning(
-                f"sweep registry: time budget {time_budget_s:.1f}s exhausted, "
-                f"skipping {remaining}"
-            )
+            logger.warning(f"sweep registry: time budget {time_budget_s:.1f}s exhausted, skipping {remaining}")
             for s in ordered:
                 results.setdefault(s.name, None)
             break

@@ -86,10 +86,7 @@ def load_retention_config(config_path: Path | None) -> None:
     for key, default in _DEFAULT_RETENTION_DAYS.items():
         raw = block.get(key, default)
         if not isinstance(raw, int) or raw <= 0:
-            logger.warning(
-                f"sweeps: retention.{key} must be a positive int, got {raw!r}, "
-                f"using default {default}"
-            )
+            logger.warning(f"sweeps: retention.{key} must be a positive int, got {raw!r}, using default {default}")
             _retention[key] = default
             continue
         _retention[key] = raw
@@ -131,9 +128,7 @@ def _sweep_thread_resolved(db_path: Path) -> int:
     """Mark stale threads as resolved + sweep deadline-passed active threads."""
     from xibi.threads import sweep_resolved_threads
 
-    return sweep_resolved_threads(
-        db_path, resolved_days=_retention_days("thread_resolved_days")
-    )
+    return sweep_resolved_threads(db_path, resolved_days=_retention_days("thread_resolved_days"))
 
 
 def _sweep_subagent_runs(db_path: Path) -> int:
@@ -286,7 +281,11 @@ def _sweep_inference_events(db_path: Path) -> int:
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        row[0], row[1], row[2], row[3], row[4],
+                        row[0],
+                        row[1],
+                        row[2],
+                        row[3],
+                        row[4],
                         int(row[5] or 0),
                         int(row[6] or 0),
                         int(row[7] or 0),
@@ -347,7 +346,9 @@ def _sweep_spans(db_path: Path) -> int:
                     ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        row[0], row[1], row[2],
+                        row[0],
+                        row[1],
+                        row[2],
                         int(row[3] or 0),
                         int(row[4] or 0),
                         int(row[5] or 0),

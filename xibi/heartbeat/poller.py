@@ -1218,6 +1218,7 @@ class HeartbeatPoller:
 
         logger.info("HeartbeatPoller run loop exiting (shutdown requested)")
 
+
 def _infer_provider(role: str, config: dict[str, Any]) -> str:
     try:
         return str(config["models"]["text"][role]["provider"])
