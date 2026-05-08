@@ -18,9 +18,13 @@ from pathlib import Path
 
 import yaml
 
-from xibi.config import CONFIG_PATH
-
 logger = logging.getLogger(__name__)
+
+# Inlined from the deleted ``xibi.config.CONFIG_PATH``. Kept as a module
+# attribute (rather than computed inline in ``_load``) so tests can
+# monkeypatch it on the module, matching the pattern in
+# ``tests/test_approval_gates.py``.
+CONFIG_PATH = Path.home() / ".xibi" / "config.yaml"
 
 _cache: list[str] | None = None
 

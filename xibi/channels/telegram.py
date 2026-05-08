@@ -267,11 +267,21 @@ class TelegramAdapter:
             return None
 
     def _is_authorized(self, chat_id: str) -> bool:
-        allowed = [x.strip() for x in os.getenv("XIBI_TELEGRAM_ALLOWED_CHAT_IDS", "").split(",") if x.strip()]
-        if not allowed:
-            logger.warning("XIBI_TELEGRAM_ALLOWED_CHAT_IDS not set — all access denied")
+        """Check ``chat_id`` against ``self.allowed_chats`` (constructor-set).
+
+        The constructor is the single source of truth for the allowlist; it
+        seeds ``self.allowed_chats`` from ``XIBI_TELEGRAM_ALLOWED_CHAT_IDS``
+        once at startup (or from the explicit ``allowed_chats`` kwarg).
+        Re-reading the env var here would diverge from that source: tests
+        and runtime overrides set on the instance would be ignored, and
+        unsetting the env var post-startup would lock out a properly
+        configured adapter. Lines 967 and 1092 already check
+        ``self.allowed_chats`` directly; this method now matches.
+        """
+        if not self.allowed_chats:
+            logger.warning("allowed_chats empty — all access denied")
             return False
-        return chat_id in allowed
+        return chat_id in self.allowed_chats
 
     def _log_access_attempt(self, chat_id: int, authorized: bool, user_name: str | None = None) -> None:
         try:

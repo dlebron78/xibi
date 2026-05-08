@@ -55,12 +55,42 @@ def db_path(tmp_path: Path) -> Path:
     return db_file
 
 
+DASHBOARD_TEST_KEY = "test-api-key"
+
+
+def _make_authed_client(db_path, monkeypatch):
+    """Helper for tests that build their own client (not via the fixture).
+
+    Sets the API key env var and returns a Flask test client with
+    ``X-API-Key`` pre-injected on every request, so existing assertions
+    against ``/api/*`` endpoints still pass under the auth gate.
+    """
+    monkeypatch.setenv("XIBI_DASHBOARD_API_KEY", DASHBOARD_TEST_KEY)
+    config = DashboardConfig(db_path=db_path)
+    app = create_app(config)
+    app.config["TESTING"] = True
+    client = app.test_client()
+    client.environ_base["HTTP_X_API_KEY"] = DASHBOARD_TEST_KEY
+    return client
+
+
 @pytest.fixture
-def client(db_path: Path):
+def client(db_path: Path, monkeypatch):
+    """Authenticated test client.
+
+    Sets ``XIBI_DASHBOARD_API_KEY`` for app construction (the auth gate
+    is fail-closed; without a key every ``/api/*`` request would 401)
+    and seeds the matching ``X-API-Key`` into ``environ_base`` so every
+    request issued via this client carries the header. Tests that
+    exercise *missing-key* / *wrong-key* paths construct their own
+    client without this fixture.
+    """
+    monkeypatch.setenv("XIBI_DASHBOARD_API_KEY", DASHBOARD_TEST_KEY)
     config = DashboardConfig(db_path=db_path)
     app = create_app(config)
     app.config["TESTING"] = True
     with app.test_client() as client:
+        client.environ_base["HTTP_X_API_KEY"] = DASHBOARD_TEST_KEY
         yield client
 
 
@@ -90,15 +120,13 @@ def test_health_ok(client, db_path: Path):
     assert "uptime_seconds" in data
 
 
-def test_health_db_missing():
-    config = DashboardConfig(db_path=Path("/nonexistent/db.sqlite"))
-    app = create_app(config)
-    with app.test_client() as client:
-        response = client.get("/api/health")
-        assert response.status_code == 200
-        data = response.get_json()
-        assert data["status"] == "degraded"
-        assert "error" in data
+def test_health_db_missing(monkeypatch):
+    client = _make_authed_client(Path("/nonexistent/db.sqlite"), monkeypatch)
+    response = client.get("/api/health")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["status"] == "degraded"
+    assert "error" in data
 
 
 def test_trends_empty(client):
@@ -147,7 +175,7 @@ def test_errors_empty(client):
     assert response.get_json() == []
 
 
-def test_errors_data(tmp_path: Path):
+def test_errors_data(tmp_path: Path, monkeypatch):
     # Create DB with error/query columns
     db_file = tmp_path / "error_data.db"
     with sqlite3.connect(db_file) as conn:
@@ -164,14 +192,12 @@ def test_errors_data(tmp_path: Path):
         )
         conn.commit()
 
-    config = DashboardConfig(db_path=db_file)
-    app = create_app(config)
-    with app.test_client() as client:
-        response = client.get("/api/errors")
-        assert response.status_code == 200
-        data = response.get_json()
-        assert len(data) == 2
-        assert data[0]["error"] == "err2"  # Ordered by created_at DESC
+    client = _make_authed_client(db_file, monkeypatch)
+    response = client.get("/api/errors")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert len(data) == 2
+    assert data[0]["error"] == "err2"  # Ordered by created_at DESC
 
 
 def test_recent_conversations(client, db_path: Path):
@@ -189,21 +215,19 @@ def test_recent_conversations(client, db_path: Path):
     assert len(data) == 10
 
 
-def test_shadow_stats_no_column(tmp_path: Path):
+def test_shadow_stats_no_column(tmp_path: Path, monkeypatch):
     # Create DB without shadow_tier column
     db_file = tmp_path / "no_shadow.db"
     with sqlite3.connect(db_file) as conn:
         conn.execute("CREATE TABLE traces (id TEXT PRIMARY KEY, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)")
 
-    config = DashboardConfig(db_path=db_file)
-    app = create_app(config)
-    with app.test_client() as client:
-        response = client.get("/api/shadow")
-        assert response.status_code == 200
-        data = response.get_json()
-        assert data["total"] == 0
-        assert "note" in data
-        assert data["note"] == "shadow_tier column not present"
+    client = _make_authed_client(db_file, monkeypatch)
+    response = client.get("/api/shadow")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["total"] == 0
+    assert "note" in data
+    assert data["note"] == "shadow_tier column not present"
 
 
 def test_shadow_stats_with_data(client, db_path: Path):

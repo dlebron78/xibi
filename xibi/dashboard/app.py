@@ -1,5 +1,34 @@
+"""Flask dashboard app for Xibi (operator-facing internal tool).
+
+Routes
+------
+HTML pages (auth-exempt, served to LAN browsers):
+  ``/``, ``/caretaker`` — operator dashboards.
+
+API endpoints (gated by ``X-API-Key`` header against
+``XIBI_DASHBOARD_API_KEY``):
+  ``/api/*`` — JSON data for the dashboard pages and any external API
+  consumer.
+
+The split is deliberate: page routes return HTML and need to load in a
+browser without a header-injection extension; API routes carry the
+actual data and are the surface worth gating. The dashboard page itself
+fetches the API key from a Jinja-rendered constant and forwards it on
+its own XHR calls.
+
+Auth model
+----------
+Fail-closed. If ``XIBI_DASHBOARD_API_KEY`` is unset or empty, every
+``/api/*`` request returns 401. There is no empty-key bypass; the
+rollback path is ``git revert``, not lowering the gate. The key is
+read once at app-creation time so a missing env var fails fast at
+deploy rather than per-request.
+"""
+
 from __future__ import annotations
 
+import logging
+import os
 import sqlite3
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
@@ -13,6 +42,8 @@ from flask import Flask, jsonify, render_template, request
 import xibi.db
 from xibi.dashboard import queries
 from xibi.router import Config, get_model
+
+logger = logging.getLogger(__name__)
 
 
 def get_system_health(db_path: Path, config: Config) -> dict:
@@ -86,11 +117,49 @@ class DashboardConfig:
 
 
 def create_app(config: DashboardConfig) -> Flask:
+    """Build the Flask app, registering routes and the API auth gate.
+
+    The ``XIBI_DASHBOARD_API_KEY`` env var is captured at app-creation
+    time and stored on ``app.config``. The ``before_request`` hook
+    consults that captured value on every ``/api/*`` request: missing
+    or wrong header → 401. HTML page routes (``/``, ``/caretaker``)
+    and the legacy ``/health`` route are exempt by path prefix.
+    """
     # Resolve templates folder relative to the repo root
     # xibi/dashboard/app.py -> xibi/dashboard -> xibi -> root
     template_folder = Path(__file__).parent.parent.parent / "templates"
     app = Flask(__name__, template_folder=str(template_folder))
     app.config["DB_PATH"] = config.db_path
+    app.config["API_KEY"] = os.environ.get("XIBI_DASHBOARD_API_KEY", "")
+
+    @app.before_request
+    def _check_api_key() -> Any:
+        """Reject ``/api/*`` requests without a valid ``X-API-Key`` header.
+
+        Fail-closed: if ``XIBI_DASHBOARD_API_KEY`` is unset or empty,
+        the configured key is the empty string and every ``/api/*``
+        request returns 401 (no header value can equal empty after
+        the truthiness check below).
+
+        Page routes (``/``, ``/caretaker``) and ``/health`` are
+        exempt — they do not start with ``/api/``. Page-side JS
+        injects the key into its own XHR via the ``api_key`` Jinja
+        variable so the dashboard works in a plain browser.
+        """
+        if not request.path.startswith("/api/"):
+            return None
+        configured = app.config.get("API_KEY") or ""
+        provided = request.headers.get("X-API-Key", "")
+        if not configured or provided != configured:
+            logger.warning(
+                "dashboard auth: rejected %s %s from %s (key %s)",
+                request.method,
+                request.path,
+                request.remote_addr,
+                "missing" if not provided else "wrong",
+            )
+            return jsonify({"error": "unauthorized"}), 401
+        return None
 
     def get_db_conn() -> AbstractContextManager[sqlite3.Connection]:
         return xibi.db.open_db(app.config["DB_PATH"])  # type: ignore[return-value]
@@ -394,11 +463,11 @@ def create_app(config: DashboardConfig) -> Flask:
 
     @app.route("/")
     def index() -> str:
-        return render_template("index.html")
+        return render_template("index.html", api_key=app.config.get("API_KEY", ""))
 
     @app.route("/caretaker")
     def caretaker_page() -> str:
-        return render_template("caretaker.html")
+        return render_template("caretaker.html", api_key=app.config.get("API_KEY", ""))
 
     @app.route("/api/caretaker/pulses")
     def caretaker_pulses() -> Any:

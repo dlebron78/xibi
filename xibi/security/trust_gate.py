@@ -23,9 +23,13 @@ from typing import Any
 
 import yaml
 
-from xibi.config import CONFIG_PATH
-
 logger = logging.getLogger(__name__)
+
+# Inlined from the deleted ``xibi.config.CONFIG_PATH``. Kept as a module
+# attribute (rather than computed inline in ``_load_config``) so tests
+# can monkeypatch it on the module, matching the pattern in
+# ``tests/test_trust_gate.py``.
+CONFIG_PATH = Path.home() / ".xibi" / "config.yaml"
 
 _DEFAULTS: dict[str, Any] = {"enabled": True, "log_level": "debug"}
 

@@ -4,8 +4,15 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Subagents — Xibi Dashboard</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/milligram/1.4.1/milligram.min.css">
+    <!-- Chart.js pinned to 4.4.7 with SRI integrity hash. -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7"
+            integrity="sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC"
+            crossorigin="anonymous"></script>
+    <!-- Milligram pinned to 1.4.1 with SRI integrity hash. -->
+    <link rel="stylesheet"
+          href="https://cdnjs.cloudflare.com/ajax/libs/milligram/1.4.1/milligram.min.css"
+          integrity="sha384-+ej8VMtCZlt+6cYHRZz5SzhI4t0/n6eLxKpiaIpnWZgE5s7S3WsBT5IKMo8mTULz"
+          crossorigin="anonymous">
     <style>
         body { padding: 2rem; background: #f4f5f7; }
         .container { max-width: 1200px; background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
@@ -72,6 +79,42 @@
     </div>
 
     <script>
+        // NOTE: this template is currently dead code -- no route in
+        // xibi/dashboard/app.py serves it, and no other template links to
+        // it. The XSS escapes and CDN pins below are applied as defense
+        // in depth per step-122 condition 3, in case the page is wired
+        // back up. If/when it is, the API endpoints it calls
+        // (/api/subagent_*) must also exist in app.py.
+
+        // Server-injected API key for /api/* requests (auth-exempt page).
+        const API_KEY = "{{ api_key|e }}";
+
+        // Wrap fetch so /api/* calls carry X-API-Key without per-call edits.
+        (function patchFetchForApiKey() {
+            const origFetch = window.fetch.bind(window);
+            window.fetch = function(input, init) {
+                init = init || {};
+                const url = typeof input === 'string' ? input : (input && input.url) || '';
+                if (url.startsWith('/api/')) {
+                    const headers = new Headers(init.headers || {});
+                    headers.set('X-API-Key', API_KEY);
+                    init.headers = headers;
+                }
+                return origFetch(input, init);
+            };
+        })();
+
+        // HTML-escape arbitrary text for safe interpolation into innerHTML.
+        function escHtml(str) {
+            if (str === null || str === undefined) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
         async function loadSummary() {
             const res = await fetch('/api/subagent_summary');
             const data = await res.json();
@@ -90,24 +133,25 @@
             data.agents.forEach(agent => {
                 const card = document.createElement('div');
                 card.className = 'step-item';
+                // Safe: static HTML, no user data.
                 const configStatus = agent.config_ready ?
                     '<span class="status-pill status-DONE">READY</span>' :
                     '<span class="status-pill status-FAILED">CONFIG REQUIRED</span>';
 
                 card.innerHTML = `
                     <div style="display:flex; justify-content:space-between">
-                        <strong>${agent.name} v${agent.version}</strong>
+                        <strong>${escHtml(agent.name)} v${escHtml(agent.version)}</strong>
                         ${configStatus}
                     </div>
-                    <p style="font-size:0.9rem; margin-top:0.5rem">${agent.description}</p>
+                    <p style="font-size:0.9rem; margin-top:0.5rem">${escHtml(agent.description)}</p>
                     <div style="font-size:0.8rem; color:#666">
                         <strong>Skills:</strong>
                         <ul style="margin: 0.5rem 0 0 1rem; list-style: disc;">
                             ${agent.skills.map(s => `
                                 <li>
-                                    <strong>${s.name}</strong>: ${s.description}
+                                    <strong>${escHtml(s.name)}</strong>: ${escHtml(s.description)}
                                     <br>
-                                    <em style="color:#888">Trust: ${s.trust} | Model: ${s.model} | Standalone: ${s.standalone ? 'Yes' : 'No'}</em>
+                                    <em style="color:#888">Trust: ${escHtml(s.trust)} | Model: ${escHtml(s.model)} | Standalone: ${s.standalone ? 'Yes' : 'No'}</em>
                                 </li>
                             `).join('')}
                         </ul>
@@ -126,12 +170,12 @@
             data.forEach(run => {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
-                    <td><strong>${run.agent_id}</strong></td>
-                    <td><span class="status-pill status-${run.status}">${run.status}</span></td>
-                    <td>${run.trigger}</td>
-                    <td>${run.started_at ? run.started_at.split('T')[1].substring(0, 5) : 'pending'}</td>
-                    <td>$${run.actual_cost_usd.toFixed(4)}</td>
-                    <td><button class="button button-clear" onclick="viewDetail('${run.id}')">View</button></td>
+                    <td><strong>${escHtml(run.agent_id)}</strong></td>
+                    <td><span class="status-pill status-${escHtml(run.status)}">${escHtml(run.status)}</span></td>
+                    <td>${escHtml(run.trigger)}</td>
+                    <td>${escHtml(run.started_at ? run.started_at.split('T')[1].substring(0, 5) : 'pending')}</td>
+                    <td>$${escHtml(run.actual_cost_usd.toFixed(4))}</td>
+                    <td><button class="button button-clear" onclick="viewDetail('${escHtml(run.id)}')">View</button></td>
                 `;
                 body.appendChild(tr);
             });
@@ -148,6 +192,7 @@
             document.getElementById('detail-trigger').innerText = data.run.trigger;
 
             const checklist = document.getElementById('checklist-view');
+            // Safe: static HTML, no user data.
             checklist.innerHTML = '<h3>Checklist</h3>';
 
             data.steps.forEach(step => {
@@ -155,11 +200,11 @@
                 div.className = 'step-item';
                 div.innerHTML = `
                     <div style="display:flex; justify-content:space-between">
-                        <strong>Step ${step.step_order}: ${step.skill_name}</strong>
-                        <span class="status-pill status-${step.status}">${step.status}</span>
+                        <strong>Step ${escHtml(step.step_order)}: ${escHtml(step.skill_name)}</strong>
+                        <span class="status-pill status-${escHtml(step.status)}">${escHtml(step.status)}</span>
                     </div>
-                    <p style="font-size:0.8rem; color:#666">Model: ${step.model || 'pending'} | Cost: $${step.cost_usd.toFixed(4)} | ${step.duration_ms}ms</p>
-                    <pre>${JSON.stringify(step.output_data, null, 2)}</pre>
+                    <p style="font-size:0.8rem; color:#666">Model: ${escHtml(step.model || 'pending')} | Cost: $${escHtml(step.cost_usd.toFixed(4))} | ${escHtml(step.duration_ms)}ms</p>
+                    <pre>${escHtml(JSON.stringify(step.output_data, null, 2))}</pre>
                 `;
                 checklist.appendChild(div);
             });

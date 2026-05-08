@@ -17,6 +17,14 @@ and roll back Xibi services.
 | SQLite database | `~/.xibi/data/xibi.db` |
 | Repo | `~/xibi/` |
 
+### Required env vars in `~/.xibi/secrets.env`
+
+| Var | Used by | Notes |
+|---|---|---|
+| `XIBI_TELEGRAM_TOKEN` | `xibi-telegram` | Bot token from BotFather. |
+| `XIBI_TELEGRAM_ALLOWED_CHAT_IDS` | `xibi-telegram` | Comma-separated chat ids. Read once at startup; the auth check uses the value seeded into the adapter, not the env var, so post-startup edits require a service restart. |
+| `XIBI_DASHBOARD_API_KEY` | `xibi-dashboard` | API key for `/api/*` routes. **Fail-closed**: empty/missing = 401 on every API call. HTML pages (`/`, `/caretaker`) are exempt and inject the key into their own XHR. Set to a long random string. |
+
 ---
 
 ## Services

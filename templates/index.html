@@ -4,10 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Xibi</title>
-    <!-- Tailwind CSS (CDN for simplicity on local dashboard) -->
+    <!-- Tailwind CSS: JIT compiler, response varies per request, cannot be SRI-hashed.
+         Risk accepted (option 3 in step-122 spec): internal LAN dashboard only. -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Chart.js -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Chart.js pinned to 4.4.7 with SRI integrity hash. -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7"
+            integrity="sha384-vsrfeLOOY6KuIYKDlmVH5UiBmgIdB1oEf7p01YgWHuqmOHfZr374+odEv96n9tNC"
+            crossorigin="anonymous"></script>
     <style>
         body { background-color: #0f172a; color: #f8fafc; }
         .panel { background-color: #1e293b; border: 1px solid #334155; border-radius: 0.5rem; padding: 1.5rem; }
@@ -217,6 +220,45 @@
     </div>
 
     <script>
+        // Server-injected API key for /api/* requests. The dashboard page is
+        // exempt from auth so the browser can load it; the page-side JS
+        // forwards this key on its own XHR calls. Empty string when the
+        // operator hasn't configured XIBI_DASHBOARD_API_KEY -- the server
+        // then rejects every /api/* call, which is the intended fail-closed
+        // behavior.
+        const API_KEY = "{{ api_key|e }}";
+
+        // Wrap window.fetch so every /api/* request carries X-API-Key.
+        // Non-API URLs pass through untouched. Existing call sites
+        // (fetch(), fetchData()) need no per-call header arguments.
+        (function patchFetchForApiKey() {
+            const origFetch = window.fetch.bind(window);
+            window.fetch = function(input, init) {
+                init = init || {};
+                const url = typeof input === 'string' ? input : (input && input.url) || '';
+                if (url.startsWith('/api/')) {
+                    const headers = new Headers(init.headers || {});
+                    headers.set('X-API-Key', API_KEY);
+                    init.headers = headers;
+                }
+                return origFetch(input, init);
+            };
+        })();
+
+        // HTML-escape arbitrary text for safe interpolation into innerHTML
+        // contexts. Used everywhere the dashboard injects API/DB-sourced
+        // strings into template literals. Hoisted above all callers so
+        // every innerHTML site can use it.
+        function escHtml(str) {
+            if (str === null || str === undefined) return '';
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
         async function fetchData(url) {
             try {
                 const res = await fetch(url);
@@ -316,10 +358,10 @@
                     <span class="${botColor} mr-1">●</span> Engine
                 </div>
                 <div class="bg-slate-800 px-3 py-1 rounded border border-slate-700 text-[10px] font-bold tracking-widest uppercase">
-                    RAM <span class="${ramColor} ml-1">${data.system_ram_pct}%</span>
+                    RAM <span class="${ramColor} ml-1">${escHtml(data.system_ram_pct)}%</span>
                 </div>
                 <div class="bg-slate-800 px-3 py-1 rounded border border-slate-700 text-[10px] font-bold tracking-widest uppercase">
-                    CPU <span class="text-blue-400 ml-1">${data.cpu_percent}%</span>
+                    CPU <span class="text-blue-400 ml-1">${escHtml(data.cpu_percent)}%</span>
                 </div>
             `;
         }
@@ -334,12 +376,12 @@
             const recentTbody = document.getElementById('inference-recent');
             recentTbody.innerHTML = data.recent.map(r => `
                 <tr class="hover:bg-slate-800/30">
-                    <td class="py-1 text-slate-500">${r.recorded_at ? r.recorded_at.split(' ')[1].substring(0,5) : '-'}</td>
-                    <td class="py-1 text-slate-400 font-mono">${r.role}</td>
-                    <td class="py-1 truncate max-w-[40px]" title="${r.operation}">${r.operation}</td>
-                    <td class="py-1 text-slate-400">${r.prompt_tokens + r.response_tokens}</td>
-                    <td class="py-1 text-slate-400">${r.duration_ms}ms</td>
-                    <td class="py-1 font-mono text-emerald-500/80">$${r.cost_usd.toFixed(4)}</td>
+                    <td class="py-1 text-slate-500">${escHtml(r.recorded_at ? r.recorded_at.split(' ')[1].substring(0,5) : '-')}</td>
+                    <td class="py-1 text-slate-400 font-mono">${escHtml(r.role)}</td>
+                    <td class="py-1 truncate max-w-[40px]" title="${escHtml(r.operation)}">${escHtml(r.operation)}</td>
+                    <td class="py-1 text-slate-400">${escHtml(r.prompt_tokens + r.response_tokens)}</td>
+                    <td class="py-1 text-slate-400">${escHtml(r.duration_ms)}ms</td>
+                    <td class="py-1 font-mono text-emerald-500/80">$${escHtml(r.cost_usd.toFixed(4))}</td>
                 </tr>
             `).join('');
 
@@ -385,13 +427,13 @@
 
                 return `
                     <tr class="hover:bg-slate-800/50">
-                        <td class="py-2 font-medium text-slate-300">${r.specialty}</td>
-                        <td class="py-2 text-slate-400">${r.effort}</td>
-                        <td class="py-2 font-mono text-slate-500">${r.audit_interval}</td>
-                        <td class="py-2 text-emerald-500/70">${r.consecutive_clean}</td>
-                        <td class="py-2 text-slate-400">${r.total_outputs}</td>
-                        <td class="py-2 text-slate-400">${r.total_failures}</td>
-                        <td class="py-2 font-bold ${colorClass}">${r.failure_rate_pct}%</td>
+                        <td class="py-2 font-medium text-slate-300">${escHtml(r.specialty)}</td>
+                        <td class="py-2 text-slate-400">${escHtml(r.effort)}</td>
+                        <td class="py-2 font-mono text-slate-500">${escHtml(r.audit_interval)}</td>
+                        <td class="py-2 text-emerald-500/70">${escHtml(r.consecutive_clean)}</td>
+                        <td class="py-2 text-slate-400">${escHtml(r.total_outputs)}</td>
+                        <td class="py-2 text-slate-400">${escHtml(r.total_failures)}</td>
+                        <td class="py-2 font-bold ${colorClass}">${escHtml(r.failure_rate_pct)}%</td>
                     </tr>
                 `;
             }).join('');
@@ -407,12 +449,12 @@
             scoreEl.className = `text-4xl font-bold ${score >= 0.8 ? 'text-emerald-400' : (score >= 0.6 ? 'text-amber-400' : 'text-red-400')}`;
 
             document.getElementById('audit-chips').innerHTML = `
-                <span class="bg-slate-800 px-2 py-0.5 rounded border border-slate-700 text-slate-400">FLAGGED: ${data.latest.nudges_flagged}</span>
-                <span class="bg-slate-800 px-2 py-0.5 rounded border border-slate-700 text-slate-400">MISSED: ${data.latest.missed_signals}</span>
-                <span class="bg-slate-800 px-2 py-0.5 rounded border border-slate-700 text-slate-400">FP: ${data.latest.false_positives}</span>
+                <span class="bg-slate-800 px-2 py-0.5 rounded border border-slate-700 text-slate-400">FLAGGED: ${escHtml(data.latest.nudges_flagged)}</span>
+                <span class="bg-slate-800 px-2 py-0.5 rounded border border-slate-700 text-slate-400">MISSED: ${escHtml(data.latest.missed_signals)}</span>
+                <span class="bg-slate-800 px-2 py-0.5 rounded border border-slate-700 text-slate-400">FP: ${escHtml(data.latest.false_positives)}</span>
             `;
 
-            document.getElementById('audit-findings').innerHTML = (data.latest.findings_json || []).map(f => `<li>${f}</li>`).join('');
+            document.getElementById('audit-findings').innerHTML = (data.latest.findings_json || []).map(f => `<li>${escHtml(f)}</li>`).join('');
 
             const ctx = document.getElementById('auditSparkline').getContext('2d');
             if (window.audChart) window.audChart.destroy();
@@ -479,15 +521,16 @@
             const header = document.getElementById('waterfall-header');
 
             if (!data || !data.trace_id) {
+                // Safe: static HTML, no user data.
                 container.innerHTML = '<div class="text-slate-500 italic py-4">No traces recorded yet.</div>';
                 return;
             }
 
             header.innerHTML = `
-                <div class="bg-slate-800/50 px-2 py-1 rounded border border-slate-700/50">TRACE: <span class="font-mono text-slate-300">${data.trace_id}</span></div>
-                <div class="bg-slate-800/50 px-2 py-1 rounded border border-slate-700/50">DURATION: <span class="font-mono text-slate-300">${data.total_duration_ms}ms</span></div>
-                <div class="bg-slate-800/50 px-2 py-1 rounded border border-slate-700/50">SPANS: <span class="font-mono text-slate-300">${data.spans.length}</span></div>
-                ${data.error_count > 0 ? `<div class="bg-red-900/20 px-2 py-1 rounded border border-red-900/50 text-red-400 font-bold">ERRORS: ${data.error_count}</div>` : ''}
+                <div class="bg-slate-800/50 px-2 py-1 rounded border border-slate-700/50">TRACE: <span class="font-mono text-slate-300">${escHtml(data.trace_id)}</span></div>
+                <div class="bg-slate-800/50 px-2 py-1 rounded border border-slate-700/50">DURATION: <span class="font-mono text-slate-300">${escHtml(data.total_duration_ms)}ms</span></div>
+                <div class="bg-slate-800/50 px-2 py-1 rounded border border-slate-700/50">SPANS: <span class="font-mono text-slate-300">${escHtml(data.spans.length)}</span></div>
+                ${data.error_count > 0 ? `<div class="bg-red-900/20 px-2 py-1 rounded border border-red-900/50 text-red-400 font-bold">ERRORS: ${escHtml(data.error_count)}</div>` : ''}
             `;
 
             // Store spans for click handler
@@ -517,18 +560,19 @@
                 if (s.operation === 'tool.dispatch' && tool) label = 'tool → ' + tool;
 
                 const clickable = hasDetail ? 'cursor-pointer' : '';
+                // Safe: static HTML, no user data.
                 const chevron = hasDetail ? '<span class="ml-1 text-slate-600 group-hover:text-slate-400">▸</span>' : '';
 
                 return `
                     <div class="space-y-0">
                         <div class="flex items-center text-[10px] group ${clickable}" onclick="toggleSpanDetail(${idx})">
-                            <div class="w-40 truncate pr-2 text-slate-500 font-mono group-hover:text-slate-300 transition-colors flex items-center" title="${s.operation}">
-                                ${label}${chevron}
+                            <div class="w-40 truncate pr-2 text-slate-500 font-mono group-hover:text-slate-300 transition-colors flex items-center" title="${escHtml(s.operation)}">
+                                ${escHtml(label)}${chevron}
                             </div>
                             <div class="flex-1 bg-slate-800/50 h-3 relative rounded-full overflow-hidden">
-                                <div class="absolute h-full ${color} ${border} rounded-full" style="left: ${left}%; width: ${width}%; min-width: 2px;" title="${label}: ${s.duration_ms}ms"></div>
+                                <div class="absolute h-full ${color} ${border} rounded-full" style="left: ${left}%; width: ${width}%; min-width: 2px;" title="${escHtml(label)}: ${escHtml(s.duration_ms)}ms"></div>
                             </div>
-                            <div class="w-14 text-right text-slate-600 font-mono ml-2">${s.duration_ms}ms</div>
+                            <div class="w-14 text-right text-slate-600 font-mono ml-2">${escHtml(s.duration_ms)}ms</div>
                         </div>
                         <div id="span-detail-${idx}" class="hidden ml-40 mt-1 mb-2 bg-slate-900 border border-slate-700/50 rounded p-3 text-[10px] space-y-2"></div>
                     </div>
@@ -577,16 +621,9 @@
                     + '</div>';
             }
             if (!html) return;
+            // Safe: html is built exclusively from escHtml() outputs above.
             el.innerHTML = html;
             el.classList.remove('hidden');
-        }
-
-        function escHtml(str) {
-            return String(str)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;');
         }
 
         async function refreshCycles() {
@@ -595,12 +632,12 @@
             const tbody = document.getElementById('cycles-body');
             tbody.innerHTML = data.map(c => `
                 <tr class="${c.degraded ? 'bg-amber-900/10 text-amber-200' : ''} hover:bg-slate-800/50">
-                    <td class="py-2 text-slate-400">${c.started_at ? c.started_at.split(' ')[1] : '-'}</td>
-                    <td class="py-2 text-slate-400">${c.completed_at ? c.completed_at.split(' ')[1] : '-'}</td>
-                    <td class="py-2 font-mono">${c.signals_processed}</td>
-                    <td class="py-2"><span class="px-1.5 py-0.5 rounded bg-slate-700 text-[10px] uppercase font-bold text-slate-300">${c.role_used}</span></td>
+                    <td class="py-2 text-slate-400">${escHtml(c.started_at ? c.started_at.split(' ')[1] : '-')}</td>
+                    <td class="py-2 text-slate-400">${escHtml(c.completed_at ? c.completed_at.split(' ')[1] : '-')}</td>
+                    <td class="py-2 font-mono">${escHtml(c.signals_processed)}</td>
+                    <td class="py-2"><span class="px-1.5 py-0.5 rounded bg-slate-700 text-[10px] uppercase font-bold text-slate-300">${escHtml(c.role_used)}</span></td>
                     <td class="py-2">${c.degraded ? 'YES' : 'NO'}</td>
-                    <td class="py-2 ${c.error_count > 0 ? 'text-red-400 font-bold' : 'text-slate-500'}">${c.error_count}</td>
+                    <td class="py-2 ${c.error_count > 0 ? 'text-red-400 font-bold' : 'text-slate-500'}">${escHtml(c.error_count)}</td>
                 </tr>
             `).join('');
         }
@@ -612,11 +649,11 @@
             container.innerHTML = data.map(t => `
                 <div class="space-y-1">
                     <div class="flex justify-between text-[10px] text-slate-500 font-bold tracking-widest uppercase">
-                        <span>${t.role}</span>
-                        <span>${t.created_at}</span>
+                        <span>${escHtml(t.role)}</span>
+                        <span>${escHtml(t.created_at)}</span>
                     </div>
                     <div class="p-3 rounded text-sm leading-relaxed ${t.role === 'user' ? 'bg-slate-800 text-slate-300' : 'bg-indigo-900/20 border border-indigo-500/20 text-indigo-100'}">
-                        ${t.content}
+                        ${escHtml(t.content)}
                     </div>
                 </div>
             `).join('');
@@ -629,12 +666,13 @@
                 // Render by_source as primary stat boxes
                 const sourceEntries = Object.entries(pipeline.by_source || {}).slice(0, 6);
                 if (sourceEntries.length === 0) {
+                    // Safe: static HTML, no user data.
                     container.innerHTML = '<div class="text-slate-500 text-xs col-span-full text-center py-2">No signals in last 7 days</div>';
                 } else {
                     container.innerHTML = sourceEntries.map(([src, count]) => `
                         <div class="bg-slate-800/50 p-3 rounded text-center border border-slate-700/50">
-                            <div class="text-[10px] text-slate-500 font-bold uppercase tracking-tighter mb-1">${src.split(':')[0]}</div>
-                            <div class="text-xl font-mono font-bold text-emerald-400">${count}</div>
+                            <div class="text-[10px] text-slate-500 font-bold uppercase tracking-tighter mb-1">${escHtml(src.split(':')[0])}</div>
+                            <div class="text-xl font-mono font-bold text-emerald-400">${escHtml(count)}</div>
                         </div>
                     `).join('');
                 }
@@ -642,6 +680,7 @@
             if (signals && signals.active_threads) {
                 const container = document.getElementById('active-threads');
                 if (signals.active_threads.length === 0) {
+                    // Safe: static HTML, no user data.
                     container.innerHTML = '<div class="text-slate-500 text-xs">No active threads</div>';
                 } else {
                     const priorityStyle = {
@@ -660,9 +699,9 @@
                         const p = t.priority || null;
                         const style = p ? priorityStyle[p] : 'bg-indigo-900/30 border-indigo-500/30 text-indigo-300';
                         const dot = p ? (priorityDot[p] + ' ') : '';
-                        const tooltip = t.summary ? ` title="${t.summary.replace(/"/g, '&quot;')}"` : '';
+                        const tooltip = t.summary ? ` title="${escHtml(t.summary)}"` : '';
                         return `<div class="border px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wide cursor-default ${style}"${tooltip}>
-                            ${dot}${t.name} <span class="ml-1 opacity-60">${t.signal_count}</span>
+                            ${dot}${escHtml(t.name)} <span class="ml-1 opacity-60">${escHtml(t.signal_count)}</span>
                         </div>`;
                     }).join('');
                 }
@@ -690,10 +729,12 @@
                 const label = a.model ? `${a.model}` : '—';
                 const sublabel = a.provider ? a.provider : '';
                 const color = EFFORT_COLORS[effort] || 'text-slate-400';
+                // effort is whitelisted ('fast'|'think'|'review'); color is a fixed
+                // CSS class string. label/sublabel come from config.json -- escape.
                 return `<div class="bg-slate-800 border border-slate-700 rounded px-3 py-1 flex items-center gap-2 text-[11px]">
-                    <span class="font-bold uppercase tracking-wider ${color}">${effort}</span>
-                    <span class="text-slate-400 font-mono truncate max-w-[140px]" title="${label}">${label}</span>
-                    ${sublabel ? `<span class="text-slate-600">${sublabel}</span>` : ''}
+                    <span class="font-bold uppercase tracking-wider ${color}">${escHtml(effort)}</span>
+                    <span class="text-slate-400 font-mono truncate max-w-[140px]" title="${escHtml(label)}">${escHtml(label)}</span>
+                    ${sublabel ? `<span class="text-slate-600">${escHtml(sublabel)}</span>` : ''}
                 </div>`;
             }).join('');
 
@@ -708,7 +749,7 @@
                 const a = (config.assignments || {})[effort] || {};
                 const providers = config.available_providers || [];
                 const provOpts = providers.map(p =>
-                    '<option value="' + p + '"' + (p === a.provider ? ' selected' : '') + '>' + p + '</option>'
+                    '<option value="' + escHtml(p) + '"' + (p === a.provider ? ' selected' : '') + '>' + escHtml(p) + '</option>'
                 ).join('');
                 const optJson = JSON.stringify(a.options || {});
                 const color = EFFORT_COLORS[effort] || 'text-slate-400';
@@ -722,29 +763,31 @@
                 if (isOllama) {
                     const modelOpts = provModels.map(m => {
                         const n = m.name || m;
-                        return '<option value="' + n + '"' + (n === currentModel ? ' selected' : '') + '>' + n + '</option>';
+                        return '<option value="' + escHtml(n) + '"' + (n === currentModel ? ' selected' : '') + '>' + escHtml(n) + '</option>';
                     }).join('');
-                    modelInput = '<select id="modal-model-' + effort + '"'
+                    modelInput = '<select id="modal-model-' + escHtml(effort) + '"'
                         + ' class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-sm text-slate-200 focus:border-blue-500 focus:outline-none">'
                         + modelOpts + '</select>';
                 } else {
                     const datalistId = 'dl-' + effort;
-                    const suggestions = provModels.map(m => '<option value="' + (m.name || m) + '">').join('');
-                    modelInput = '<input type="text" id="modal-model-' + effort + '" value="' + currentModel + '"'
-                        + ' list="' + datalistId + '" autocomplete="off" placeholder="Type or pick a model…"'
+                    const suggestions = provModels.map(m => '<option value="' + escHtml(m.name || m) + '">').join('');
+                    modelInput = '<input type="text" id="modal-model-' + escHtml(effort) + '" value="' + escHtml(currentModel) + '"'
+                        + ' list="' + escHtml(datalistId) + '" autocomplete="off" placeholder="Type or pick a model…"'
                         + ' class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-sm font-mono text-slate-200 focus:border-blue-500 focus:outline-none" />'
-                        + '<datalist id="' + datalistId + '">' + suggestions + '</datalist>';
+                        + '<datalist id="' + escHtml(datalistId) + '">' + suggestions + '</datalist>';
                 }
 
+                // effort is whitelisted ('fast'|'think'|'review'); color is a fixed
+                // CSS class string; provOpts/modelInput are pre-escaped above.
                 return `<div class="border border-slate-700/50 rounded-lg p-4">
                     <div class="flex items-center justify-between mb-3">
-                        <span class="text-sm font-bold uppercase tracking-wider ${color}">${effort}</span>
-                        <span class="text-[10px] text-slate-600" id="modal-save-status-${effort}"></span>
+                        <span class="text-sm font-bold uppercase tracking-wider ${color}">${escHtml(effort)}</span>
+                        <span class="text-[10px] text-slate-600" id="modal-save-status-${escHtml(effort)}"></span>
                     </div>
                     <div class="grid grid-cols-2 gap-3 mb-3">
                         <div>
                             <label class="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">Provider</label>
-                            <select id="modal-provider-${effort}" onchange="onModalProviderChange('${effort}')"
+                            <select id="modal-provider-${escHtml(effort)}" onchange="onModalProviderChange('${escHtml(effort)}')"
                                 class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-sm text-slate-200 focus:border-blue-500 focus:outline-none">
                                 ${provOpts}
                             </select>
@@ -757,10 +800,10 @@
                     <div class="flex gap-3 items-end">
                         <div class="flex-1">
                             <label class="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">Options (JSON)</label>
-                            <input type="text" id="modal-options-${effort}" value='${optJson}'
+                            <input type="text" id="modal-options-${escHtml(effort)}" value='${escHtml(optJson)}'
                                 class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-xs font-mono text-slate-300 focus:border-blue-500 focus:outline-none" />
                         </div>
-                        <button onclick="saveModalModel('${effort}')"
+                        <button onclick="saveModalModel('${escHtml(effort)}')"
                             class="bg-blue-600 hover:bg-blue-500 text-white text-sm font-semibold py-1.5 px-5 rounded transition-colors whitespace-nowrap">
                             Save
                         </button>
@@ -803,18 +846,18 @@
 
             if (provider === 'ollama') {
                 // Replace with dropdown for ollama (live list)
-                const opts = models.map(m => '<option value="' + (m.name||m) + '">' + (m.name||m) + '</option>').join('');
+                const opts = models.map(m => '<option value="' + escHtml(m.name||m) + '">' + escHtml(m.name||m) + '</option>').join('');
                 modelContainer.innerHTML = '<label class="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">Model</label>'
-                    + '<select id="modal-model-' + effort + '" class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-sm text-slate-200 focus:border-blue-500 focus:outline-none">'
+                    + '<select id="modal-model-' + escHtml(effort) + '" class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-sm text-slate-200 focus:border-blue-500 focus:outline-none">'
                     + opts + '</select>';
             } else {
                 // Replace with text input + datalist for cloud providers
                 const datalistId = 'dl-' + effort;
-                const suggestions = models.map(m => '<option value="' + (m.name||m) + '">').join('');
+                const suggestions = models.map(m => '<option value="' + escHtml(m.name||m) + '">').join('');
                 modelContainer.innerHTML = '<label class="text-[10px] text-slate-500 uppercase tracking-wider block mb-1">Model</label>'
-                    + '<input type="text" id="modal-model-' + effort + '" list="' + datalistId + '" autocomplete="off" placeholder="Type or pick a model…"'
+                    + '<input type="text" id="modal-model-' + escHtml(effort) + '" list="' + escHtml(datalistId) + '" autocomplete="off" placeholder="Type or pick a model…"'
                     + ' class="w-full bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-sm font-mono text-slate-200 focus:border-blue-500 focus:outline-none" />'
-                    + '<datalist id="' + datalistId + '">' + suggestions + '</datalist>';
+                    + '<datalist id="' + escHtml(datalistId) + '">' + suggestions + '</datalist>';
             }
         }
 

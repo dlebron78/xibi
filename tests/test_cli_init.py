@@ -12,15 +12,15 @@ from xibi.cli.init import cmd_init
 def isolated_config(tmp_path, monkeypatch):
     xibi_home = tmp_path / ".xibi"
     xibi_home.mkdir(parents=True, exist_ok=True)
+    # Monkeypatching ``Path.home`` is the single redirect for config-path
+    # resolution: trust_gate and approval_config now call
+    # ``Path.home() / ".xibi" / "config.yaml"`` at use time, so this patch
+    # propagates to them without needing a separate setattr on a module
+    # constant. (xibi.config is removed in step-122.)
     monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
     import xibi.cli
     import xibi.cli.init
-    import xibi.config
     import xibi.secrets.manager
-
-    config_path = xibi_home / "config.yaml"
-    monkeypatch.setattr(xibi.config, "CONFIG_PATH", config_path)
-    # We no longer patch xibi.cli.CONFIG_PATH as it's not used there anymore
 
     monkeypatch.setattr(xibi.secrets.manager, "SECRETS_DIR", xibi_home / "secrets")
     monkeypatch.setattr(xibi.secrets.manager, "MASTER_KEY_FILE", xibi_home / "secrets" / ".master.key")
