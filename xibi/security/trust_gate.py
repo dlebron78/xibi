@@ -1,18 +1,26 @@
 """Universal trust gate -- single entry point for all external text reaching LLM context.
 
-Step-119 establishes the choke-point architecture. Every piece of attacker-
+Step-119 established the choke-point architecture. Every piece of attacker-
 controllable text (MCP tool responses, email/calendar signal fields, subagent
 inter-step injections) is funneled through :func:`trust_gate` before entering
-an LLM prompt. This step ships the gate as a pass-through with debug logging
-so the boundary is visible in production. Future PRs add policy
-(sanitization, delimiter framing, risk grading) under the same ``trust_gate:``
-config namespace without touching call sites.
+an LLM prompt.
+
+PR 2 adds sanitization as the first policy layer. The gate calls
+:func:`~xibi.security.sanitize.sanitize_untrusted_text` on every input,
+with behavior controlled by ``trust_gate.sanitize`` in config:
+
+- ``shadow`` (default): sanitize a copy, log a WARNING if the result
+  differs, return the **original** unchanged. Collects data on what
+  sanitization would catch without breaking anything.
+- ``enforce``: sanitize and return the sanitized text. Production mode
+  after shadow logs confirm no false positives.
+- ``off``: skip sanitization entirely (pass-through, step-119 behavior).
 
 Config loading mirrors the heartbeat read-once-cache-in-module pattern: the
 ``trust_gate`` section of ``~/.xibi/config.yaml`` is parsed lazily on the
 first call, cached for the process lifetime, and defaults to
-``enabled: true`` when the section is absent so the gate is active on
-deploy without requiring a config edit.
+``enabled: true, sanitize: shadow`` when the section is absent so the gate
+is active on deploy without requiring a config edit.
 """
 
 from __future__ import annotations
@@ -23,6 +31,8 @@ from typing import Any
 
 import yaml
 
+from xibi.security.sanitize import sanitize_untrusted_text
+
 logger = logging.getLogger(__name__)
 
 # Inlined from the deleted ``xibi.config.CONFIG_PATH``. Kept as a module
@@ -31,7 +41,11 @@ logger = logging.getLogger(__name__)
 # ``tests/test_trust_gate.py``.
 CONFIG_PATH = Path.home() / ".xibi" / "config.yaml"
 
-_DEFAULTS: dict[str, Any] = {"enabled": True, "log_level": "debug"}
+_DEFAULTS: dict[str, Any] = {
+    "enabled": True,
+    "log_level": "debug",
+    "sanitize": "shadow",
+}
 
 _config_cache: dict[str, Any] | None = None
 
@@ -85,14 +99,16 @@ def trust_gate(
     titles, attendee names). ``mode="content"`` is long-form payloads
     (email bodies, MCP tool responses, subagent inter-step output).
 
-    Currently a pass-through: the gate logs the invocation and returns
-    ``text`` unchanged. Future PRs add sanitization, delimiter framing,
-    and risk scoring under the same ``trust_gate:`` config namespace --
-    each toggled independently -- without changing call sites.
+    Sanitization policy is controlled by ``trust_gate.sanitize`` in config:
+
+    - ``shadow``: sanitize a copy, log diff if any, return original.
+    - ``enforce``: sanitize and return the sanitized result.
+    - ``off``: no sanitization (logging-only pass-through).
 
     Never raises. Returns ``""`` for ``None`` / empty input. Any internal
-    error (logging failure, config glitch) falls open: ``text`` is returned
-    unchanged so callers stay true one-liners with no defensive wrapping.
+    error (logging failure, config glitch, sanitize crash) falls open:
+    ``text`` is returned unchanged so callers stay true one-liners with no
+    defensive wrapping.
     """
     if not text:
         return ""
@@ -100,6 +116,27 @@ def trust_gate(
         cfg = _get_config()
         if not cfg.get("enabled", True):
             return text
+
+        # -- Sanitization layer (PR 2) --
+        sanitize_mode = cfg.get("sanitize", "shadow")
+        if sanitize_mode and sanitize_mode != "off":
+            sanitized = sanitize_untrusted_text(
+                text, source=source, mode=mode,
+            )
+            if sanitize_mode == "enforce":
+                text = sanitized
+            elif sanitized != text:
+                # Shadow mode: log what would change, return original
+                logger.warning(
+                    "trust_gate shadow_diff source=%s mode=%s "
+                    "orig_len=%d sanitized_len=%d",
+                    source or "(unset)",
+                    mode,
+                    len(text),
+                    len(sanitized),
+                )
+
+        # -- Logging layer (step-119) --
         # YAML 1.1 parses unquoted ``off`` as ``False``, so a falsy value is
         # also treated as "logging disabled" to match operator intent.
         raw_level = cfg.get("log_level", "debug")
