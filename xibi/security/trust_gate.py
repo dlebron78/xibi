@@ -121,15 +121,16 @@ def trust_gate(
         sanitize_mode = cfg.get("sanitize", "shadow")
         if sanitize_mode and sanitize_mode != "off":
             sanitized = sanitize_untrusted_text(
-                text, source=source, mode=mode,
+                text,
+                source=source,
+                mode=mode,
             )
             if sanitize_mode == "enforce":
                 text = sanitized
             elif sanitized != text:
                 # Shadow mode: log what would change, return original
                 logger.warning(
-                    "trust_gate shadow_diff source=%s mode=%s "
-                    "orig_len=%d sanitized_len=%d",
+                    "trust_gate shadow_diff source=%s mode=%s orig_len=%d sanitized_len=%d",
                     source or "(unset)",
                     mode,
                     len(text),

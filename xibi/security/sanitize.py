@@ -40,8 +40,8 @@ _INJECTION_TOKENS = re.compile(
     r"|<<SYS>>"
     r"|<</SYS>>"
     r"|\$\{"  # template injection ${...}
-    r"|<\|"  # catch-all for other <| patterns
-    , re.IGNORECASE,
+    r"|<\|",  # catch-all for other <| patterns
+    re.IGNORECASE,
 )
 
 # Multi-word injection phrases. 3+ words to avoid false positives from
@@ -55,8 +55,8 @@ _INJECTION_PHRASES = re.compile(
     r"|override\s+your\s+instructions"
     r"|forget\s+your\s+instructions"
     r"|do\s+not\s+follow\s+your"
-    r"|new\s+instructions\s+below"
-    , re.IGNORECASE,
+    r"|new\s+instructions\s+below",
+    re.IGNORECASE,
 )
 
 # Line-start patterns (SYSTEM: prompt format used by some models).
