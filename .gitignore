@@ -71,3 +71,6 @@ RESTART_BOT.sh
 # SSH deploy keys — private key stays local
 .ssh/
 MagicMock/
+
+# Claude Code session lockfiles
+.claude/scheduled_tasks.lock
