@@ -1,3 +1,11 @@
+"""Fuzzy matching for checklist items -- tokenized stopword-filtered overlap scoring.
+
+Used so users can say "mark coffee done" instead of an item id. The
+matcher normalises both candidate and query into stopword-filtered
+token sets and picks the best overlap above a minimum threshold; ties
+prefer the most recent item.
+"""
+
 from __future__ import annotations
 
 import sqlite3

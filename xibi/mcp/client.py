@@ -1,3 +1,19 @@
+"""Synchronous MCP (Model Context Protocol) client over stdio JSON-RPC.
+
+Each ``MCPClient`` instance owns one server subprocess: it spawns the
+configured command, completes the JSON-RPC handshake, lists the server's
+tools, and routes ``call_tool`` invocations to it. The transport is
+blocking stdio with a 15-second select timeout per request; failures
+return normalized ``{"status": "error", ...}`` dicts rather than
+raising, so the ReAct loop never crashes on a misbehaving MCP server.
+
+Every byte of tool output -- success path, error path, and the
+catch-all exception path -- is funneled through :func:`trust_gate`
+before being handed back to the agent. MCP servers are external trust
+boundaries; their responses can carry prompt-injection payloads even on
+error.
+"""
+
 from __future__ import annotations
 
 import json
@@ -35,6 +51,7 @@ class MCPToolManifest:
 
 class MCPClient:
     def __init__(self, config: MCPServerConfig) -> None:
+        """Store config; do not spawn the subprocess until :meth:`initialize`."""
         self.config = config
         self.process: subprocess.Popen | None = None
         self._id_counter = 0
@@ -43,10 +60,12 @@ class MCPClient:
         self.server_info: dict = {}
 
     def _next_id(self) -> int:
+        """Return a fresh monotonic JSON-RPC request id for this connection."""
         self._id_counter += 1
         return self._id_counter
 
     def _resolve_env(self) -> dict[str, str]:
+        """Build the child env: parent env plus config overrides with ``${VAR}`` expansion."""
         env = os.environ.copy()
         for k, v in self.config.env.items():
             # Resolve ${VAR} references
@@ -193,6 +212,13 @@ class MCPClient:
             return False
 
     def _send_and_receive(self, message: dict[str, Any], timeout: int = 15) -> dict[str, Any]:
+        """Write one JSON-RPC request to stdin and read the next line from stdout.
+
+        Raises ``RuntimeError`` on dead subprocess, ``select`` timeout, or
+        early EOF (server closed). Callers expecting a response id must
+        verify it themselves; this method does not match request to
+        response.
+        """
         if not self.process or not self.process.stdin or not self.process.stdout:
             raise RuntimeError("MCP server process not running")
 
@@ -215,6 +241,7 @@ class MCPClient:
         return cast(dict[str, Any], json.loads(line))
 
     def _send_notification(self, message: dict) -> None:
+        """Fire-and-forget JSON-RPC notification (no id, no response expected)."""
         if not self.process or not self.process.stdin:
             return
         msg_json = json.dumps(message)

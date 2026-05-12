@@ -75,6 +75,7 @@ def _load_config() -> dict[str, Any]:
 
 
 def _get_config() -> dict[str, Any]:
+    """Return the process-cached trust_gate config, loading from disk on first call."""
     global _config_cache
     if _config_cache is None:
         _config_cache = _load_config()

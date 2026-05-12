@@ -1,3 +1,13 @@
+"""Conversational checklist API -- create, list, complete, and delete instances.
+
+This is the surface the chat-side skill calls into. Templates and
+instances are stored via :mod:`xibi.checklists.lists`; deadline nudges
+and lifecycle reminders are registered through
+:mod:`xibi.scheduling.api`. Fuzzy item resolution lives in
+:mod:`xibi.checklists.fuzzy` so callers can say "mark coffee done"
+instead of pasting an item id.
+"""
+
 from __future__ import annotations
 
 import json

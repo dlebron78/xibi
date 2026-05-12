@@ -61,6 +61,7 @@ class PulseResult:
 
 
 def _utcnow_iso() -> str:
+    """Return the current UTC time as a SQLite-friendly ``YYYY-MM-DD HH:MM:SS`` string."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
@@ -74,6 +75,7 @@ class Caretaker:
         tracer: Tracer | None = None,
         user_config: dict | None = None,
     ) -> None:
+        """Bind DB, workdir, config, and tracer; no work runs until :meth:`pulse`."""
         self.db_path = db_path
         self.workdir = workdir
         self.config = config
@@ -92,6 +94,7 @@ class Caretaker:
         attributes: dict,
         status: str = "ok",
     ) -> None:
+        """Emit one ``caretaker.*`` span per check via the bound tracer."""
         from xibi.tracing import Span
 
         self.tracer.emit(
@@ -111,6 +114,7 @@ class Caretaker:
     # -- pulse lifecycle ------------------------------------------------
 
     def _start_pulse_row(self) -> int:
+        """Insert a ``running`` row in ``caretaker_pulses`` and return its id."""
         with open_db(self.db_path) as conn, conn:
             cur = conn.execute(
                 "INSERT INTO caretaker_pulses (started_at, status) VALUES (?, ?)",
@@ -126,6 +130,7 @@ class Caretaker:
         findings: list[Finding],
         duration_ms: int,
     ) -> None:
+        """Close a pulse row with final status, duration, and serialized findings."""
         findings_json = (
             json.dumps(
                 [
@@ -166,6 +171,12 @@ class Caretaker:
     # -- orchestrator ---------------------------------------------------
 
     def pulse(self) -> PulseResult:
+        """Run all configured checks once, persist findings, and return a :class:`PulseResult`.
+
+        Each check is timed and gets its own span; dedup-suppressed
+        findings are partitioned out of the result. The final pulse
+        ``status`` is the worst-severity rank seen across checks.
+        """
         start_ms = now_ms()
         trace_id = self.tracer.new_trace_id()
         parent_span_id = self.tracer.new_span_id()
@@ -174,6 +185,7 @@ class Caretaker:
         status = "clean"
 
         def _bump(s: str) -> None:
+            """Raise the rolling pulse status only when ``s`` is strictly more severe."""
             nonlocal status
             if _STATUS_RANK[s] > _STATUS_RANK[status]:
                 status = s
@@ -325,6 +337,7 @@ class Caretaker:
     # -- status read surface -------------------------------------------
 
     def last_pulse(self) -> dict | None:
+        """Return the most recent ``caretaker_pulses`` row as a dict, or None if empty."""
         with open_db(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
@@ -347,6 +360,7 @@ class Caretaker:
             }
 
     def recent_pulses(self, limit: int = 20) -> list[dict]:
+        """Return the most recent pulse rows (newest first), summary fields only."""
         with open_db(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(

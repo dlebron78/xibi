@@ -171,6 +171,7 @@ def _extract_metadata(raw: str) -> dict[str, Any]:
         logger.warning(f"smart_parser metadata: walk failed: {exc}")
 
     def _get(header: str) -> str:
+        """Return ``msg[header]`` stringified, or ``""`` on any access failure."""
         try:
             val = msg.get(header)
             return str(val) if val is not None else ""
@@ -203,6 +204,7 @@ def _extract_metadata_via_mailparser(raw: str) -> dict[str, Any] | None:
         return None
 
     def _addr_list(addrs: Any) -> list[str]:
+        """Flatten a mail-parser address iterable into a list of bare address strings."""
         out: list[str] = []
         if not addrs:
             return out

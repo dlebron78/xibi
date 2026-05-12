@@ -1,3 +1,17 @@
+"""Manager-review cycle -- periodic LLM pass over recently-classified signals.
+
+This module reconsiders earlier triage decisions in light of fresh
+context: prior trace history, priority_context, engagement signals from
+the redirect tracker, and any reclassifications the user requested.
+The output (:class:`ReviewOutput`) is a structured set of
+reclassifications, nudges, and reasoning that the heartbeat poller
+applies back to the signals/triage_log tables.
+
+Runs on its own cadence inside the heartbeat loop -- not every tick --
+because it is review-tier (slow, expensive) and is not on the
+notification critical path.
+"""
+
 from __future__ import annotations
 
 import json
@@ -381,6 +395,7 @@ def _parse_review_response(response: str) -> ReviewOutput:
     output = ReviewOutput(reasoning=response)
 
     def extract_tag(tag_name: str) -> str | None:
+        """Return the stripped inner text of the first ``<tag_name>...</tag_name>``, or None."""
         match = re.search(f"<{tag_name}>(.*?)</{tag_name}>", response, re.DOTALL)
         return match.group(1).strip() if match else None
 

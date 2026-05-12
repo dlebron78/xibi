@@ -1,3 +1,11 @@
+"""Action handlers for checklist deadlines (24h warning, due-now nudges).
+
+These run from the universal action scheduler. Each handler is "dumb":
+the scheduler is the source of truth for when to fire; the handler only
+checks the item state at fire time, posts the appropriate nudge, and
+returns a :class:`HandlerResult` describing the outcome.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -12,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 def _is_item_open(db_path: str, item_id: str) -> bool:
+    """Return True iff the checklist item exists and has no ``completed_at`` timestamp."""
     with open_db(Path(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         item = conn.execute("SELECT completed_at FROM checklist_instance_items WHERE id = ?", (item_id,)).fetchone()
@@ -19,6 +28,7 @@ def _is_item_open(db_path: str, item_id: str) -> bool:
 
 
 def _get_item_label(db_path: str, item_id: str) -> str:
+    """Return the human label for a checklist item, or ``"Unknown item"`` if absent."""
     with open_db(Path(db_path)) as conn:
         conn.row_factory = sqlite3.Row
         item = conn.execute("SELECT label FROM checklist_instance_items WHERE id = ?", (item_id,)).fetchone()

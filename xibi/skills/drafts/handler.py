@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 def _default_db_path() -> Path:
+    """Return the default SQLite path (``~/.xibi/data/xibi.db``) used when no override is injected."""
     return Path.home() / ".xibi" / "data" / "xibi.db"
 
 

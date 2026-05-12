@@ -30,6 +30,12 @@ _cache: list[str] | None = None
 
 
 def _load() -> list[str]:
+    """Return ``approval_gates.required_tools`` from ``~/.xibi/config.yaml``, ``[]`` if absent.
+
+    Fail-open: any load/parse failure logs a warning and returns the
+    empty list so the gate effectively disables itself rather than
+    blocking all tools when config is malformed.
+    """
     cfg_path: Path = CONFIG_PATH
     try:
         if not cfg_path.exists():

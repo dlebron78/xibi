@@ -1,3 +1,39 @@
+"""ReAct agent loop -- the central reasoning kernel that drives every user turn.
+
+This module owns the Thought / Action / Observation loop. Each call to
+:func:`run` (or its async cousin :func:`_run_async`) walks the LLM
+through up to ``max_steps`` iterations of "pick a tool, dispatch it,
+read the result, repeat" until the model emits ``finish``, ``ask_user``,
+the step or wall-clock budget runs out, or three tool failures stack up
+in a row. The loop is format-agnostic: the same scaffolding drives the
+JSON, XML, plain-text, and native tool-calling variants, with the
+parsers in this file (``_parse_json_response``, ``_parse_xml_response``,
+``_parse_text_response``) translating the chosen wire format into the
+common ``{thought, tool, tool_input}`` shape.
+
+Cross-cutting concerns live alongside the loop:
+
+- **Trust gate.** Every tool output funneled to the LLM passes through
+  :func:`xibi.security.trust_gate`. MCP results are already gated at
+  the MCP boundary; this is the second checkpoint for non-MCP skill
+  output.
+- **TrustGradient.** Per-(specialty, effort) success/failure stats are
+  recorded for every step so the router can demote flaky tiers.
+- **Handles.** Large tool outputs are stored in :class:`HandleStore` and
+  referenced by short ``h_xxxx`` ids; the agent passes those handles
+  back to downstream tools instead of inlining megabytes of JSON.
+- **Control plane and shadow routing.** Before each LLM call, the
+  control plane and BM25 shadow matcher get a chance to short-circuit
+  the loop with a canned response or direct tool dispatch.
+- **Graceful degradation.** When the loop dies mid-flight (timeout,
+  parse failure, three errors in a row) :func:`_build_partial_answer`
+  salvages whatever observations are in the scratchpad rather than
+  returning an empty string.
+
+All public entry points live behind :func:`run`, which transparently
+handles being called from sync or async contexts.
+"""
+
 from __future__ import annotations
 
 import json
@@ -88,6 +124,14 @@ def _pending_drafts_block(db_path: Path | str) -> str:
 
 
 def _resolve_handles_in_input(tool_input: dict, store: HandleStore | None) -> dict:
+    """Inflate any ``h_xxxx`` handle references in ``tool_input`` to their stored values.
+
+    Walks the tool's input dict once; string values that match the
+    handle pattern are replaced with the data they reference, everything
+    else is passed through verbatim. Missing handles raise XibiError via
+    :meth:`HandleStore.get` so the caller sees the failure instead of a
+    silent ``None``. A ``None`` store is a no-op (test/legacy code path).
+    """
     if store is None:
         return tool_input
     resolved = {}
@@ -100,6 +144,15 @@ def _resolve_handles_in_input(tool_input: dict, store: HandleStore | None) -> di
 
 
 def _maybe_wrap_in_handle(tool: str, output: Any, store: HandleStore | None) -> Any:
+    """Wrap large tool outputs in a handle reference, leaving small/error outputs alone.
+
+    Outputs are wrapped only when they are dicts that are not already
+    error/suppressed/blocked, not already handle-shaped, and either over
+    2 KiB serialized or recognised as a large collection. Wrapping
+    replaces the payload with ``{handle, schema, summary, item_count}``
+    so the agent sees a short reference; the real bytes stay in
+    ``store`` for downstream tools to dereference.
+    """
     if store is None:
         return output
 
@@ -139,6 +192,14 @@ def _format_observation_for_user(output: Any) -> str:
 
 
 def _render_dict_for_user(d: dict) -> str:
+    """Format a dict as a user-readable string for the partial-answer salvage path.
+
+    Prefers common content fields (``content``, ``answer``, ``message``,
+    ``text``, ``summary``) when present; otherwise renders up to 12
+    key/value pairs as a bulleted list, skipping internal keys like
+    ``status`` and ``_xibi_error``. Values are truncated at 200 chars
+    each, the whole result at 2000.
+    """
     # Prefer common content fields when present
     for key in ("content", "answer", "message", "text", "summary"):
         v = d.get(key)
@@ -164,6 +225,14 @@ def _render_dict_for_user(d: dict) -> str:
 
 
 def _render_list_for_user(items: list) -> str:
+    """Format a list of items as a numbered string for the partial-answer salvage path.
+
+    Each list item is rendered on its own line. Dicts get a "best
+    label" pick (title / name / subject / summary / first value) plus a
+    handful of likely-useful extra fields (company, url, date, etc.).
+    Non-dict items are stringified. Per-item output is truncated at 200
+    chars to keep partial answers readable.
+    """
     lines: list[str] = []
     for i, item in enumerate(items, start=1):
         if isinstance(item, dict):
@@ -396,7 +465,7 @@ def is_repeat(step: Step, scratchpad: list[Step]) -> bool:
     """True if this step has >60% word overlap with any prior same-tool step."""
 
     def get_words(s: str) -> set[str]:
-        # Simple word extractor
+        """Return the lowercased word-token set of ``s`` for overlap scoring."""
         import re
 
         return set(re.findall(r"\w+", s.lower()))
@@ -560,7 +629,7 @@ def _parse_xml_response(response_text: str) -> dict[str, Any]:
     """
 
     def _extract_tag(tag: str, text: str) -> str | None:
-        # Match both <tag>content</tag> and <tag>\ncontent\n</tag>
+        """Return the stripped inner text of the first ``<tag>...</tag>``, or None if absent."""
         m = re.search(rf"<{tag}>(.*?)</{tag}>", text, re.DOTALL)
         return m.group(1).strip() if m else None
 
@@ -666,6 +735,25 @@ async def _run_async(
     llm_routing_classifier: LLMRoutingClassifier | None = None,
     react_format: str = "json",
 ) -> ReActResult:
+    """Run one ReAct turn end-to-end and return its :class:`ReActResult`.
+
+    Drives the Thought/Action/Observation loop for up to ``max_steps``
+    iterations or ``max_secs`` wall-clock seconds, whichever comes
+    first. Each iteration: ask the LLM for the next step, parse it,
+    dispatch the chosen tool through the command-layer / executor
+    gate, append the result to the scratchpad, and continue. The loop
+    exits early on ``finish``, ``ask_user``, three consecutive errors,
+    or three repeat-action detections; on hard exits the scratchpad is
+    salvaged into a partial answer when possible.
+
+    Side effects: emits ``react.run`` and ``react.step`` spans to the
+    optional ``tracer``, records success/failure on the optional
+    ``trust_gradient``, and consults ``control_plane`` and ``shadow``
+    for short-circuit responses before invoking the LLM.
+
+    The function is async because LLM tool dispatch may be I/O-bound;
+    use :func:`run` from synchronous code.
+    """
     start_time = time.time()
     handle_store = HandleStore()  # per-run, lives until function returns
 
@@ -678,6 +766,7 @@ async def _run_async(
     set_trace_context(trace_id=_run_trace_id, span_id=_run_span_id, operation="react_step")
 
     def _emit_run_span(result: ReActResult) -> None:
+        """Emit the ``react.run`` span summarising the whole run, no-op if tracer is absent."""
         if _tracer is None or _run_trace_id is None or _run_span_id is None:
             return
         _tracer.emit(
@@ -1290,6 +1379,14 @@ async def _run_async(
 
 
 def run(*args: Any, **kwargs: Any) -> ReActResult:
+    """Public sync/async entry point that proxies through to :func:`_run_async`.
+
+    When called from inside a running event loop, returns the coroutine
+    so the caller can ``await`` it. When called from synchronous code,
+    spins up a fresh event loop via :func:`asyncio.run` and returns the
+    resolved :class:`ReActResult`. All keyword arguments are forwarded
+    to :func:`_run_async` unchanged.
+    """
     import asyncio
 
     try:

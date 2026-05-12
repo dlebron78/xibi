@@ -1,3 +1,10 @@
+"""Subagent dataclass models -- ``SubagentRun``, ``ChecklistStep``, ``CostEvent``, etc.
+
+These mirror the ``subagent_*`` SQLite tables and are the typed shape
+the orchestrator and DB layer pass back and forth. Pure data classes:
+no behavior beyond default factories and a couple of formatting helpers.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

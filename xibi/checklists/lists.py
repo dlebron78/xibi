@@ -1,3 +1,12 @@
+"""Checklist instance/template CRUD -- the storage side of the checklists skill.
+
+Templates name a routine ("weekly-review"); each instance is one run of
+that routine, with its own ordered item list, due dates, and completion
+state. The functions here resolve template/instance by name, create new
+instances, and update item state; the conversational surface lives in
+``xibi.skills.checklists``.
+"""
+
 from __future__ import annotations
 
 import json
@@ -14,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 def _find_template(conn: sqlite3.Connection, list_name: str) -> sqlite3.Row | None:
+    """Return the case-insensitive template row matching ``list_name``, or None."""
     conn.row_factory = sqlite3.Row
     result: sqlite3.Row | None = conn.execute(
         "SELECT * FROM checklist_templates WHERE LOWER(name) = LOWER(?)",
@@ -23,6 +33,7 @@ def _find_template(conn: sqlite3.Connection, list_name: str) -> sqlite3.Row | No
 
 
 def _find_active_instance(conn: sqlite3.Connection, template_id: str) -> sqlite3.Row | None:
+    """Return the most recent ``status='open'`` instance for ``template_id``, or None."""
     conn.row_factory = sqlite3.Row
     result: sqlite3.Row | None = conn.execute(
         "SELECT * FROM checklist_instances WHERE template_id = ? AND status = 'open' ORDER BY created_at DESC LIMIT 1",

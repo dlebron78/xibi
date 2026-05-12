@@ -1,3 +1,26 @@
+"""Heartbeat poller -- the periodic loop that polls sources, triages, and acts.
+
+:class:`HeartbeatPoller` is the long-running background worker behind
+Xibi's autonomous behavior. Every ``interval_minutes`` it runs one
+``tick``: poll configured signal sources (email, calendar, MCP, JobSpy),
+classify each raw signal, fan out tier-2 extractions, drive the
+:class:`RuleEngine` triage pipeline, push the resulting nudges back
+through the Telegram adapter, and finally run :class:`ObservationCycle`
+and :class:`Radiant` audits.
+
+The poller is structured around phase timeouts (``_PHASE0_TIMEOUT_SECS``
+... ``_PHASE3_TIMEOUT_SECS``) so a stuck source can never block the tick
+indefinitely; each phase is wrapped in ``asyncio.wait_for`` and a
+timeout is logged but does not crash the loop. ``digest_tick``,
+``recap_tick``, and ``reflection_tick`` are time-window helpers driven
+by :meth:`run`, the public infinite loop that interlocks with the
+shutdown event for clean SIGTERM handling.
+
+Trust-gradient bookkeeping, signal intelligence routing, and audit
+intervals are wired up in :meth:`__init__` so callers only need to hand
+in skills, DB, adapter, and rule engine references.
+"""
+
 from __future__ import annotations
 
 import importlib.util
@@ -69,6 +92,14 @@ class HeartbeatPoller:
         *,
         trust_gradient: TrustGradient | None = None,
     ) -> None:
+        """Wire the poller's collaborators -- nothing runs until :meth:`tick`.
+
+        Most arguments are dependency injections (adapter, rule engine,
+        executor, optional radiant). ``trust_gradient`` defaults to a
+        fresh :class:`TrustGradient` rooted at ``db_path`` so the poller
+        always records LLM tier success/failure. Quiet hours, interval,
+        and the observation cycle are also bound here.
+        """
         self.skills_dir = skills_dir
         self.db_path = db_path
         self.adapter = adapter
@@ -219,6 +250,12 @@ class HeartbeatPoller:
                 logger.warning(f"Failed to broadcast to {chat_id}: {e}", exc_info=True)
 
     def _is_quiet_hours(self) -> bool:
+        """Return True if the local clock is inside the configured quiet window.
+
+        Quiet windows can wrap midnight (``quiet_start > quiet_end``).
+        Equal start/end disables the window. Used to gate notification
+        broadcasts and the reflection tick.
+        """
         hour = datetime.now().hour
         if self.quiet_start > self.quiet_end:
             return hour >= self.quiet_start or hour < self.quiet_end
@@ -227,6 +264,15 @@ class HeartbeatPoller:
         return self.quiet_start <= hour < self.quiet_end
 
     def _run_tool(self, tool_name: str, params: dict[str, Any]) -> dict[str, Any]:
+        """Synchronously invoke a skill tool by name from ``self.skills_dir``.
+
+        Looks up ``<skill>/tools/<tool_name>.py`` under every subdir of
+        the skills directory, imports the first match, and calls its
+        ``run(params)`` entry point. Returns the tool result on success
+        or ``{"error": <msg>}`` on import/dispatch failure. Used by
+        heartbeat-specific paths that do not flow through the full
+        executor (email polling, classification probes).
+        """
         try:
             # Find the tool in any skill subdirectory
             for skill_path in self.skills_dir.iterdir():
@@ -249,6 +295,7 @@ class HeartbeatPoller:
             return {"error": str(e)}
 
     def _check_email(self) -> list[dict[str, Any]]:
+        """Return the current unread email list, empty on tool failure."""
         result = self._run_tool("list_unread", {})
         if "error" in result:
             logger.warning(f"Email check failed: {result['error']}")
@@ -257,6 +304,17 @@ class HeartbeatPoller:
         return list(emails)
 
     def _classify_signal(self, signal: dict[str, Any], context: SignalContext | None = None) -> tuple[str, str | None]:
+        """Run one signal through condensation + LLM classification.
+
+        Condenses the signal body via :func:`condense` (phishing
+        detection runs there and short-circuits to ``NOISE`` on hit),
+        builds a context-aware or fallback prompt, and asks the fast
+        text model for a verdict. Returns ``(verdict, reason)`` -- the
+        reason is ``None`` for normal classifications and a short
+        explanation for forced verdicts (phishing) or fallbacks. LLM
+        errors degrade to ``("MEDIUM", None)`` so the tick survives
+        provider outages.
+        """
         from xibi.condensation import condense
         from xibi.heartbeat.classification import (
             build_fallback_prompt,
@@ -307,6 +365,7 @@ class HeartbeatPoller:
         return verdict, subject
 
     def tick(self) -> None:
+        """Run one synchronous tick by spinning up an event loop for :meth:`async_tick`."""
         import asyncio
 
         asyncio.run(self.async_tick())
@@ -697,6 +756,15 @@ class HeartbeatPoller:
         triage_rules: dict,
         email_rules: list,
     ) -> None:
+        """Run the per-email half of one heartbeat tick.
+
+        Fetches the raw body (via himalaya when available), summarises
+        it, runs trust assessment on the sender, classifies the signal,
+        records it in the ledger, and drives the rule engine. Each
+        signal is processed independently so a single failing email
+        does not abort the rest of the batch. ``seen_ids`` is updated
+        in place to suppress repeat processing on the next tick.
+        """
         from xibi.heartbeat.email_body import (
             compact_body,
             fetch_raw_email,
@@ -1091,6 +1159,14 @@ class HeartbeatPoller:
                 )
 
     def digest_tick(self, force: bool = False) -> None:
+        """Broadcast the accumulated digest queue to Telegram.
+
+        Pops the digest queue from the rule engine, groups items into
+        Priority Attention vs Worth Reading sections, prepends any
+        rate-limited urgent overflow, and broadcasts a single message
+        per allowed chat. Skipped during quiet hours unless ``force`` is
+        True (the recap path passes ``force=True``).
+        """
         if not self._enable_legacy_digest and not force:
             return
 
@@ -1143,6 +1219,7 @@ class HeartbeatPoller:
         self._broadcast("\n".join(msg_lines))
 
     def recap_tick(self) -> None:
+        """Force a digest broadcast (used by the 9 AM / 6 PM time windows)."""
         if not self._enable_legacy_digest:
             logger.debug("Legacy digest disabled — skipping recap tick")
             return
@@ -1150,6 +1227,13 @@ class HeartbeatPoller:
         self.digest_tick(force=True)
 
     def reflection_tick(self) -> None:
+        """Generate and broadcast a daily reflection on recent triage patterns.
+
+        Pulls the top-5 senders by triage volume over the last 7 days,
+        asks the fast text model for a short reflection, broadcasts it,
+        and stamps the date so the tick runs at most once per day.
+        Quiet hours suppress the broadcast.
+        """
         if self._is_quiet_hours():
             return
 
@@ -1185,6 +1269,14 @@ class HeartbeatPoller:
             logger.warning(f"Reflection tick error: {e}", exc_info=True)
 
     def run(self) -> None:
+        """Block in the heartbeat loop until SIGTERM.
+
+        Calls :meth:`tick` every ``interval_minutes``, fires
+        :meth:`recap_tick` inside the 9 AM / 6 PM windows, and
+        :meth:`reflection_tick` inside the 7 AM window. Wait between
+        ticks is interruptible via the shutdown event, so SIGTERM cuts
+        the loop without waiting out the interval.
+        """
         from xibi.shutdown import is_shutdown_requested, wait_for_shutdown
 
         tick_count = 0
@@ -1220,6 +1312,7 @@ class HeartbeatPoller:
 
 
 def _infer_provider(role: str, config: dict[str, Any]) -> str:
+    """Return the configured provider name for ``models.text.<role>``, or ``"unknown"``."""
     try:
         return str(config["models"]["text"][role]["provider"])
     except KeyError:
@@ -1227,6 +1320,7 @@ def _infer_provider(role: str, config: dict[str, Any]) -> str:
 
 
 def _infer_model(role: str, config: dict[str, Any]) -> str:
+    """Return the configured model name for ``models.text.<role>``, or ``"unknown"``."""
     try:
         return str(config["models"]["text"][role]["model"])
     except KeyError:

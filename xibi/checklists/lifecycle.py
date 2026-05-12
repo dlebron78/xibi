@@ -1,3 +1,11 @@
+"""Checklist lifecycle handlers -- nudges, expiry, and recurring re-instantiation.
+
+The functions here are wired into the universal action scheduler.
+They handle: scheduling 24h-before and due-now warnings when a
+checklist instance is created, expiring stale items, and rolling daily
+or weekly templates into a new instance when the previous one closes.
+"""
+
 from __future__ import annotations
 
 import json

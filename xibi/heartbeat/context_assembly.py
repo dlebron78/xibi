@@ -1,3 +1,17 @@
+"""Signal-context assembly -- bundles every fact known about one inbound signal.
+
+:class:`SignalContext` is the source-agnostic envelope that feeds the
+LLM classifier: it carries the raw signal fields (id, sender, subject),
+trust/contact/thread context queried from the DB, and topic-extraction
+hints. Property aliases (``email_id``, ``sender_addr``, ``subject``)
+preserve the pre-step-76 names so existing email-only call sites still
+compile.
+
+Channel adapters (email/calendar/slack) are responsible for populating
+the :class:`SignalContext` from their native formats before handing it
+to :func:`xibi.heartbeat.classification.build_classification_prompt`.
+"""
+
 from __future__ import annotations
 
 import hashlib
@@ -30,14 +44,17 @@ class SignalContext:
     # --- Backward-compatible aliases for step-76 ---
     @property
     def email_id(self) -> str:
+        """Alias for :attr:`signal_ref_id` (pre-step-76 email-only callers)."""
         return self.signal_ref_id
 
     @property
     def sender_addr(self) -> str:
+        """Alias for :attr:`sender_id` (pre-step-76 email-only callers)."""
         return self.sender_id
 
     @property
     def subject(self) -> str:
+        """Alias for :attr:`headline` (pre-step-76 email-only callers)."""
         return self.headline
 
     # Step-67: Body summary

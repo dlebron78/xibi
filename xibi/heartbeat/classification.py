@@ -1,3 +1,12 @@
+"""Signal-classification prompt builders for the heartbeat tick.
+
+Given an assembled :class:`SignalContext`, :func:`build_classification_prompt`
+returns a single prompt string that asks the fast text model for a
+verdict. :func:`build_fallback_prompt` is the no-context variant used
+when assembly fails. :func:`parse_classification_response` translates
+the model's free-form reply into ``(verdict, reason)``.
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING

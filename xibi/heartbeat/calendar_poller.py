@@ -141,6 +141,7 @@ def poll_calendar_signals(
 
 
 def _is_processed(db_path: Path, source: str, ref_id: str) -> bool:
+    """Return True if ``(source, ref_id)`` has been recorded in ``processed_messages``."""
     with open_db(db_path) as conn:
         row = conn.execute(
             "SELECT 1 FROM processed_messages WHERE source = ? AND ref_id = ?",
@@ -150,6 +151,7 @@ def _is_processed(db_path: Path, source: str, ref_id: str) -> bool:
 
 
 def _mark_processed(db_path: Path, source: str, ref_id: str) -> None:
+    """Record ``(source, ref_id)`` in ``processed_messages`` so it is not re-emitted."""
     with open_db(db_path) as conn, conn:
         conn.execute(
             "INSERT OR IGNORE INTO processed_messages (source, ref_id, processed_at) VALUES (?, ?, ?)",
@@ -158,6 +160,7 @@ def _mark_processed(db_path: Path, source: str, ref_id: str) -> None:
 
 
 def _log_calendar_signal(db_path: Path, sig: dict) -> None:
+    """Insert one calendar-derived signal row, leaving received_via_* fields NULL."""
     # Step-110: signals.received_via_account / received_via_email_alias are
     # nullable; calendar-derived signals always pass NULL because events
     # have no inbound email alias to attribute to.
@@ -226,6 +229,7 @@ def _extract_attendees(event: dict) -> tuple[str | None, str | None]:
 
 
 def _format_start_time(start_iso: str) -> str:
+    """Render an event's start time as ``HH:MM`` (or ``"All day"`` for date-only events)."""
     if len(start_iso) <= 10:
         return "All day"
     try:

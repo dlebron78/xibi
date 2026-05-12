@@ -1,3 +1,10 @@
+"""Xibi DB package -- :func:`open_db` is the single entry point for SQLite access.
+
+Every connection runs PRAGMA journal_mode=WAL and
+foreign_keys=ON. Schema bootstrapping is delegated to
+:class:`xibi.db.migrations.SchemaManager` (re-exported here for convenience).
+"""
+
 from __future__ import annotations
 
 import json

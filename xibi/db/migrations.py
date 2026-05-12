@@ -1,3 +1,26 @@
+"""SQLite schema migration runner for the Xibi DB.
+
+Each :meth:`SchemaManager._migration_N` method adds the version-N tables
+or columns. :meth:`SchemaManager.migrate` iterates the registered
+migrations in order, applies any whose version exceeds the current
+``schema_version.version`` row, and records the bump inside the same
+transaction so partial applications cannot leave a stale version number
+on disk (the BUG-009 keystone).
+
+Migrations bypass :func:`xibi.db.open_db` and open a raw
+:mod:`sqlite3` connection: ``open_db`` applies process-wide PRAGMAs
+(WAL, ``foreign_keys=ON``) that fight with DDL and with the explicit
+BEGIN/COMMIT envelope the migrator needs. The migration body runs
+inside a single explicit ``BEGIN`` so any failure mid-body rolls back
+the table changes alongside the version-row insert.
+
+Adding a new migration: bump :data:`SCHEMA_VERSION`, append a
+``(version, description, self._migration_N)`` tuple to the
+``migrations`` list in :meth:`migrate`, and write the ``_migration_N``
+method. Idempotent column adds use :func:`_safe_add_column` so re-runs
+on partially-applied DBs do not double-add.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -53,6 +76,7 @@ def _safe_add_column(
 
 class SchemaManager:
     def __init__(self, db_path: Path) -> None:
+        """Bind the manager to a SQLite path; no DB access happens until :meth:`migrate`."""
         self.db_path = db_path
 
     def get_version(self) -> int:
@@ -169,6 +193,7 @@ class SchemaManager:
         return applied
 
     def _ensure_schema_version_table(self, conn: sqlite3.Connection) -> None:
+        """Create the ``schema_version`` bookkeeping table if it does not exist."""
         conn.execute("""
             CREATE TABLE IF NOT EXISTS schema_version (
                 version     INTEGER PRIMARY KEY,
@@ -178,6 +203,7 @@ class SchemaManager:
         """)
 
     def _migration_1(self, conn: sqlite3.Connection) -> None:
+        """Create core tables: beliefs, ledger, traces (plus schema_version bookkeeping)."""
         self._ensure_schema_version_table(conn)
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS beliefs (
@@ -230,6 +256,7 @@ class SchemaManager:
         """)
 
     def _migration_2(self, conn: sqlite3.Connection) -> None:
+        """Create app tables: tasks, conversation_history, pinned_topics, signals, shadow_phrases."""
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS tasks (
                 id                  TEXT PRIMARY KEY,
@@ -289,6 +316,7 @@ class SchemaManager:
         """)
 
     def _migration_3(self, conn: sqlite3.Connection) -> None:
+        """Create alerting tables: rules, triage_log, heartbeat_state, seen_emails."""
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS rules (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -323,6 +351,7 @@ class SchemaManager:
         """)
 
     def _migration_4(self, conn: sqlite3.Connection) -> None:
+        """Create trust tables: trust_records (per-tier success/failure tracking)."""
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS trust_records (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -338,6 +367,7 @@ class SchemaManager:
         """)
 
     def _migration_5(self, conn: sqlite3.Connection) -> None:
+        """Create security tables: access_log."""
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS access_log (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -349,6 +379,7 @@ class SchemaManager:
         """)
 
     def _migration_6(self, conn: sqlite3.Connection) -> None:
+        """Create idempotency table: processed_messages (Telegram message dedup)."""
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS processed_messages (
                 message_id    INTEGER PRIMARY KEY,
@@ -360,6 +391,7 @@ class SchemaManager:
         """)
 
     def _migration_7(self, conn: sqlite3.Connection) -> None:
+        """Trust hardening: add model_hash and last_failure_type columns to trust_records."""
         for col_name, col_type in [
             ("model_hash", "TEXT"),
             ("last_failure_type", "TEXT"),
@@ -367,6 +399,7 @@ class SchemaManager:
             _safe_add_column(conn, "trust_records", col_name, col_type)
 
     def _migration_8(self, conn: sqlite3.Connection) -> None:
+        """Create session_turns table for conversation continuity."""
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS session_turns (
                 turn_id     TEXT PRIMARY KEY,
@@ -384,6 +417,7 @@ class SchemaManager:
         """)
 
     def _migration_9(self, conn: sqlite3.Connection) -> None:
+        """Create session_entities table for cross-domain entity extraction."""
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS session_entities (
                 id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -401,6 +435,7 @@ class SchemaManager:
         """)
 
     def _migration_10(self, conn: sqlite3.Connection) -> None:
+        """Create tracing table: spans."""
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS spans (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -419,6 +454,7 @@ class SchemaManager:
         """)
 
     def _migration_11(self, conn: sqlite3.Connection) -> None:
+        """Create observation_cycles table for cycle bookkeeping."""
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS observation_cycles (
                 id                     INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -434,6 +470,7 @@ class SchemaManager:
         """)
 
     def _migration_12(self, conn: sqlite3.Connection) -> None:
+        """Signal intelligence: thread materialization (threads + contacts + signal columns)."""
         # Create new tables
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS threads (
@@ -477,6 +514,7 @@ class SchemaManager:
             _safe_add_column(conn, "signals", col_name, col_type)
 
     def _migration_13(self, conn: sqlite3.Connection) -> None:
+        """Create inference_events table for radiant inference tracking."""
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS inference_events (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -496,6 +534,7 @@ class SchemaManager:
         """)
 
     def _migration_14(self, conn: sqlite3.Connection) -> None:
+        """Create audit_results table for radiant audit findings."""
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS audit_results (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -512,12 +551,14 @@ class SchemaManager:
         """)
 
     def _migration_15(self, conn: sqlite3.Connection) -> None:
+        """Add source column to session_turns (track which channel each turn came from)."""
         # Was a bare ALTER with no error handling; wrapped in _safe_add_column
         # (step-87A, Category C) so replays against stale DBs where the column
         # already exists become a no-op rather than crashing.
         _safe_add_column(conn, "session_turns", "source", "TEXT NOT NULL DEFAULT 'user'")
 
     def _migration_16(self, conn: sqlite3.Connection) -> None:
+        """Add trace_id column to inference_events for cross-correlation."""
         # Split from a single executescript so the ALTER goes through
         # _safe_add_column (step-87A Category C — same replay-safety rationale
         # as _migration_15). The CREATE INDEX is left bare because the SQL
@@ -527,6 +568,7 @@ class SchemaManager:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_inference_events_trace ON inference_events(trace_id)")
 
     def _migration_17(self, conn: sqlite3.Connection) -> None:
+        """Extend access_log with user_agent and origin_chat columns."""
         # Idempotent addition of columns to access_log
         new_cols = [
             ("prev_step_source", "TEXT"),
@@ -612,6 +654,7 @@ class SchemaManager:
                 raise
 
     def _migration_19(self, conn: sqlite3.Connection) -> None:
+        """Manager review: add thread priority and review tracking columns."""
         # Thread priority + last_reviewed_at for manager review pattern
         _safe_add_column(conn, "threads", "priority", "TEXT DEFAULT NULL")
         _safe_add_column(conn, "threads", "last_reviewed_at", "DATETIME DEFAULT NULL")
@@ -619,6 +662,7 @@ class SchemaManager:
         _safe_add_column(conn, "observation_cycles", "review_mode", "TEXT DEFAULT 'triage'")
 
     def _migration_20(self, conn: sqlite3.Connection) -> None:
+        """Create belief_summaries table for session compression."""
         sql_path = Path(__file__).parent / "migrations" / "0020_belief_summaries.sql"
         if sql_path.exists():
             conn.executescript(sql_path.read_text())
@@ -642,6 +686,7 @@ class SchemaManager:
             """)
 
     def _migration_21(self, conn: sqlite3.Connection) -> None:
+        """Create universal action scheduler tables (scheduled_actions and runs)."""
         sql_path = Path(__file__).parent / "migrations" / "0021_scheduled_actions.sql"
         if sql_path.exists():
             conn.executescript(sql_path.read_text())
@@ -687,6 +732,7 @@ class SchemaManager:
             """)
 
     def _migration_22(self, conn: sqlite3.Connection) -> None:
+        """Create checklist_templates and checklist_instances tables."""
         sql_path = Path(__file__).parent / "migrations" / "0022_checklists.sql"
         if sql_path.exists():
             conn.executescript(sql_path.read_text())

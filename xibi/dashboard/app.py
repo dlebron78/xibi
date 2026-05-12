@@ -47,6 +47,13 @@ logger = logging.getLogger(__name__)
 
 
 def get_system_health(db_path: Path, config: Config) -> dict:
+    """Return a multi-check health report (DB, schema, LLM, skills, CPU/RAM).
+
+    Probes are best-effort: each one is wrapped in try/except so a
+    single failing subsystem does not crash the dashboard. The overall
+    ``status`` field is ``"degraded"`` if any check string contains the
+    word ``"error"``, ``"healthy"`` otherwise.
+    """
     checks = {}
 
     # 1. Database connectivity
@@ -162,6 +169,7 @@ def create_app(config: DashboardConfig) -> Flask:
         return None
 
     def get_db_conn() -> AbstractContextManager[sqlite3.Connection]:
+        """Open a fresh SQLite connection to the dashboard DB (caller closes via ``with``)."""
         return xibi.db.open_db(app.config["DB_PATH"])  # type: ignore[return-value]
 
     def _load_secrets(workdir: Any) -> dict:
@@ -183,6 +191,7 @@ def create_app(config: DashboardConfig) -> Flask:
 
     @app.route("/health")
     def health_full() -> Any:
+        """Serve the full system-health probe (auth-exempt, used by deploy checks)."""
         # We need a Config object. Since create_app doesn't take it, but the health check needs it,
         # and the router can load it from default path if not provided.
         # However, the task description says get_system_health(db_path, config).
@@ -202,6 +211,7 @@ def create_app(config: DashboardConfig) -> Flask:
 
     @app.route("/api/health")
     def health() -> Any:
+        """Serve a lightweight dashboard-tile health summary (CPU/RAM, last trace, uptime)."""
         try:
             with get_db_conn() as conn:
                 last_trace = queries.get_last_trace(conn)
@@ -238,30 +248,35 @@ def create_app(config: DashboardConfig) -> Flask:
 
     @app.route("/api/trends")
     def trends() -> Any:
+        """Serve conversation-volume trend data for the dashboard charts."""
         with get_db_conn() as conn:
             data = queries.get_conversation_trends(conn)
             return jsonify(data)
 
     @app.route("/api/errors")
     def errors() -> Any:
+        """Serve the recent-errors feed (XibiError rows from the audit table)."""
         with get_db_conn() as conn:
             data = queries.get_recent_errors(conn)
             return jsonify(data)
 
     @app.route("/api/recent")
     def recent() -> Any:
+        """Serve the recent-conversations list (most recent traces with previews)."""
         with get_db_conn() as conn:
             data = queries.get_recent_conversations(conn)
             return jsonify(data)
 
     @app.route("/api/shadow")
     def shadow() -> Any:
+        """Serve shadow-router stats (BM25 match rate and hint quality)."""
         with get_db_conn() as conn:
             data = queries.get_shadow_stats(conn)
             return jsonify(data)
 
     @app.route("/api/signals")
     def signals() -> Any:
+        """Serve recent signals plus the active-threads list for the inbox panel."""
         with get_db_conn() as conn:
             return jsonify(
                 {
@@ -272,37 +287,44 @@ def create_app(config: DashboardConfig) -> Flask:
 
     @app.route("/api/signal_pipeline")
     def signal_pipeline() -> Any:
+        """Serve per-stage counters for the signal-processing pipeline visualization."""
         with get_db_conn() as conn:
             data = queries.get_signal_pipeline(conn)
             return jsonify(data)
 
     @app.route("/api/inference")
     def inference() -> Any:
+        """Serve LLM inference stats (calls, p50/p95 latency, by-model breakdown)."""
         with get_db_conn() as conn:
             return jsonify(queries.get_inference_stats(conn))
 
     @app.route("/api/trust")
     def trust() -> Any:
+        """Serve trust-gradient records (per-tier success/failure counts and EMA)."""
         with get_db_conn() as conn:
             return jsonify(queries.get_trust_records(conn))
 
     @app.route("/api/audit")
     def audit() -> Any:
+        """Serve audit-log results (tool calls with full request/response detail)."""
         with get_db_conn() as conn:
             return jsonify(queries.get_audit_results(conn))
 
     @app.route("/api/spans")
     def spans() -> Any:
+        """Serve the latest tracing spans for the trace timeline view."""
         with get_db_conn() as conn:
             return jsonify(queries.get_latest_spans(conn))
 
     @app.route("/api/cycles")
     def cycles() -> Any:
+        """Serve observation-cycle history (one row per cycle with summary)."""
         with get_db_conn() as conn:
             return jsonify(queries.get_observation_cycles(conn))
 
     @app.route("/api/checklists")
     def checklists() -> Any:
+        """Serve the user's checklists with item state for the dashboard panel."""
         with get_db_conn() as conn:
             return jsonify(queries.get_checklists(conn))
 
@@ -463,14 +485,17 @@ def create_app(config: DashboardConfig) -> Flask:
 
     @app.route("/")
     def index() -> str:
+        """Render the main dashboard HTML page (auth-exempt; API key injected via Jinja)."""
         return render_template("index.html", api_key=app.config.get("API_KEY", ""))
 
     @app.route("/caretaker")
     def caretaker_page() -> str:
+        """Render the caretaker dashboard HTML page (auth-exempt; API key injected via Jinja)."""
         return render_template("caretaker.html", api_key=app.config.get("API_KEY", ""))
 
     @app.route("/api/caretaker/pulses")
     def caretaker_pulses() -> Any:
+        """Serve recent caretaker pulses (one row per scheduled health check)."""
         limit = int(request.args.get("limit", "20"))
         from xibi.caretaker.pulse import Caretaker
 
@@ -480,6 +505,7 @@ def create_app(config: DashboardConfig) -> Flask:
 
     @app.route("/api/caretaker/drift")
     def caretaker_drift() -> Any:
+        """Serve the active caretaker drift findings (dedup-suppressed alerts surface here)."""
         from xibi.caretaker import dedup as _dedup
 
         return jsonify({"active": _dedup.list_active(app.config["DB_PATH"])})

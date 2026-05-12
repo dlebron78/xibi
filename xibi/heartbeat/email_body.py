@@ -1,3 +1,13 @@
+"""Email body retrieval and LLM-summarisation helpers for the heartbeat tick.
+
+Provides :func:`find_himalaya` (locate the ``himalaya`` CLI),
+:func:`fetch_raw_email` (pull a single MIME blob from himalaya),
+:func:`compact_body` (strip quoted/forwarded chunks down to the new
+text), and :func:`summarize_email_body` (LLM-driven one-paragraph
+summary). All run inside the per-tick budget; failures degrade to
+empty strings so a stuck mail server cannot break the tick.
+"""
+
 import json
 import logging
 import os

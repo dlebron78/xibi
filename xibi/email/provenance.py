@@ -38,6 +38,7 @@ _EMAIL_RE = re.compile(r"[\w.+\-]+@[\w\-]+(?:\.[\w\-]+)+")
 
 
 def _instance_user_id() -> str:
+    """Return the owner user id for this Xibi instance (env override or default)."""
     return os.environ.get("XIBI_INSTANCE_OWNER_USER_ID", "default-owner")
 
 

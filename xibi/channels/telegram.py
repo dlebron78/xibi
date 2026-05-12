@@ -1,3 +1,23 @@
+"""Telegram channel adapter -- the primary user-facing surface.
+
+:class:`TelegramAdapter` long-polls Telegram for updates, authorizes
+incoming chats against ``XIBI_TELEGRAM_ALLOWED_CHAT_IDS``, routes each
+message through the chitchat / control-plane / shadow-router / ReAct
+stack, and pushes outgoing nudges and confirmations back to the user.
+The adapter is also the home for inline-button callbacks (email
+confirmation keyboards, account-command dispatch).
+
+The class owns process-level state that is intentionally not stored in
+the DB: typing indicators, per-chat session caches, the long-poll
+offset checkpoint file, and an in-memory record of pending attachment
+paths. Persistent state -- access log, processed-message idempotency,
+ledger drafts -- still flows through the shared SQLite DB.
+
+A mock mode (``XIBI_MOCK_TELEGRAM=1``) replaces every outgoing HTTP
+call with a canned reply so the adapter can be exercised in CI without
+hitting the Bot API.
+"""
+
 from __future__ import annotations
 
 import contextlib
@@ -97,6 +117,12 @@ class TelegramAdapter:
         llm_routing_classifier: Any | None = None,
         config_path: Path | str | None = None,
     ) -> None:
+        """Resolve token, allowlist, DB path, and offset file -- nothing polls until :meth:`poll`.
+
+        Raises ``ValueError`` if no bot token is found (constructor arg
+        or ``XIBI_TELEGRAM_TOKEN``) and refuses to start with a bad DB
+        path so the failure happens at boot instead of mid-message.
+        """
         self.config = config
         self.config_path = Path(config_path) if config_path else None
         self.skill_registry = skill_registry
@@ -148,6 +174,7 @@ class TelegramAdapter:
         self._mock_sent: bool = False
 
     def _load_offset(self) -> int:
+        """Return the last persisted ``update_id+1`` to resume long-polling from, or 0."""
         if self.offset_file.exists():
             try:
                 return int(self.offset_file.read_text().strip())
@@ -181,6 +208,7 @@ class TelegramAdapter:
             logger.warning(f"Failed to purge old processed_messages: {e}", exc_info=True)
 
     def _save_offset(self, offset: int) -> None:
+        """Persist ``offset`` to disk so a restart resumes after the last handled update."""
         try:
             self.offset_file.parent.mkdir(parents=True, exist_ok=True)
             self.offset_file.write_text(str(offset))
@@ -188,6 +216,15 @@ class TelegramAdapter:
             logger.warning(f"Could not write offset file: {e}", exc_info=True)
 
     def _api_call(self, method: str, params: dict | None = None) -> dict[str, Any]:
+        """Invoke one Telegram Bot API method and return the parsed JSON response.
+
+        ``getUpdates`` uses URL-encoded query parameters with a 35-second
+        socket timeout to accommodate Telegram's long-polling window;
+        all other methods POST JSON. Network errors degrade to
+        ``{"ok": False}`` so callers never need to wrap this in
+        try/except. Honors the ``XIBI_MOCK_TELEGRAM=1`` env flag, in
+        which case it returns canned data from :meth:`_mock_api_call`.
+        """
         if os.environ.get("XIBI_MOCK_TELEGRAM") == "1":
             return self._mock_api_call(method, params)
 
@@ -211,6 +248,13 @@ class TelegramAdapter:
             return {"ok": False}
 
     def _mock_api_call(self, method: str, params: dict | None = None) -> dict[str, Any]:
+        """Return canned Bot API responses for CI/dev when ``XIBI_MOCK_TELEGRAM=1``.
+
+        The first ``getUpdates`` call yields a single canned message
+        from chat id ``123``; subsequent calls return an empty result
+        list so the poll loop quiesces. All other methods return
+        ``{"ok": True}``.
+        """
         if method == "getUpdates":
             if not self._mock_sent:
                 self._mock_sent = True
@@ -231,6 +275,11 @@ class TelegramAdapter:
         return {"ok": True}
 
     def send_message(self, chat_id: int, text: str, reply_markup: dict | None = None) -> dict:
+        """Send one text message to ``chat_id``; ``reply_markup`` attaches inline buttons.
+
+        Returns the raw Bot API response dict. Outgoing text is logged
+        at INFO so the operator can audit what the bot said.
+        """
         logger.info(f"Outgoing message to {chat_id}: {text}")
         params = {"chat_id": chat_id, "text": text}
         if reply_markup:
@@ -245,6 +294,15 @@ class TelegramAdapter:
             stop_event.wait(TYPING_INTERVAL)
 
     def _download_file(self, file_id: str, chat_id: int) -> str | None:
+        """Download a Telegram-uploaded file to ``~/.xibi/uploads`` and return its local path.
+
+        Filenames are sanitised through :func:`_safe_filename` (random
+        prefix, no path components, no hidden-file leading dot) so an
+        attacker-controlled upload name cannot traverse the filesystem.
+        The upload directory is owner-only (mode 0o700). Returns
+        ``None`` on any failure -- the caller decides whether to abort
+        or proceed without the attachment.
+        """
         try:
             result = self._api_call("getFile", {"file_id": file_id})
             if not result.get("ok"):
@@ -284,6 +342,11 @@ class TelegramAdapter:
         return chat_id in self.allowed_chats
 
     def _log_access_attempt(self, chat_id: int, authorized: bool, user_name: str | None = None) -> None:
+        """Record an authorization decision in the ``access_log`` table for audit.
+
+        DB write failures are logged but never raise -- access logging
+        must not break the message path.
+        """
         try:
             with open_db(self.db_path) as conn, conn:
                 conn.execute(
@@ -298,6 +361,12 @@ class TelegramAdapter:
         return self._is_authorized(str(chat_id))
 
     def _get_session(self, chat_id: int) -> SessionContext:
+        """Return the cached :class:`SessionContext` for ``chat_id``, creating one per day.
+
+        Session ids are scoped to ``telegram:<chat_id>:<YYYY-MM-DD>``,
+        so a new day rolls a fresh session even if the process never
+        restarts.
+        """
         if chat_id not in self._sessions:
             session_id = f"telegram:{chat_id}:{date.today().isoformat()}"
             self._sessions[chat_id] = SessionContext(session_id, self.db_path, config=self.config)
@@ -595,6 +664,7 @@ class TelegramAdapter:
                 def _add_turn_safe(
                     _text: str = user_text, _result: ReActResult = result, _source: str = source
                 ) -> None:
+                    """Background-thread wrapper that calls ``session.add_turn`` and logs failures."""
                     try:
                         session.add_turn(_text, _result, source=_source)
                     except Exception as _e:
@@ -626,6 +696,15 @@ class TelegramAdapter:
                 state["stop"].set()
 
     def poll(self) -> None:
+        """Block in the Telegram long-poll loop until SIGTERM.
+
+        Each iteration calls ``getUpdates`` with the current offset,
+        dispatches each update (callback query, text message, or file
+        upload), and persists the new offset. Errors inside per-update
+        handlers are caught upstream so one bad message cannot kill the
+        loop. The loop wakes immediately on shutdown via
+        ``is_shutdown_requested``.
+        """
         from xibi.shutdown import is_shutdown_requested
 
         logger.info("Xibi is listening on Telegram...")
@@ -825,6 +904,7 @@ class TelegramAdapter:
         }
 
     def _edit_message_text(self, chat_id: int, message_id: int, text: str) -> None:
+        """Replace the body of an existing Telegram message in place (no buttons changed)."""
         self._api_call(
             "editMessageText",
             {"chat_id": chat_id, "message_id": message_id, "text": text},
@@ -902,6 +982,7 @@ class TelegramAdapter:
             self.send_message(chat_id, f"⚠️ Command failed: {e}")
 
     def _strip_buttons(self, chat_id: int, message_id: int) -> None:
+        """Remove inline buttons from a message (used after a button tap completes)."""
         self._api_call(
             "editMessageReplyMarkup",
             {"chat_id": chat_id, "message_id": message_id, "reply_markup": {"inline_keyboard": []}},

@@ -1,3 +1,13 @@
+"""Subagent checklist execution -- runs a multi-step plan against an MCP tool surface.
+
+Each step in a subagent checklist names a tool, an argument template,
+and the expected output shape. This module steps through the
+checklist, calls the tool via the bound :class:`MCPClient`, applies
+trust-gate and approval-config policy, and records timing + outcome
+to ``subagent_checklist_steps``. Failures partition into recoverable
+(retry) and terminal (abort run) categories.
+"""
+
 from __future__ import annotations
 
 import json

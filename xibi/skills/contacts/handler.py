@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 def _days_since(last_seen: str | None) -> int | None:
+    """Return whole UTC days between ``last_seen`` and now; None if ``last_seen`` is empty/unparseable."""
     if not last_seen:
         return None
     try:

@@ -173,7 +173,9 @@ class Tier2ExtractorRegistry:
 
     @classmethod
     def register(cls, source: str) -> Callable[[Tier2ExtractorFn], Tier2ExtractorFn]:
+        """Decorator: register a Tier-2 extractor for ``source`` and return it unchanged."""
         def decorator(fn: Tier2ExtractorFn) -> Tier2ExtractorFn:
+            """Store ``fn`` under ``source`` and return it (decorator inner)."""
             cls._registry[source] = fn
             return fn
 
@@ -181,14 +183,17 @@ class Tier2ExtractorRegistry:
 
     @classmethod
     def get(cls, source: str) -> Tier2ExtractorFn | None:
+        """Return the registered extractor for ``source``, or None if not registered."""
         return cls._registry.get(source)
 
     @classmethod
     def has(cls, source: str) -> bool:
+        """Return True if a Tier-2 extractor is registered for ``source``."""
         return source in cls._registry
 
     @classmethod
     def sources(cls) -> list[str]:
+        """Return the list of source names with registered Tier-2 extractors."""
         return list(cls._registry.keys())
 
 

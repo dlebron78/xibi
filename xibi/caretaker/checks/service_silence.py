@@ -45,6 +45,7 @@ def _last_span(db_path: Path, operation: str) -> tuple[int, str] | None:
 
 
 def _fmt_utc(ms: int) -> str:
+    """Format a millisecond Unix timestamp as ``YYYY-MM-DD HH:MM:SS UTC``."""
     from datetime import datetime, timezone
 
     return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")

@@ -38,10 +38,12 @@ PROVIDER_SCOPES = {
 
 
 def _instance_user_id() -> str:
+    """Return the owner user id for this Xibi instance (env override or default)."""
     return os.environ.get("XIBI_INSTANCE_OWNER_USER_ID", "default-owner")
 
 
 def _validate_nickname(nickname: str) -> str | None:
+    """Return an error message if ``nickname`` is invalid, or None when it is acceptable."""
     if not nickname:
         return "nickname is required"
     if len(nickname) > 64:
@@ -52,6 +54,13 @@ def _validate_nickname(nickname: str) -> str | None:
 
 
 def connect_account(params: dict[str, Any]) -> dict[str, Any]:
+    """Begin an OAuth flow for ``nickname`` / ``provider`` and return the consent URL.
+
+    Validates the nickname, ensures no existing account uses it, mints a
+    pending-state token with a 10-minute TTL, and builds the provider's
+    authorization URL. Returns a status dict with ``auth_url`` on
+    success; the user clicks the URL to complete consent.
+    """
     nickname = (params.get("nickname") or "").strip()
     provider = (params.get("provider") or "google_calendar").strip()
     err = _validate_nickname(nickname)
@@ -92,6 +101,7 @@ def connect_account(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def list_accounts(params: dict[str, Any]) -> dict[str, Any]:
+    """Return all OAuth accounts owned by this instance, optionally filtered by provider."""
     provider_filter = (params.get("provider") or "").strip() or None
     db_path = params.get("_db_path")
     if not db_path:
@@ -376,6 +386,13 @@ def backfill_contacts_origin(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def disconnect_account(params: dict[str, Any]) -> dict[str, Any]:
+    """Revoke an OAuth account locally and (by default) at the provider.
+
+    Looks up the account by ``nickname`` and ``provider``, deletes the
+    local row, and -- when ``revoke_at_provider`` is True -- calls the
+    provider's revoke endpoint so the refresh token is no longer
+    accepted. Returns an error status if the named account does not exist.
+    """
     nickname = (params.get("nickname") or "").strip()
     provider = (params.get("provider") or "google_calendar").strip()
     revoke_at_provider = bool(params.get("revoke_at_provider", True))

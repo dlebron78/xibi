@@ -168,6 +168,7 @@ def _delete_older_than(db_path: Path, table: str, ts_column: str, days: int) -> 
 
 
 def _sweep_processed_messages(db_path: Path) -> int:
+    """Delete ``processed_messages`` rows older than the configured TTL. Returns rows deleted."""
     return _delete_older_than(
         db_path,
         table="processed_messages",
@@ -177,6 +178,7 @@ def _sweep_processed_messages(db_path: Path) -> int:
 
 
 def _sweep_observation_cycles(db_path: Path) -> int:
+    """Delete ``observation_cycles`` rows older than the configured TTL."""
     return _delete_older_than(
         db_path,
         table="observation_cycles",
@@ -186,6 +188,7 @@ def _sweep_observation_cycles(db_path: Path) -> int:
 
 
 def _sweep_caretaker_pulses(db_path: Path) -> int:
+    """Delete ``caretaker_pulses`` rows older than the configured TTL."""
     return _delete_older_than(
         db_path,
         table="caretaker_pulses",
@@ -195,6 +198,7 @@ def _sweep_caretaker_pulses(db_path: Path) -> int:
 
 
 def _sweep_triage_log(db_path: Path) -> int:
+    """Delete ``triage_log`` rows older than the configured TTL."""
     return _delete_older_than(
         db_path,
         table="triage_log",
@@ -204,6 +208,7 @@ def _sweep_triage_log(db_path: Path) -> int:
 
 
 def _sweep_seen_emails(db_path: Path) -> int:
+    """Delete ``seen_emails`` rows older than the configured TTL (default 90 days)."""
     # 90 days matches the contact poller's `backfill_contacts(days_back=90)`
     # historical scope: we never look further back than 90 days of mail in
     # production polling, so a `seen_emails` row older than that cannot
@@ -218,6 +223,7 @@ def _sweep_seen_emails(db_path: Path) -> int:
 
 
 def _sweep_access_log(db_path: Path) -> int:
+    """Delete ``access_log`` rows older than the configured TTL."""
     return _delete_older_than(
         db_path,
         table="access_log",

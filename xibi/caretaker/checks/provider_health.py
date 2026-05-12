@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 def _last_success_text(last_success_at: str | None) -> str:
+    """Render the last-success timestamp for finding text, or "never (in window)"."""
     return last_success_at if last_success_at else "never (in window)"
 
 
