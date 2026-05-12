@@ -76,10 +76,9 @@ from __future__ import annotations
 import argparse
 import ast
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
-
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 XIBI_ROOT = REPO_ROOT / "xibi"
@@ -160,9 +159,7 @@ def _walk_with_scope(
     common case (top-level functions and class methods) reads naturally.
     """
 
-    def visit(node: ast.AST, scope: list[str]) -> Iterator[
-        tuple[ast.FunctionDef | ast.AsyncFunctionDef, str]
-    ]:
+    def visit(node: ast.AST, scope: list[str]) -> Iterator[tuple[ast.FunctionDef | ast.AsyncFunctionDef, str]]:
         for child in ast.iter_child_nodes(node):
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 qual = ".".join(scope + [child.name])
@@ -274,11 +271,7 @@ def _resolve_targets(explicit: list[str]) -> list[Path]:
 
 def _format_summary(total_files: int, current_gaps: list[Gap]) -> str:
     files_with = len({g.rel_path for g in current_gaps})
-    return (
-        f"summary: {total_files} files scanned, "
-        f"{files_with} with gaps, "
-        f"{len(current_gaps)} undocumented items"
-    )
+    return f"summary: {total_files} files scanned, {files_with} with gaps, {len(current_gaps)} undocumented items"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -290,9 +283,7 @@ def main(argv: list[str] | None = None) -> int:
     current scan and exit 0. Explicit file arguments override the xibi/
     default and force strict mode.
     """
-    parser = argparse.ArgumentParser(
-        description="Check docstring coverage across xibi/."
-    )
+    parser = argparse.ArgumentParser(description="Check docstring coverage across xibi/.")
     parser.add_argument(
         "--strict",
         action="store_true",
@@ -306,8 +297,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "files",
         nargs="*",
-        help="Explicit files to scan (default: all xibi/**/*.py). "
-        "Implies --strict.",
+        help="Explicit files to scan (default: all xibi/**/*.py). Implies --strict.",
     )
     args = parser.parse_args(argv)
 
@@ -357,7 +347,7 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print(_format_summary(len(targets), current))
     if strict:
-        print(f"mode: strict (no baseline applied)")
+        print("mode: strict (no baseline applied)")
     else:
         print(f"mode: baseline ({len(baseline)} grandfathered entries)")
         print(f"new gaps not in baseline: {len(new_gaps)}")

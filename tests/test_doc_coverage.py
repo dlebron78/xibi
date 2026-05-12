@@ -15,7 +15,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "doc_coverage.py"
 
@@ -159,9 +158,7 @@ def test_property_setter_pair_is_skipped(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_baseline_grandfathers_existing_gaps(
-    tmp_path: Path, has_gaps: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_baseline_grandfathers_existing_gaps(tmp_path: Path, has_gaps: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Baseline entries should suppress those gaps from the failure set.
 
     The default (no-arg) mode reads ``scripts/doc_coverage_baseline.txt``
@@ -184,9 +181,7 @@ def test_baseline_grandfathers_existing_gaps(
         # Patch the module to point at our temp baseline + temp file
         # list, then call main() with no args (default-mode path).
         monkeypatch.setattr(doc_coverage, "BASELINE_PATH", baseline_path)
-        monkeypatch.setattr(
-            doc_coverage, "iter_xibi_files", lambda: iter([has_gaps])
-        )
+        monkeypatch.setattr(doc_coverage, "iter_xibi_files", lambda: iter([has_gaps]))
         exit_code = doc_coverage.main([])
         assert exit_code == 0, "all gaps are in baseline; expected exit 0"
 
@@ -199,9 +194,7 @@ def test_baseline_grandfathers_existing_gaps(
         sys.path.remove(str(REPO_ROOT / "scripts"))
 
 
-def test_strict_mode_ignores_baseline(
-    tmp_path: Path, has_gaps: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_strict_mode_ignores_baseline(tmp_path: Path, has_gaps: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``--strict`` should fail even when every gap is in the baseline."""
     sys.path.insert(0, str(REPO_ROOT / "scripts"))
     try:
@@ -217,9 +210,7 @@ def test_strict_mode_ignores_baseline(
         monkeypatch.setattr(doc_coverage, "BASELINE_PATH", baseline_path)
         # Explicit-file form is always strict, but we want to test the
         # --strict default-scan path too.
-        monkeypatch.setattr(
-            doc_coverage, "iter_xibi_files", lambda: iter([has_gaps])
-        )
+        monkeypatch.setattr(doc_coverage, "iter_xibi_files", lambda: iter([has_gaps]))
         exit_code = doc_coverage.main(["--strict"])
         assert exit_code == 1, "--strict must not honor baseline"
     finally:
@@ -234,7 +225,5 @@ def test_repo_default_scan_passes() -> None:
     """
     result = _run()
     assert result.returncode == 0, (
-        "default scan should be green via the committed baseline.\n"
-        + result.stdout
-        + result.stderr
+        "default scan should be green via the committed baseline.\n" + result.stdout + result.stderr
     )

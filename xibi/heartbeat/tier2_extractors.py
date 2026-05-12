@@ -174,6 +174,7 @@ class Tier2ExtractorRegistry:
     @classmethod
     def register(cls, source: str) -> Callable[[Tier2ExtractorFn], Tier2ExtractorFn]:
         """Decorator: register a Tier-2 extractor for ``source`` and return it unchanged."""
+
         def decorator(fn: Tier2ExtractorFn) -> Tier2ExtractorFn:
             """Store ``fn`` under ``source`` and return it (decorator inner)."""
             cls._registry[source] = fn
