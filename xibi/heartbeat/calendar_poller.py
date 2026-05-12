@@ -114,6 +114,7 @@ def poll_calendar_signals(
 
             location = event.get("location")
             if location:
+                location = trust_gate(location, source="calendar_location", mode="metadata")
                 preview += f" (@ {location})"
 
             # 3. Log signal

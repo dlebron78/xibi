@@ -17,6 +17,7 @@ from xibi.router import (
     set_last_parse_status,
     set_trace_context,
 )
+from xibi.security import trust_gate
 from xibi.tools import resolve_tier
 from xibi.tracing import Span, Tracer
 from xibi.trust.gradient import FailureType, TrustGradient
@@ -348,10 +349,19 @@ def _append_native_tool_result(
             "tool_calls": [{"function": {"name": tool_name, "arguments": tool_input}}],
         }
     )
+    # Defense-in-depth: gate the tool output at the LLM-message boundary.
+    # MCP tool results are already gated upstream in MCPClient.call_tool; a
+    # second pass here is accepted to keep this boundary uniformly covered
+    # for non-MCP skill outputs that have no other gate.
+    tool_output_str = trust_gate(
+        json.dumps(tool_output),
+        source=f"react_tool:{tool_name}",
+        mode="content",
+    )
     messages.append(
         {
             "role": "tool",
-            "content": json.dumps(tool_output),
+            "content": tool_output_str,
         }
     )
 

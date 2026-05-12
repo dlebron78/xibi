@@ -237,11 +237,12 @@ def execute_checklist(
                         result = client.call_tool(tool_name, args)
 
                         if result["status"] == "ok":
-                            run.scoped_input[inject_key] = trust_gate(
-                                result["result"],
-                                source=f"subagent_tool:{server_name}/{tool_name}",
-                                mode="content",
-                            )
+                            # MCPClient.call_tool already passed result["result"]
+                            # through trust_gate. Re-gating here would double-
+                            # process the text and produce spurious shadow_diff
+                            # warnings in shadow mode (or double-truncation in
+                            # enforce mode), so we trust the upstream gate.
+                            run.scoped_input[inject_key] = result["result"]
                             logger.info(f"Prefetch {server_name}/{tool_name} -> scoped_input.{inject_key}")
                         elif tool_decl.get("required", False):
                             raise RuntimeError(f"Required tool {server_name}/{tool_name} failed: {result.get('error')}")

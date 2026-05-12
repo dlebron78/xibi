@@ -228,6 +228,10 @@ class MCPClient:
           {"status": "error", "error": <str>}     on tool error (isError: true)
           {"status": "error", "error": "timeout"} on timeout
         Never raises — errors are always returned as dicts.
+
+        All returned text (success and error paths, including the
+        catch-all exception path) is funneled through trust_gate before
+        leaving this function, so callers do not need to re-gate.
         """
         if not self._ensure_alive():
             return {
@@ -287,17 +291,25 @@ class MCPClient:
                 )
                 full_text = truncated_text
 
+            # Gate before the error branch so both success and error responses
+            # pass through trust_gate exactly once. MCP servers can embed
+            # injection payloads in error messages too.
+            full_text = trust_gate(full_text, source=f"mcp:{self.config.name}/{name}", mode="content")
+
             if is_error:
                 return {"status": "error", "error": full_text}
 
-            full_text = trust_gate(full_text, source=f"mcp:{self.config.name}/{name}", mode="content")
             result = {"status": "ok", "result": full_text}
             if structured is not None:
                 result["structured"] = structured
             return result
 
         except Exception as e:
-            return {"status": "error", "error": str(e)}
+            # Defense-in-depth: gate the exception text path too. Python
+            # exception strings are typically not attacker-controlled, but a
+            # remote MCP failure can surface server-side text here.
+            gated = trust_gate(str(e), source=f"mcp:{self.config.name}/{name}", mode="content")
+            return {"status": "error", "error": gated}
 
     def close(self) -> None:
         """Terminate subprocess cleanly."""
