@@ -31,13 +31,13 @@ All items verified in code 2026-05-12.
 | Delimiter framing (PR 3) | 1 | step-127 | DONE | `[EXTERNAL_DATA]` wrapping in `trust_gate()` content-mode; `DELIMITER_INSTRUCTION` in react.py system prompt + checklist.py user prompt |
 | Risk grading (PR 4) | 1 | NOT STARTED | Config-driven phrase matching in trust_gate, shadow-only scoring, structured log lines |
 
-## Phase B: Signal pipeline -- NOT STARTED
+## Phase B: Signal pipeline -- IN PROGRESS
 
 Depends on: PR 3 + PR 4 (trust gate fully armed before LLM processes arbitrary sources).
 
 | Item | RFC Section | Status | What's needed |
 |---|---|---|---|
-| LLM-driven signal extraction | 2 | NOT STARTED | Replace `SignalExtractorRegistry` per-source Python extractors with LLM extraction. Registry still exists with 7 coded extractors (email, github, file, web_search, jobs, calendar, generic). Tier 2 adds LLM enrichment but doesn't replace Tier 1 coded extraction. |
+| LLM-driven signal extraction | 2 | step-128 | PARTIAL | `xibi/heartbeat/llm_extractor.py` ships `extract_signals_llm()` using `get_model(effort="fast")`; `xibi/heartbeat/extraction_config.py` controls `mode={shadow,llm,coded}` (default shadow); `poller.py` Phase 2 runs LLM extraction alongside coded path with `extraction.shadow` log lines + spans. Coded extractors stay live and produce the pipeline signal in shadow mode. Flip to `mode=llm` after shadow data confirms parity. |
 | Source-agnostic classification | 3 | PARTIAL | Classification prompt still uses email-specific fields (sender name, email_alias, account provenance). Prompt builder structure is generic but content is email-shaped. |
 
 ## Phase C: Observation and action -- NOT STARTED

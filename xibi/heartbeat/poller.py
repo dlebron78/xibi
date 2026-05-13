@@ -40,7 +40,13 @@ from xibi.channels.telegram import TelegramAdapter
 from xibi.command_layer import CommandLayer
 from xibi.heartbeat.classification import build_classification_prompt
 from xibi.heartbeat.contact_poller import backfill_contacts, find_himalaya, poll_sent_folder
+from xibi.heartbeat.extraction_config import get_extraction_config
 from xibi.heartbeat.extractors import SignalExtractorRegistry
+from xibi.heartbeat.llm_extractor import (
+    compare_extractions,
+    extract_signals_llm,
+    merge_email_tier0_signals,
+)
 from xibi.heartbeat.review_cycle import execute_review, run_review_cycle
 from xibi.heartbeat.sender_trust import (
     _extract_sender_addr,
@@ -143,6 +149,23 @@ class HeartbeatPoller:
             initialize_checklists(self.db_path)
 
         self.tracer = Tracer(self.db_path) if self.db_path else None
+
+        # Step-128 C3: warn at startup if shadow/llm extraction is enabled
+        # with a tight Phase 2 budget. Sequential LLM extraction adds
+        # ~timeout_ms per source; if the budget is too small, sources will
+        # be skipped under load. Threshold from TRR condition C3.
+        try:
+            _ext_cfg_startup = get_extraction_config()
+            if _ext_cfg_startup.get("mode") in ("shadow", "llm") and _PHASE2_TIMEOUT_SECS < 40:
+                logger.warning(
+                    "extraction.budget_tight phase2=%ds mode=%s -- shadow LLM"
+                    " extraction may cause source skipping under load",
+                    _PHASE2_TIMEOUT_SECS,
+                    _ext_cfg_startup.get("mode"),
+                )
+        except Exception as _ext_cfg_exc:
+            logger.warning("extraction_config startup check failed: %s", _ext_cfg_exc)
+
         from xibi.heartbeat.rich_nudge import NudgeRateLimiter
 
         nudge_config = self.config.get("nudge", {})
@@ -508,6 +531,15 @@ class HeartbeatPoller:
 
         # Phase 2: Signal Extraction and Classification
         phase2_deadline = time.monotonic() + _PHASE2_TIMEOUT_SECS
+        # Step-128: extraction config read once per tick so mode flips
+        # between coded/shadow/llm pick up on the next tick after a config
+        # change (no in-tick re-read needed).
+        try:
+            _tick_ext_cfg = get_extraction_config()
+        except Exception:
+            _tick_ext_cfg = {"mode": "coded", "timeout_ms": 5000}
+        _tick_ext_mode = _tick_ext_cfg.get("mode", "shadow")
+        _tick_ext_timeout_ms = int(_tick_ext_cfg.get("timeout_ms", 5000))
         for idx, result in enumerate(poll_results):
             if time.monotonic() > phase2_deadline:
                 remaining_count = len(poll_results) - idx
@@ -516,6 +548,16 @@ class HeartbeatPoller:
                     _PHASE2_TIMEOUT_SECS,
                     remaining_count,
                 )
+                # Step-128 C3: per-source shadow-skipped lines so the loss
+                # is visible, not silent. Only emit when shadow/llm mode
+                # is on -- in coded mode there is no shadow work being
+                # dropped.
+                if _tick_ext_mode in ("shadow", "llm"):
+                    for skipped in poll_results[idx:]:
+                        logger.warning(
+                            "extraction.shadow_skipped source=%s reason=phase2_timeout",
+                            skipped.get("source", "unknown"),
+                        )
                 break
 
             if result.get("error"):
@@ -526,6 +568,7 @@ class HeartbeatPoller:
             extractor_name = result["extractor"]
 
             try:
+                _coded_t0 = time.monotonic()
                 raw_signals = SignalExtractorRegistry.extract(
                     extractor_name,
                     source_name,
@@ -536,6 +579,102 @@ class HeartbeatPoller:
                         "source_metadata": result.get("metadata", {}),
                     },
                 )
+                _coded_duration_ms = int((time.monotonic() - _coded_t0) * 1000)
+
+                # Step-128: LLM-driven extraction in shadow or llm mode.
+                # Sequential (TRR C3 -- not fire-and-forget). Failures
+                # never crash the heartbeat or affect the coded path.
+                if _tick_ext_mode in ("shadow", "llm"):
+                    try:
+                        _llm_t0 = time.monotonic()
+                        llm_signals = extract_signals_llm(
+                            source_name=source_name,
+                            extractor_name=extractor_name,
+                            raw_data=data,
+                            context={
+                                "source_metadata": result.get("metadata", {}),
+                            },
+                            timeout_ms=_tick_ext_timeout_ms,
+                            tracer=self.tracer,
+                        )
+                        _llm_duration_ms = int((time.monotonic() - _llm_t0) * 1000)
+                        # Email: merge LLM enrichment with Tier 0 fields
+                        # BEFORE comparison and pipeline use (step-128 spec
+                        # "Email Tier 0 interaction").
+                        if extractor_name == "email":
+                            llm_signals = merge_email_tier0_signals(raw_signals, llm_signals)
+                        comparison = compare_extractions(
+                            coded=raw_signals,
+                            llm=llm_signals,
+                            source_name=source_name,
+                            extractor_name=extractor_name,
+                            duration_coded_ms=_coded_duration_ms,
+                            duration_llm_ms=_llm_duration_ms,
+                        )
+                        logger.info(
+                            "extraction.shadow source=%s extractor=%s"
+                            " coded_count=%d llm_count=%d ref_id_match=%d/%d"
+                            " field_coverage_pct=%s topic_similarity=%s"
+                            " duration_coded_ms=%d duration_llm_ms=%d primary=%s",
+                            source_name,
+                            extractor_name,
+                            comparison["coded_count"],
+                            comparison["llm_count"],
+                            comparison["ref_id_matches"],
+                            comparison["coded_count"],
+                            comparison["field_coverage_pct"],
+                            comparison["topic_similarity_avg"],
+                            comparison["duration_coded_ms"],
+                            comparison["duration_llm_ms"],
+                            "llm" if _tick_ext_mode == "llm" else "coded",
+                        )
+                        # Quality-divergence WARNING (spec Observability §2)
+                        cr = comparison.get("count_ratio")
+                        rid_match_rate = (
+                            comparison["ref_id_matches"] / comparison["coded_count"]
+                            if comparison["coded_count"] > 0
+                            else 1.0
+                        )
+                        if (cr is not None and (cr > 2.0 or cr < 0.5)) or rid_match_rate < 0.5:
+                            logger.warning(
+                                "extraction.divergence source=%s extractor=%s count_ratio=%s ref_id_match_rate=%.2f",
+                                source_name,
+                                extractor_name,
+                                f"{cr:.2f}" if cr is not None else "n/a",
+                                rid_match_rate,
+                            )
+                        # Best-effort shadow comparison span.
+                        if self.tracer is not None:
+                            import contextlib
+
+                            with contextlib.suppress(Exception):
+                                self.tracer.span(
+                                    operation="extraction.shadow",
+                                    attributes={
+                                        "source": source_name,
+                                        "extractor": extractor_name,
+                                        "coded_count": comparison["coded_count"],
+                                        "llm_count": comparison["llm_count"],
+                                        "ref_id_matches": comparison["ref_id_matches"],
+                                        "field_coverage_pct": comparison["field_coverage_pct"],
+                                        "topic_similarity_avg": comparison["topic_similarity_avg"],
+                                        "primary": "llm" if _tick_ext_mode == "llm" else "coded",
+                                    },
+                                    duration_ms=_llm_duration_ms,
+                                    component="extraction",
+                                )
+                        # In llm mode, swap roles: LLM output becomes the
+                        # pipeline signal. Fall back to coded if LLM
+                        # returned empty so the pipeline never goes dark.
+                        if _tick_ext_mode == "llm" and llm_signals:
+                            raw_signals = llm_signals
+                    except Exception as _llm_exc:
+                        logger.warning(
+                            "extraction.shadow_error source=%s extractor=%s error=%s",
+                            source_name,
+                            extractor_name,
+                            type(_llm_exc).__name__,
+                        )
 
                 # Side-channel: export job signals to Google Sheets (best-effort)
                 if extractor_name == "jobs" and raw_signals:
