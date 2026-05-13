@@ -94,3 +94,21 @@ jobs:
           if [ -n "$coverage" ] && [ "$coverage" -lt 80 ]; then
             echo "::warning::Coverage is below 80%: ${coverage}%"
           fi
+
+  doc-coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      - name: Check documentation coverage
+        # Default mode is baseline-aware: scans every xibi/**/*.py and
+        # fails on any docstring gap that is not already grandfathered in
+        # scripts/doc_coverage_baseline.txt. Closing a baseline entry
+        # silently shrinks the file on the next --write-baseline run; no
+        # CI change is needed for a future spec to ratchet the baseline
+        # down. See scripts/doc_coverage.py module docstring for details.
+        run: python3 scripts/doc_coverage.py
