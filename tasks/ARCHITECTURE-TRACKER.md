@@ -37,7 +37,7 @@ Depends on: PR 3 + PR 4 (trust gate fully armed before LLM processes arbitrary s
 
 | Item | RFC Section | Status | What's needed |
 |---|---|---|---|
-| LLM-driven signal extraction | 2 | step-128 | PARTIAL | `xibi/heartbeat/llm_extractor.py` ships `extract_signals_llm()` using `get_model(effort="fast")`; `xibi/heartbeat/extraction_config.py` controls `mode={shadow,llm,coded}` (default shadow); `poller.py` Phase 2 runs LLM extraction alongside coded path with `extraction.shadow` log lines + spans. Coded extractors stay live and produce the pipeline signal in shadow mode. Flip to `mode=llm` after shadow data confirms parity. |
+| LLM-driven signal extraction | 2 | PARTIAL (step-128) | `xibi/heartbeat/llm_extractor.py` ships `extract_signals_llm()` using `get_model(effort="fast")`; `xibi/heartbeat/extraction_config.py` controls `mode={shadow,llm,coded}` (default shadow); `poller.py` Phase 2 runs LLM extraction alongside coded path with `extraction.shadow` log lines + spans. Coded extractors stay live and produce the pipeline signal in shadow mode. Flip to `mode=llm` after shadow data confirms parity. |
 | Source-agnostic classification | 3 | PARTIAL | Classification prompt still uses email-specific fields (sender name, email_alias, account provenance). Prompt builder structure is generic but content is email-shaped. |
 
 ## Phase C: Observation and action -- NOT STARTED
