@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from xibi.mcp.client import MCPClient
 
 from xibi.security import trust_gate
+from xibi.security.trust_gate import DELIMITER_INSTRUCTION
 from xibi.subagent.approval_config import get_approval_required_tools
 from xibi.subagent.db import (
     create_cost_event,
@@ -275,7 +276,12 @@ def execute_checklist(
             # Context chaining
             context_str = f"Scoped Input: {json.dumps(run.scoped_input)}\n"
             if previous_outputs:
-                context_str += "Previous step outputs:\n"
+                # Trust-gate delimiter instruction (step-127). Each prev_out
+                # is gated as content-mode, so it arrives wrapped in
+                # ``[EXTERNAL_DATA ...]...[/EXTERNAL_DATA]`` markers. The
+                # instruction is inserted once before the loop -- repeating
+                # it per step would inflate token cost without adding signal.
+                context_str += f"{DELIMITER_INSTRUCTION}\n\nPrevious step outputs:\n"
                 for j, prev_out in enumerate(previous_outputs):
                     prev_out_str = trust_gate(
                         json.dumps(prev_out),

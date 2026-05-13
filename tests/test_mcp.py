@@ -63,7 +63,11 @@ def test_mcp_client_call_tool_success():
 
     with patch("select.select", return_value=([client.process.stdout], [], [])):
         result = client.call_tool("tool1", {"arg": "val"})
-        assert result == {"status": "ok", "result": "hello"}
+        # Step-127: success-path result is content-mode trust-gated and
+        # therefore wrapped in [EXTERNAL_DATA ...]...[/EXTERNAL_DATA].
+        assert result["status"] == "ok"
+        assert 'source="mcp:test/tool1"' in result["result"]
+        assert "hello" in result["result"]
 
 
 def test_mcp_client_tool_error_normalized():
@@ -84,7 +88,12 @@ def test_mcp_client_tool_error_normalized():
 
     with patch("select.select", return_value=([client.process.stdout], [], [])):
         result = client.call_tool("tool1", {"arg": "val"})
-        assert result == {"status": "error", "error": "file not found"}
+        # Step-127: error-path text is content-mode trust-gated (same gate
+        # as the success branch -- see ``MCPClient.call_tool``), so it's
+        # also wrapped in [EXTERNAL_DATA ...]...[/EXTERNAL_DATA].
+        assert result["status"] == "error"
+        assert 'source="mcp:test/tool1"' in result["error"]
+        assert "file not found" in result["error"]
 
 
 def test_mcp_client_timeout():
@@ -116,8 +125,15 @@ def test_mcp_client_response_truncated():
     with patch("select.select", return_value=([client.process.stdout], [], [])):
         result = client.call_tool("tool1", {})
         assert result["status"] == "ok"
-        assert result["result"].endswith("[truncated]")
-        assert len(result["result"].encode("utf-8")) <= 10 + len(b" [truncated]")
+        # Step-127: truncation happens before trust_gate wraps the payload
+        # in delimiters. ``[truncated]`` is therefore the LAST token of the
+        # raw text inside the wrapper, not the trailing token of the whole
+        # string. The wrapper itself ends with ``[/EXTERNAL_DATA]``.
+        assert result["result"].endswith("[/EXTERNAL_DATA]")
+        assert "[truncated]" in result["result"]
+        # Byte-budget: truncated raw text is bounded; the wrapper is constant overhead.
+        wrapper_overhead_bytes = len(b'[EXTERNAL_DATA source="mcp:test/tool1"]\n\n[/EXTERNAL_DATA]')
+        assert len(result["result"].encode("utf-8")) <= 10 + len(b" [truncated]") + wrapper_overhead_bytes
 
 
 def test_mcp_registry_injects_tools():

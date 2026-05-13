@@ -287,7 +287,16 @@ N/A -- no schema changes.
 - [ ] trust_gate content-mode output wrapped in `[EXTERNAL_DATA]` delimiters
 - [ ] trust_gate metadata-mode output unchanged
 - [ ] DELIMITER_INSTRUCTION constant exported from trust_gate module
-- [ ] Standing instruction inserted in all 4 system prompt builders
+- [ ] Standing instruction inserted in `xibi/react.py` system prompt
+      (native + non-native paths) and `xibi/subagent/checklist.py` user
+      prompt before `Previous step outputs:` (per TRR conditions 1 + 2;
+      original spec's 4 builders revised to 2 actual insertion points)
+- [ ] Attacker-supplied `[EXTERNAL_DATA` / `[/EXTERNAL_DATA` markers in
+      input text are defanged with a zero-width space before wrapping
+      (per TRR condition 3)
+- [ ] Delimiter wrapping placed AFTER sanitization and BEFORE logging in
+      `trust_gate()` so the `length` log field reflects post-wrap bytes
+      (per TRR condition 5)
 - [ ] All new tests pass
 - [ ] All existing tests pass (updated for delimiter wrapping where needed)
 - [ ] No new files created

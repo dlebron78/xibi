@@ -54,6 +54,7 @@ from xibi.router import (
     set_trace_context,
 )
 from xibi.security import trust_gate
+from xibi.security.trust_gate import DELIMITER_INSTRUCTION
 from xibi.tools import resolve_tier
 from xibi.tracing import Span, Tracer
 from xibi.trust.gradient import FailureType, TrustGradient
@@ -1039,16 +1040,25 @@ async def _run_async(
             _native_parts.append(context_block)
         _native_parts.append("\n".join(_identity_lines))
         _native_parts.append(_rules)
+        # Trust-gate delimiter instruction (step-127). Tool results land in
+        # the message list as ``[EXTERNAL_DATA ...]...[/EXTERNAL_DATA]`` blocks
+        # gated by :func:`trust_gate`; this instruction primes the LLM to
+        # read those blocks as data, not commands.
+        _native_parts.append(DELIMITER_INSTRUCTION)
         if _drafts_block:
             _native_parts.append(_drafts_block)
         # _handle_instructions is appended without a leading separator below
         # to preserve the existing native prompt suffix shape.
         system_prompt = "\n\n".join(_native_parts) + _handle_instructions
     else:
-        # Assembly order: identity → rules → drafts → context → tools → format
+        # Assembly order: identity → rules → delimiter instruction → drafts → context → tools → format
         _prompt_parts = []
         _prompt_parts.append("\n".join(_identity_lines))
         _prompt_parts.append(_rules)
+        # Trust-gate delimiter instruction (step-127). JSON-format tool
+        # results are folded into the running scratchpad/context block by
+        # the loop; same threat model as native, same instruction.
+        _prompt_parts.append(DELIMITER_INSTRUCTION)
         if _drafts_block:
             _prompt_parts.append(_drafts_block)
         if context_block:
