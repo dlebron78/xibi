@@ -596,13 +596,15 @@ class HeartbeatPoller:
                             },
                             timeout_ms=_tick_ext_timeout_ms,
                             tracer=self.tracer,
+                            config_path=self.config_path,
                         )
                         _llm_duration_ms = int((time.monotonic() - _llm_t0) * 1000)
-                        # Email: merge LLM enrichment with Tier 0 fields
-                        # BEFORE comparison and pipeline use (step-128 spec
-                        # "Email Tier 0 interaction").
-                        if extractor_name == "email":
-                            llm_signals = merge_email_tier0_signals(raw_signals, llm_signals)
+                        # BUG-014: compare BEFORE the email Tier 0 merge.
+                        # The merge falls back to coded signals when the LLM
+                        # returns an empty list, which would make the
+                        # comparison see two identical lists and report a
+                        # false 100% match. The merge is only needed for
+                        # the in-llm-mode pipeline swap below.
                         comparison = compare_extractions(
                             coded=raw_signals,
                             llm=llm_signals,
@@ -611,6 +613,12 @@ class HeartbeatPoller:
                             duration_coded_ms=_coded_duration_ms,
                             duration_llm_ms=_llm_duration_ms,
                         )
+                        # Email: merge LLM enrichment with Tier 0 fields
+                        # for the pipeline swap (step-128 spec "Email
+                        # Tier 0 interaction"). Done after comparison so
+                        # shadow metrics reflect raw LLM output.
+                        if extractor_name == "email":
+                            llm_signals = merge_email_tier0_signals(raw_signals, llm_signals)
                         logger.info(
                             "extraction.shadow source=%s extractor=%s"
                             " coded_count=%d llm_count=%d ref_id_match=%d/%d"

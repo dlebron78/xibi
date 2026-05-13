@@ -160,15 +160,16 @@ def extract_signals_llm(
     *,
     timeout_ms: int = 5000,
     tracer: Any | None = None,
+    config_path: str | None = None,
 ) -> list[dict[str, Any]]:
     """Extract signal dicts from raw MCP response via the local LLM.
 
-    Resolves the model via ``get_model(effort="fast")`` and calls the
-    returned ``ModelClient`` (TRR C2 -- do not call Ollama directly).
-    On any failure (timeout, parse error, model down) returns an empty
-    list and emits an ``extraction.llm`` span with ``status="error"``.
-    The caller (poller) is responsible for falling back to the coded path
-    when this returns empty.
+    Resolves the model via ``get_model(effort="fast", config_path=...)`` and
+    calls the returned ``ModelClient`` (TRR C2 -- do not call Ollama
+    directly). On any failure (timeout, parse error, model down) returns
+    an empty list and emits an ``extraction.llm`` span with
+    ``status="error"``. The caller (poller) is responsible for falling
+    back to the coded path when this returns empty.
 
     Parameters
     ----------
@@ -182,11 +183,19 @@ def extract_signals_llm(
         to 4000 chars before being placed in the prompt.
     context : dict, optional
         Same context dict passed to coded extractors (db_path, config,
-        source_metadata). Reserved for future use; not consumed today.
+        source_metadata). Reserved for future use; not consumed today,
+        but preserved through the call so callers can attach metadata
+        for span/log enrichment in later specs.
     timeout_ms : int
         Per-call Ollama timeout in milliseconds. Default 5000.
     tracer : Tracer, optional
         Tracer for span emission. Best-effort; None disables tracing.
+    config_path : str, optional
+        Path to the Xibi config file. Forwarded to ``get_model`` so the
+        LLM resolution respects the same fallback chain other heartbeat
+        callers use (e.g. ``poller.py``, ``classification.py``). When
+        ``None``, ``get_model``'s own default is used -- useful for
+        ad-hoc/test callers that don't have a poller-style config path.
 
     Returns
     -------
@@ -194,7 +203,6 @@ def extract_signals_llm(
         Signal dicts matching the coded extractor output schema. Empty
         list on any failure.
     """
-    del context  # reserved
     prompt = _build_prompt(source_name, extractor_name, raw_data)
     t_start = time.monotonic()
     status = "ok"
@@ -205,7 +213,10 @@ def extract_signals_llm(
     try:
         from xibi.router import get_model
 
-        client = get_model(effort="fast")
+        if config_path is not None:
+            client = get_model(effort="fast", config_path=config_path)
+        else:
+            client = get_model(effort="fast")
         model_label = getattr(client, "model", "")
         timeout_sec = max(1.0, timeout_ms / 1000.0)
         response = client.generate(prompt, timeout=timeout_sec)

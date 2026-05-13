@@ -81,7 +81,7 @@ def test_parse_valid_json_array():
 
 
 def test_parse_strips_markdown_fence():
-    response = "```json\n[{\"source\":\"x\",\"content_preview\":\"y\"}]\n```"
+    response = '```json\n[{"source":"x","content_preview":"y"}]\n```'
     signals, err = _parse_llm_response(response)
     assert err is None
     assert len(signals) == 1
@@ -172,9 +172,7 @@ def _make_client(response_text: str):
 
 
 def test_extract_signals_llm_happy_path():
-    client = _make_client(
-        '[{"source":"github","content_preview":"commit abc","type":"commit","ref_id":"sha1"}]'
-    )
+    client = _make_client('[{"source":"github","content_preview":"commit abc","type":"commit","ref_id":"sha1"}]')
     with patch("xibi.router.get_model", return_value=client):
         out = extract_signals_llm("github", "github_activity", {"x": 1})
     assert len(out) == 1
@@ -189,6 +187,28 @@ def test_extract_signals_llm_passes_timeout_kwarg():
     # Inspect call: generate(prompt, timeout=1.234)
     _args, kwargs = client.generate.call_args
     assert kwargs.get("timeout") == pytest.approx(1.234)
+
+
+def test_extract_signals_llm_forwards_config_path_to_get_model():
+    """BUG-013: config_path must flow through to get_model so the LLM
+    resolution uses the same fallback chain as other heartbeat callers."""
+    client = _make_client("[]")
+    with patch("xibi.router.get_model", return_value=client) as mocked:
+        extract_signals_llm("x", "y", {}, config_path="/tmp/xibi.json")
+    _args, kwargs = mocked.call_args
+    assert kwargs.get("config_path") == "/tmp/xibi.json"
+    assert kwargs.get("effort") == "fast"
+
+
+def test_extract_signals_llm_omits_config_path_when_none():
+    """When config_path is None, do not forward it -- let get_model use
+    its own default. This preserves backward compatibility for ad-hoc
+    callers (tests, REPL) that don't have a poller-style config path."""
+    client = _make_client("[]")
+    with patch("xibi.router.get_model", return_value=client) as mocked:
+        extract_signals_llm("x", "y", {})
+    _args, kwargs = mocked.call_args
+    assert "config_path" not in kwargs
 
 
 def test_extract_signals_llm_timeout_returns_empty(caplog):
@@ -254,7 +274,10 @@ def test_compare_extractions_count_and_ref_id_match():
 
 
 def test_compare_extractions_count_mismatch():
-    coded = [{"source": "x", "content_preview": "a", "ref_id": "1"}, {"source": "x", "content_preview": "b", "ref_id": "2"}]
+    coded = [
+        {"source": "x", "content_preview": "a", "ref_id": "1"},
+        {"source": "x", "content_preview": "b", "ref_id": "2"},
+    ]
     llm = [{"source": "x", "content_preview": "a", "ref_id": "1"}] * 4
     cmp = compare_extractions(coded, llm, "x", "generic")
     assert cmp["coded_count"] == 2
@@ -272,7 +295,12 @@ def test_compare_extractions_empty_inputs():
 
 def test_compare_extractions_records_durations():
     cmp = compare_extractions(
-        [], [], "x", "y", duration_coded_ms=12, duration_llm_ms=345,
+        [],
+        [],
+        "x",
+        "y",
+        duration_coded_ms=12,
+        duration_llm_ms=345,
     )
     assert cmp["duration_coded_ms"] == 12
     assert cmp["duration_llm_ms"] == 345
