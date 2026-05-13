@@ -260,7 +260,15 @@ review, escalate to Cowork or wait for Daniel to run it there.
 
 ## Reference
 
+- tasks/ARCHITECTURE-TRACKER.md — execution status for RFC work + pipeline state
 - BUGS_AND_ISSUES.md — incident log
 - tasks/EPIC-subagent.md — current epic (subagent runtime)
 - tasks/EPIC-chief-of-staff.md — parallel epic
 - tasks/templates/task-spec.md — spec template (Cowork uses this)
+
+**Architecture tracker update rule.** On every merge that touches RFC-related
+code or pipeline tooling, update `tasks/ARCHITECTURE-TRACKER.md` as part of
+the merge commit. Status must be verified against code (grep/read), not
+copied from specs or the RFC. This is the same class of requirement as
+moving the spec to `done/` — if the tracker is stale after merge, something
+went wrong.
