@@ -2,6 +2,7 @@
 Description=Xibi Dashboard
 After=network.target
 Wants=network.target
+OnFailure=xibi-caretaker-onfail.service
 
 [Service]
 Type=simple
@@ -10,6 +11,8 @@ ExecStart=/usr/bin/python3 %h/xibi/run_dashboard.py
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=30
+MemoryMax=256M
+CPUQuota=50%
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=xibi-dashboard

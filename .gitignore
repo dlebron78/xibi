@@ -16,6 +16,7 @@ DEPLOY.md
 *.db-wal
 *.db-shm
 *.db-journal
+*.db.migrate.lock
 data/
 
 # Conversation logs and workspace mirrors — contain real email content, PII

@@ -101,6 +101,7 @@ run_case() {
     SYNC_UPDATED=""
     SYNC_ENABLED=""
     SYNC_STALE=""
+    SYNC_REMOVED=""
     SYNC_WARNINGS=""
     SYNC_STALE_CHANGED=""
     "$@"
@@ -202,6 +203,15 @@ case4() {
     sync_units
 
     assert_eq "$SYNC_STALE" "xibi-dashboard.service" "case4.stale has dashboard only (deploy allow-listed)"
+    # Step-130: removal phase populates SYNC_REMOVED even under DRY_RUN (intent
+    # is recorded; the actual rm + disable are gated behind DRY_RUN below).
+    assert_eq "$SYNC_REMOVED" "xibi-dashboard.service" "case4.removed populated with same set"
+    # DRY_RUN must NOT actually delete the file from the fake dst dir.
+    if [ ! -f "$XIBI_SYSTEMD_USER_DIR/xibi-dashboard.service" ]; then
+        fail "case4.dry_run: stale file was deleted despite SYSTEMD_DRY_RUN=1"
+    else
+        pass "case4.dry_run: stale file preserved (no rm under dry-run)"
+    fi
     # First-ever run: state file absent → previous empty, current {dashboard} → state change.
     assert_eq "$SYNC_STALE_CHANGED" "current:xibi-dashboard.service" "case4.stale_changed marks new stale set"
 
@@ -218,6 +228,7 @@ case4() {
     rm "$XIBI_SYSTEMD_USER_DIR/xibi-dashboard.service"
     sync_units
     assert_eq "$SYNC_STALE" "" "case4.cleared: SYNC_STALE empty after removal"
+    assert_eq "$SYNC_REMOVED" "" "case4.cleared: SYNC_REMOVED empty (nothing to remove)"
     assert_eq "$SYNC_STALE_CHANGED" "cleared:xibi-dashboard.service" "case4.cleared: stale_changed reports cleared set"
 }
 run_case "Case 4: stale detection + dedup + cleared" case4
@@ -252,6 +263,71 @@ case5() {
     fi
 }
 run_case "Case 5: SYSTEMD_DRY_RUN=1 prevents mutations" case5
+
+# ---------------------------------------------------------------------------
+# Case 6: Stale removal — non-dry-run actually deletes the file (step-130).
+# Mocks `systemctl` so the disable call in the removal phase doesn't escape
+# into the host user session. Verifies SYNC_REMOVED is populated and the
+# unit file is gone from DST_DIR after sync.
+# ---------------------------------------------------------------------------
+# shellcheck disable=SC2317  # invoked indirectly via sync_units when DRY_RUN=0
+systemctl() {
+    # Swallow daemon-reload, enable, disable, is-enabled. Treat is-enabled
+    # as "not enabled" (rc=1) so the enable phase does its thing without
+    # caring. Treat disable as success. Everything else returns success.
+    case "${2:-}" in
+        is-enabled) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+export -f systemctl
+
+case6() {
+    local root; root=$(make_case case6)
+    export REPO_DIR="$root/repo"
+    export XIBI_SYSTEMD_USER_DIR="$root/dst"
+    export XIBI_DEPLOY_SYNC_STATE="$root/state"
+
+    # Plant a stale unit with [Install] (exercises the disable branch).
+    write_unit_with_install "$XIBI_SYSTEMD_USER_DIR/xibi-ghost.service"
+    # And a stale unit without [Install] (exercises the bare-rm branch).
+    write_service_no_install "$XIBI_SYSTEMD_USER_DIR/xibi-spirit.service"
+
+    # Allow-list unit must survive.
+    write_unit_with_install "$XIBI_SYSTEMD_USER_DIR/xibi-deploy.service"
+
+    # Turn off dry-run for this case only.
+    local saved="${SYSTEMD_DRY_RUN:-}"
+    export SYSTEMD_DRY_RUN=0
+
+    sync_units
+
+    # Restore dry-run for subsequent cases (none currently, but defensive).
+    export SYSTEMD_DRY_RUN="${saved:-1}"
+
+    # SYNC_REMOVED should list BOTH stale units (allow-list excluded).
+    # Order is the iteration order of cur_stale which is filesystem-glob order
+    # (alphabetical): ghost before spirit.
+    assert_eq "$SYNC_REMOVED" "xibi-ghost.service xibi-spirit.service" "case6.removed lists both stale units"
+    if [ -f "$XIBI_SYSTEMD_USER_DIR/xibi-ghost.service" ]; then
+        fail "case6.ghost file still present (rm did not fire)"
+    else
+        pass "case6.ghost file deleted from dst"
+    fi
+    if [ -f "$XIBI_SYSTEMD_USER_DIR/xibi-spirit.service" ]; then
+        fail "case6.spirit file still present (rm did not fire)"
+    else
+        pass "case6.spirit file deleted from dst"
+    fi
+    # Allow-list survivor: must NOT be removed.
+    if [ -f "$XIBI_SYSTEMD_USER_DIR/xibi-deploy.service" ]; then
+        pass "case6.allow_list xibi-deploy.service preserved"
+    else
+        fail "case6.allow_list xibi-deploy.service was deleted — ALLOW_LIST not enforced"
+    fi
+}
+run_case "Case 6: stale removal (non-dry-run, mocked systemctl)" case6
+unset -f systemctl
 
 echo ""
 echo "=============================="

@@ -19,17 +19,40 @@ Adding a new migration: bump :data:`SCHEMA_VERSION`, append a
 ``migrations`` list in :meth:`migrate`, and write the ``_migration_N``
 method. Idempotent column adds use :func:`_safe_add_column` so re-runs
 on partially-applied DBs do not double-add.
+
+Concurrency
+-----------
+:meth:`SchemaManager.migrate` serializes itself against concurrent
+callers (caretaker + heartbeat both run ``migrate()`` at startup) via
+an exclusive ``fcntl.flock`` on a sibling lock file derived from the
+DB path. The ``busy_timeout=30000`` PRAGMA only handles row-level
+contention inside SQLite; it cannot prevent two Python processes from
+racing on the migration loop itself.
 """
 
 from __future__ import annotations
 
+import errno
+import fcntl
 import logging
 import sqlite3
+import time
 from pathlib import Path
+from typing import IO
 
 logger = logging.getLogger(__name__)
 
 SCHEMA_VERSION = 44  # increment when adding new migrations
+
+# Maximum wall-clock seconds ``migrate()`` will wait for the file lock
+# before raising :class:`TimeoutError`. Set as a module-level constant so
+# tests can monkeypatch it down (the real concurrent-migration race
+# resolves in milliseconds; 30s mirrors the SQLite ``busy_timeout``).
+MIGRATION_LOCK_TIMEOUT_SECONDS = 30.0
+
+# Poll interval while waiting on the lock. Small enough that real
+# contention clears quickly; large enough that the spin doesn't burn CPU.
+_MIGRATION_LOCK_POLL_INTERVAL_SECONDS = 0.1
 
 
 def _safe_add_column(
@@ -95,7 +118,73 @@ class SchemaManager:
         except sqlite3.OperationalError:
             return 0
 
+    def _lock_path(self) -> Path:
+        """Return the sibling lock file path derived from ``db_path``.
+
+        Kept as a method (not a hardcoded suffix at call sites) so test
+        doubles can override it and so the derivation stays in one place.
+        """
+        return Path(str(self.db_path) + ".migrate.lock")
+
     def migrate(self) -> list[int]:
+        """Apply all pending migrations in order, holding an exclusive flock.
+
+        Concurrent callers serialize on the file lock at ``self._lock_path()``.
+        If the lock cannot be acquired within
+        :data:`MIGRATION_LOCK_TIMEOUT_SECONDS` seconds, raises
+        :class:`TimeoutError`. The version-probe and the migration loop
+        both run under the lock so two processes cannot observe the same
+        ``schema_version`` and both attempt to apply the same migration.
+        """
+        lock_path = self._lock_path()
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        # Open in append mode so the file is created if missing without
+        # clobbering anyone else who might already have it open. The fd
+        # itself is what flock(2) actually keys on. We can't use a `with`
+        # block: the file has to stay open across the migration body and
+        # the lock release, then close in the outer `finally`.
+        lock_file = open(lock_path, "a")  # noqa: SIM115
+        try:
+            self._acquire_lock(lock_file)
+            try:
+                return self._migrate_locked()
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        finally:
+            lock_file.close()
+
+    @staticmethod
+    def _acquire_lock(lock_file: IO[str]) -> None:
+        """Block until the exclusive flock is held or the timeout elapses.
+
+        Polls ``LOCK_EX | LOCK_NB`` so the wait honors
+        :data:`MIGRATION_LOCK_TIMEOUT_SECONDS` rather than blocking
+        indefinitely on a stuck holder. Emits one WARNING the first time
+        contention is observed, and raises :class:`TimeoutError` if the
+        lock is still held when the deadline passes.
+        """
+        deadline = time.monotonic() + MIGRATION_LOCK_TIMEOUT_SECONDS
+        warned = False
+        while True:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return
+            except BlockingIOError:
+                pass
+            except OSError as e:
+                # macOS may return EWOULDBLOCK as a plain OSError rather
+                # than BlockingIOError on some Python builds; accept that
+                # too. Any other errno is a real problem — re-raise.
+                if e.errno not in (errno.EAGAIN, errno.EWOULDBLOCK):
+                    raise
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"Could not acquire migration lock within {MIGRATION_LOCK_TIMEOUT_SECONDS:.0f}s")
+            if not warned:
+                logger.warning("Migration lock held by another process, waiting...")
+                warned = True
+            time.sleep(_MIGRATION_LOCK_POLL_INTERVAL_SECONDS)
+
+    def _migrate_locked(self) -> list[int]:
         """Apply all pending migrations in order. Return list of version numbers applied."""
         current_version = self.get_version()
         applied = []

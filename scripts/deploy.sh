@@ -70,6 +70,8 @@ sync_units() {
     # shellcheck disable=SC2034
     SYNC_STALE=""
     # shellcheck disable=SC2034
+    SYNC_REMOVED=""
+    # shellcheck disable=SC2034
     SYNC_WARNINGS=""
     SYNC_STALE_CHANGED=""   # "current:<list>" or "cleared:<list>" when state changes
 
@@ -176,6 +178,41 @@ sync_units() {
     # shellcheck disable=SC2034  # read by tests via SYNC_STALE; dedup logic uses local cur_stale
     SYNC_STALE="$cur_stale"
 
+    # --- Stale removal: for each unit in SYNC_STALE, disable (if [Install]) and rm.
+    # ALLOW_LIST membership was already enforced during stale detection above —
+    # any unit in cur_stale is safe to remove. DRY_RUN skips the filesystem +
+    # systemctl mutations but still populates SYNC_REMOVED so tests see intent.
+    local removed=""
+    local stale_unit install_err disable_err
+    for stale_unit in $cur_stale; do
+        local stale_path="$DST_DIR/$stale_unit"
+        [ -f "$stale_path" ] || continue
+        if [ "$DRY_RUN" = "1" ]; then
+            removed="${removed:+$removed }$stale_unit"
+            logger -t "$LOG_TAG" "sync_units: removed $stale_unit" 2>/dev/null || true
+            continue
+        fi
+        # Only disable units that have an [Install] section — units without
+        # one were never enabled, and `systemctl disable` would just warn.
+        if grep -q '^\[Install\]' "$stale_path"; then
+            disable_err=$(systemctl --user disable --now "$stale_unit" 2>&1) || install_err="$disable_err"
+            if [ -n "${install_err:-}" ]; then
+                SYNC_WARNINGS="${SYNC_WARNINGS:+$SYNC_WARNINGS; }disable failed $stale_unit: $install_err"
+                logger -t "$LOG_TAG" "sync_units: disable failed $stale_unit $install_err" 2>/dev/null || true
+                install_err=""
+            fi
+        fi
+        if rm -f "$stale_path"; then
+            removed="${removed:+$removed }$stale_unit"
+            logger -t "$LOG_TAG" "sync_units: removed $stale_unit" 2>/dev/null || true
+        else
+            SYNC_WARNINGS="${SYNC_WARNINGS:+$SYNC_WARNINGS; }rm failed $stale_unit"
+            logger -t "$LOG_TAG" "sync_units: rm failed $stale_unit" 2>/dev/null || true
+        fi
+    done
+    # shellcheck disable=SC2034  # consumed by build_sync_block + tests
+    SYNC_REMOVED="$removed"
+
     # --- Stale dedup via state file (TRR condition 2: first-ever run treats
     # previous stale set as empty; state file is always rewritten on change,
     # including the empty-set case on clear).
@@ -234,6 +271,8 @@ build_sync_block() {
   Stale: $list"
         fi
     fi
+    [ -n "${SYNC_REMOVED:-}" ] && block="${block}
+  Removed: $SYNC_REMOVED"
     [ -n "${SYNC_WARNINGS:-}" ] && block="${block}
   ⚠️ Warnings: $SYNC_WARNINGS"
 

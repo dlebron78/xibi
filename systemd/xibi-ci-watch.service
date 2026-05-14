@@ -1,5 +1,6 @@
 [Unit]
 Description=Xibi CI watch (poll GitHub PR checks, notify via Telegram)
+OnFailure=xibi-caretaker-onfail.service
 
 [Service]
 Type=oneshot

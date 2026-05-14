@@ -2,6 +2,7 @@
 Description=Xibi Telegram Adapter
 After=network.target
 Wants=network.target
+OnFailure=xibi-caretaker-onfail.service
 
 [Service]
 Type=simple
@@ -11,6 +12,8 @@ ExecStart=/usr/bin/python3 -m xibi --config %h/.xibi/config.json --workdir %h/.x
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=300
+MemoryMax=256M
+CPUQuota=50%
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=xibi-telegram

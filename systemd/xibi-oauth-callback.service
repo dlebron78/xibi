@@ -2,6 +2,7 @@
 Description=Xibi OAuth Callback Server
 After=network.target
 Wants=network.target
+OnFailure=xibi-caretaker-onfail.service
 
 [Service]
 Type=simple
@@ -11,6 +12,8 @@ ExecStart=/usr/bin/python3 -m xibi.oauth.server
 Restart=on-failure
 RestartSec=10
 TimeoutStopSec=30
+MemoryMax=128M
+CPUQuota=25%
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=xibi-oauth-callback

@@ -163,95 +163,6 @@ class OllamaClient:
             int(rjson.get("eval_count", 0) or 0),
         )
 
-    def _emit_telemetry(
-        self,
-        prompt: str,
-        system: str | None,
-        response_text: str,
-        duration_ms: int,
-        parse_status: str = "ok",
-        recovery_attempt: bool = False,
-        error: XibiError | None = None,
-    ) -> None:
-        """Write span + inference_event. Never raises."""
-        prompt_tokens, response_tokens, _ = getattr(self, "_last_tokens", (0, 0, 0))
-        ctx = _active_trace.get()
-        is_error = error is not None or parse_status == "failed"
-
-        # 1. Inference event — always written regardless of trace context
-        try:
-            from xibi.db import open_db
-
-            db_path = _active_db_path.get()
-            if db_path:
-                with open_db(db_path) as conn:
-                    conn.execute(
-                        """
-                        INSERT INTO inference_events
-                            (recorded_at, role, provider, model, operation,
-                             prompt_tokens, response_tokens, duration_ms, cost_usd, degraded, trace_id)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            datetime.utcnow().isoformat(),
-                            getattr(self, "_role", "unknown") or "unknown",
-                            self.provider,
-                            self.model,
-                            ctx["operation"] if ctx else "unknown",
-                            prompt_tokens,
-                            response_tokens,
-                            duration_ms,
-                            0.0,
-                            1 if is_error else 0,
-                            ctx["trace_id"] if ctx else None,
-                        ),
-                    )
-                    conn.commit()
-        except Exception:
-            pass
-
-        # 2. Span — only if a trace context is active
-        if ctx and ctx.get("trace_id"):
-            try:
-                tracer = _active_tracer.get()
-                if tracer:
-                    from xibi.tracing import Span
-
-                    attributes: dict[str, Any] = {
-                        "provider": self.provider,
-                        "model": self.model,
-                        "role": getattr(self, "_role", "unknown") or "unknown",
-                        "operation": ctx.get("operation", "unknown"),
-                        "prompt_tokens": prompt_tokens,
-                        "response_tokens": response_tokens,
-                        "system_prompt_len": len(system) if system else 0,
-                        "system_prompt_preview": (system or "")[:800],
-                        "prompt_len": len(prompt),
-                        "prompt_preview": prompt[:800],
-                        "raw_response_preview": response_text[:800],
-                        "parse_status": parse_status,
-                        "recovery_attempt": recovery_attempt,
-                    }
-                    if error is not None:
-                        attributes["error.category"] = error.category.value
-                        attributes["error.message"] = error.message[:200]
-                        attributes["error.component"] = error.component
-                    tracer.emit(
-                        Span(
-                            trace_id=ctx["trace_id"],
-                            span_id=str(uuid.uuid4()),
-                            parent_span_id=ctx.get("parent_span_id"),
-                            operation="llm.generate",
-                            component="router",
-                            start_ms=int(time.time() * 1000) - duration_ms,
-                            duration_ms=duration_ms,
-                            status="error" if is_error else "ok",
-                            attributes=attributes,
-                        )
-                    )
-            except Exception:
-                pass
-
     def _call_provider(self, prompt: str, system: str | None = None, **kwargs: Any) -> str:
         url = f"{self.base_url}/api/generate"
         # Separate top-level Ollama API flags (e.g. "think") from model options
@@ -310,7 +221,8 @@ class OllamaClient:
             raise
         finally:
             duration_ms = int((time.monotonic() - t_start) * 1000)
-            self._emit_telemetry(
+            _emit_provider_telemetry(
+                self,
                 prompt=prompt,
                 system=system,
                 response_text=text,
@@ -353,7 +265,8 @@ class OllamaClient:
             raise
         finally:
             duration_ms = int((time.monotonic() - t_start) * 1000)
-            self._emit_telemetry(
+            _emit_provider_telemetry(
+                self,
                 prompt=prompt_with_schema,
                 system=system,
                 response_text=response_text,
@@ -429,7 +342,8 @@ class OllamaClient:
                     }
                 )
 
-            self._emit_telemetry(
+            _emit_provider_telemetry(
+                self,
                 prompt=str(chat_messages),
                 system=system,
                 response_text=msg.get("content", "") or str(result["tool_calls"]),
@@ -479,95 +393,6 @@ class GeminiClient:
         except Exception:
             pass
         return (0, 0)
-
-    def _emit_telemetry(
-        self,
-        prompt: str,
-        system: str | None,
-        response_text: str,
-        duration_ms: int,
-        parse_status: str = "ok",
-        recovery_attempt: bool = False,
-        error: XibiError | None = None,
-    ) -> None:
-        """Write span + inference_event. Never raises."""
-        prompt_tokens, response_tokens, _ = getattr(self, "_last_tokens", (0, 0, 0))
-        ctx = _active_trace.get()
-        is_error = error is not None or parse_status == "failed"
-
-        # 1. Inference event — always written regardless of trace context
-        try:
-            from xibi.db import open_db
-
-            db_path = _active_db_path.get()
-            if db_path:
-                with open_db(db_path) as conn:
-                    conn.execute(
-                        """
-                        INSERT INTO inference_events
-                            (recorded_at, role, provider, model, operation,
-                             prompt_tokens, response_tokens, duration_ms, cost_usd, degraded, trace_id)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            datetime.utcnow().isoformat(),
-                            getattr(self, "_role", "unknown") or "unknown",
-                            self.provider,
-                            self.model,
-                            ctx["operation"] if ctx else "unknown",
-                            prompt_tokens,
-                            response_tokens,
-                            duration_ms,
-                            0.0,
-                            1 if is_error else 0,
-                            ctx["trace_id"] if ctx else None,
-                        ),
-                    )
-                    conn.commit()
-        except Exception:
-            pass
-
-        # 2. Span — only if a trace context is active
-        if ctx and ctx.get("trace_id"):
-            try:
-                tracer = _active_tracer.get()
-                if tracer:
-                    from xibi.tracing import Span
-
-                    attributes: dict[str, Any] = {
-                        "provider": self.provider,
-                        "model": self.model,
-                        "role": getattr(self, "_role", "unknown") or "unknown",
-                        "operation": ctx.get("operation", "unknown"),
-                        "prompt_tokens": prompt_tokens,
-                        "response_tokens": response_tokens,
-                        "system_prompt_len": len(system) if system else 0,
-                        "system_prompt_preview": (system or "")[:800],
-                        "prompt_len": len(prompt),
-                        "prompt_preview": prompt[:800],
-                        "raw_response_preview": response_text[:800],
-                        "parse_status": parse_status,
-                        "recovery_attempt": recovery_attempt,
-                    }
-                    if error is not None:
-                        attributes["error.category"] = error.category.value
-                        attributes["error.message"] = error.message[:200]
-                        attributes["error.component"] = error.component
-                    tracer.emit(
-                        Span(
-                            trace_id=ctx["trace_id"],
-                            span_id=str(uuid.uuid4()),
-                            parent_span_id=ctx.get("parent_span_id"),
-                            operation="llm.generate",
-                            component="router",
-                            start_ms=int(time.time() * 1000) - duration_ms,
-                            duration_ms=duration_ms,
-                            status="error" if is_error else "ok",
-                            attributes=attributes,
-                        )
-                    )
-            except Exception:
-                pass
 
     def _call_provider(self, prompt: str, system: str | None = None, **kwargs: Any) -> str:
         config_kwargs: dict[str, Any] = {**self.options}
@@ -621,7 +446,8 @@ class GeminiClient:
             raise
         finally:
             duration_ms = int((time.monotonic() - t_start) * 1000)
-            self._emit_telemetry(
+            _emit_provider_telemetry(
+                self,
                 prompt=prompt,
                 system=system,
                 response_text=text,
@@ -664,7 +490,8 @@ class GeminiClient:
             raise
         finally:
             duration_ms = int((time.monotonic() - t_start) * 1000)
-            self._emit_telemetry(
+            _emit_provider_telemetry(
+                self,
                 prompt=prompt_with_schema,
                 system=system,
                 response_text=response_text,
