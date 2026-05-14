@@ -5,7 +5,7 @@ Claude Code on merge. Cowork updates on grooming or re-prioritizing.
 
 Design rationale: `~/Documents/Dev Docs/Xibi/RFC-source-agnostic-xibi.md`.
 
-Last verified against codebase: 2026-05-13.
+Last verified against codebase: 2026-05-14.
 
 ---
 
@@ -56,7 +56,7 @@ Can start in parallel with Phase B.
 
 | Item | RFC Section | Status | What's needed |
 |---|---|---|---|
-| Subagent runtime hardening | 7 (minus PRAGMA) | NOT STARTED | Inter-step trust propagation, output validation. PRAGMA piece done in Phase A. |
+| Subagent runtime hardening | 7 (minus PRAGMA) | DONE (step-129) | System prompt UTC timestamp + format instructions, 32KB context budget, output-schema validation with corrective retry, tool-scope enforcement, scoped_input deep-copy, manifest `trust` field deprecation. PRAGMA piece done in Phase A. |
 | Cleanup Tier 2: quality | 10 | NOT STARTED | Consolidate 3 telemetry copies, delete orphan test files, add missing tests |
 | Cleanup Tier 3: operations | 10 | NOT STARTED | systemd OnFailure/MemoryMax, deploy.sh orphan removal, migration locking |
 
