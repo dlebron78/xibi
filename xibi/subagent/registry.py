@@ -1,3 +1,13 @@
+"""In-memory registry of validated agent manifests.
+
+Scans ``domains/*/agent.yml`` at boot, validates each via
+:class:`ManifestValidator`, and exposes lookup + checklist-resolution
+helpers used by :func:`spawn_subagent`. step-129 threads the manifest's
+top-level ``output_schema`` through ``resolve_checklist`` so each step
+dict carries the schema needed for prompt enrichment + output
+validation in ``execute_checklist``.
+"""
+
 from __future__ import annotations
 
 import logging

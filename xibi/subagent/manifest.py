@@ -1,3 +1,15 @@
+"""Agent manifest parsing + validation.
+
+Walks an ``agent.yml`` against the contract schema in
+:mod:`xibi.subagent.models`, returning a typed :class:`AgentManifest`
+plus a list of human-readable error strings. Used at registry-discovery
+time (boot) and at spawn time (config-readiness recheck).
+
+step-129: the L1/L2 ``trust`` requirement was removed — the field is
+deprecated since step-123 and the dataclass now defaults it to ``""``,
+so manifests omitting it still parse cleanly.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
