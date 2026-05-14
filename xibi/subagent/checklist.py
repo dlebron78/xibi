@@ -228,10 +228,14 @@ def _parse_step_json(response_content: str) -> dict[str, Any]:
         parsed = json.loads(cleaned.strip())
     except json.JSONDecodeError:
         return {"raw_content": response_content, "error": "Failed to parse JSON output"}
-    return parsed if isinstance(parsed, dict) else {
-        "raw_content": response_content,
-        "error": "JSON output is not an object",
-    }
+    return (
+        parsed
+        if isinstance(parsed, dict)
+        else {
+            "raw_content": response_content,
+            "error": "JSON output is not an object",
+        }
+    )
 
 
 def _apply_context_budget(
@@ -442,11 +446,7 @@ def execute_checklist(
             # declares one -- the output schema as explicit format
             # instructions. Both segments are no-ops for legacy agents.
             now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-            system_prompt = (
-                f"Agent ID: {run.agent_id}\n"
-                f"Skill: {step.skill_name}\n"
-                f"Current UTC time: {now_utc}\n"
-            )
+            system_prompt = f"Agent ID: {run.agent_id}\nSkill: {step.skill_name}\nCurrent UTC time: {now_utc}\n"
             output_schema = step_cfg.get("output_schema") or {}
             if output_schema:
                 system_prompt += (
@@ -587,9 +587,7 @@ def execute_checklist(
                     retry_duration_ms = int((time.monotonic() - t_retry_start) * 1000)
                     responses_for_cost.append((retry_response, retry_duration_ms))
                     retry_output = _check_scope(_parse_step_json(retry_response.content))
-                    retry_valid, retry_error = _validate_step_output(
-                        retry_output, output_schema
-                    )
+                    retry_valid, retry_error = _validate_step_output(retry_output, output_schema)
                     if retry_valid:
                         val_status = "retry_pass"
                         val_error = None

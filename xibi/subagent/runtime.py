@@ -166,9 +166,7 @@ def spawn_subagent(
         # spans share the same DB target and the cost of _ensure_table
         # is paid up front, not per step.
         tracer = Tracer(db_path)
-        run = execute_checklist(
-            run, db_path, resolved_checklist, mcp_configs=mcp_configs, tracer=tracer
-        )
+        run = execute_checklist(run, db_path, resolved_checklist, mcp_configs=mcp_configs, tracer=tracer)
 
         # 9. Generate summary
         if run.status == "COMPLETING":
@@ -248,9 +246,7 @@ def resume_run(
         return run
 
     tracer = Tracer(db_path)
-    run = execute_checklist(
-        run, db_path, checklist, mcp_configs=mcp_configs, tracer=tracer
-    )
+    run = execute_checklist(run, db_path, checklist, mcp_configs=mcp_configs, tracer=tracer)
 
     # Checklist completed without a summary step — persist and return
     if run.status == "DONE":
