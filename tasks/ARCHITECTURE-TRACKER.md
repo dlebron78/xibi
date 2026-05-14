@@ -37,7 +37,7 @@ Depends on: PR 3 + PR 4 (trust gate fully armed before LLM processes arbitrary s
 
 | Item | RFC Section | Status | What's needed |
 |---|---|---|---|
-| LLM-driven signal extraction | 2 | PARTIAL (step-128) | `xibi/heartbeat/llm_extractor.py` ships `extract_signals_llm()` using `get_model(effort="fast")`; `xibi/heartbeat/extraction_config.py` controls `mode={shadow,llm,coded}` (default shadow); `poller.py` Phase 2 runs LLM extraction alongside coded path with `extraction.shadow` log lines + spans. Coded extractors stay live and produce the pipeline signal in shadow mode. Flip to `mode=llm` after shadow data confirms parity. |
+| LLM-driven signal extraction | 2 | PARTIAL (step-128) | `xibi/heartbeat/llm_extractor.py` ships `extract_signals_llm()` using `get_model(effort="fast")`; `xibi/heartbeat/extraction_config.py` controls `mode={shadow,llm,coded}` (default shadow); `poller.py` Phase 2 runs LLM extraction alongside coded path with `extraction.shadow` log lines + spans. Coded extractors stay live and produce the pipeline signal in shadow mode. Flip to `mode=llm` after shadow data confirms parity. **Smoke test 2026-05-13:** BUG-013 (missing config_path) + BUG-014 (shadow comparison after merge) both found and fixed in hotfix PR #143 same day. Shadow data now accumulating with real LLM output (confirmed: `llm_count=1`, `topic_similarity=0.417` on email source). LLM call latency ~10.5s/email worth monitoring. |
 | Source-agnostic classification | 3 | PARTIAL | Classification prompt still uses email-specific fields (sender name, email_alias, account provenance). Prompt builder structure is generic but content is email-shaped. |
 
 ## Phase C: Observation and action -- NOT STARTED
@@ -57,8 +57,8 @@ Can start in parallel with Phase B.
 | Item | RFC Section | Status | What's needed |
 |---|---|---|---|
 | Subagent runtime hardening | 7 (minus PRAGMA) | DONE (step-129) | System prompt UTC timestamp + format instructions, 32KB context budget, output-schema validation with corrective retry, tool-scope enforcement, scoped_input deep-copy, manifest `trust` field deprecation. PRAGMA piece done in Phase A. |
-| Cleanup Tier 2: quality | 10 | NOT STARTED | Consolidate 3 telemetry copies, delete orphan test files, add missing tests |
-| Cleanup Tier 3: operations | 10 | NOT STARTED | systemd OnFailure/MemoryMax, deploy.sh orphan removal, migration locking |
+| Cleanup Tier 2: quality | 10 | DONE (step-130) | Telemetry consolidated (5 call sites now route through module-level `_emit_provider_telemetry`); orphan tests `dump_traces.py` + `test_step36_deployment.py` deleted; new `tests/test_secrets_manager.py` covers store/load/keyring-fallback/corruption/idempotency. |
+| Cleanup Tier 3: operations | 10 | DONE (step-130) | All long-running systemd units carry `OnFailure=xibi-caretaker-onfail.service` + `MemoryMax`/`CPUQuota`; `scripts/deploy.sh sync_units()` removes stale units (not just logs) with `SYNC_REMOVED` summary; new `run_dashboard.py` entry point binds 127.0.0.1:8081; `SchemaManager.migrate()` now holds an exclusive `fcntl.flock` with 30s timeout (sibling lock file derived from `db_path`). |
 
 ---
 
@@ -70,6 +70,7 @@ Specs in `tasks/backlog/` not tied to the RFC:
 |---|---|---|
 | step-87b | Schema reconciliation | Parked |
 | step-118 | Signal intelligence fix + review freshness check | Parked |
+| signal-decay | Signal decay, recurring-signal fatigue, engagement-driven deprioritization | Backlog note filed 2026-05-14. Three slices: (A) wire decay_days to sweep, (B) fatigue signal for classifier, (C) Dismiss/non-engagement creates triage rules. See `tasks/backlog/notes/signal-decay-and-fatigue-2026-05-14.md` |
 | dashboard-punchlist | Dashboard improvements | Parked |
 
 ---
