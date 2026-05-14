@@ -213,10 +213,11 @@ def _notify_parked_action(action: PendingL2Action, run: SubagentRun, step: Any) 
 def _parse_step_json(response_content: str) -> dict[str, Any]:
     """Best-effort parse of a step response's content into a JSON dict.
 
-    Strips a trailing ``\`\`\`json``/``\`\`\``` fence pair if the model
-    wrapped its output in markdown. On parse failure, returns a sentinel
-    dict carrying the raw text -- the downstream validator will treat
-    this as a schema violation and trigger a corrective retry.
+    Strips a leading triple-backtick-json fence and trailing triple-
+    backtick fence if the model wrapped its output in markdown. On
+    parse failure, returns a sentinel dict carrying the raw text --
+    the downstream validator will treat this as a schema violation
+    and trigger a corrective retry.
     """
     cleaned = response_content.strip()
     if cleaned.startswith("```json"):
@@ -515,26 +516,36 @@ def execute_checklist(
             # step-129: declared_tools comes from the skill manifest's
             # tools list -- the same source the prefetch loop uses. An
             # empty list disables the scope check (see check_tool_scope).
-            declared_tools = [
-                t.get("tool")
-                for t in step_cfg.get("tools", [])
-                if isinstance(t, dict) and t.get("tool")
-            ]
+            declared_tools: list[str] = []
+            for t in step_cfg.get("tools", []):
+                if not isinstance(t, dict):
+                    continue
+                tool_name = t.get("tool")
+                if isinstance(tool_name, str) and tool_name:
+                    declared_tools.append(tool_name)
 
-            def _check_scope(out: dict[str, Any]) -> dict[str, Any]:
+            # Default args bind the loop-scoped values at definition
+            # time so ruff B023 stays happy when the retry path reuses
+            # this closure on its own parsed output.
+            def _check_scope(
+                out: dict[str, Any],
+                _declared: list[str] = declared_tools,
+                _skill: str = step.skill_name,
+                _run_id: str = run.id,
+            ) -> dict[str, Any]:
                 """Apply tool-scope check + log any violations.
 
                 Closure so primary and retry parses share the same
                 violation-logging path against the step's declared
                 tool list.
                 """
-                cleaned, violations = check_tool_scope(out, declared_tools)
+                cleaned, violations = check_tool_scope(out, _declared)
                 for v in violations:
                     logger.warning(
                         "tool_scope_violation skill=%s tool=%s run=%s",
-                        step.skill_name,
+                        _skill,
                         v["tool"],
-                        run.id,
+                        _run_id,
                     )
                 return cleaned
 
