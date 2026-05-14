@@ -381,3 +381,40 @@ def test_email_merge_empty_llm_topic_falls_back_to_coded():
     merged = merge_email_tier0_signals(coded, llm)
     assert merged[0]["topic_hint"] == "coded topic"
     assert merged[0]["content_preview"] == "c-preview"
+
+
+def test_compare_after_merge_with_empty_llm_yields_false_100_match():
+    """BUG-014 regression: comparing AFTER ``merge_email_tier0_signals`` with
+    an empty LLM list produces a false 100% match -- the merge falls back
+    to coded signals, so compare sees two identical lists.
+
+    The fix in ``poller.py`` is to run ``compare_extractions`` BEFORE the
+    merge. This test pins the helper-level interaction that motivated the
+    fix: if the order is ever swapped back, this test fails loudly.
+    """
+    coded = [
+        {"source": "email_a", "content_preview": "x", "ref_id": "msg-1", "topic_hint": "t1"},
+        {"source": "email_a", "content_preview": "y", "ref_id": "msg-2", "topic_hint": "t2"},
+    ]
+    llm: list[dict] = []  # LLM returned nothing (timeout, parse error, etc.)
+
+    # The buggy order (merge first, then compare) collapses to "coded vs coded":
+    merged_then_compared = compare_extractions(
+        coded=coded,
+        llm=merge_email_tier0_signals(coded, llm),
+        source_name="email_a",
+        extractor_name="email",
+    )
+    assert merged_then_compared["ref_id_matches"] == merged_then_compared["coded_count"]
+    assert merged_then_compared["count_ratio"] == 1.0  # false 100%
+
+    # The correct order (compare first) reports the real divergence:
+    compared_then_merged = compare_extractions(
+        coded=coded,
+        llm=llm,
+        source_name="email_a",
+        extractor_name="email",
+    )
+    assert compared_then_merged["llm_count"] == 0
+    assert compared_then_merged["ref_id_matches"] == 0
+    assert compared_then_merged["count_ratio"] == 0.0
