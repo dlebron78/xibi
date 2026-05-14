@@ -84,7 +84,8 @@ class TestSubagent(unittest.TestCase):
 
     def test_cancellation(self):
         with patch(
-            "xibi.subagent.runtime.execute_checklist", side_effect=lambda run, db_path, checklist, mcp_configs=None: run
+            "xibi.subagent.runtime.execute_checklist",
+            side_effect=lambda run, db_path, checklist, mcp_configs=None, tracer=None: run,
         ):
             run = spawn_subagent("agent", "manual", {}, {}, TEST_CHECKLIST, {}, self.db_path)
 

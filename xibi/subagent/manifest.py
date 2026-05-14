@@ -92,8 +92,10 @@ class ManifestValidator:
                 if not prompt_path.exists():
                     errors.append(f"Skill '{s_name}' prompt_file not found: {s_data['prompt_file']}")
 
-            if s_data.get("trust") not in ["L1", "L2"]:
-                errors.append(f"Skill '{s_name}' trust must be L1 or L2")
+            # trust field is deprecated (step-123). Read it for backward
+            # compat in SkillDeclaration but do not validate or require it
+            # (step-129 — removed the L1/L2 requirement so new manifests
+            # can omit the field cleanly).
             if not s_data.get("model"):
                 errors.append(f"Skill '{s_name}' missing model")
 

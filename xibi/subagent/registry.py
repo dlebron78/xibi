@@ -112,6 +112,11 @@ class AgentRegistry:
                     "prompt": prompt_content,
                     "references": references,
                     "tools": skill.tools,
+                    # Manifest-level output schema is threaded through to each
+                    # step dict so execute_checklist can build format
+                    # instructions and validate output without re-reading the
+                    # manifest (step-129).
+                    "output_schema": manifest.output_schema,
                 }
             )
 

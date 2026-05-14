@@ -1,5 +1,16 @@
+"""Subagent spawn + resume entry points.
+
+This module owns the lifecycle wrapping around :func:`execute_checklist`:
+manifest lookup, user_config injection, checklist resolution, run
+creation, summary generation, and failure recording. step-129 added a
+deep-copy of ``scoped_input`` at entry so caller dicts aren't mutated,
+and threaded a :class:`Tracer` instance into ``execute_checklist`` so
+the new ``subagent.*`` spans actually land in the DB.
+"""
+
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import uuid
@@ -16,6 +27,7 @@ from xibi.subagent.models import ChecklistStep, SubagentRun
 from xibi.subagent.registry import AgentRegistry
 from xibi.subagent.routing import ModelRouter
 from xibi.subagent.summary import SummaryGenerator
+from xibi.tracing import Tracer
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +50,10 @@ def spawn_subagent(
     """
     if db_path is None:
         raise ValueError("db_path must be provided")
+
+    # Deep-copy at entry so injecting user_config, prefetch results, and
+    # references can't leak back into the caller's dict (step-129).
+    scoped_input = copy.deepcopy(scoped_input)
 
     run_id = str(uuid.uuid4())
     manifest = None
@@ -145,8 +161,14 @@ def spawn_subagent(
             )
             create_step(db_path, step)
 
-        # 8. Execute (sequentially for now as per spec)
-        run = execute_checklist(run, db_path, resolved_checklist, mcp_configs=mcp_configs)
+        # 8. Execute (sequentially for now as per spec).
+        # Tracer is constructed once per run so step-129's subagent.*
+        # spans share the same DB target and the cost of _ensure_table
+        # is paid up front, not per step.
+        tracer = Tracer(db_path)
+        run = execute_checklist(
+            run, db_path, resolved_checklist, mcp_configs=mcp_configs, tracer=tracer
+        )
 
         # 9. Generate summary
         if run.status == "COMPLETING":
@@ -225,7 +247,10 @@ def resume_run(
     if run.status in ("DONE", "RUNNING"):
         return run
 
-    run = execute_checklist(run, db_path, checklist, mcp_configs=mcp_configs)
+    tracer = Tracer(db_path)
+    run = execute_checklist(
+        run, db_path, checklist, mcp_configs=mcp_configs, tracer=tracer
+    )
 
     # Checklist completed without a summary step — persist and return
     if run.status == "DONE":

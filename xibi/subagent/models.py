@@ -89,13 +89,15 @@ class SkillDeclaration:
     name: str
     description: str
     prompt_file: str
+    model: str
     # DEPRECATED in step-123: per-skill L1/L2 trust replaced by the global
     # approval_required_tools config list. Field kept on the dataclass and
     # in skill manifest YAML so legacy manifests still parse, but the value
     # is no longer consulted by the runtime. Removal scheduled in a
-    # follow-up that also sweeps every manifest in one pass.
-    trust: str  # L1 | L2 — deprecated, ignored by enforce_trust()
-    model: str
+    # follow-up that also sweeps every manifest in one pass. Default is ""
+    # so manifests that omit the field parse without TypeError after the
+    # manifest-validator stopped requiring it (step-129).
+    trust: str = ""  # L1 | L2 — deprecated, ignored by enforce_trust()
     standalone: bool = False
     standalone_input: dict[str, Any] | None = None
     depends_on: list[str] = field(default_factory=list)
