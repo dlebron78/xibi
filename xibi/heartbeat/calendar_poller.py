@@ -80,7 +80,16 @@ def poll_calendar_signals(
                 continue
 
             # 2. Derive fields
-            title = trust_gate(event.get("summary", "(No title)"), source="calendar_title", mode="metadata")
+            # Step-131: calendar events have no sender trust model yet, so all
+            # three trust_gate calls pass ``sender_trust_tier="UNKNOWN"`` -- the
+            # conservative default that gives the risk grader a non-neutral
+            # signal without inventing a tier that does not exist.
+            title = trust_gate(
+                event.get("summary", "(No title)"),
+                source="calendar_title",
+                mode="metadata",
+                sender_trust_tier="UNKNOWN",
+            )
             start = event.get("start", {})
             start_iso = start.get("dateTime", start.get("date"))
 
@@ -97,7 +106,12 @@ def poll_calendar_signals(
 
             urgency = _derive_urgency(start_iso)
             attendee_name, attendee_email = _extract_attendees(event)
-            attendee_name = trust_gate(attendee_name, source="calendar_attendee", mode="metadata")
+            attendee_name = trust_gate(
+                attendee_name,
+                source="calendar_attendee",
+                mode="metadata",
+                sender_trust_tier="UNKNOWN",
+            )
 
             # Google Calendar deep link format uses a base64 encoded string of "event_id calendar_id"
             # Standard padding is removed to match observed GCal URL patterns.
@@ -114,7 +128,12 @@ def poll_calendar_signals(
 
             location = event.get("location")
             if location:
-                location = trust_gate(location, source="calendar_location", mode="metadata")
+                location = trust_gate(
+                    location,
+                    source="calendar_location",
+                    mode="metadata",
+                    sender_trust_tier="UNKNOWN",
+                )
                 preview += f" (@ {location})"
 
             # 3. Log signal

@@ -932,8 +932,27 @@ class HeartbeatPoller:
         for sig in raw_signals:
             email = sig["metadata"]["email"]
             email_id = sig["ref_id"]
-            sender = trust_gate(sig["entity_text"], source="email_sender", mode="metadata")
-            subject = trust_gate(sig["topic_hint"], source="email_subject", mode="metadata")
+            # Step-131: assess sender trust BEFORE the trust_gate calls so
+            # ``TrustAssessment.tier`` can flow into the shadow risk grader.
+            # The move is safe -- nothing between here and the original
+            # assessment location (formerly just before ``processed.append``)
+            # reads the trust value, and the inputs the assessor needs
+            # (``email``, ``self.db_path``) are already in scope.
+            sender_addr = _extract_sender_addr(email)
+            sender_name = _extract_sender_name(email)
+            trust = assess_sender_trust(sender_addr, sender_name, self.db_path)
+            sender = trust_gate(
+                sig["entity_text"],
+                source="email_sender",
+                mode="metadata",
+                sender_trust_tier=trust.tier,
+            )
+            subject = trust_gate(
+                sig["topic_hint"],
+                source="email_subject",
+                mode="metadata",
+                sender_trust_tier=trust.tier,
+            )
             sender_str = str(sender).lower()
 
             # Body fetching and summarization for new emails
@@ -952,7 +971,12 @@ class HeartbeatPoller:
                     parse_start_ms = int(_time.time() * 1000)
                     parsed = await loop.run_in_executor(None, parse_email_smart, raw)
                     parse_duration_ms = int(_time.time() * 1000) - parse_start_ms
-                    body = trust_gate(parsed.get("body"), source="email_body", mode="content")
+                    body = trust_gate(
+                        parsed.get("body"),
+                        source="email_body",
+                        mode="content",
+                        sender_trust_tier=trust.tier,
+                    )
                     parsed_body_format = str(parsed.get("format") or "")
                     parser_chain = list(parsed.get("parser_chain") or [])
                     fallback_used = bool(parsed.get("fallback_used"))
@@ -999,11 +1023,6 @@ class HeartbeatPoller:
                         )
 
             verdict = ""
-
-            # Sender trust assessment
-            sender_addr = _extract_sender_addr(email)
-            sender_name = _extract_sender_name(email)
-            trust = assess_sender_trust(sender_addr, sender_name, self.db_path)
 
             processed.append(
                 {

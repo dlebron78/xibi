@@ -26,6 +26,19 @@ adds noise for minimal benefit on 64-char strings. Wrapping is non-
 destructive (additive only), so it applies regardless of sanitize mode;
 the only toggle is ``trust_gate.enabled``.
 
+Step-131 adds shadow risk grading (Layer 1). After sanitization, the gate
+computes a ``sanitizer_flagged`` boolean (did the sanitizer alter the
+text?) and calls :func:`xibi.security.risk_grader.grade_risk` with the
+**original** (pre-sanitization) text plus that boolean. Structural anomaly
+detection runs on the original text so attacker payloads are visible to
+the grader before sanitization scrubs them. Grading is log-only -- the
+returned ``RiskGrade`` (or ``None`` when disabled) is not consulted for
+any downstream behavior; the gate continues with sanitized text and the
+existing delimiter/logging layers regardless of outcome. Sender trust
+context is provided by the optional ``sender_trust_tier`` kwarg; email and
+calendar call sites pass it through, while MCP / subagent / ReAct sites
+omit it (empty string = neutral modifier).
+
 Config loading mirrors the heartbeat read-once-cache-in-module pattern: the
 ``trust_gate`` section of ``~/.xibi/config.yaml`` is parsed lazily on the
 first call, cached for the process lifetime, and defaults to
@@ -41,6 +54,7 @@ from typing import Any
 
 import yaml
 
+from xibi.security.risk_grader import grade_risk
 from xibi.security.sanitize import sanitize_untrusted_text
 
 logger = logging.getLogger(__name__)
@@ -147,6 +161,7 @@ def trust_gate(
     *,
     source: str = "",
     mode: str = "content",
+    sender_trust_tier: str = "",
 ) -> str:
     """Single entry point for all external text entering LLM context.
 
@@ -167,6 +182,13 @@ def trust_gate(
     non-destructive and does not interact with the sanitize mode toggle.
     Metadata-mode output is returned unwrapped.
 
+    ``sender_trust_tier`` (step-131) feeds the shadow risk grader; email
+    and calendar call sites pass it through (``"ESTABLISHED"`` /
+    ``"RECOGNIZED"`` / ``"UNKNOWN"`` / ``"NAME_MISMATCH"``), while MCP,
+    subagent, and ReAct call sites omit it (empty string = neutral
+    modifier). The kwarg is optional and backwards-compatible -- existing
+    call sites continue to work unchanged.
+
     Never raises. Returns ``""`` for ``None`` / empty input. Any internal
     error (logging failure, config glitch, sanitize crash) falls open:
     ``text`` is returned unchanged so callers stay true one-liners with no
@@ -180,6 +202,11 @@ def trust_gate(
             return text
 
         # -- Sanitization layer (PR 2) --
+        # Preserve the pre-sanitization text so the risk grader (step-131)
+        # can analyze the attacker's original payload for structural
+        # anomalies, regardless of whether enforce mode rewrites ``text``.
+        original_text = text
+        sanitizer_flagged = False
         sanitize_mode = cfg.get("sanitize", "shadow")
         if sanitize_mode and sanitize_mode != "off":
             sanitized = sanitize_untrusted_text(
@@ -187,9 +214,10 @@ def trust_gate(
                 source=source,
                 mode=mode,
             )
+            sanitizer_flagged = sanitized != text
             if sanitize_mode == "enforce":
                 text = sanitized
-            elif sanitized != text:
+            elif sanitizer_flagged:
                 # Shadow mode: log what would change, return original
                 logger.warning(
                     "trust_gate shadow_diff source=%s mode=%s orig_len=%d sanitized_len=%d",
@@ -198,6 +226,20 @@ def trust_gate(
                     len(text),
                     len(sanitized),
                 )
+
+        # -- Risk grading layer (step-131) --
+        # Always runs on the **original** text so structural detectors see
+        # the attacker payload pre-sanitization. Returns ``None`` when
+        # disabled or on malformed config; the gate ignores the result
+        # because grading is log-only in shadow phase.
+        grade_risk(
+            original_text,
+            source=source,
+            mode=mode,
+            sanitizer_flagged=sanitizer_flagged,
+            sender_trust_tier=sender_trust_tier,
+            config=cfg.get("risk_scoring"),
+        )
 
         # -- Delimiter framing layer (step-127) --
         # Content-mode only. Defang attacker-supplied markers first so a
