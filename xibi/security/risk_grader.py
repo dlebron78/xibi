@@ -32,9 +32,9 @@ Defaults are tuned so ``HIGH`` requires sanitizer-flagged AND multiple
 structural anomalies AND a poor sender tier, keeping the noise floor low
 during the shadow-log review window.
 
-This module is pure stdlib (re, unicodedata, dataclasses, logging). It
-never raises: any internal error logs a WARNING and returns ``None`` so
-the trust gate can continue processing the signal.
+This module is pure stdlib (re, dataclasses, logging). It never raises:
+any internal error logs a WARNING and returns ``None`` so the trust gate
+can continue processing the signal.
 """
 
 from __future__ import annotations
