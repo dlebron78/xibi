@@ -29,7 +29,7 @@ All items verified in code 2026-05-12.
 | Item | RFC Section | Status | What's needed |
 |---|---|---|---|
 | Delimiter framing (PR 3) | 1 | step-127 | DONE | `[EXTERNAL_DATA]` wrapping in `trust_gate()` content-mode; `DELIMITER_INSTRUCTION` in react.py system prompt + checklist.py user prompt |
-| Risk grading (PR 4) | 1 | NOT STARTED | Config-driven phrase matching in trust_gate, shadow-only scoring, structured log lines |
+| Risk grading (PR 4) | 1 | step-131 | DONE | `xibi/security/risk_grader.py` ships `grade_risk()` + `RiskGrade` dataclass. Composite blends sanitizer-flagged signal (weight 0.5), four structural detectors (base64 blocks, mixed-script homoglyphs, invisible/bidi unicode, excessive whitespace; weight 0.35) and a sender-trust modifier (weight 0.15). Levels mapped via `low`/`high` thresholds (TRR C2). `trust_gate()` calls `grade_risk(original_text, sanitizer_flagged=...)` after sanitization but before delimiter framing; new optional `sender_trust_tier` kwarg is wired through email/calendar pollers. Log-only -- no signal is gated. After 1-2 weeks of shadow logs, review distribution and decide on Phase B feed-in or Phase A+3 gating. |
 
 ## Phase B: Signal pipeline -- IN PROGRESS
 
