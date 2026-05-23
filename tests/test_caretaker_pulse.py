@@ -12,6 +12,7 @@ from xibi.caretaker import Caretaker
 from xibi.caretaker.config import (
     CaretakerConfig,
     ConfigDriftConfig,
+    ReviewFreshnessConfig,
     SchemaDriftConfig,
     ServiceSilenceConfig,
 )
@@ -38,6 +39,7 @@ def _clean_config() -> CaretakerConfig:
         service_silence=ServiceSilenceConfig(watched_operations=(), silence_threshold_min=30),
         config_drift=ConfigDriftConfig(watched_paths=()),
         schema_drift=SchemaDriftConfig(enabled=True),
+        review_freshness=ReviewFreshnessConfig(enabled=False),
     )
 
 

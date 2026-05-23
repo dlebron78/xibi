@@ -13,6 +13,7 @@ from xibi.caretaker import Caretaker, dedup
 from xibi.caretaker.config import (
     CaretakerConfig,
     ConfigDriftConfig,
+    ReviewFreshnessConfig,
     SchemaDriftConfig,
     ServiceSilenceConfig,
 )
@@ -46,6 +47,7 @@ def _silence_only_config() -> CaretakerConfig:
         ),
         config_drift=ConfigDriftConfig(watched_paths=()),
         schema_drift=SchemaDriftConfig(enabled=False),
+        review_freshness=ReviewFreshnessConfig(enabled=False),
     )
 
 
@@ -114,6 +116,7 @@ def test_resolve_deletes_row_when_drift_clears(tmp_path: Path) -> None:
             service_silence=ServiceSilenceConfig(watched_operations=(), silence_threshold_min=30),
             config_drift=ConfigDriftConfig(watched_paths=()),
             schema_drift=SchemaDriftConfig(enabled=False),
+            review_freshness=ReviewFreshnessConfig(enabled=False),
         ),
     )
     with patch("xibi.caretaker.notifier.send_nudge") as send:

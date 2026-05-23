@@ -83,19 +83,34 @@ def test_enrich_signals_records_failure_on_empty_tier1(db_path, tg):
     assert record.consecutive_clean == 0
 
 
-def test_enrich_signals_skips_tier1_when_should_audit_false(db_path, tg):
+def test_enrich_signals_always_runs_tier1_ignoring_should_audit(db_path, tg):
+    """step-118 Fix A regression: tier-1 must run regardless of should_audit.
+
+    Pre-fix, signal_intelligence misused trust_gradient.should_audit as a
+    circuit breaker. When audit_interval saturated, ~98% of batches
+    skipped tier-1 entirely and the fallback re-marked signals as
+    intel_tier=0, re-queuing them forever (257-signal backlog on prod
+    by 2026-04-28). The gate is now removed; tier-1 always runs and
+    trust is recorded on outcome.
+    """
     with open_db(db_path) as conn, conn:
         conn.execute("INSERT INTO signals (id, source, intel_tier, content_preview) VALUES (1, 'email', 0, '')")
 
+    mock_intels = [SignalIntel(signal_id=1, action_type="request")]
     with (
-        patch.object(tg, "should_audit", return_value=False),
-        patch("xibi.signal_intelligence.extract_tier1_batch") as mock_extract,
+        patch.object(tg, "should_audit", return_value=False) as mock_should_audit,
+        patch("xibi.signal_intelligence.extract_tier1_batch", return_value=mock_intels) as mock_extract,
     ):
         enrich_signals(db_path, config=None, trust_gradient=tg)
-        mock_extract.assert_not_called()
+        mock_extract.assert_called_once()
+        # should_audit must not be consulted — the gate is gone.
+        mock_should_audit.assert_not_called()
 
-    # No record created for skip
-    assert tg.get_record("text", "fast") is None
+    # Trust still recorded based on tier-1 outcome quality.
+    record = tg.get_record("text", "fast")
+    assert record is not None
+    assert record.consecutive_clean == 1
+    assert record.total_failures == 0
 
 
 def test_enrich_signals_no_trust_gradient_no_error(db_path):

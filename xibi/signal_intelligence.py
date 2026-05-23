@@ -520,26 +520,22 @@ def enrich_signals(
         # Tier 0 extraction (free)
         tier0_intels = [extract_tier0(s) for s in signals]
 
-        # Tier 1 extraction (fast role batch call)
-        run_tier1 = True
-        if trust_gradient is not None:
-            run_tier1 = trust_gradient.should_audit("text", "fast")
+        # Tier 1 extraction (fast role batch call) — always runs.
+        # trust_gradient is an audit sampler, not a circuit breaker; gating
+        # tier-1 invocation on should_audit() starved enrichment when the
+        # audit_interval grew. Trust is now recorded purely as an
+        # observation of tier-1 outcome quality.
+        tier1_intels = extract_tier1_batch(signals, config, config_path=config_path)
 
-        if run_tier1:
-            tier1_intels = extract_tier1_batch(signals, config, config_path=config_path)
-            # Record trust based on extraction quality
-            if trust_gradient is not None:
-                try:
-                    valid_count = sum(1 for t in tier1_intels if any([t.action_type, t.urgency, t.direction]))
-                    if valid_count == 0 and len(tier1_intels) > 0:
-                        trust_gradient.record_failure("text", "fast", FailureType.PERSISTENT)
-                    else:
-                        trust_gradient.record_success("text", "fast")
-                except Exception as e:
-                    logger.warning(f"Signal Intelligence: failed to record trust: {e}")
-        else:
-            # Trust says skip tier-1 this batch → use tier-0 only
-            tier1_intels = [SignalIntel(signal_id=s["id"]) for s in signals]
+        if trust_gradient is not None:
+            try:
+                valid_count = sum(1 for t in tier1_intels if any([t.action_type, t.urgency, t.direction]))
+                if valid_count == 0 and len(tier1_intels) > 0:
+                    trust_gradient.record_failure("text", "fast", FailureType.PERSISTENT)
+                else:
+                    trust_gradient.record_success("text", "fast")
+            except Exception as e:
+                logger.warning(f"Signal Intelligence: failed to record trust: {e}")
 
         # Merge: use tier1 fields where available, tier0 as fallback
         merged = merge_intels(tier0_intels, tier1_intels)

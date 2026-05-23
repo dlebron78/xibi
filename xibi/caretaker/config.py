@@ -61,6 +61,25 @@ def _provider_health_from_env() -> ProviderHealthConfig:
 
 
 @dataclass(frozen=True)
+class ReviewFreshnessConfig:
+    staleness_threshold_hours: int = 24
+    enabled: bool = True
+
+
+def _review_freshness_from_env() -> ReviewFreshnessConfig:
+    """Build ReviewFreshnessConfig honoring XIBI_CARETAKER_REVIEW_FRESHNESS_*.
+
+    Resolved at construction time; the resulting dataclass is frozen.
+    """
+    enabled = os.environ.get("XIBI_CARETAKER_REVIEW_FRESHNESS_ENABLED", "1") != "0"
+    threshold_hours = int(os.environ.get("XIBI_CARETAKER_REVIEW_FRESHNESS_THRESHOLD_HOURS", "24"))
+    return ReviewFreshnessConfig(
+        staleness_threshold_hours=threshold_hours,
+        enabled=enabled,
+    )
+
+
+@dataclass(frozen=True)
 class CaretakerConfig:
     pulse_interval_min: int = 15
     service_silence: ServiceSilenceConfig = field(
@@ -100,6 +119,7 @@ class CaretakerConfig:
     )
     schema_drift: SchemaDriftConfig = field(default_factory=SchemaDriftConfig)
     provider_health: ProviderHealthConfig = field(default_factory=_provider_health_from_env)
+    review_freshness: ReviewFreshnessConfig = field(default_factory=_review_freshness_from_env)
 
 
 DEFAULTS = CaretakerConfig()

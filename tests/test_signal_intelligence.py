@@ -312,3 +312,97 @@ def test_enrich_signals_returns_zero_on_error():
     # Invalid db path
     count = enrich_signals(Path("/nonexistent/db"), {})
     assert count == 0
+
+
+# --- Trust-gate removal regression tests (step-118) ---
+
+
+@patch("xibi.signal_intelligence.extract_tier1_batch")
+def test_enrich_signals_always_runs_tier1(mock_tier1, db_path):
+    """Regression: tier-1 must run even when trust_gradient.should_audit=False.
+
+    Pre-step-118, signal_intelligence asked should_audit() and skipped tier-1
+    98% of the time once audit_interval saturated. The buggy fallback then
+    re-marked signals as intel_tier=0, re-queuing them forever.
+    """
+    with open_db(db_path) as conn, conn:
+        conn.execute("""
+            INSERT INTO signals (source, topic_hint, entity_text, content_preview)
+            VALUES ('email', 'Test Topic', 'alice@example.com', 'Hello world')
+        """)
+
+    mock_tier1.side_effect = lambda signals, config, config_path="config.json": [
+        SignalIntel(signal_id=s["id"], action_type="request", intel_tier=1) for s in signals
+    ]
+
+    trust = MagicMock()
+    trust.should_audit.return_value = False  # would have skipped tier-1 pre-fix
+
+    count = enrich_signals(db_path, {}, trust_gradient=trust)
+    assert count == 1
+    assert mock_tier1.called, "tier-1 must run regardless of should_audit result"
+    # should_audit must not be consulted at all
+    assert not trust.should_audit.called
+
+    with open_db(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM signals WHERE id = 1").fetchone()
+        assert row["intel_tier"] == 1
+        assert row["action_type"] == "request"
+
+
+@patch("xibi.signal_intelligence.extract_tier1_batch")
+def test_enrich_signals_records_trust_success_on_valid_output(mock_tier1, db_path):
+    with open_db(db_path) as conn, conn:
+        conn.execute("INSERT INTO signals (source, content_preview) VALUES ('email', 'Hello')")
+
+    mock_tier1.return_value = [
+        SignalIntel(signal_id=1, action_type="request", urgency="high", intel_tier=1)
+    ]
+
+    trust = MagicMock()
+    enrich_signals(db_path, {}, trust_gradient=trust)
+
+    trust.record_success.assert_called_once_with("text", "fast")
+    trust.record_failure.assert_not_called()
+
+
+@patch("xibi.signal_intelligence.extract_tier1_batch")
+def test_enrich_signals_records_trust_failure_on_empty_output(mock_tier1, db_path):
+    """When tier-1 returns intels with no fields populated, record persistent failure."""
+    from xibi.trust.gradient import FailureType
+
+    with open_db(db_path) as conn, conn:
+        conn.execute("INSERT INTO signals (source, content_preview) VALUES ('email', 'Hello')")
+
+    mock_tier1.return_value = [SignalIntel(signal_id=1, intel_tier=1)]
+
+    trust = MagicMock()
+    enrich_signals(db_path, {}, trust_gradient=trust)
+
+    trust.record_failure.assert_called_once_with("text", "fast", FailureType.PERSISTENT)
+    trust.record_success.assert_not_called()
+
+
+@patch("xibi.signal_intelligence.extract_tier1_batch")
+def test_enrich_signals_no_trust_gradient(mock_tier1, db_path):
+    """trust_gradient=None: tier-1 still runs, no record_* calls attempted."""
+    with open_db(db_path) as conn, conn:
+        conn.execute("""
+            INSERT INTO signals (source, topic_hint, entity_text, content_preview)
+            VALUES ('email', 'Test', 'alice@example.com', 'Hello')
+        """)
+
+    mock_tier1.side_effect = lambda signals, config, config_path="config.json": [
+        SignalIntel(signal_id=s["id"], action_type="reply", intel_tier=1) for s in signals
+    ]
+
+    count = enrich_signals(db_path, {}, trust_gradient=None)
+    assert count == 1
+    assert mock_tier1.called
+
+    with open_db(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT intel_tier, action_type FROM signals WHERE id = 1").fetchone()
+        assert row["intel_tier"] == 1
+        assert row["action_type"] == "reply"
