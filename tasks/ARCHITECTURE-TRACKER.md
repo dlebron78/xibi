@@ -5,7 +5,7 @@ Claude Code on merge. Cowork updates on grooming or re-prioritizing.
 
 Design rationale: `~/Documents/Dev Docs/Xibi/RFC-source-agnostic-xibi.md`.
 
-Last verified against codebase: 2026-05-14.
+Last verified against codebase: 2026-05-23.
 
 ---
 
@@ -69,7 +69,7 @@ Specs in `tasks/backlog/` not tied to the RFC:
 | Spec | What | Status |
 |---|---|---|
 | step-87b | Schema reconciliation | Parked |
-| step-118 | Signal intelligence fix + review freshness check | Parked |
+| step-118 | Signal intelligence fix + review freshness check | DONE 2026-05-23. Fix A: `enrich_signals()` in `xibi/signal_intelligence.py` no longer gates tier-1 on `trust_gradient.should_audit()` (audit-sampler-as-circuit-breaker misuse that left 257 signals unenriched on prod after 2026-04-28); trust still recorded on tier-1 outcome quality. Fix B: new caretaker check `xibi/caretaker/checks/review_freshness.py` reads `MAX(priority_context.updated_at)`, emits CRITICAL Finding when older than `staleness_threshold_hours` (default 24h, strict `>`); empty table emits separate "missing" finding (TRR C2). Configured via `XIBI_CARETAKER_REVIEW_FRESHNESS_ENABLED` + `XIBI_CARETAKER_REVIEW_FRESHNESS_THRESHOLD_HOURS`. |
 | signal-decay | Signal decay, recurring-signal fatigue, engagement-driven deprioritization | Backlog note filed 2026-05-14. Three slices: (A) wire decay_days to sweep, (B) fatigue signal for classifier, (C) Dismiss/non-engagement creates triage rules. See `tasks/backlog/notes/signal-decay-and-fatigue-2026-05-14.md` |
 | dashboard-punchlist | Dashboard improvements | Parked |
 
