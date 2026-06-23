@@ -928,10 +928,33 @@ class HeartbeatPoller:
             logger.warning("himalaya binary not found. Skipping email body summarization.")
             himalaya_bin = None
 
+        # Age gate (step-133): skip emails older than XIBI_EMAIL_MAX_AGE_DAYS.
+        # The poller is the single owner of this policy — list_unread.py no
+        # longer filters by age (a tool lists; policy belongs to the consumer).
+        # Old emails are marked as seen so they don't re-enter on the next tick.
+        max_age_days = int(os.environ.get("XIBI_EMAIL_MAX_AGE_DAYS", "7"))
+        age_cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days) if max_age_days > 0 else None
+        stale_ids: list[str] = []
+
         processed: list[dict] = []
         for sig in raw_signals:
             email = sig["metadata"]["email"]
             email_id = sig["ref_id"]
+
+            # Age gate check
+            if age_cutoff and email_id not in seen_ids:
+                email_date_str = email.get("date", "")
+                if email_date_str:
+                    try:
+                        edt = datetime.fromisoformat(email_date_str)
+                        if edt.tzinfo is None:
+                            edt = edt.replace(tzinfo=timezone.utc)
+                        if edt < age_cutoff:
+                            stale_ids.append(email_id)
+                            continue
+                    except (ValueError, TypeError):
+                        pass  # unparseable date, let it through
+
             # Step-131: assess sender trust BEFORE the trust_gate calls so
             # ``TrustAssessment.tier`` can flow into the shadow risk grader.
             # The move is safe -- nothing between here and the original
@@ -1081,39 +1104,62 @@ class HeartbeatPoller:
             item["subject"] = subject
             item["reasoning"] = reasoning
 
-        try:
-            with xibi.db.open_db(self.db_path) as conn, conn:
-                conn.row_factory = sqlite3.Row
-                for item in processed:
-                    sig = item["sig"]
-                    summary_data = item.get("summary_data", {})
-                    trust = item["trust_assessment"]
-                    deep_link_url = None
-                    if sig["source"] == "email" and sig.get("ref_id"):
-                        # Gmail deep link format
-                        deep_link_url = f"https://mail.google.com/mail/u/0/#inbox/{sig['ref_id']}"
+        # Persist age-gate: mark stale emails as seen so they never re-enter.
+        if stale_ids:
+            logger.info(
+                "email age gate (poller): marking %d stale emails as seen",
+                len(stale_ids),
+            )
+            try:
+                with xibi.db.open_db(self.db_path) as _conn, _conn:
+                    for _sid in stale_ids:
+                        self.rules.mark_seen_with_conn(_conn, _sid)
+                        seen_ids.add(_sid)
+            except Exception:
+                logger.warning("Failed to mark stale emails as seen", exc_info=True)
 
-                    # Step-110: pull provenance from the SignalContext that
-                    # already carries it (assemble_batch_signal_context populates
-                    # received_via_account/email_alias from the inbound headers).
-                    ctx = item.get("context")
-                    received_via_account = getattr(ctx, "received_via_account", None) if ctx else None
-                    received_via_email_alias = getattr(ctx, "received_via_email_alias", None) if ctx else None
+        # Step-133: per-email transactions. Each email's DB writes commit
+        # (or roll back) independently, so a failure on one email no longer
+        # poisons mark_seen for the rest of the batch. The prior structure
+        # wrapped the whole batch in one transaction, so any single error
+        # rolled back every email's writes — re-firing nudges next tick.
+        for item in processed:
+            sig = item["sig"]
+            summary_data = item.get("summary_data", {})
+            trust = item["trust_assessment"]
+            deep_link_url = None
+            if sig["source"] == "email" and sig.get("ref_id"):
+                # Gmail deep link format
+                deep_link_url = f"https://mail.google.com/mail/u/0/#inbox/{sig['ref_id']}"
 
-                    extracted_facts = summary_data.get("extracted_facts")
+            # Step-110: pull provenance from the SignalContext that
+            # already carries it (assemble_batch_signal_context populates
+            # received_via_account/email_alias from the inbound headers).
+            ctx = item.get("context")
+            received_via_account = getattr(ctx, "received_via_account", None) if ctx else None
+            received_via_email_alias = getattr(ctx, "received_via_email_alias", None) if ctx else None
 
-                    # Step-112: write the parent signal envelope with its
-                    # facts (if any). Fan-out for digests happens after the
-                    # parent write so the parent is durable even if a
-                    # child write hits an unexpected error.
-                    parsed_body_value = item.get("parsed_body")
-                    parsed_body_format_value = item.get("parsed_body_format")
-                    parsed_body_at_value = (
-                        datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-                        if parsed_body_value
-                        else None
-                    )
+            extracted_facts = summary_data.get("extracted_facts")
 
+            # Step-112: write the parent signal envelope with its
+            # facts (if any). Fan-out for digests happens after the
+            # parent write so the parent is durable even if a
+            # child write hits an unexpected error.
+            parsed_body_value = item.get("parsed_body")
+            parsed_body_format_value = item.get("parsed_body_format")
+            parsed_body_at_value = (
+                datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+                if parsed_body_value
+                else None
+            )
+
+            # Step-133: one IMMEDIATE transaction per email. ``open_db``
+            # commits on clean exit and rolls back on exception, so a single
+            # context manager suffices (the prior ``as conn, conn:`` entered
+            # the connection twice and committed twice). ``row_factory`` is
+            # not set — none of the write-phase helpers read rows by name.
+            try:
+                with xibi.db.open_db(self.db_path) as conn:
                     self.rules.log_signal_with_conn(
                         conn,
                         source=sig["source"],
@@ -1157,64 +1203,78 @@ class HeartbeatPoller:
                             received_via_email_alias=received_via_email_alias,
                         )
 
-                    if not item["is_new"] or item["verdict"] == "DEFER":
+                    # Step-133: DEFER is not a valid classification tier
+                    # (see VALID_TIERS in classification.py) — the old
+                    # ``or item["verdict"] == "DEFER"`` arm was vestigial.
+                    if not item["is_new"]:
                         continue
 
                     self.rules.log_triage_with_conn(
                         conn, item["email_id"], str(item["sender"]), item["subject"], item["verdict"]
                     )
                     self.rules.mark_seen_with_conn(conn, item["email_id"])
+                # Transaction committed. The debug confirmation and the
+                # nudge run AFTER the with-block (SQLite lock released) but
+                # INSIDE this try, so a Telegram/network failure is isolated
+                # to this one email — logged below as a per-email failure, it
+                # can neither roll back the already-committed writes nor abort
+                # the rest of the batch.
+                logger.debug(
+                    "email write committed: email_id=%s verdict=%s",
+                    item["email_id"],
+                    item["verdict"],
+                )
 
-                    if item["verdict"] in ("CRITICAL", "HIGH", "URGENT"):
-                        from xibi.heartbeat.rich_nudge import compose_smart_nudge
+                if item["verdict"] in ("CRITICAL", "HIGH", "URGENT"):
+                    from xibi.heartbeat.rich_nudge import compose_smart_nudge
 
-                        base_url = self.config.get("redirect_base_url") or os.environ.get("XIBI_REDIRECT_BASE")
+                    base_url = self.config.get("redirect_base_url") or os.environ.get("XIBI_REDIRECT_BASE")
 
-                        ctx = email_contexts.get(item["email_id"])
-                        if ctx and self._nudge_limiter.allow():
-                            nudge = await compose_smart_nudge(
-                                ctx,
-                                model=self.nudge_model,
-                                signal_id=item.get("signal_id"),
-                                timeout_ms=self.nudge_timeout_ms,
-                                base_url=base_url,
-                            )
-                            self._broadcast(nudge.text, nudge=nudge)
-                            # Store nudge context for the adapter
-                            self._pending_nudge_context = {
-                                "signal_id": nudge.signal_id,
-                                "email_context": ctx,
-                                "actions": nudge.actions,
-                                "sent_at": datetime.now().isoformat(),
+                    ctx = email_contexts.get(item["email_id"])
+                    if ctx and self._nudge_limiter.allow():
+                        nudge = await compose_smart_nudge(
+                            ctx,
+                            model=self.nudge_model,
+                            signal_id=item.get("signal_id"),
+                            timeout_ms=self.nudge_timeout_ms,
+                            base_url=base_url,
+                        )
+                        self._broadcast(nudge.text, nudge=nudge)
+                        # Store nudge context for the adapter
+                        self._pending_nudge_context = {
+                            "signal_id": nudge.signal_id,
+                            "email_context": ctx,
+                            "actions": nudge.actions,
+                            "sent_at": datetime.now().isoformat(),
+                        }
+                        # Sync back to adapter if possible
+                        if hasattr(self.adapter, "_pending_nudge_context"):
+                            self.adapter._pending_nudge_context = self._pending_nudge_context
+
+                        logger.info(
+                            f"Rich URGENT nudge sent for signal {nudge.signal_id}: "
+                            f"{len(nudge.text)} chars, actions={nudge.actions}"
+                        )
+                    elif ctx and not self._nudge_limiter.allow():
+                        # Rate limited — queue for next digest
+                        self._digest_overflow.append(
+                            {
+                                "signal_id": item.get("signal_id"),
+                                "preview": ctx.summary or item["subject"],
+                                "topic": ctx.topic,
                             }
-                            # Sync back to adapter if possible
-                            if hasattr(self.adapter, "_pending_nudge_context"):
-                                self.adapter._pending_nudge_context = self._pending_nudge_context
-
-                            logger.info(
-                                f"Rich URGENT nudge sent for signal {nudge.signal_id}: "
-                                f"{len(nudge.text)} chars, actions={nudge.actions}"
-                            )
-                        elif ctx and not self._nudge_limiter.allow():
-                            # Rate limited — queue for next digest
-                            self._digest_overflow.append(
-                                {
-                                    "signal_id": item.get("signal_id"),
-                                    "preview": ctx.summary or item["subject"],
-                                    "topic": ctx.topic,
-                                }
-                            )
-                            logger.info(
-                                f"URGENT nudge rate-limited (#{self._nudge_limiter.count_this_hour}/hr), "
-                                f"queued for digest"
-                            )
-                        else:
-                            # Fallback — no context assembled
-                            alert_msg = self.rules.evaluate_email(item["email"], email_rules, sender_trust=trust)
-                            if alert_msg:
-                                self._broadcast(alert_msg)
-        except Exception as e:
-            logger.warning(f"Error in process_email_signals write phase: {e}", exc_info=True)
+                        )
+                        logger.info(
+                            f"URGENT nudge rate-limited (#{self._nudge_limiter.count_this_hour}/hr), queued for digest"
+                        )
+                    else:
+                        # Fallback — no context assembled
+                        alert_msg = self.rules.evaluate_email(item["email"], email_rules, sender_trust=trust)
+                        if alert_msg:
+                            self._broadcast(alert_msg)
+            except Exception as e:
+                logger.warning("email write failed for %s: %s", item["email_id"], e, exc_info=True)
+                continue
 
     def _tier2_observe_and_fanout(
         self,
