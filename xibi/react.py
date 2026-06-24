@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from collections.abc import Callable
@@ -69,6 +70,204 @@ if TYPE_CHECKING:
 from xibi.types import ReActResult, Step
 
 logger = logging.getLogger(__name__)
+
+# --- System-prompt mode (step-135) ---------------------------------------
+# ``XIBI_REACT_PROMPT_MODE`` selects how the ReAct system prompt frames tool
+# use. ``heavy`` (default) is the current behavior. ``slim`` drops the
+# "act with initiative" identity line and replaces the "LOOK BEFORE YOU LEAP"
+# rule with a WHEN-TO-USE-TOOLS block, so the small local model stops treating
+# conversational statements as research tasks. Everything else — Rules 2-5,
+# the trust-gate delimiter instruction, drafts/context/handle blocks — is
+# byte-identical across modes. The flip to slim is an env change, reversible
+# in one command; default ships heavy (no behavior change).
+PROMPT_MODE_DEFAULT = "heavy"
+
+# Static CHECKLISTS + HANDLES instructions appended to every system prompt.
+# Mode-independent; a module constant so the loop and the step-135 canary
+# harness assemble the identical suffix.
+_HANDLE_INSTRUCTIONS = (
+    "\nCHECKLISTS\n"
+    "Use checklist tools for recurring routines, weekly reports, or multi-step planning tasks.\n"
+    "You can mark items done via position or fuzzy label match.\n"
+    "\nHANDLES — large tool outputs\n"
+    "Some tools return outputs containing a `handle` field that looks like this:\n"
+    '  {"status": "ok", "handle": "h_a4f1", "schema": "list[dict] (25 items)", "summary": "...", "item_count": 25}\n'
+    "This means the full data is stored out-of-band and you have a reference to it. "
+    "To use the data, pass the handle string as a parameter to any tool that accepts it. Example:\n"
+    '  write_file(filepath="jobs.md", handle="h_a4f1")\n'
+    '  transform_data(handle="h_a4f1", operations=[{"op": "sort", "args": {"field": "salary", "order": "desc"}}])\n'
+    "Do NOT try to read the bytes of a handle directly. Do NOT include handle IDs in prose responses to the user — "
+    "they are internal references and will look like noise. The handle is valid only for the current run.\n"
+)
+
+# Heavy Rule 1, factored out so the slim assembly can swap exactly this slot
+# while leaving the rest of the rules block byte-identical.
+_HEAVY_RULE1 = (
+    "1. LOOK BEFORE YOU LEAP\n"
+    "   Before any action tool, use an observation tool first.\n"
+    "   Don't know a filename → list_files. Don't know an email → recall.\n"
+    "   Don't know what's in a file → read_file. NEVER guess what you can look up.\n"
+)
+
+# Slim replacement for Rule 1. ``{user}`` is filled with the user's name (or
+# "the user"). Occupies the same structural slot as ``_HEAVY_RULE1`` (single
+# trailing newline) so Rule 2 onward stays byte-identical.
+SLIM_WHEN_TO_USE_TOOLS = (
+    "WHEN TO USE TOOLS\n"
+    "- If {user} is making conversation, sharing news, reacting, or asking something you "
+    "can answer from what you already know, reply directly. Do NOT call a tool.\n"
+    "- Use tools when {user} asks you to look something up or take an action. When you "
+    "need information you don't have, look it up rather than guessing.\n"
+)
+
+
+def _prompt_mode() -> str:
+    """Return the ReAct system-prompt mode from ``XIBI_REACT_PROMPT_MODE``.
+
+    Recognized values are ``heavy`` (default) and ``slim``. Any other value
+    (including unset) falls back to ``heavy``; an unrecognized non-empty value
+    logs a WARNING so a typo'd flip is visible rather than silently ignored.
+    Env, not config.json — the box's config.json is ``chattr +i`` immutable.
+    """
+    raw = os.environ.get("XIBI_REACT_PROMPT_MODE", PROMPT_MODE_DEFAULT)
+    if raw in ("heavy", "slim"):
+        return raw
+    logger.warning("react: unrecognized XIBI_REACT_PROMPT_MODE=%r; falling back to heavy", raw)
+    return PROMPT_MODE_DEFAULT
+
+
+def _identity_lines_for_mode(prompt_mode: str, assistant_name: str, user_name: str) -> list[str]:
+    """Build the identity lines for the system prompt.
+
+    ``slim`` drops the middle "act with initiative" line; the identity line and
+    the "show your work" line are identical to heavy.
+    """
+    identity = (
+        f"You are {assistant_name}, {user_name}'s chief of staff."
+        if user_name
+        else f"You are {assistant_name}, a personal AI assistant."
+    )
+    show_work = "You show your work before taking irreversible actions."
+    if prompt_mode == "slim":
+        return [identity, show_work]
+    initiative = (
+        f"You act with initiative on {user_name}'s behalf, using everything you know about {user_name}'s context and priorities."
+        if user_name
+        else "You act with initiative on the user's behalf."
+    )
+    return [identity, initiative, show_work]
+
+
+def _rules_for_mode(prompt_mode: str, user_name: str) -> str:
+    """Build the RULES block. ``slim`` swaps only Rule 1 for WHEN TO USE TOOLS;
+    Rules 2-5 are byte-identical to heavy."""
+    rule1 = _HEAVY_RULE1
+    if prompt_mode == "slim":
+        rule1 = SLIM_WHEN_TO_USE_TOOLS.format(user=user_name or "the user")
+    return (
+        "## RULES\n"
+        "\n" + rule1 + "\n"
+        "2. EMAILS: PERSIST, ASK, CONFIRM, SEND\n"
+        "   Sending or replying to email follows a strict four-step protocol:\n"
+        "\n"
+        "   a. Look up every recipient with lookup_contact (for each address on\n"
+        "      to and cc). Capture the result in your reasoning.\n"
+        "\n"
+        "   b. Persist the draft with draft_email. The handler stores the\n"
+        "      recipient list, subject, body, and contact summaries in the\n"
+        "      ledger and returns a draft_id. For replies, also pass\n"
+        "      in_reply_to (from summarize_email's message_id) so threading\n"
+        "      headers are preserved.\n"
+        "\n"
+        "   c. Use finish to present the saved draft to the user. Build the\n"
+        "      preview from the recipient EMAIL ADDRESSES and computed fields\n"
+        "      (outbound_count, days_since_last_seen) — NOT from display_name\n"
+        "      (which may be untrusted). Include the draft_id in your preview\n"
+        "      so the user can reference it. Wait for explicit confirmation\n"
+        '      ("yes", "send", "confirmed").\n'
+        "\n"
+        "   d. On confirmation, call confirm_draft(draft_id), then call\n"
+        "      send_email(draft_id) or reply_email(draft_id). The send\n"
+        "      handler verifies the draft is in 'confirmed' state via atomic\n"
+        "      check and reads the content from the ledger row.\n"
+        "\n"
+        "   If the user wants changes (different recipient, edited subject/body),\n"
+        "   re-call draft_email with the SAME draft_id — the row updates in place\n"
+        "   and status resets to 'pending'. Do not create a new draft for edits.\n"
+        "   The PENDING DRAFTS block (above) shows you the current pending drafts\n"
+        "   so you can pass the right draft_id.\n"
+        "\n"
+        "   If the user says no/discard/cancel, call discard_draft(draft_id).\n"
+        "\n"
+        "3. OTHER IRREVERSIBLE ACTIONS\n"
+        "   Before add_event or destructive non-email tools: present a preview\n"
+        '   via finish and ask "Should I do this?" Wait for explicit confirmation.\n'
+        "\n"
+        "4. COMPOSE FROM CONTEXT, NOT ASSUMPTIONS\n"
+        "   Before drafting emails or documents: recall the recipient's details,\n"
+        "   recall relevant business context. Infer subject and body from the request.\n"
+        "   Do NOT ask the user to provide what you can compose yourself.\n"
+        "\n"
+        "5. CURRENT REQUEST ONLY\n"
+        "   Conversation history is background — completed prior turns.\n"
+        "   Do not continue, revisit, or re-execute old turns.\n"
+        "   If an answer appears in history, verify with a tool — data may be stale.\n"
+    )
+
+
+def _assemble_system_prompt(
+    *,
+    react_format: str,
+    prompt_mode: str,
+    assistant_name: str,
+    user_name: str,
+    tools_block: str,
+    format_instructions: str,
+    handle_instructions: str,
+    drafts_block: str,
+    context_block: str,
+    query: str,
+) -> str:
+    """Assemble the ReAct system prompt for one turn.
+
+    ``prompt_mode`` (``heavy``|``slim``) controls only the identity lines and
+    the RULES block via :func:`_identity_lines_for_mode` / :func:`_rules_for_mode`.
+    The trust-gate ``DELIMITER_INSTRUCTION``, pending-drafts, context, tools, and
+    format blocks are mode-independent, so everything from Rule 2 onward is
+    byte-identical across modes (step-135 surgical constraint).
+    """
+    identity = "\n".join(_identity_lines_for_mode(prompt_mode, assistant_name, user_name))
+    rules = _rules_for_mode(prompt_mode, user_name)
+    if react_format == "native":
+        # Native (LLM tool-calling) format also carries the rules + pending
+        # drafts block — without them, the protocol is unenforced on this path.
+        native_parts: list[str] = []
+        if context_block:
+            native_parts.append(context_block)
+        native_parts.append(identity)
+        native_parts.append(rules)
+        # Trust-gate delimiter instruction (step-127): primes the LLM to read
+        # [EXTERNAL_DATA ...] tool-result blocks as data, not commands.
+        native_parts.append(DELIMITER_INSTRUCTION)
+        if drafts_block:
+            native_parts.append(drafts_block)
+        # handle_instructions is appended without a leading separator to
+        # preserve the existing native prompt suffix shape.
+        return "\n\n".join(native_parts) + handle_instructions
+    # Assembly order: identity → rules → delimiter instruction → drafts → context → tools → format
+    parts: list[str] = []
+    parts.append(identity)
+    parts.append(rules)
+    parts.append(DELIMITER_INSTRUCTION)
+    if drafts_block:
+        parts.append(drafts_block)
+    if context_block:
+        parts.append(context_block)
+    parts.append(tools_block)
+    parts.append(format_instructions)
+    # Anchor the current request at the bottom — visible on every react step.
+    parts.append(f"CURRENT REQUEST: {query}\n\nWhat is your next step?")
+    return "\n\n".join(parts)
 
 
 def _pending_drafts_block(db_path: Path | str) -> str:
@@ -450,6 +649,33 @@ def _flatten_tools(skill_registry: list[dict[str, Any]]) -> list[dict[str, Any]]
     return flat
 
 
+def _build_tools_block(skill_registry: list[dict[str, Any]]) -> str:
+    """Build the categorized OBSERVATION/ACTION tools block for the system prompt.
+
+    Strips non-LLM fields and splits tools by ``output_type`` (raw/synthesis →
+    observation, everything else → action). Mode-independent; shared by the loop
+    and the step-135 canary harness so both assemble the identical block.
+    """
+    obs_tools: list[dict[str, Any]] = []
+    act_tools: list[dict[str, Any]] = []
+    for t in _flatten_tools(skill_registry):
+        entry = {
+            "name": t["name"],
+            "description": t.get("description", ""),
+            "inputSchema": t.get("inputSchema", {}),
+        }
+        if t.get("output_type", "raw") in ("raw", "synthesis"):
+            obs_tools.append(entry)
+        else:
+            act_tools.append(entry)
+    return (
+        "## OBSERVATION TOOLS (use these FIRST to gather information)\n"
+        + json.dumps(obs_tools)
+        + "\n\n## ACTION TOOLS (use AFTER observing — some are irreversible)\n"
+        + json.dumps(act_tools)
+    )
+
+
 def compress_scratchpad(scratchpad: list[Step]) -> str:
     """Last 4 steps full detail, older steps compressed summaries."""
     full_steps = 4
@@ -766,6 +992,14 @@ async def _run_async(
     # Set trace context for subsequent LLM calls
     set_trace_context(trace_id=_run_trace_id, span_id=_run_span_id, operation="react_step")
 
+    # Resolve the system-prompt mode once per turn, above the span closure, so
+    # the span attribute and the assembled prompt read the same value and cannot
+    # diverge (step-135, TRR condition 3). Short-circuit paths (control plane,
+    # shadow-direct) emit the span before prompt assembly — they're tagged with
+    # the resolved mode anyway, which is expected, not a bug.
+    prompt_mode = _prompt_mode()
+    logger.info("react: prompt_mode=%s", prompt_mode)
+
     def _emit_run_span(result: ReActResult) -> None:
         """Emit the ``react.run`` span summarising the whole run, no-op if tracer is absent."""
         if _tracer is None or _run_trace_id is None or _run_span_id is None:
@@ -784,6 +1018,7 @@ async def _run_async(
                     "exit_reason": result.exit_reason,
                     "steps": str(len(result.steps)),
                     "query_preview": query[:80],
+                    "prompt_mode": prompt_mode,
                 },
             )
         )
@@ -869,36 +1104,8 @@ async def _run_async(
     _assistant_name = str(_profile.get("assistant_name", "Xibi"))
     _user_name = _profile.get("user_name", "")
 
-    _identity_lines = [
-        f"You are {_assistant_name}, {_user_name}'s chief of staff."
-        if _user_name
-        else f"You are {_assistant_name}, a personal AI assistant.",
-        f"You act with initiative on {_user_name}'s behalf, using everything you know about {_user_name}'s context and priorities."
-        if _user_name
-        else "You act with initiative on the user's behalf.",
-        "You show your work before taking irreversible actions.",
-    ]
-
     # --- Build categorized tools block (strip non-LLM fields) ---
-    _all_tools = _flatten_tools(skill_registry)
-    _obs_tools = []
-    _act_tools = []
-    for _t in _all_tools:
-        _entry = {
-            "name": _t["name"],
-            "description": _t.get("description", ""),
-            "inputSchema": _t.get("inputSchema", {}),
-        }
-        if _t.get("output_type", "raw") in ("raw", "synthesis"):
-            _obs_tools.append(_entry)
-        else:
-            _act_tools.append(_entry)
-    _tools_block = (
-        "## OBSERVATION TOOLS (use these FIRST to gather information)\n"
-        + json.dumps(_obs_tools)
-        + "\n\n## ACTION TOOLS (use AFTER observing — some are irreversible)\n"
-        + json.dumps(_act_tools)
-    )
+    _tools_block = _build_tools_block(skill_registry)
 
     # Auto-detection fallback
     if react_format == "native" and not getattr(llm, "supports_tool_calling", lambda: False)():
@@ -910,20 +1117,7 @@ async def _run_async(
 
     _native_messages: list[dict[str, Any]] = []
     _native_tools: list[dict[str, Any]] = []
-    _handle_instructions = (
-        "\nCHECKLISTS\n"
-        "Use checklist tools for recurring routines, weekly reports, or multi-step planning tasks.\n"
-        "You can mark items done via position or fuzzy label match.\n"
-        "\nHANDLES — large tool outputs\n"
-        "Some tools return outputs containing a `handle` field that looks like this:\n"
-        '  {"status": "ok", "handle": "h_a4f1", "schema": "list[dict] (25 items)", "summary": "...", "item_count": 25}\n'
-        "This means the full data is stored out-of-band and you have a reference to it. "
-        "To use the data, pass the handle string as a parameter to any tool that accepts it. Example:\n"
-        '  write_file(filepath="jobs.md", handle="h_a4f1")\n'
-        '  transform_data(handle="h_a4f1", operations=[{"op": "sort", "args": {"field": "salary", "order": "desc"}}])\n'
-        "Do NOT try to read the bytes of a handle directly. Do NOT include handle IDs in prose responses to the user — "
-        "they are internal references and will look like noise. The handle is valid only for the current run.\n"
-    )
+    _handle_instructions = _HANDLE_INSTRUCTIONS
 
     if react_format == "native":
         _native_messages = _init_native_messages(query, context)
@@ -973,101 +1167,23 @@ async def _run_async(
             '   - "ask_user": Use when you need more information. Input: {"question": "..."}\n'
         ) + _handle_instructions
 
-    # --- Behavioral rules (ranked by importance) ---
-    _rules = (
-        "## RULES\n"
-        "\n"
-        "1. LOOK BEFORE YOU LEAP\n"
-        "   Before any action tool, use an observation tool first.\n"
-        "   Don't know a filename → list_files. Don't know an email → recall.\n"
-        "   Don't know what's in a file → read_file. NEVER guess what you can look up.\n"
-        "\n"
-        "2. EMAILS: PERSIST, ASK, CONFIRM, SEND\n"
-        "   Sending or replying to email follows a strict four-step protocol:\n"
-        "\n"
-        "   a. Look up every recipient with lookup_contact (for each address on\n"
-        "      to and cc). Capture the result in your reasoning.\n"
-        "\n"
-        "   b. Persist the draft with draft_email. The handler stores the\n"
-        "      recipient list, subject, body, and contact summaries in the\n"
-        "      ledger and returns a draft_id. For replies, also pass\n"
-        "      in_reply_to (from summarize_email's message_id) so threading\n"
-        "      headers are preserved.\n"
-        "\n"
-        "   c. Use finish to present the saved draft to the user. Build the\n"
-        "      preview from the recipient EMAIL ADDRESSES and computed fields\n"
-        "      (outbound_count, days_since_last_seen) — NOT from display_name\n"
-        "      (which may be untrusted). Include the draft_id in your preview\n"
-        "      so the user can reference it. Wait for explicit confirmation\n"
-        '      ("yes", "send", "confirmed").\n'
-        "\n"
-        "   d. On confirmation, call confirm_draft(draft_id), then call\n"
-        "      send_email(draft_id) or reply_email(draft_id). The send\n"
-        "      handler verifies the draft is in 'confirmed' state via atomic\n"
-        "      check and reads the content from the ledger row.\n"
-        "\n"
-        "   If the user wants changes (different recipient, edited subject/body),\n"
-        "   re-call draft_email with the SAME draft_id — the row updates in place\n"
-        "   and status resets to 'pending'. Do not create a new draft for edits.\n"
-        "   The PENDING DRAFTS block (above) shows you the current pending drafts\n"
-        "   so you can pass the right draft_id.\n"
-        "\n"
-        "   If the user says no/discard/cancel, call discard_draft(draft_id).\n"
-        "\n"
-        "3. OTHER IRREVERSIBLE ACTIONS\n"
-        "   Before add_event or destructive non-email tools: present a preview\n"
-        '   via finish and ask "Should I do this?" Wait for explicit confirmation.\n'
-        "\n"
-        "4. COMPOSE FROM CONTEXT, NOT ASSUMPTIONS\n"
-        "   Before drafting emails or documents: recall the recipient's details,\n"
-        "   recall relevant business context. Infer subject and body from the request.\n"
-        "   Do NOT ask the user to provide what you can compose yourself.\n"
-        "\n"
-        "5. CURRENT REQUEST ONLY\n"
-        "   Conversation history is background — completed prior turns.\n"
-        "   Do not continue, revisit, or re-execute old turns.\n"
-        "   If an answer appears in history, verify with a tool — data may be stale.\n"
-    )
-
     _drafts_block = _pending_drafts_block(_db_path)
 
-    if react_format == "native":
-        # Native (LLM tool-calling) format also carries the rules + pending
-        # drafts block — without them, the protocol is unenforced on this path
-        # (see TRR condition 5).
-        _native_parts = []
-        if context_block:
-            _native_parts.append(context_block)
-        _native_parts.append("\n".join(_identity_lines))
-        _native_parts.append(_rules)
-        # Trust-gate delimiter instruction (step-127). Tool results land in
-        # the message list as ``[EXTERNAL_DATA ...]...[/EXTERNAL_DATA]`` blocks
-        # gated by :func:`trust_gate`; this instruction primes the LLM to
-        # read those blocks as data, not commands.
-        _native_parts.append(DELIMITER_INSTRUCTION)
-        if _drafts_block:
-            _native_parts.append(_drafts_block)
-        # _handle_instructions is appended without a leading separator below
-        # to preserve the existing native prompt suffix shape.
-        system_prompt = "\n\n".join(_native_parts) + _handle_instructions
-    else:
-        # Assembly order: identity → rules → delimiter instruction → drafts → context → tools → format
-        _prompt_parts = []
-        _prompt_parts.append("\n".join(_identity_lines))
-        _prompt_parts.append(_rules)
-        # Trust-gate delimiter instruction (step-127). JSON-format tool
-        # results are folded into the running scratchpad/context block by
-        # the loop; same threat model as native, same instruction.
-        _prompt_parts.append(DELIMITER_INSTRUCTION)
-        if _drafts_block:
-            _prompt_parts.append(_drafts_block)
-        if context_block:
-            _prompt_parts.append(context_block)
-        _prompt_parts.append(_tools_block)
-        _prompt_parts.append(_format_instructions)
-        # Anchor the current request at the bottom — visible on every react step.
-        _prompt_parts.append(f"CURRENT REQUEST: {query}\n\nWhat is your next step?")
-        system_prompt = "\n\n".join(_prompt_parts)
+    # Behavioral rules + identity are mode-dependent (heavy|slim); every other
+    # block is mode-independent, so the slim delta is contained to the identity
+    # initiative line and Rule 1 (step-135). See :func:`_assemble_system_prompt`.
+    system_prompt = _assemble_system_prompt(
+        react_format=react_format,
+        prompt_mode=prompt_mode,
+        assistant_name=_assistant_name,
+        user_name=_user_name,
+        tools_block=_tools_block,
+        format_instructions=_format_instructions,
+        handle_instructions=_handle_instructions,
+        drafts_block=_drafts_block,
+        context_block=context_block,
+        query=query,
+    )
 
     for step_num in range(1, max_steps + 1):
         error_obj: XibiError | None = None

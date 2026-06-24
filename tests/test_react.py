@@ -283,7 +283,12 @@ def test_trust_record_failure_on_parse_error(mock_get_model, mock_config, skill_
 def test_trust_record_failure_on_timeout(mock_get_model, mock_config, skill_registry, mocker):
     mock_llm = MagicMock()
     mock_get_model.return_value = mock_llm
-    mocker.patch("time.time", side_effect=[0, 100, 110])  # start=0, first loop check=100 (>60)
+    # Clock: 0 on the first read (start_time), then 100 forever (>60 = timeout on
+    # the first loop check). Robust to extra time.time() reads — e.g. the per-turn
+    # `react: prompt_mode=%s` INFO log stamps a record via time.time() when INFO
+    # logging is enabled — so the timeout intent holds regardless of call count.
+    _clock = iter([0.0])
+    mocker.patch("time.time", side_effect=lambda: next(_clock, 100.0))
 
     mock_trust = MagicMock()
     run("query", mock_config, skill_registry, trust_gradient=mock_trust, max_secs=60)
