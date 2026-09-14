@@ -119,6 +119,26 @@ via Claude Code, then push to origin. The NucBox watcher script picks up
      surface), **stop** — drop the hotfix branch and escalate for a
      proper spec. Do not grow a hotfix into a feature.
 
+9. **Python precomputes, roles reason.** Models never receive raw inputs
+   that require inference to interpret. Before any prompt is assembled,
+   Python resolves:
+   - **Temporal expressions** → absolute date strings. `"next Tuesday"`
+     becomes `"Tuesday, April 1, 2026"`; `"last week"` becomes
+     `after_date=2026-03-17`. The model sees resolved values, never
+     computes them.
+   - **Conditional injection** → date context is only added when the user
+     message contains temporal language (today, tomorrow, weekday names,
+     etc.). No temporal words = no date block = the model cannot apply
+     phantom date filters.
+   - **Active threads, pinned topics** → pre-queried from SQLite and
+     formatted before the prompt is built.
+
+   Precomputation utilities live in `xibi/utils/` (e.g.
+   `xibi/utils/time.py::parse_semantic_datetime`). No precomputation logic
+   belongs in prompt templates, role-calling code, or tool implementations.
+   If you find yourself asking a role to "figure out what date last Tuesday
+   was" — stop. Python does that.
+
 ---
 
 ## Escalation to Telegram
@@ -209,6 +229,15 @@ are missing.
   Spec drafts, TRR promotions, and pipeline config changes stay as local
   commits (or uncommitted on disk) until they ride along with the next
   code push to `main`.
+
+---
+
+## Code hygiene
+
+- All DB writes best-effort — never raise to caller
+- Circuit breaker: `finally: _tables_ensured.add(db_key)` pattern — never retry DDL
+- Tracing: every span emission wrapped in `try/except: pass` — tracing must never break the hot path
+- Config values via `config.get()` — no hardcoded paths or model strings
 
 ---
 

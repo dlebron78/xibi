@@ -267,4 +267,4 @@ def build_reference_schema() -> dict[str, dict[str, str]]:
 > drift incident, multi-deploy expansion, regular backup/restore workflow)
 > moves this out of parked status. See this spec's Context section for the
 > unpark criteria.
-> See `WORKFLOW.md`.
+> See `CLAUDE.md` § Git workflow.

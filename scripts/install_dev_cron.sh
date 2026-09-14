@@ -6,7 +6,7 @@
 #
 # What it does:
 #   1. Adds a cron job that runs the dev pressure test nightly at 1:55am
-#   2. Test results are committed to the repo so Cowork can read them
+#   2. Reports are written to ~/.xibi/reviews/test-runs (outside the repo)
 #   3. Log file written to ~/xibi/logs/pressure-test.log
 #
 # To remove:
@@ -17,7 +17,7 @@ set -euo pipefail
 XIBI_DIR="${HOME}/xibi"
 LOG_DIR="${XIBI_DIR}/logs"
 CRON_MARKER="dev_pressure_test"
-CRON_JOB="55 1 * * * cd ${XIBI_DIR} && git pull origin main -q && systemctl --user restart xibi-telegram xibi-heartbeat && sleep 5 && /usr/bin/python3 scripts/dev_pressure_test.py >> ${LOG_DIR}/pressure-test.log 2>&1 && git add reviews/test-runs/ && git diff --cached --quiet || git commit -m \"chore: nightly dev pressure test \$(date +\\%Y-\\%m-\\%d)\" && git push origin main -q  # ${CRON_MARKER}"
+CRON_JOB="55 1 * * * cd ${XIBI_DIR} && git pull origin main -q && systemctl --user restart xibi-telegram xibi-heartbeat && sleep 5 && /usr/bin/python3 scripts/dev_pressure_test.py --report-dir ${HOME}/.xibi/reviews/test-runs >> ${LOG_DIR}/pressure-test.log 2>&1  # ${CRON_MARKER}"
 
 echo "=== Xibi Dev Pressure Test Cron Installer ==="
 echo ""
@@ -53,7 +53,7 @@ crontab -l | grep "${CRON_MARKER}"
 echo ""
 echo "Next run: tonight at 1:55am"
 echo "Logs:     ${LOG_DIR}/pressure-test.log"
-echo "Reports:  ${XIBI_DIR}/reviews/test-runs/"
+echo "Reports:  ${HOME}/.xibi/reviews/test-runs/"
 echo ""
 echo "To run manually right now:"
 echo "  cd ~/xibi && python3 scripts/dev_pressure_test.py --verbose"

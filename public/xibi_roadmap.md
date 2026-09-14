@@ -1,6 +1,6 @@
 # Xibi v2 Roadmap
 
-> **Architecture:** `public/xibi_architecture.md`. **Security:** `SECURITY.md`. **Backlog:** `BACKLOG.md`. **Antigravity instructions:** `GEMINI.md`.
+> **Architecture:** `public/xibi_architecture.md`. **Security:** `SECURITY.md`.
 >
 > This is the implementation plan. The architecture doc is the design source of truth. When these conflict, the architecture doc wins — update the roadmap, not the architecture.
 >
@@ -211,7 +211,7 @@ Functions to migrate:
 - `get_active_threads(db_path) → list` — pre-formatted thread list for prompts
 - `get_pinned_topics(db_path) → list`
 
-**Invariant (see GEMINI.md Rule 24):** No prompt template or role-calling code performs date arithmetic or DB lookups. `xibi/utils.py` runs first, resolved values are injected. Models only ever see absolute dates and pre-formatted context.
+**Invariant (see CLAUDE.md hard rule 9):** No prompt template or role-calling code performs date arithmetic or DB lookups. `xibi/utils/` runs first, resolved values are injected. Models only ever see absolute dates and pre-formatted context.
 
 **CLI channel adapter (`xibi/channels/cli.py`):**
 

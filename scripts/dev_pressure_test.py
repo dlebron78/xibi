@@ -11,9 +11,9 @@ Usage:
     python scripts/dev_pressure_test.py                  # all suites
     python scripts/dev_pressure_test.py --suite 1        # single suite
     python scripts/dev_pressure_test.py --suite 1 3 5    # multiple suites
-    python scripts/dev_pressure_test.py --report-dir ~/xibi/reviews/test-runs
+    python scripts/dev_pressure_test.py --report-dir ~/.xibi/reviews/test-runs
 
-Output: Markdown report written to reviews/test-runs/dev-test-YYYY-MM-DD-HHMM.md
+Output: Markdown report written to ~/.xibi/reviews/test-runs/dev-test-YYYY-MM-DD-HHMM.md
 """
 
 from __future__ import annotations
@@ -975,7 +975,7 @@ def write_report(suite_results: list[dict[str, Any]], report_dir: Path) -> Path:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Xibi dev pressure test runner")
     parser.add_argument("--suite", type=int, nargs="+", help="Suite IDs to run (default: all)")
-    parser.add_argument("--report-dir", default="reviews/test-runs", help="Report output directory")
+    parser.add_argument("--report-dir", default="~/.xibi/reviews/test-runs", help="Report output directory")
     parser.add_argument("--verbose", "-v", action="store_true", help="Show answer previews per turn")
     parser.add_argument("--skills-dir", default="xibi/skills/sample", help="Path to skills directory")
     parser.add_argument(

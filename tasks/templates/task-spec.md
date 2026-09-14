@@ -301,4 +301,4 @@ Roberto: [expected response]
 ---
 > **Spec gating:** Do not push this file until the preceding step is merged.
 > Specs may be drafted locally up to 2 steps ahead but stay local until their gate clears.
-> See `WORKFLOW.md`.
+> See `CLAUDE.md` § Git workflow.

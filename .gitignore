@@ -75,3 +75,9 @@ MagicMock/
 
 # Claude Code session lockfiles
 .claude/scheduled_tasks.lock
+
+# step-136: review output, editor worktrees, frozen snapshots
+reviews/
+.claude/worktrees/
+.claude/settings.local.json
+architecture/

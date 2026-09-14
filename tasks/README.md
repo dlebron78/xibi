@@ -85,7 +85,8 @@ the implementer tier.
    - **Vision check.** Does this still match Xibi's architectural vision?
      (local-capable, security-first, L1-L2 autonomy, T2 trust, reference
      deployments, opposite-of-OpenClaw posture.) Read the latest vision
-     docs, not just this spec's framing.
+     docs, not just this spec's framing — the seven vision-alignment gates
+     are in `public/review_criteria.md`.
    - **Code check.** Does this still match the current codebase? Grep
      every class, function, table, column, tool name, tier value, and
      module path the spec names. Mark each as ✓ exists / ✗ wrong / NEW.
