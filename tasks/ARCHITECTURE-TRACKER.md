@@ -77,6 +77,16 @@ Specs in `tasks/backlog/` not tied to the RFC:
 
 ---
 
+## Pruning (audit 2026-09-14)
+
+Origin: Xibi Pruning Audit, 2026-09-14 (Cowork) — 5-step cleanup plan (prune, do not rewrite). Not RFC-tied. Steps 2-5 (dead-code deletion, one-skill-system, shadow-path cutover) are separate specs, not yet in `tasks/`.
+
+| Step | Status | Evidence |
+|---|---|---|
+| step-136 | DONE | Repo hygiene: 559 files removed (12 root docs, 9 `public/` docs, 533 `reviews/`, 5 `MagicMock/`), 9 files modified (`README.md` written from empty, `CLAUDE.md` hard rule 9 + `## Code hygiene` section added, `.gitignore` covers `reviews/`/`.claude/worktrees/`/`architecture/`, nightly cron (`scripts/install_dev_cron.sh`, `scripts/dev_pressure_test.py`) now writes reports to `~/.xibi/reviews/` instead of committing to the repo). `git ls-files` 1247 → 688 (verified on merge commit `b80eded`). Zero `xibi/` files touched. |
+
+---
+
 ## Pipeline
 
 Tools and process infrastructure. Verified 2026-05-12.
