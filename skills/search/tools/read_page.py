@@ -2,7 +2,7 @@
 read_page.py — Bregger search skill tool
 
 Fetches and extracts clean text from a URL using trafilatura.
-The caller (LLM) decides when to invoke this, typically after search_searxng
+The caller (LLM) decides when to invoke this, typically after a web search
 returns a URL that needs deeper reading.
 """
 

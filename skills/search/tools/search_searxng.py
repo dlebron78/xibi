@@ -8,8 +8,11 @@ Returns up to 10 results with title, URL, and snippet.
 """
 
 import json
+import logging
 import urllib.parse
 import urllib.request
+
+logger = logging.getLogger(__name__)
 
 # Local SearXNG endpoint — must be running on the NucBox
 _SEARXNG_URL = "http://localhost:8080/search"
@@ -39,6 +42,25 @@ def run(params: dict) -> dict:
         return {"status": "error", "message": f"SearXNG request failed: {e}"}
 
     raw_results = data.get("results", [])
+    dead = data.get("unresponsive_engines", [])  # shape: [[engine, reason], ...]
+
+    # A total engine outage is a tool failure, not an empty result set. Reporting
+    # it as success leaves the model unable to tell "the web has no answer" from
+    # "this tool is broken", so it retries the same dead tool. Which tool to reach
+    # for instead is the manifest's job — naming one here would put provider
+    # preference in Python (CLAUDE.md rule 5).
+    if not raw_results and dead:
+        logger.warning("search.engines_unavailable engines=%s", [e[0] for e in dead])
+        return {
+            "status": "error",
+            "message": (
+                f"SearXNG returned no results because {len(dead)} of its engines failed: "
+                f"{', '.join(e[0] for e in dead)}. This is a tool outage, not an empty "
+                f"result set."
+            ),
+            "data": {"query": query, "unresponsive_engines": dead, "source": "searxng"},
+        }
+
     if not raw_results:
         return {
             "status": "success",

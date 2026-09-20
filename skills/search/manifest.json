@@ -17,7 +17,7 @@
         {
             "name": "search_searxng",
             "output_type": "synthesis",
-            "description": "Perform a real-time web search using the local SearXNG instance. This is the primary search tool \u2014 no API key, no rate limits, returns rich results with snippets and URLs. Use this for any world-state or current information request.",
+            "description": "Web search using the locally hosted SearXNG instance \u2014 private, no API key. Its upstream engines may be blocked, in which case it returns an error naming them; prefer search_tavily for general queries.",
             "examples": [
                 "search for the latest news on AI",
                 "look up the stock price of AAPL",
@@ -40,7 +40,7 @@
         {
             "name": "read_page",
             "output_type": "synthesis",
-            "description": "Fetch and extract the main text content from a URL using trafilatura. Use this after search_searxng when you need to read the full content of a page (e.g., a news article, a standings page).",
+            "description": "Fetch and extract the main text content from a URL using trafilatura. Use this after a web search when you need the full content of a page.",
             "examples": [
                 "read the article at https://example.com",
                 "summarize that webpage for me",
@@ -104,7 +104,7 @@
             "name": "search_tavily",
             "output_type": "synthesis",
             "access": "operator",
-            "description": "Fallback web search via Tavily API. Use only when search_searxng is unavailable. Requires TAVILY_API_KEY in secrets.env.",
+            "description": "Web search via the Tavily API. Use this for world-state and current information requests. Returns a synthesised answer when Tavily provides one. Requires TAVILY_API_KEY in secrets.env.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
