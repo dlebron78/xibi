@@ -9,6 +9,7 @@ Covers:
   - the outage message names no alternative tool (provider preference stays in
     the manifest, per CLAUDE.md rule 5)
   - the outage dict carries "status" at the top level, where xibi/react.py reads it
+  - the search.engines_unavailable warning is emitted, on the module logger
   - search_tavily answer/snippet modes and _slim_results' truncation limits
 
 Fixture note: the urlopen stub must implement the context-manager protocol and
@@ -25,6 +26,7 @@ from __future__ import annotations
 import glob
 import importlib.util
 import json
+import logging
 import sys
 import urllib.request
 from pathlib import Path
@@ -198,6 +200,27 @@ def test_outage_status_key_is_top_level(monkeypatch):
 
     assert result.get("status") == "error"
     assert "status" not in result["data"]
+
+
+def test_outage_emits_engines_unavailable_warning(monkeypatch, caplog):
+    """
+    DoD: the search.engines_unavailable warning is emitted. Asserting the
+    record's logger name also pins TRR condition 6 — swapping logger.warning
+    for the module-level logging.warning would record under "root" and call
+    basicConfig(), installing a root StreamHandler into xibi-telegram.
+    """
+    mod = _load_tool("search_searxng")
+    _patch_urlopen(monkeypatch, _FIXTURE_A)
+
+    with caplog.at_level(logging.WARNING):
+        mod.run({"query": "capital of Portugal"})
+
+    emitted = [r for r in caplog.records if "search.engines_unavailable" in r.getMessage()]
+    assert len(emitted) == 1, "expected exactly one search.engines_unavailable warning"
+    assert emitted[0].levelno == logging.WARNING
+    assert emitted[0].name == mod.logger.name != "root"
+    for engine, _reason in _DEAD_ENGINES:
+        assert engine in emitted[0].getMessage()
 
 
 # ── search_tavily ─────────────────────────────────────────────────────────────
