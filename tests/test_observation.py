@@ -163,7 +163,9 @@ def test_should_run_gate_ignores_chief_of_staff_watermark(db_path):
             "INSERT INTO observation_cycles (started_at, completed_at, last_signal_id, review_mode) "
             "VALUES (datetime('now', '-2 hours'), datetime('now', '-1 hours'), 0, 'chief_of_staff')"
         )
-    cycle = ObservationCycle(db_path=db_path, profile={"observation": {"trigger_threshold": 5}})
+    # min_interval below the 1h chief_of_staff age so the gate reaches the watermark
+    # path; unscoped, it would read watermark 0 and report "activity: 10 new signals".
+    cycle = ObservationCycle(db_path=db_path, profile={"observation": {"trigger_threshold": 5, "min_interval": "30m"}})
     should, reason = cycle.should_run()
     assert should is False
     assert "idle" in reason

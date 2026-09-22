@@ -206,7 +206,7 @@ class ObservationCycle:
         Evaluate whether to run a cycle now.
 
         Decision logic (all Python, no inference):
-        1. Load the most recent observation_cycles row.
+        1. Load the most recent completed triage observation_cycles row.
         2. If a cycle completed in the last min_interval_minutes → return (False, "interval: last cycle N min ago").
         3. Query signal count since last_signal_id → new_count.
         4. If new_count == 0 and idle_skip=True → return (False, "idle: no new signals").
