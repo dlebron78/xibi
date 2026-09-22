@@ -105,6 +105,70 @@ def test_get_watermark_returns_last_completed(db_path):
     assert cycle._get_watermark() == 25
 
 
+def test_get_watermark_ignores_chief_of_staff_cycles(db_path):
+    """A chief_of_staff row (always last_signal_id=0) must not become the watermark."""
+    with open_db(db_path) as conn, conn:
+        conn.execute(
+            "INSERT INTO observation_cycles (completed_at, last_signal_id, review_mode) VALUES (CURRENT_TIMESTAMP, 5000, 'triage')"
+        )
+        conn.execute(
+            "INSERT INTO observation_cycles (completed_at, last_signal_id, review_mode) VALUES (CURRENT_TIMESTAMP, 0, 'chief_of_staff')"
+        )
+    cycle = ObservationCycle(db_path=db_path)
+    assert cycle._get_watermark() == 5000
+
+
+def test_get_watermark_newer_triage_wins(db_path):
+    with open_db(db_path) as conn, conn:
+        conn.execute(
+            "INSERT INTO observation_cycles (completed_at, last_signal_id, review_mode) VALUES (CURRENT_TIMESTAMP, 5000, 'triage')"
+        )
+        conn.execute(
+            "INSERT INTO observation_cycles (completed_at, last_signal_id, review_mode) VALUES (CURRENT_TIMESTAMP, 0, 'chief_of_staff')"
+        )
+        conn.execute(
+            "INSERT INTO observation_cycles (completed_at, last_signal_id, review_mode) VALUES (CURRENT_TIMESTAMP, 5100, 'triage')"
+        )
+        conn.execute(
+            "INSERT INTO observation_cycles (completed_at, last_signal_id, review_mode) VALUES (CURRENT_TIMESTAMP, 0, 'manager')"
+        )
+    cycle = ObservationCycle(db_path=db_path)
+    assert cycle._get_watermark() == 5100
+
+
+def test_get_watermark_no_triage_rows_returns_zero(db_path):
+    with open_db(db_path) as conn, conn:
+        conn.execute(
+            "INSERT INTO observation_cycles (completed_at, last_signal_id, review_mode) VALUES (CURRENT_TIMESTAMP, 0, 'chief_of_staff')"
+        )
+        conn.execute(
+            "INSERT INTO observation_cycles (completed_at, last_signal_id, review_mode) VALUES (CURRENT_TIMESTAMP, 7, 'manager')"
+        )
+    cycle = ObservationCycle(db_path=db_path)
+    assert cycle._get_watermark() == 0
+
+
+def test_should_run_gate_ignores_chief_of_staff_watermark(db_path):
+    """A newer chief_of_staff row must not make the gate see every signal as new."""
+    with open_db(db_path) as conn, conn:
+        for _i in range(10):
+            conn.execute("INSERT INTO signals (source, content_preview) VALUES ('test', 'p')")
+        # Triage cycle that already processed all 10 signals, well outside min_interval
+        conn.execute(
+            "INSERT INTO observation_cycles (started_at, completed_at, last_signal_id, review_mode) "
+            "VALUES (datetime('now', '-4 hours'), datetime('now', '-3 hours'), 10, 'triage')"
+        )
+        # chief_of_staff cycle completed afterwards with last_signal_id=0
+        conn.execute(
+            "INSERT INTO observation_cycles (started_at, completed_at, last_signal_id, review_mode) "
+            "VALUES (datetime('now', '-2 hours'), datetime('now', '-1 hours'), 0, 'chief_of_staff')"
+        )
+    cycle = ObservationCycle(db_path=db_path, profile={"observation": {"trigger_threshold": 5}})
+    should, reason = cycle.should_run()
+    assert should is False
+    assert "idle" in reason
+
+
 def test_collect_signals_filters_by_watermark(db_path):
     with open_db(db_path) as conn, conn:
         for i in range(1, 6):

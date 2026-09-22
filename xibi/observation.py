@@ -220,7 +220,9 @@ class ObservationCycle:
             with open_db(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.execute(
-                    "SELECT completed_at, last_signal_id FROM observation_cycles WHERE completed_at IS NOT NULL ORDER BY id DESC LIMIT 1"
+                    "SELECT completed_at, last_signal_id FROM observation_cycles "
+                    "WHERE completed_at IS NOT NULL AND review_mode = 'triage' "
+                    "ORDER BY id DESC LIMIT 1"
                 )
                 last_cycle = cursor.fetchone()
 
@@ -415,14 +417,19 @@ class ObservationCycle:
 
     def _get_watermark(self) -> int:
         """
-        Return the last_signal_id from the most recent completed observation_cycles row.
-        Returns 0 if no completed cycle exists.
+        Return the last_signal_id from the most recent completed triage cycle.
+        Scoped to review_mode='triage' because manager and chief_of_staff cycles
+        do not walk signals (chief_of_staff always writes last_signal_id=0) and
+        must never become the watermark for the next triage cycle.
+        Returns 0 if no completed triage cycle exists.
         Never raises.
         """
         try:
             with open_db(self.db_path) as conn:
                 cursor = conn.execute(
-                    "SELECT last_signal_id FROM observation_cycles WHERE completed_at IS NOT NULL ORDER BY id DESC LIMIT 1"
+                    "SELECT last_signal_id FROM observation_cycles "
+                    "WHERE completed_at IS NOT NULL AND review_mode = 'triage' "
+                    "ORDER BY id DESC LIMIT 1"
                 )
                 row = cursor.fetchone()
                 return row[0] if row else 0
